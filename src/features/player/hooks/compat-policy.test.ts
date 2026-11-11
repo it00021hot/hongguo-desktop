@@ -39,24 +39,12 @@ describe('decideCompatPlayback', () => {
     ).toEqual({ forceCompat: false, holdNative: false });
   });
 
-  it('forces compat when backend marks needsCompat (bytevc2)', () => {
-    expect(
-      decideCompatPlayback({
-        hevcPlayable: true,
-        android: false,
-        compatAuthorized: false,
-        needsCompat: true,
-      }),
-    ).toEqual({ forceCompat: true, holdNative: true });
-  });
-
-  it('keeps Windows direct ByteVC2 out of compatibility playback', () => {
+  it('keeps direct ByteVC2 out of compatibility playback', () => {
     expect(
       decideCompatPlayback({
         hevcPlayable: false,
         android: false,
         compatAuthorized: true,
-        needsCompat: true,
         directPlayback: true,
       }),
     ).toEqual({ forceCompat: false, holdNative: false });

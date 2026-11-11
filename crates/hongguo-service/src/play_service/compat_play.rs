@@ -475,9 +475,10 @@ async fn compat_for_playback_with(
         };
         let settings = state.settings();
         let env = state.api_env();
-        // 转码源保持全量候选：HEVC 走平台硬编；bytevc2 走内置 Rust 解帧。
-        let cap = hongguo_api::stream_pick::DecoderCapability::full()
-            .with_bytevc2(hongguo_media_platform::capability::bytevc2_decode_available());
+        // Tauri 的 ByteVC2 源由直播放处理，兼容命令重选时也不能把它带入转码。
+        let cap = hongguo_api::stream_pick::DecoderCapability::full().with_bytevc2(
+            !at_prefix && hongguo_media_platform::capability::bytevc2_decode_available(),
+        );
         let play = hongguo_api::play_url::fetch_play_url(&vid, definition, cap, &env).await?;
         if definition.is_some_and(|expected| play.definition != expected) {
             return Err(AppError::Media("所选清晰度已不可用".into()));

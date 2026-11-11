@@ -63,7 +63,10 @@ pub use local_history::{
     upsert_local_history,
 };
 pub use merge::{delete_merge_task, merge_tasks, upsert_merge_task};
-pub use playback::{playback_position, save_playback_position, series_last_position};
+pub use playback::{
+    playback_definition, playback_position, save_playback_definition, save_playback_position,
+    series_last_position,
+};
 pub use series::{series_all, series_by_id, upsert_series};
 pub use settings::{save_settings, settings};
 pub use task::{replace_tasks, tasks};

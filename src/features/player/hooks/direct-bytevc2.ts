@@ -1,23 +1,37 @@
-import { isWindows } from '@/utils/platform';
-import { STREAM_SCHEME } from '@/utils/scheme';
+import { isWindows, usesSchemeHostForm } from '@/utils/platform';
+import { LOCAL_SCHEME, STREAM_SCHEME } from '@/utils/scheme';
 
-const STREAM_ORIGIN = `http://${STREAM_SCHEME}.localhost`;
-const ROOT = `${STREAM_ORIGIN}/bvc2`;
 const PREBUFFER_FRAMES = 8;
 const LOW_WATER_FRAMES = 16;
 const DISPLAY_LEAD_SECONDS = 0.008;
+const DEFAULT_FRAME_INTERVAL = 1 / 30;
 const HEADER_BYTES = 16;
+const SHARED_BUFFER_TIMEOUT_MS = 5000;
+export const DIRECT_BYTEVC2_FRAME = 'hongguo-bytevc2-frame';
 
-export function directBytevc2Source(src: string | null, needsCompat: boolean): string | null {
-  if (!src || !needsCompat || !isWindows()) return null;
-  const prefix = `${STREAM_ORIGIN}/s/`;
-  if (!src.startsWith(prefix)) return null;
-  const source = src.slice(prefix.length);
-  return /^\d+\/[a-zA-Z0-9_-]+$/.test(source) ? source : null;
+function schemeBase(scheme: string): string {
+  return usesSchemeHostForm() ? `http://${scheme}.localhost` : `${scheme}://localhost`;
+}
+
+function directRoot(): string {
+  return `${schemeBase(STREAM_SCHEME)}/bvc2`;
+}
+
+export function directBytevc2Source(src: string | null, isBytevc2: boolean): string | null {
+  if (!src || !isBytevc2) return null;
+  const streamPrefix = `${schemeBase(STREAM_SCHEME)}/s/`;
+  if (src.startsWith(streamPrefix)) {
+    const source = src.slice(streamPrefix.length);
+    return /^[1-9]\d*\/[a-zA-Z0-9_-]+$/.test(source) ? source : null;
+  }
+  const localPrefix = `${schemeBase(LOCAL_SCHEME)}/f/`;
+  if (!src.startsWith(localPrefix)) return null;
+  const file = src.slice(localPrefix.length);
+  return /^[a-zA-Z0-9_-]+$/.test(file) ? `local/${file}` : null;
 }
 
 export function directBytevc2Audio(source: string): string {
-  return `${ROOT}/audio/${source}`;
+  return `${directRoot()}/audio/${source}`;
 }
 
 type BufferEvent = Event & {
@@ -33,8 +47,8 @@ let nextId = Date.now() * 1024;
 
 function getBridge(): WebViewBridge {
   const host = (window as unknown as { chrome?: { webview?: WebViewBridge } }).chrome?.webview;
-  if (!host || typeof host.releaseBuffer !== 'function' || typeof VideoFrame !== 'function') {
-    throw new Error('WebView2 shared buffers or VideoFrame are unavailable');
+  if (!host || typeof host.releaseBuffer !== 'function') {
+    throw new Error('WebView2 shared buffers are unavailable');
   }
   if (installed !== host) {
     host.addEventListener('sharedbufferreceived', (event) => {
@@ -59,13 +73,13 @@ type Frame = {
   release: () => void;
 };
 
-function framesFrom(buffer: ArrayBuffer, bridge: WebViewBridge): Frame[] {
+function framesFrom(buffer: ArrayBuffer, dispose: () => void): Frame[] {
   const view = new DataView(buffer);
   const frames: Frame[] = [];
   let remaining = 0;
   const release = () => {
     remaining--;
-    if (!remaining) bridge.releaseBuffer(buffer);
+    if (!remaining) dispose();
   };
   for (let offset = 0; offset < buffer.byteLength;) {
     if (buffer.byteLength - offset < HEADER_BYTES)
@@ -89,7 +103,7 @@ function framesFrom(buffer: ArrayBuffer, bridge: WebViewBridge): Frame[] {
     offset = start + length;
     remaining++;
   }
-  if (!remaining) bridge.releaseBuffer(buffer);
+  if (!remaining) dispose();
   return frames;
 }
 
@@ -102,6 +116,8 @@ type Run = {
   requesting: boolean;
   wakeRequest?: () => void;
   first: boolean;
+  lastPts: number;
+  frameInterval: number;
 };
 
 type Callbacks = {
@@ -111,7 +127,8 @@ type Callbacks = {
 };
 
 export class DirectBytevc2Player {
-  private readonly bridge = getBridge();
+  private readonly bridge = isWindows() ? getBridge() : undefined;
+  private readonly root = directRoot();
   private readonly surface: CanvasRenderingContext2D;
   private readonly events = new AbortController();
   private run?: Run;
@@ -129,6 +146,7 @@ export class DirectBytevc2Player {
     private readonly callbacks: Callbacks,
     target: number,
   ) {
+    if (typeof VideoFrame !== 'function') throw new Error('VideoFrame is unavailable');
     const surface = canvas.getContext('2d');
     if (!surface) throw new Error('ByteVC2 canvas is unavailable');
     this.surface = surface;
@@ -170,6 +188,7 @@ export class DirectBytevc2Player {
   private setBuffering(value: boolean) {
     if (this.buffering === value) return;
     this.buffering = value;
+    this.canvas.dataset.buffering = String(value);
     this.callbacks.waiting(value);
     if (value) this.audio.pause();
   }
@@ -182,7 +201,7 @@ export class DirectBytevc2Player {
     run.stop.abort();
     run.wakeRequest?.();
     for (const frame of run.frames) frame.release();
-    void fetch(`${ROOT}/stop/${run.id}`, { method: 'POST' }).catch(() => undefined);
+    void fetch(`${this.root}/stop/${run.id}`, { method: 'POST' }).catch(() => undefined);
   }
 
   private begin(target: number) {
@@ -195,29 +214,38 @@ export class DirectBytevc2Player {
       ended: false,
       requesting: false,
       first: false,
+      lastPts: target,
+      frameInterval: DEFAULT_FRAME_INTERVAL,
     };
     this.run = run;
     this.setBuffering(true);
-    receivers.set(run.id, (buffer) => {
-      try {
-        run.frames.push(...framesFrom(buffer, this.bridge));
-      } catch (error) {
-        this.bridge.releaseBuffer(buffer);
-        this.fail(error);
-      } finally {
-        run.wakeRequest?.();
-      }
-    });
+    const bridge = this.bridge;
+    if (bridge) {
+      receivers.set(run.id, (buffer) => {
+        const dispose = () => bridge.releaseBuffer(buffer);
+        try {
+          run.frames.push(...framesFrom(buffer, dispose));
+        } catch (error) {
+          dispose();
+          this.fail(error);
+        } finally {
+          run.wakeRequest?.();
+        }
+      });
+    }
     void this.request(run, `start/${run.id}/${this.source}/${Math.round(target * 1000)}`);
   }
 
   private async request(run: Run, path: string) {
     run.requesting = true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const shared = new Promise<void>((resolve) => {
-        run.wakeRequest = resolve;
-      });
-      const response = await fetch(`${ROOT}/${path}`, {
+      const shared = this.bridge
+        ? new Promise<void>((resolve) => {
+            run.wakeRequest = resolve;
+          })
+        : undefined;
+      const response = await fetch(`${this.root}/${path}`, {
         method: 'POST',
         signal: run.stop.signal,
       });
@@ -225,12 +253,24 @@ export class DirectBytevc2Player {
       if (response.status === 204) {
         run.ended = true;
         if (!run.first) throw new Error('ByteVC2 returned no frames');
+      } else if (shared) {
+        await Promise.race([
+          shared,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error('Timed out waiting for the ByteVC2 shared buffer')),
+              SHARED_BUFFER_TIMEOUT_MS,
+            );
+          }),
+        ]);
       } else {
-        await shared;
+        const bytes = await response.arrayBuffer();
+        if (!run.stop.signal.aborted) run.frames.push(...framesFrom(bytes, () => undefined));
       }
     } catch (error) {
       if (!run.stop.signal.aborted) this.fail(error);
     } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
       run.wakeRequest = undefined;
       run.requesting = false;
     }
@@ -263,8 +303,12 @@ export class DirectBytevc2Player {
       frame.release();
     }
     this.canvas.dataset.videoPts = String(frame.pts);
+    const next = run.frames[0];
+    if (next && next.pts > frame.pts) run.frameInterval = next.pts - frame.pts;
+    run.lastPts = frame.pts;
     this.canvas.dataset.renderedFrames = String(++this.drawn);
     this.canvas.dataset.droppedFrames = String(this.dropped);
+    this.canvas.dispatchEvent(new Event(DIRECT_BYTEVC2_FRAME));
     if (!run.first) {
       run.first = true;
       this.callbacks.firstFrame(frame.width, frame.height);
@@ -299,7 +343,11 @@ export class DirectBytevc2Player {
         frame = run.frames.shift();
       }
       if (frame) this.draw(frame, run);
-      if (!run.frames.length && !run.ended) {
+      if (
+        !run.frames.length &&
+        !run.ended &&
+        this.audio.currentTime >= run.lastPts + run.frameInterval
+      ) {
         this.canvas.dataset.rebuffers = String(++this.rebuffers);
         this.setBuffering(true);
       }

@@ -10,7 +10,7 @@ use hongguo_common::{AppError, AppResult};
 
 /// 当前 schema 版本。每次结构性变更（加表/加列）时 +1，
 /// 并在 [`MIGRATIONS`] 追加一段从上一版本到新版本的 SQL。
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 /// 按版本升序排列的迁移 SQL，第 n 段把 schema 从版本 n 升到 n+1。
 pub static MIGRATIONS: &[&str] = &[
@@ -122,6 +122,13 @@ pub static MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_local_history_updated ON local_history(updated_at);
     "#,
+    // v7 -> v8：官方非进程级清晰度记忆。回滚 SQL：DROP TABLE playback_definition;
+    r#"
+    CREATE TABLE playback_definition (
+        scope TEXT PRIMARY KEY,
+        definition INTEGER NOT NULL
+    );
+    "#,
 ];
 
 /// 隔离目录里已有的符号链接不删、不跟随。库引擎还会在旁边写自己的日志文件，开库前先看见这些链接。
@@ -149,7 +156,10 @@ fn refuse_engine_sidecars(db_path: &Path) -> Result<(), String> {
         match std::fs::symlink_metadata(&side) {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => {
-                return Err(format!("离线 QA 无法检查引擎旁路 {}: {err}", side.display()));
+                return Err(format!(
+                    "离线 QA 无法检查引擎旁路 {}: {err}",
+                    side.display()
+                ));
             }
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(format!(
@@ -463,6 +473,48 @@ mod tests {
                 assert_eq!(j.as_text().map(|s| s.as_str()), Some("{\"a\":1}"));
             }
             let _ = std::fs::remove_file(&path);
+        });
+    }
+
+    #[test]
+    fn v7_upgrade_adds_quality_memory_without_touching_existing_settings() {
+        run(async {
+            let db = Db::open(":memory:").await.unwrap();
+            db.execute(
+                "INSERT INTO settings(id,json) VALUES(1,'{\"old\":true}')",
+                (),
+            )
+            .await
+            .unwrap();
+            db.execute("DROP TABLE playback_definition", ())
+                .await
+                .unwrap();
+            db.execute("PRAGMA user_version = 7", ()).await.unwrap();
+            db.migrate().await.unwrap();
+            crate::entity::save_playback_definition(&db, "", Some(540))
+                .await
+                .unwrap();
+            db.migrate().await.unwrap();
+            assert_eq!(
+                crate::entity::playback_definition(&db, "").await.unwrap(),
+                Some(540)
+            );
+            let mut rows = db
+                .conn()
+                .query("SELECT json FROM settings WHERE id=1", ())
+                .await
+                .unwrap();
+            assert_eq!(
+                rows.next()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .get_value(0)
+                    .unwrap()
+                    .as_text()
+                    .map(String::as_str),
+                Some("{\"old\":true}")
+            );
         });
     }
 

@@ -5,8 +5,8 @@
 pub mod bootstrap;
 pub mod commands;
 mod diagnostics;
-#[cfg(target_os = "windows")]
 mod direct_bytevc2;
+mod direct_bytevc2_source;
 mod events;
 mod protocol;
 #[cfg(test)]

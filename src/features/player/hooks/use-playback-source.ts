@@ -61,16 +61,24 @@ export function usePlaybackSource(params: {
   const retryTick = retry.key === episodeKey ? retry.tick : 0;
   /** 在线取流/解密进度：播未下载的集时显示「正在缓存 45%（54/120MB）」。 */
   const [buffering, setBuffering] = useState<OnlineProgress | null>(null);
-  /**
-   * 用户选的清晰度，`undefined` = 后端取平台最高档。存组件不存 store：
-   * 切集应回到「自动最高档」，把上一集档位带过去多半触发回退。
-   */
-  const [definition, setDefinition] = useState<number | undefined>(undefined);
+  // 切集后的手选记忆由后端按官方作用域管理；自动选择需要显式清除该记忆。
+  const [choice, setChoice] = useState<{ key: string; value?: number; reset: boolean }>({
+    key: episodeKey,
+    reset: false,
+  });
+  if (choice.key !== episodeKey) setChoice({ key: episodeKey, reset: false });
+  const definition = choice.key === episodeKey ? choice.value : undefined;
+  const resetDefinition = choice.key === episodeKey && choice.reset;
+  const setDefinition = useCallback(
+    (value: number | undefined) => {
+      setChoice({ key: episodeKey, value, reset: value === undefined });
+    },
+    [episodeKey],
+  );
   /** 本集实际生效的档位与全部可选档位，由起播响应带回。 */
   const [activeDefinition, setActiveDefinition] = useState(0);
   const [definitions, setDefinitions] = useState<VideoDefinition[]>([]);
-  /** 后端标明必须兼容转码（典型 bytevc2） */
-  const [needsCompat, setNeedsCompat] = useState(false);
+  const [isBytevc2, setIsBytevc2] = useState(false);
 
   const { mutate: play } = usePlay();
 
@@ -136,6 +144,7 @@ export function usePlaybackSource(params: {
   // 当前位置先存 pendingSeek，否则从 10 分钟处切 720p 会被弹回片头
   useEffect(() => {
     if (!seriesId || !vidIndex) return;
+    let active = true;
 
     const video = videoRef.current;
     // 只在元素里还是这一集的流时才续点；信息流切剧时元素里是上一部剧的画面，读它就串剧
@@ -155,9 +164,10 @@ export function usePlaybackSource(params: {
       hint && hint.seriesId === seriesId && hint.vidIndex === vidIndex ? hint.positionMs / 1000 : 0;
 
     play(
-      { seriesId, vidIndex, definition },
+      { seriesId, vidIndex, definition, resetDefinition },
       {
         onSuccess: (res) => {
+          if (!active) return;
           srcKeyRef.current = episodeKey;
           setSrcKey(episodeKey);
           setPlaybackMaterialsError(false);
@@ -165,7 +175,7 @@ export function usePlaybackSource(params: {
           setSrc(res.error ? null : res.url);
           setActiveDefinition(res.definition);
           setDefinitions(res.definitions);
-          setNeedsCompat(Boolean(res.needsCompat));
+          setIsBytevc2(res.needsCompat);
           // 续播位置在 metadata 加载后 seek，优先级：本会话播放点 > 本地 resumeAt > 云端历史提示
           pendingSeek.current = res.error
             ? 0
@@ -177,20 +187,26 @@ export function usePlaybackSource(params: {
           if (!res.error && hintMs > 0) clearResumeHint(null);
         },
         onError: (e) => {
+          if (!active) return;
           srcKeyRef.current = '';
           setSrcKey('');
           setPlaybackMaterialsError(isAppInvokeError(e) && e.kind === 'error.playbackMaterials');
           setError(e.message);
           setSrc(null);
-          setNeedsCompat(false);
+          setIsBytevc2(false);
         },
       },
     );
+    return () => {
+      active = false;
+    };
     // ref 形参按仓库惯例写进依赖（身份恒定，见 use-playback-progress）
   }, [
     seriesId,
     vidIndex,
     definition,
+    choice,
+    resetDefinition,
     episodeKey,
     play,
     retryTick,
@@ -268,7 +284,7 @@ export function usePlaybackSource(params: {
     setDefinition,
     activeDefinition,
     definitions,
-    needsCompat,
+    isBytevc2,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,

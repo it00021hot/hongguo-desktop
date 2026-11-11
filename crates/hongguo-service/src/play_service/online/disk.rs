@@ -184,6 +184,34 @@ pub(crate) fn usage() -> (u64, u64) {
     )
 }
 
+/// 与官方 getCacheSize 一致：除 360P 外，最后一个已有媒体字节的档位优先。
+pub(crate) fn cached_definition(
+    device: &hongguo_signer::device::DeviceProfile,
+    vid: &str,
+    candidates: &[hongguo_api::resolution_policy::Candidate],
+) -> Option<u32> {
+    let entries = files(&paths::online_cache_dir());
+    candidates
+        .iter()
+        .filter(|value| value.definition != 360)
+        .filter(|value| {
+            if hongguo_stream::cache().cached_bytes(vid, value.definition) > 0 {
+                return true;
+            }
+            value
+                .file_hash
+                .as_deref()
+                .and_then(|hash| MediaCache::new(device, vid, value.definition, hash))
+                .is_some_and(|cache| {
+                    entries
+                        .iter()
+                        .any(|entry| entry.range(cache.key()).is_some())
+                })
+        })
+        .map(|value| value.definition)
+        .next_back()
+}
+
 pub(crate) fn clear() -> (u64, u64) {
     let mut generation = GENERATION.lock();
     *generation = generation.wrapping_add(1);

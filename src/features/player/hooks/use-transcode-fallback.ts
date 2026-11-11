@@ -32,8 +32,6 @@ export function useTranscodeFallback(params: {
   hevcPlayable: boolean | undefined;
   /** Android：无扩展安装路径，软解判假即强制兼容 */
   android: boolean;
-  /** 后端标明本集必须转兼容（bytevc2 等） */
-  needsCompat?: boolean;
   directPlayback: boolean;
   definition?: number;
   sourceReady: boolean;
@@ -57,7 +55,6 @@ export function useTranscodeFallback(params: {
     currentSeries,
     hevcPlayable,
     android,
-    needsCompat,
     directPlayback,
     definition,
     sourceReady,
@@ -74,7 +71,7 @@ export function useTranscodeFallback(params: {
   } | null>(null);
   const [compatProgress, setCompatProgress] = useState<CompatProgress | null>(null);
   const [waitingFor, setWaitingFor] = useState<string | null>(null);
-  const compatKey = sourceReady ? compatPlaybackKey(episodeKey, definition) : '';
+  const compatKey = sourceReady && !directPlayback ? compatPlaybackKey(episodeKey, definition) : '';
   const waitingWholeFile = waitingFor === compatKey;
   const activeCompatKey = useRef(compatKey);
   const compatStarted = useRef(false);
@@ -83,7 +80,6 @@ export function useTranscodeFallback(params: {
     hevcPlayable,
     android,
     compatAuthorized: hevcSession.compatAuthorized(),
-    needsCompat: sourceReady && needsCompat,
     directPlayback,
   });
 

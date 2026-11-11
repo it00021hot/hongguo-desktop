@@ -36,7 +36,7 @@ impl Default for PrefetchCache {
     }
 }
 
-pub async fn prefetch_budget(state: &AppState) -> PrefetchBudget {
+pub(super) async fn policy(state: &AppState) -> PrefetchPolicy {
     let generation = state.device_generation();
     let now = Instant::now();
     let (cell, previous) = {
@@ -71,6 +71,12 @@ pub async fn prefetch_budget(state: &AppState) -> PrefetchBudget {
             }
         })
         .await;
+    policy.clone()
+}
+
+pub async fn prefetch_budget(state: &AppState) -> PrefetchBudget {
+    let policy = policy(state).await;
+    let env = state.api_env();
     let local = Local::now();
     let minute = local.hour() * 60 + local.minute();
     let wifi = env.device.get("ac") == "wifi";

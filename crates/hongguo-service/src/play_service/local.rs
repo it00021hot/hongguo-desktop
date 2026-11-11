@@ -1,4 +1,4 @@
-//! 播放地址解析：本地成品优先，其次在线流。
+//! 播放地址解析：显式文件、本地播放与在线清晰度选择。
 
 use super::{online, position};
 use crate::app_state::AppState;
@@ -7,28 +7,12 @@ use hongguo_common::model::{PlayRequest, PlayResponse};
 use hongguo_common::{AppError, AppResult};
 use hongguo_store::Store;
 
-/// 解析播放请求。`preferOnline` 只在**本地没有这一集**时才起作用：
-/// 已下好的文件永远走 `hongguo-local://`，没必要重新下一遍。
+/// 显式文件路径优先；`preferOnline` 起播返回在线流及可选档位。
 pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<PlayResponse> {
     let resume_at = position::load(state, &request.series_id, request.vid_index)?;
-    // 本地文件只有一版，谈不上切清晰度：菜单会拿到空列表而自动隐藏。
-    // bytevc2 等需兼容转码时标 needs_compat，前端走同一 growing 管线（未登录本地实播最小接线）。
-
-    // 调用方直接给了路径就用它
-    if !request.file_path.trim().is_empty() {
-        let url = hongguo_protocol::local::local_play_url(&request.file_path)
+    if let Some(path) = local_playback_path(state, request) {
+        let url = hongguo_protocol::local::local_play_url(&path)
             .ok_or_else(|| AppError::InvalidArgs("文件路径无效".into()))?;
-        return Ok(local_file_response(&request.file_path, url, resume_at));
-    }
-
-    // 已下载的那一集走本地协议
-    let local = state
-        .queue()
-        .completed_path(&request.series_id, request.vid_index);
-
-    if let Some(path) = local
-        && let Some(url) = hongguo_protocol::local::local_play_url(&path)
-    {
         return Ok(local_file_response(&path, url, resume_at));
     }
 
@@ -75,6 +59,13 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
 
     // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
     let progress_key = format!("{}:{}", request.series_id, request.vid_index);
+    super::resolution::remember(
+        state,
+        &request.series_id,
+        request.definition,
+        request.reset_definition,
+    )
+    .await?;
     match online::prepare(
         state,
         &vid,
@@ -115,7 +106,19 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
     }
 }
 
-/// 本地成品 / 显式 filePath：探测编码，bytevc2 标 needs_compat 以便正式播放器走 progressive 兼容。
+fn local_playback_path(state: &AppState, request: &PlayRequest) -> Option<String> {
+    if !request.file_path.trim().is_empty() {
+        return Some(request.file_path.clone());
+    }
+    if request.prefer_online {
+        return None;
+    }
+    state
+        .queue()
+        .completed_path(&request.series_id, request.vid_index)
+}
+
+/// 本地成品和显式 filePath 都探测编码，以便选中 ByteVC2 直播放。
 fn local_file_response(path: &str, url: String, resume_at: f64) -> PlayResponse {
     let (codec, needs_compat) = probe_local_codec(path);
     PlayResponse {
@@ -199,6 +202,42 @@ pub(crate) fn episode_vid(store: &Store, series_id: &str, vid_index: u32) -> Opt
 mod tests {
     use super::*;
     use hongguo_common::model::{Episode, Series};
+
+    #[test]
+    fn online_playback_keeps_quality_selection_when_the_episode_is_downloaded() {
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::default());
+        let mut task = hongguo_common::model::DownloadTask::new("series", "剧集", 1, "vid", "");
+        task.mark_completed("/downloads/episode.mp4", 1);
+        state.queue().enqueue(task);
+        let mut request = PlayRequest {
+            series_id: "series".into(),
+            vid_index: 1,
+            file_path: String::new(),
+            prefer_online: true,
+            definition: None,
+            reset_definition: false,
+        };
+
+        assert_eq!(local_playback_path(&state, &request), None);
+        request.definition = Some(720);
+        assert_eq!(local_playback_path(&state, &request), None);
+        request.prefer_online = false;
+        request.definition = None;
+        assert_eq!(
+            local_playback_path(&state, &request).as_deref(),
+            Some("/downloads/episode.mp4")
+        );
+        request.prefer_online = true;
+        request.file_path = "/chosen/episode.mp4".into();
+        assert_eq!(
+            local_playback_path(&state, &request).as_deref(),
+            Some("/chosen/episode.mp4")
+        );
+        request.file_path.clear();
+        request.prefer_online = false;
+        request.vid_index = 2;
+        assert_eq!(local_playback_path(&state, &request), None);
+    }
 
     fn store_with(episodes: Vec<Episode>) -> Store {
         let store = Store::open_memory().expect("测试内存库");

@@ -6,7 +6,7 @@ use hongguo_common::AppResult;
 use hongguo_common::model::{PlayRequest, PlayResponse};
 use hongguo_service::app_state::AppState;
 
-/// 解析播放请求（本地成品优先，其次在线流）。取流编排与进度事件全在 service：进度走事件总线（`online-play-progress` 由壳的事件转发器发给前端）。
+/// 解析播放请求。取流编排与进度事件全在 service，显式文件和在线清晰度由请求决定。
 #[tauri::command]
 pub async fn play_series(
     state: State<'_, AppState>,

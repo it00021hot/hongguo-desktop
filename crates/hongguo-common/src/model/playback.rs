@@ -60,15 +60,18 @@ impl PlaybackPosition {
 pub struct PlayRequest {
     pub series_id: String,
     pub vid_index: u32,
-    /// 指定文件路径；不给则由后端从任务表里找
+    /// 指定本地文件路径；未指定时由 prefer_online 决定在线或下载记录。
     #[serde(default)]
     pub file_path: String,
     /// 优先在线播放（不落盘）
     #[serde(default)]
     pub prefer_online: bool,
-    /// 指定清晰度档位；不给则取平台提供的最高档
+    /// 用户手选清晰度；未指定时按官方记忆、缓存与动态策略选择。
     #[serde(default)]
     pub definition: Option<u32>,
+    /// 用户点击自动：清除当前官方作用域的手选记忆。
+    #[serde(default)]
+    pub reset_definition: bool,
 }
 
 /// 播放地址响应。发给前端 `playResponseSchema`，键名 camelCase。
@@ -91,10 +94,10 @@ pub struct PlayResponse {
     /// 本集提供的全部档位，供切换菜单渲染
     #[serde(default)]
     pub definitions: Vec<VideoDefinition>,
-    /// 选中流的 `codec_type`（如 `bytevc1` / `bytevc2`）；本地文件为空。
+    /// 选中流的编码，本地探测失败时为空。
     #[serde(default)]
     pub codec: String,
-    /// 系统播放器 / WebView 不能直喂，必须先走兼容转码（典型：`bytevc2`）。
+    /// 历史字段名，标识应走 ByteVC2 直播放。
     #[serde(default)]
     pub needs_compat: bool,
 }

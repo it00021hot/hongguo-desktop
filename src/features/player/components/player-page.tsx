@@ -130,12 +130,12 @@ export function PlayerView({
     setSrcKey,
     srcKeyRef,
     lastKnownRef,
-    pendingSeek,
+    pendingSeek: pendingSeekRef,
     buffering,
     setDefinition,
     activeDefinition,
     definitions,
-    needsCompat,
+    isBytevc2,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,
@@ -181,7 +181,7 @@ export function PlayerView({
   // 转码兜底：onDecodeFailure 代理须先于 hook 创建
   const { onDecodeFailure, onDecodeFailureRef } = useDecodeFailureProxy();
   const sourceReady = srcKey === episodeKey && Boolean(src);
-  const directSource = directBytevc2Source(src, needsCompat);
+  const directSource = directBytevc2Source(src, isBytevc2);
   const compatDefinition = sourceReady && activeDefinition > 0 ? activeDefinition : undefined;
   const {
     compatSrc,
@@ -202,27 +202,26 @@ export function PlayerView({
     src,
     retryTick,
     srcKeyRef,
-    pendingSeekRef: pendingSeek,
+    pendingSeekRef,
     setSrcKey,
     currentSeries,
     hevcPlayable,
     android: isAndroid(),
-    needsCompat,
-    directPlayback: directSource !== null,
+    directPlayback: isBytevc2,
     definition: compatDefinition,
     sourceReady,
     onDecodeFailure,
   });
   const { videoLive, videoStalled, markLive, markStalled } = useVideoLive(streamKey);
   const handleDirectError = (reason: unknown) => {
-    setError(`${t('player.onlineInterrupted')}（${String(reason)}）`);
-    setSrc(null);
+    const detail = reason instanceof Error ? reason.message : String(reason);
+    setError(`${t('error.media')}（ByteVC2: ${detail}）`);
   };
   const isDirectBuffering = useDirectBytevc2({
-    source: sourceReady ? directSource : null,
+    source: sourceReady && !error ? directSource : null,
     videoRef,
     canvasRef: directCanvasRef,
-    pendingSeekRef: pendingSeek,
+    pendingSeekRef,
     onFirstFrame: (width, height) => {
       noteVideoSize(width, height);
       markLive();
@@ -560,8 +559,9 @@ export function PlayerView({
                 )}
                 <EnhancementLayer
                   videoRef={videoRef}
+                  directCanvasRef={directSource ? directCanvasRef : undefined}
                   src={playSrc}
-                  available={videoLive && !directSource}
+                  available={videoLive}
                   cover={coverFill}
                   settings={enhanceSettings}
                   onStatus={setEnhanceStatus}

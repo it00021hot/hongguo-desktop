@@ -1,14 +1,9 @@
-//! 播放策略轮询：官方播放器栈每 `query_gap` 秒（响应下发，默认 300s）拉一次
-//! `GET /reading/media/play/strategy/`。**只取不施策**：策略内容不落地
-//!（用户明确：不对齐降清晰度/倍速行为）。
-//!
-//! ```bash
-//! cargo test -p hongguo-api --lib play_strategy
-//! ```
+//! 官方播放策略响应与清晰度策略。
 
 use serde_json::Value;
 
 use crate::client::ApiEnv;
+use crate::resolution_policy::{Strategy, decode};
 use hongguo_common::{AppError, AppResult};
 use hongguo_signer::device::fingerprint_for_cdid;
 
@@ -46,9 +41,7 @@ fn media_stack_env(env: &ApiEnv) -> ApiEnv {
     media_env
 }
 
-/// 拉一次播放策略。成功返回服务端下发的轮询间隔（秒）；失败如实上抛。
-/// 策略面板内容**刻意不返回**——不施策。
-pub async fn fetch_play_strategy(env: &ApiEnv) -> AppResult<u64> {
+pub async fn fetch_play_strategy(env: &ApiEnv) -> AppResult<Strategy> {
     let media_env = media_stack_env(env);
     let biz = [
         ("device_level".to_string(), "3".to_string()),
@@ -58,7 +51,11 @@ pub async fn fetch_play_strategy(env: &ApiEnv) -> AppResult<u64> {
     let bytes =
         crate::client::api_call_full(MEDIA_API_ORIGIN, PLAY_STRATEGY_PATH, None, &biz, &media_env)
             .await?;
-    let v: Value = serde_json::from_slice(&bytes)
+    parse_strategy(&bytes)
+}
+
+fn parse_strategy(bytes: &[u8]) -> AppResult<Strategy> {
+    let v: Value = serde_json::from_slice(bytes)
         .map_err(|e| AppError::Media(format!("播放策略响应非 JSON: {e}")))?;
     let code = v.pointer("/code").and_then(Value::as_i64).unwrap_or(-1);
     if code != 0 {
@@ -68,10 +65,42 @@ pub async fn fetch_play_strategy(env: &ApiEnv) -> AppResult<u64> {
             .unwrap_or("未知");
         return Err(AppError::Media(format!("播放策略接口返回 {code}: {msg}")));
     }
-    Ok(v.pointer("/data/query_gap")
+    let query_gap = v
+        .pointer("/data/query_gap")
         .and_then(Value::as_u64)
         .filter(|g| *g > 0)
-        .unwrap_or(DEFAULT_QUERY_GAP_SECS))
+        .unwrap_or(DEFAULT_QUERY_GAP_SECS);
+    #[derive(serde::Deserialize)]
+    struct RuleList {
+        #[serde(default)]
+        list: Option<Vec<crate::resolution_policy::StrategyRule>>,
+    }
+    // 官方 JSONUtils.getSafeObject 将无效的可选策略置空，不保留旧规则。
+    let optional = |key: &str| {
+        v.pointer("/data/strategies")
+            .and_then(|value| value.get(key))
+    };
+    let rules: Option<RuleList> = decode(optional("resolution_strategy")).unwrap_or_else(|error| {
+        log::warn!("[PlayStrategy] 忽略无效分辨率规则: {error}");
+        None
+    });
+    let peak_demotion = decode(optional("peak_demotion")).unwrap_or_else(|error| {
+        log::warn!("[PlayStrategy] 忽略无效高峰规则: {error}");
+        None
+    });
+    Ok(Strategy {
+        query_gap,
+        is_peak_period: v
+            .pointer("/data/is_peak_period")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        use_videoarch_peak_period: v
+            .pointer("/data/use_videoarch_peak_period")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        peak_demotion,
+        rules: rules.and_then(|rules| rules.list),
+    })
 }
 
 #[cfg(test)]
@@ -89,12 +118,39 @@ mod tests {
             "strategies":{"peak_demotion":"{}","play_strategy_enable_server":"true",
             "playrate_strategy":"{\"default_play_speed\":\"1.0\"}","resolution_strategy":""}},
             "message":"MediaApiERR_SUCCESS"}"#;
-        let v: Value = serde_json::from_str(sample).unwrap();
-        assert_eq!(v.pointer("/code").and_then(Value::as_i64), Some(0));
+        let parsed = parse_strategy(sample.as_bytes()).unwrap();
+        assert_eq!(parsed.query_gap, 300);
+        assert!(parsed.rules.is_none());
+        assert!(parsed.peak_demotion.unwrap().resolution.is_none());
+    }
+
+    #[test]
+    fn decodes_nested_rules_and_clears_missing_or_invalid_optional_rules() {
+        let raw = serde_json::json!({"code":0,"data":{"query_gap":123,"is_peak_period":true,
+            "use_videoarch_peak_period":true,"strategies":{
+                "peak_demotion":"{\"resolution\":\"480P\",\"resolution_in_peak_min_episode_index\":12}",
+                "resolution_strategy":"{\"list\":[{\"suggest_resolution_type\":\"1080P\",\"keep_alive_duration\":30}]}"}}});
+        let parsed = parse_strategy(raw.to_string().as_bytes()).unwrap();
+        assert_eq!(parsed.query_gap, 123);
+        assert!(parsed.is_peak_period && parsed.use_videoarch_peak_period);
         assert_eq!(
-            v.pointer("/data/query_gap").and_then(Value::as_u64),
-            Some(300)
+            parsed
+                .peak_demotion
+                .unwrap()
+                .resolution_in_peak_min_episode_index,
+            12
         );
+        assert_eq!(parsed.rules.unwrap()[0].keep_alive_duration, 30);
+        for value in ["{}", "null", "broken", ""] {
+            let parsed = parse_strategy(
+                serde_json::json!({"code":0,"data":{"strategies":{
+                "resolution_strategy":value}}})
+                .to_string()
+                .as_bytes(),
+            )
+            .unwrap();
+            assert!(parsed.rules.is_none());
+        }
     }
 
     #[test]

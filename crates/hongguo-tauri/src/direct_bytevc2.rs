@@ -9,10 +9,14 @@ use hongguo_common::{AppError, AppResult};
 use hongguo_stream::range::{RangeSpec, parse_range};
 use tauri::http::{Method, Request, Response};
 use tauri::{Manager, UriSchemeContext, UriSchemeResponder, Wry};
+#[cfg(target_os = "windows")]
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY, ICoreWebView2_17, ICoreWebView2Environment12,
 };
+#[cfg(target_os = "windows")]
 use windows_core::{HSTRING, Interface, PWSTR};
+
+use crate::direct_bytevc2_source::Source;
 
 pub const PATH_PREFIX: &str = "/bvc2/";
 const FRAME_BATCH: usize = 8;
@@ -30,12 +34,6 @@ pub struct DirectPlayback {
     indexes: Mutex<HashMap<String, SourceIndex>>,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct Source {
-    definition: u32,
-    vid: String,
-}
-
 struct Session {
     id: u64,
     cancelled: Arc<AtomicBool>,
@@ -50,20 +48,26 @@ impl DirectPlayback {
         responder: UriSchemeResponder,
     ) {
         let app = context.app_handle();
+        let label = context.webview_label().to_owned();
+        let Some(window) = app.get_webview_window(&label) else {
+            responder.respond(response(410, "", "text/plain", Vec::new()));
+            return;
+        };
         let origin = request
             .headers()
             .get("origin")
             .and_then(|value| value.to_str().ok());
-        let Some(origin) = origin
-            .filter(|origin| app_origin(app.config(), origin))
-            .map(str::to_owned)
-        else {
-            responder.respond(response(403, "", "text/plain", Vec::new()));
-            return;
+        let allowed_origin = match origin {
+            Some(origin) if app_origin(app.config(), origin) => Some(origin),
+            None | Some("null") if !cfg!(target_os = "windows") => window
+                .url()
+                .ok()
+                .filter(|url| app_origin(app.config(), &page_origin(url)))
+                .map(|_| origin.unwrap_or("null")),
+            _ => None,
         };
-        let label = context.webview_label().to_owned();
-        let Some(window) = app.get_webview_window(&label) else {
-            responder.respond(response(410, &origin, "text/plain", Vec::new()));
+        let Some(origin) = allowed_origin.map(str::to_owned) else {
+            responder.respond(response(403, "", "text/plain", Vec::new()));
             return;
         };
         let playback = Arc::clone(self);
@@ -71,6 +75,7 @@ impl DirectPlayback {
             let reply = playback.serve(&label, &origin, &request);
             match reply {
                 Ok(Reply::Http(result)) => responder.respond(result),
+                #[cfg(target_os = "windows")]
                 Ok(Reply::Frames { id, bytes }) if !bytes.is_empty() => {
                     let dispatch = window.with_webview(move |webview| {
                         let result = match post_frames(webview, &origin, id, &bytes) {
@@ -82,6 +87,10 @@ impl DirectPlayback {
                     if let Err(error) = dispatch {
                         log::debug!("[ByteVC2/Direct] 窗口已关闭: {error}");
                     }
+                }
+                #[cfg(not(target_os = "windows"))]
+                Ok(Reply::Frames { bytes }) if !bytes.is_empty() => {
+                    responder.respond(response(200, &origin, "application/octet-stream", bytes));
                 }
                 Ok(Reply::Frames { .. }) => {
                     responder.respond(response(204, &origin, "text/plain", Vec::new()));
@@ -116,6 +125,7 @@ impl DirectPlayback {
                 let target = f64::from(number(target)?) / 1000.0;
                 let receiver = self.start(label, id, source, target)?;
                 Ok(Reply::Frames {
+                    #[cfg(target_os = "windows")]
                     id,
                     bytes: frames(&receiver, 1)?,
                 })
@@ -132,6 +142,7 @@ impl DirectPlayback {
                     .map(Arc::clone)
                     .ok_or(AppError::Cancelled)?;
                 Ok(Reply::Frames {
+                    #[cfg(target_os = "windows")]
                     id,
                     bytes: frames(&receiver, FRAME_BATCH)?,
                 })
@@ -163,14 +174,14 @@ impl DirectPlayback {
         {
             return Ok(Arc::clone(index));
         }
+        let mut reader = source.reader()?;
         let index = Arc::new(IndexedBytevc2::open(
             source.length(cancelled)?,
             |offset, length, bytes| {
                 if length > MAX_INDEX_READ {
                     return Err(AppError::Media("ByteVC2 索引过大".into()));
                 }
-                *bytes = source.read(offset, length, cancelled)?;
-                Ok(())
+                reader.read(offset, length, cancelled, bytes)
             },
         )?);
         self.indexes
@@ -205,9 +216,8 @@ impl DirectPlayback {
         let index = self.index(label, &source, &cancelled)?;
         std::thread::Builder::new().name("bytevc2-direct".into()).spawn(move || {
             let mut first = true;
-            let result = index.decode_from(target, |offset, length, bytes| {
-                *bytes = source.read(offset, length, &cancelled)?;
-                Ok(())
+            let result = source.reader().and_then(|mut reader| index.decode_from(target, |offset, length, bytes| {
+                reader.read(offset, length, &cancelled, bytes)
             }, |frame| {
                 if cancelled.load(Ordering::Relaxed) {
                     return Err(AppError::Cancelled);
@@ -215,11 +225,11 @@ impl DirectPlayback {
                 if first {
                     first = false;
                     let pts = frame.pts.unwrap_or_default();
-                    log::info!("[ByteVC2/Direct] vid={} definition={} target={target:.3}s pts={pts:.3}s decode_ms={}",
-                        source.vid, source.definition, started.elapsed().as_millis());
+                    log::info!("[ByteVC2/Direct] session={id} target={target:.3}s pts={pts:.3}s decode_ms={}",
+                        started.elapsed().as_millis());
                 }
                 sender.send(Ok(frame)).map_err(|_| AppError::Cancelled)
-            });
+            }));
             if let Err(error) = result && !matches!(error, AppError::Cancelled) {
                 let _ = sender.send(Err(error));
             }
@@ -254,7 +264,10 @@ impl DirectPlayback {
             }
         };
         let index = self.index(label, source, &cancelled)?;
-        let mut bytes = source.read(start, end - start + 1, &cancelled)?;
+        let mut bytes = Vec::new();
+        source
+            .reader()?
+            .read(start, end - start + 1, &cancelled, &mut bytes)?;
         index.mask_video_tracks(start, &mut bytes);
         let mut response = builder(status, origin, "audio/mp4")
             .header("Accept-Ranges", "bytes")
@@ -280,65 +293,13 @@ impl Session {
     }
 }
 
-impl Source {
-    fn parse(definition: &str, vid: &str) -> AppResult<Self> {
-        if vid.is_empty()
-            || vid.len() > 64
-            || !vid
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        {
-            return Err(AppError::InvalidArgs("无效的视频 ID".into()));
-        }
-        Ok(Self {
-            definition: number(definition)?,
-            vid: vid.to_owned(),
-        })
-    }
-
-    fn length(&self, cancelled: &AtomicBool) -> AppResult<u64> {
-        let length = match hongguo_stream::total_len(&self.vid, self.definition) {
-            Some(length) => length,
-            // prepare 可能先交出占位地址，零长度读取只等条目初始化。
-            None => self.read_chunk(0, 0, cancelled)?.total,
-        };
-        if length == 0 {
-            return Err(AppError::StreamMiss("在线流尚未就绪".into()));
-        }
-        Ok(length)
-    }
-
-    fn read(&self, offset: u64, length: u64, cancelled: &AtomicBool) -> AppResult<Vec<u8>> {
-        let chunk = self.read_chunk(offset, length, cancelled)?;
-        if chunk.bytes.len() as u64 != length {
-            return Err(AppError::Media("ByteVC2 字节范围被截断".into()));
-        }
-        Ok(chunk.bytes)
-    }
-
-    fn read_chunk(
-        &self,
-        offset: u64,
-        length: u64,
-        cancelled: &AtomicBool,
-    ) -> AppResult<hongguo_stream::StreamChunk> {
-        hongguo_stream::read_range_cancellable(
-            &self.vid,
-            self.definition,
-            offset,
-            Some(length),
-            || cancelled.load(Ordering::Relaxed),
-        )
-        .map_err(|error| match error {
-            hongguo_stream::StreamReadError::Cancelled => AppError::Cancelled,
-            _ => AppError::Network(error.to_string()),
-        })
-    }
-}
-
 enum Reply {
     Http(Response<Vec<u8>>),
-    Frames { id: u64, bytes: Vec<u8> },
+    Frames {
+        #[cfg(target_os = "windows")]
+        id: u64,
+        bytes: Vec<u8>,
+    },
 }
 
 fn frames(receiver: &Mutex<Receiver<AppResult<DecodedFrame>>>, count: usize) -> AppResult<Vec<u8>> {
@@ -362,6 +323,7 @@ fn frames(receiver: &Mutex<Receiver<AppResult<DecodedFrame>>>, count: usize) -> 
     Ok(bytes)
 }
 
+#[cfg(target_os = "windows")]
 fn post_frames(
     webview: tauri::webview::PlatformWebview,
     origin: &str,
@@ -396,12 +358,21 @@ fn post_frames(
 fn app_origin(config: &tauri::Config, origin: &str) -> bool {
     origin == "http://tauri.localhost"
         || origin == "https://tauri.localhost"
+        || origin == "tauri://localhost"
         || (cfg!(debug_assertions)
             && config
                 .build
                 .dev_url
                 .as_ref()
                 .is_some_and(|url| url.origin().ascii_serialization() == origin))
+}
+
+fn page_origin(url: &tauri::Url) -> String {
+    if url.scheme() == "tauri" && url.host_str() == Some("localhost") {
+        "tauri://localhost".into()
+    } else {
+        url.origin().ascii_serialization()
+    }
 }
 
 fn number(value: &str) -> AppResult<u32> {

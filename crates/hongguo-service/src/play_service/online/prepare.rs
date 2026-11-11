@@ -95,8 +95,6 @@ pub async fn prepare(
             .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
     });
     crate::cold_start::wait().await;
-    // 播放策略轮询（行为画像对齐）：首次在线播放触发，进程内仅启动一次
-    super::super::ensure_play_strategy_poller(state);
     let c = cache();
     // 记下当前集：逐出策略保它、预填礼让它、切走后旧填充据此自杀。
     // 一次只看一集的**语义下有界保留**：全清的话，信息流切剧目标一弹，
@@ -104,40 +102,29 @@ pub async fn prepare(
     // set_current 内已跑 retain_playing_set（连播接力同路，不依赖 prepare）。
     c.set_current(vid);
 
-    // 自动档只认自动选流的结果。手动缓存的一档不能代替自动选流。
-    let want = definition.or_else(|| c.auto_definition(vid));
-    if let Some(want) = want {
-        if let Some(hit) = prepared(c, vid, want) {
-            // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
-            resume_fill(state, vid, want, progress_key);
-            log::info!("[Online] {vid} 档位 {want} 已缓存，直接复用");
-            // 不在缓存命中记 PLAY_OK：缓存可能来自旧身份，误记会把已选档/代次闩污染到现役身份，
-            // 旧剧回点被「本剧已发货」误挡（CROSS-GEAR-RESIDUAL）。
-            return Ok(hit);
-        }
-        // 另一个请求正在把这一档取下来：等它，而不是自己也发一次下载。
-        if c.is_fetching(vid, want) {
-            log::info!("[Online] {vid} 档位 {want} 正在取流，等待复用");
-            let result = wait_for_fetch(c, vid, want).await?;
-            resume_fill(state, vid, want, progress_key);
-            return Ok(result);
-        }
-    }
-
     // 还没有键可查：先做一次很小的接口调用把流表拿回来，解析出的真实档位才是缓存的键；
     // 贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
     let cap = crate::device::stream_cap();
-    let play = match fetch_with_registry(state, vid, progress_key, definition, cap).await {
+    match fetch_with_registry(state, vid, progress_key, definition, cap).await {
         Err(e @ AppError::StreamMiss(_)) => {
             crate::device::note_stream_miss(state, vid);
             return Err(e);
         }
-        r => r?,
+        r => {
+            r?;
+        }
     };
+    let play = super::super::resolution::select(
+        state,
+        vid,
+        progress_key,
+        definition,
+        hongguo_api::resolution_policy::Purpose::Playback,
+    )
+    .await?;
     let want = play.definition;
     remember_codec(vid, want, &play.codec);
-    // 只记「不指定档位」那次解析到的结果：手动选过 720 再点「自动」，
-    // 要的仍然是平台给的最高档，而不是上一次手动选的那档。
+    // 记真实自动结果供队列查询；它不再跳过下一次的动态决策。
     if definition.is_none() {
         c.remember_auto(vid, want);
     }
@@ -210,30 +197,24 @@ pub async fn prefetch_stream(
     }
     crate::cold_start::wait().await;
     let c = cache();
-    // 已解析过档位且条目在场/在取：无事可做
-    if let Some(want) = c.auto_definition(vid)
-        && (c.exists(vid, want) || c.is_fetching(vid, want))
-    {
-        return Ok(());
-    }
     // 预取与真实播放同一条选流模式：无 HEVC 机器预取的也必须是 h264，
     // 否则起播时探测结论翻转会命中一条播不了的缓存流。
-    let play = match fetch_with_registry(
-        state,
-        vid,
-        progress_key,
-        None,
-        crate::device::stream_cap(),
-    )
-    .await
-    {
-        Ok(p) => p,
+    match fetch_with_registry(state, vid, progress_key, None, crate::device::stream_cap()).await {
+        Ok(_) => {}
         Err(e) => {
             // 失败被忽略 = 降级（用户播到时现场取流），warn 留痕供排障定案。
             log::warn!("[Online] 预取 {vid} 取流表失败（忽略，播到时现场取）: {e}");
             return Ok(());
         }
     };
+    let play = super::super::resolution::select(
+        state,
+        vid,
+        progress_key,
+        None,
+        hongguo_api::resolution_policy::Purpose::Prefetch,
+    )
+    .await?;
     let want = play.definition;
     c.remember_auto(vid, want);
     if c.is_fetching(vid, want) || c.exists(vid, want) {

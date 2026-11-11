@@ -57,8 +57,16 @@ function isGpuBackingError(error: unknown): boolean {
 }
 
 /** 视频帧 → 输入纹理：优先 `copyExternalImageToTexture` GPU 直拷（零拷贝），桥路径经 OffscreenCanvas 中转（每帧 getContext 拿回同一实例）。 */
+type FrameSource = HTMLVideoElement | HTMLCanvasElement;
+
+function frameSize(source: FrameSource): [number, number] {
+  return 'videoWidth' in source
+    ? [source.videoWidth, source.videoHeight]
+    : [source.width, source.height];
+}
+
 function createFrameUploader(
-  video: HTMLVideoElement,
+  source: FrameSource,
   queue: GPUQueue,
   texture: GPUTexture,
   width: number,
@@ -72,7 +80,7 @@ function createFrameUploader(
     upload() {
       if (!bridge) {
         try {
-          queue.copyExternalImageToTexture({ source: video }, { texture }, [width, height]);
+          queue.copyExternalImageToTexture({ source }, { texture }, [width, height]);
           return;
         } catch (error) {
           // 跨源 taint（自定义协议流可能中招）：换任何上传路径都一样，直接退原画
@@ -85,7 +93,7 @@ function createFrameUploader(
       }
       const context = bridge.getContext('2d', { alpha: false });
       if (!context) throw new EnhancementError('generic');
-      context.drawImage(video, 0, 0, width, height);
+      context.drawImage(source, 0, 0, width, height);
       queue.copyExternalImageToTexture({ source: bridge }, { texture }, [width, height]);
     },
     dispose() {
@@ -149,13 +157,12 @@ function sharpenAmountOf(strength: number): number {
  * 建管线包在 validation error scope 里——不支持的显卡在这里显式失败而不是画出黑帧。
  */
 export async function createAnime4KRenderer(
-  video: HTMLVideoElement,
+  source: FrameSource,
   canvas: HTMLCanvasElement,
   { signal, onError, sharpen = 0 }: CreateRendererOptions,
 ): Promise<Anime4KRenderer> {
   if (!navigator.gpu) throw new EnhancementError('noWebgpu');
-  const width = video.videoWidth;
-  const height = video.videoHeight;
+  const [width, height] = frameSize(source);
   if (!width || !height) throw new EnhancementError('notReady');
   if (width * height > MAX_INPUT_PIXELS) throw new EnhancementError('inputTooLarge');
   const { CNNx2M } = await import('anime4k-webgpu');
@@ -204,7 +211,7 @@ export async function createAnime4KRenderer(
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
     });
-    const up = createFrameUploader(video, device.queue, input, width, height);
+    const up = createFrameUploader(source, device.queue, input, width, height);
     uploader = up;
     const anime = new CNNx2M({ device, inputTexture: input });
     const output = anime.getOutputTexture();
@@ -259,13 +266,17 @@ export async function createAnime4KRenderer(
         writeSharpen(sharpenAmountOf(strength));
       },
       async draw() {
-        if (disposed || video.readyState < 2 || video.seeking) return false;
-        if (video.videoWidth !== width || video.videoHeight !== height) {
+        if (disposed || ('readyState' in source && (source.readyState < 2 || source.seeking))) {
+          return false;
+        }
+        const [frameWidth, frameHeight] = frameSize(source);
+        if (frameWidth !== width || frameHeight !== height) {
           throw new EnhancementError('sizeChanged');
         }
         const started = performance.now();
         // 桥路径 30fps 限速：CPU 中转的帧率收益递减，主线程时间更值钱
-        if (up.usesCanvas && !video.paused && started - lastFrameAt < 1000 / BRIDGED_MAX_FPS) {
+        const playing = 'paused' in source ? !source.paused : true;
+        if (up.usesCanvas && playing && started - lastFrameAt < 1000 / BRIDGED_MAX_FPS) {
           return false;
         }
         lastFrameAt = started;

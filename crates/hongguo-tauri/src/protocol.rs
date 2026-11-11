@@ -16,7 +16,6 @@ use hongguo_stream::range::ProtocolResponse;
 
 /// 注册全部自定义协议。必须在 `setup` 之前调用（Builder 阶段）。
 pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
-    #[cfg(target_os = "windows")]
     let direct_bytevc2 = std::sync::Arc::new(crate::direct_bytevc2::DirectPlayback::default());
     builder
         .register_asynchronous_uri_scheme_protocol(LOCAL_SCHEME, move |_ctx, request, responder| {
@@ -37,7 +36,6 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
             })
         })
         .register_asynchronous_uri_scheme_protocol(STREAM_SCHEME, move |ctx, request, responder| {
-            #[cfg(target_os = "windows")]
             if request
                 .uri()
                 .path()
@@ -46,8 +44,6 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
                 direct_bytevc2.dispatch(ctx, request, responder);
                 return;
             }
-            #[cfg(not(target_os = "windows"))]
-            let _ = ctx;
             guarded(stream_pool(), STREAM_SCHEME, move || {
                 let range = range_header(&request);
                 let path = request.uri().path().to_string();

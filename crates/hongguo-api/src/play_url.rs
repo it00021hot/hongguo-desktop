@@ -42,12 +42,51 @@ fn cached_model(vid: &str) -> Option<Arc<Value>> {
     cache.get(vid).map(|(_, model)| Arc::clone(model))
 }
 
-fn cached_play(
+pub fn cached_play(
     vid: &str,
     definition: Option<u32>,
     cap: super::stream_pick::DecoderCapability,
 ) -> Option<PlayInfo> {
     select_play(cached_model(vid)?.as_ref(), definition, cap)
+}
+
+pub fn playback_candidates(
+    vid: &str,
+    cap: super::stream_pick::DecoderCapability,
+) -> Option<(Instant, Vec<crate::resolution_policy::Candidate>)> {
+    let (stamp, model) = {
+        let cache = batch_cache().lock();
+        let (stamp, model) = cache.get(vid)?;
+        if stamp.elapsed() >= BATCH_TTL {
+            return None;
+        }
+        (*stamp, Arc::clone(model))
+    };
+    let available = list_definitions(&model, cap);
+    let candidates = model
+        .get("video_list")?
+        .as_array()?
+        .iter()
+        .filter_map(|stream| {
+            stream.get("main_url")?.as_str()?;
+            if !super::stream_pick::is_playable(stream, cap) {
+                return None;
+            }
+            let score = super::stream_pick::stream_score_with(stream, cap);
+            if !available.iter().any(|value| value.value == score.def_num) {
+                return None;
+            }
+            Some(crate::resolution_policy::Candidate {
+                definition: score.def_num,
+                bitrate: score.bitrate,
+                file_hash: stream
+                    .pointer("/video_meta/file_hash")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            })
+        })
+        .collect();
+    Some((stamp, candidates))
 }
 
 /// 这一集的流是否已经取到、还在有效期内。切集前用来决定要不要再打一次批量。

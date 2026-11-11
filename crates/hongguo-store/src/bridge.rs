@@ -35,6 +35,17 @@ impl std::fmt::Debug for Store {
 }
 
 impl Store {
+    pub fn playback_definition(&self, scope: &str) -> AppResult<Option<u32>> {
+        let scope = scope.to_owned();
+        self.exec(move |db| Box::pin(async move { entity::playback_definition(db, &scope).await }))
+    }
+
+    pub fn save_playback_definition(&self, scope: &str, definition: Option<u32>) -> AppResult<()> {
+        let scope = scope.to_owned();
+        self.exec(move |db| {
+            Box::pin(async move { entity::save_playback_definition(db, &scope, definition).await })
+        })
+    }
     /// 打开文件库（含 schema 迁移）。
     pub fn open(path: impl AsRef<std::path::Path>) -> AppResult<Self> {
         let path = path.as_ref();

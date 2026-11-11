@@ -8,6 +8,7 @@ pub mod local;
 pub mod online;
 pub mod position;
 mod prefetch;
+pub(crate) mod resolution;
 pub mod resume;
 
 pub use feed::prefetch_feed;
@@ -55,29 +56,37 @@ pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vi
     });
 }
 
-/// 播放策略轮询（行为画像对齐）：播放器栈播放期每 `query_gap` 秒（响应下发，默认 300s）
-/// 拉一次播放策略接口。**只取不施策**——官方的默认倍速/高峰降档/分辨率干预不落地；
-/// 首次在线播放触发，进程内一次；失败按既有节拍顺延。
-pub fn ensure_play_strategy_poller(state: &AppState) {
-    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return;
-    }
-    let state = state.clone();
-    crate::runtime::spawn(async move {
-        let mut gap = hongguo_api::play_strategy::DEFAULT_QUERY_GAP_SECS;
-        loop {
-            let env = state.api_env();
-            match hongguo_api::play_strategy::fetch_play_strategy(&env).await {
-                Ok(g) => {
-                    gap = g;
-                    log::info!("[PlayStrategy] 播放策略拉取成功，轮询间隔 {gap}s");
+/// 首次选档等首包策略；之后按 query_gap 更新同一控制器，失败保留上次有效值。
+pub async fn ensure_play_strategy_poller(state: &AppState) {
+    state
+        .playback_resolution
+        .poller
+        .get_or_init(|| async {
+            let gap = refresh_play_strategy(state).await;
+            let state = state.clone();
+            crate::runtime::spawn(async move {
+                let mut gap = gap;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(gap)).await;
+                    gap = refresh_play_strategy(&state).await;
                 }
-                Err(e) => {
-                    log::warn!("[PlayStrategy] 拉取失败（{e}），按 {gap}s 节拍顺延");
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(gap)).await;
+            });
+        })
+        .await;
+}
+
+async fn refresh_play_strategy(state: &AppState) -> u64 {
+    let generation = state.device_generation();
+    match hongguo_api::play_strategy::fetch_play_strategy(&state.api_env()).await {
+        Ok(strategy) => {
+            let gap = strategy.query_gap.max(1);
+            resolution::accept_strategy(state, generation, strategy);
+            log::debug!("[PlayStrategy] 策略已更新，轮询间隔 {gap}s");
+            gap
         }
-    });
+        Err(error) => {
+            log::warn!("[PlayStrategy] 拉取失败，保留有效策略: {error}");
+            resolution::query_gap(state)
+        }
+    }
 }

@@ -386,6 +386,7 @@ export const COMMANDS = {
         filePath: z.string(),
         preferOnline: z.boolean(),
         definition: z.number().nullable(),
+        resetDefinition: z.boolean(),
       }),
     }),
     response: playResponseSchema,

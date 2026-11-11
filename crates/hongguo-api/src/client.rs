@@ -638,8 +638,12 @@ pub async fn get_video_range(
     refuse_external(url)?;
     let mut last_err = None;
     for attempt in 0..STREAM_RETRY_ATTEMPTS {
+        let started = std::time::Instant::now();
         match get_video_range_once(client, url, start, end).await {
-            Ok(bytes) => return Ok(bytes),
+            Ok(bytes) => {
+                crate::resolution_policy::record_transfer(bytes.len(), started.elapsed());
+                return Ok(bytes);
+            }
             Err(e) => {
                 log::warn!("[CDN] Range {start}-{end} 第 {} 次失败: {e}", attempt + 1);
                 last_err = Some(e);

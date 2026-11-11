@@ -44,11 +44,7 @@ impl Default for StreamEntry {
 /// 预算逐出也会偏松）；整集模式按落盘明文计。
 fn entry_weight(e: &StreamEntry) -> u64 {
     if let Some(p) = &*e.progressive.lock() {
-        let plan = p
-            .plan
-            .as_ref()
-            .map(|pl| pl.footprint_bytes())
-            .unwrap_or(0);
+        let plan = p.plan.as_ref().map(|pl| pl.footprint_bytes()).unwrap_or(0);
         p.sparse.allocated() + plan
     } else {
         *e.size.lock()
@@ -123,6 +119,16 @@ impl StreamCache {
             *e.last_used.lock() = std::time::Instant::now();
         }
         entry
+    }
+
+    pub fn cached_bytes(&self, vid: &str, definition: u32) -> u64 {
+        let Some(entry) = self.get(vid, definition) else {
+            return 0;
+        };
+        if let Some(stream) = entry.progressive.lock().as_ref() {
+            return stream.sparse.downloaded();
+        }
+        *entry.filled.lock()
     }
 
     /// 这一档的条目是否还在（取流失败会被删掉）。

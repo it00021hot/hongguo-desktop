@@ -38,8 +38,8 @@ fn is_h264(codec: &str) -> bool {
 }
 
 /// 无 HEVC 模式的编码层级。
-fn codec_tier_no_hevc(codec: &str) -> u8 {
-    if is_h264(codec) {
+fn codec_tier_no_hevc(codec: &str, cap: DecoderCapability) -> u8 {
+    if is_h264(codec) || (cap.bytevc2 && hongguo_bytevc2::is_bytevc2(codec)) {
         NO_HEVC_H264
     } else if codec.is_empty() {
         NO_HEVC_UNKNOWN
@@ -103,7 +103,7 @@ pub fn stream_score_with(v: &Value, cap: DecoderCapability) -> StreamScore {
         codec_tier: if cap.hevc {
             0
         } else {
-            codec_tier_no_hevc(codec)
+            codec_tier_no_hevc(codec, cap)
         },
     }
 }
@@ -324,6 +324,19 @@ mod tests {
         assert_eq!(s.codec.as_deref(), Some("bytevc1"), "同剧仍优先 bytevc1");
         let only = pick_stream_at(&multi_codec_model(), Some(720), cap).unwrap();
         assert_eq!(only.codec.as_deref(), Some("bytevc1"), "同档仍优先标准编码");
+    }
+
+    #[test]
+    fn bytevc2_is_selectable_without_a_system_hevc_decoder() {
+        let cap = DecoderCapability::no_hevc().with_bytevc2(true);
+        let defs = list_definitions(&real_model(), cap);
+        assert_eq!(
+            defs.iter().map(|d| d.value).collect::<Vec<_>>(),
+            vec![720, 360]
+        );
+        let stream = pick_stream_at(&real_model(), Some(720), cap).unwrap();
+        assert_eq!(stream.definition, 720);
+        assert_eq!(stream.codec.as_deref(), Some("bytevc2"));
     }
 
     #[test]

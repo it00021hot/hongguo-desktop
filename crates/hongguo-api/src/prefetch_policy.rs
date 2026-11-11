@@ -18,6 +18,7 @@ const MINUTES_PER_DAY: u32 = 24 * 60;
 
 #[derive(Debug, Clone, Default)]
 pub struct PrefetchRules {
+    pub resolution: crate::resolution_policy::Rules,
     preload: Preload,
     peak: PeakTime,
     reduce_at_peak: bool,
@@ -41,6 +42,10 @@ impl PrefetchRules {
         let peak = experiments.peak.clone().or_else(|| fallback.peak.clone());
         let reduce = experiments.reduce.or(fallback.reduce);
         Self {
+            resolution: crate::resolution_policy::Rules::from_sources(
+                &experiments.resolution,
+                &fallback.resolution,
+            ),
             preload: preload.unwrap_or_default(),
             peak: peak.unwrap_or_default(),
             reduce_at_peak: reduce.is_some_and(|reduce| reduce.strategy != 0),
@@ -58,6 +63,7 @@ struct SettingsFallback {
 
 #[derive(Debug, Clone, Default)]
 struct SourceValues {
+    resolution: crate::resolution_policy::Sources,
     preload: Option<Preload>,
     peak: Option<PeakTime>,
     reduce: Option<PeakReduction>,
@@ -210,9 +216,10 @@ impl PrefetchPolicy {
         let time = &rules.peak;
         let (peak, suppress) = match (minute(&time.peak_start), minute(&time.peak_end)) {
             (Some(start), Some(end)) => (
-                rules
-                    .reduce_at_peak
-                    .then(|| Window(start, add_minutes(end, jitter(time.peak_random_range_min)))),
+                Some(Window(
+                    start,
+                    add_minutes(end, jitter(time.peak_random_range_min)),
+                )),
                 Some((
                     Window(end, add_minutes(end, time.peak_random_range_min)),
                     Window(
@@ -243,7 +250,7 @@ impl PrefetchPolicy {
 
     pub fn select(&self, minute: u32, wifi: bool) -> PrefetchBudget {
         let cfg = &self.rules.preload;
-        let (phase, count, bytes) = if self.peak.is_some_and(|window| window.contains(minute)) {
+        let (phase, count, bytes) = if self.rules.reduce_at_peak && self.is_peak(minute) {
             (
                 Phase::Peak,
                 cfg.preload_hot_time_num,
@@ -269,6 +276,10 @@ impl PrefetchPolicy {
             count: count.min(DEFAULT_PREFETCH_COUNT),
             bytes,
         }
+    }
+
+    pub fn is_peak(&self, minute: u32) -> bool {
+        self.peak.is_some_and(|window| window.contains(minute))
     }
 
     fn suppressed(&self, minute: u32) -> Option<(u32, u64)> {
@@ -384,6 +395,9 @@ fn parse_settings(bytes: &[u8], mut previous: SettingsFallback) -> AppResult<Set
     }
     if let Some(settings) = data.get("settings") {
         let values = &mut previous.values;
+        values
+            .resolution
+            .merge(crate::resolution_policy::Sources::read(settings, false)?);
         values.preload = decode(settings.get(PRELOAD_KEY), PRELOAD_KEY)?.or(values.preload.take());
         values.peak = decode(settings.get(PEAK_KEY), PEAK_KEY)?.or(values.peak.take());
         values.reduce = decode(settings.get(REDUCE_KEY), REDUCE_KEY)?.or(values.reduce);
@@ -403,6 +417,7 @@ fn parse_ab(bytes: &[u8]) -> AppResult<SourceValues> {
         .ok_or_else(|| AppError::Media("预取 AB 响应缺少 data".into()))?;
     let experiment = |key: &str| data.get(key).and_then(|value| value.get("val"));
     Ok(SourceValues {
+        resolution: crate::resolution_policy::Sources::read(data, true)?,
         preload: decode(experiment(PRELOAD_KEY), PRELOAD_KEY)?,
         peak: decode(experiment(PEAK_KEY), PEAK_KEY)?,
         reduce: decode(experiment(REDUCE_KEY), REDUCE_KEY)?,
