@@ -1,4 +1,4 @@
-//! 冷启动预热门闩：预热完成前，取流和起播在这里等。
+//! 启动注册期间的在线取流门闩。
 //! 未 `arm` 时是开的，单测和还没进启动装配的调用不会被卡住。
 
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -17,14 +17,7 @@ pub fn arm() {
     let _ = STATE.compare_exchange(OPEN, PENDING, Ordering::AcqRel, Ordering::Acquire);
 }
 
-/// 会话中途空响应换档：预热完成前再次挡住取流。
-/// 与 [`arm`] 不同，READY 之后也能重新拉上门闩，避免换档预热窗口被并发取流烧废新身份。
-pub fn rearm() {
-    STATE.store(PENDING, Ordering::Release);
-}
-
-/// 预热结束（成功或注册失败放弃）后放行。
-pub fn release() {
+fn release() {
     STATE.store(READY, Ordering::Release);
     NOTIFY.notify_waiters();
 }
@@ -41,7 +34,7 @@ pub async fn wait() {
     }
 }
 
-/// `ensure_registered` 的全部出口都放行，包括提前返回和 panic。
+/// 启动注册的全部出口都放行。
 pub struct ReleaseOnDrop;
 
 impl Drop for ReleaseOnDrop {
@@ -59,21 +52,5 @@ mod tests {
         let started = Instant::now();
         super::wait().await;
         assert!(started.elapsed() < Duration::from_millis(200));
-    }
-
-    #[tokio::test]
-    async fn rearm_blocks_until_release() {
-        super::release();
-        super::rearm();
-        let wait = tokio::spawn(async {
-            super::wait().await;
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(!wait.is_finished(), "rearm 后门闩应仍挡住 wait");
-        super::release();
-        tokio::time::timeout(Duration::from_millis(500), wait)
-            .await
-            .expect("release 后 wait 应返回")
-            .expect("wait task");
     }
 }

@@ -154,8 +154,7 @@ impl AppStateInner {
         self.device.read().clone()
     }
 
-    /// 整体替换设备档案（bootstrap 健康探针判定死设备后的轮换、
-    /// 手动重注册成功）。下一次 `api_env()` 起全部请求即用新档。
+    /// 注册成功后整体替换设备档案。下一次 `api_env()` 起全部请求即用新档。
     pub fn replace_device(&self, device: hongguo_signer::device::DeviceProfile) {
         *self.device.write() = device;
         self.device_generation.fetch_add(1, Ordering::Relaxed);

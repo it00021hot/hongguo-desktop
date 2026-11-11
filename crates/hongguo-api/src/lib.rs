@@ -24,7 +24,6 @@ pub mod resolution_policy;
 pub mod reservation;
 pub mod search;
 pub mod stream_pick;
-pub mod warmup;
 
 /// 抓包/调试转储目录：`HG_CAPTURE_DIR` 环境变量可覆盖，默认系统临时目录下的 `hg_capture/`。
 pub fn capture_dir() -> std::path::PathBuf {

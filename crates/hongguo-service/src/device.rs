@@ -1,9 +1,7 @@
-//! 设备档案的启动同步（adopt）：读库 → 阵亡名单/远古快照预筛 → 版本对齐；双壳共用。
-//! 纯 store + signer，不走网络——健康探针与轮换是异步生命周期，留在各壳的 bootstrap。
-//! 注册链路走 TT-Encrypt V5（见 hongguo-api::register）：[`ensure_registered`] 把匿名/死档案
-//! 自动换档为注册产物——播放取流需要服务端「认识」的设备，匿名不可播。
+//! 双壳共用的设备档案装载与注册。已有身份本地对齐当前版本，缺失身份才注册。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::Instant;
 
 use hongguo_api::client::ApiEnv;
 use hongguo_api::register::{
@@ -13,7 +11,6 @@ use hongguo_api::register::{
 use hongguo_common::utils::time::now_ms;
 use hongguo_signer::device::{DeviceProfile, align_app_version, anonymous_profile, fresh_cdid};
 use hongguo_store::Store;
-use tokio::sync::Mutex as AsyncMutex;
 
 use crate::app_state::AppState;
 use crate::events::ServiceEvent;
@@ -22,12 +19,8 @@ use crate::events::ServiceEvent;
 /// 壳转发与前端 `EVENTS.deviceRegistered` 共用；载荷 = 新 iid）。
 pub const DEVICE_REGISTERED: &str = "device-registered";
 
-/// 冷启动预热完成前挡住起播。壳在拉起 [`ensure_registered`] 之前调用。
+/// 启动注册完成前挡住在线取流。壳在拉起 [`ensure_registered`] 之前调用。
 pub use crate::cold_start::arm as arm_cold_start;
-
-/// 已被淘汰、必须从库里重铺的档案 install_id（含全部静态兜底档案——共享身份是风控暴露面）。
-/// 今后每次淘汰档案，旧 iid 必须追加进名单：名单兜「已知的死」，缺补会让老用户再次集体阵亡。
-pub const RETIRED_STATIC_IIDS: &[&str] = &["1905892595382586", "2715158266282762"];
 
 /// 轮换元数据（`device_profile` 元数据行，JSON 文档）。
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -39,12 +32,9 @@ pub struct BootstrapMeta {
     /// 最近一次换档前的旧 iid。
     #[serde(default)]
     pub previous_iid: Option<String>,
-    /// 上次注册尝试时间（ms epoch）。空响应换档用它做冷却。
+    /// 上次注册尝试时间（ms epoch）。
     #[serde(default)]
     pub last_register_attempt_ms: Option<i64>,
-    /// 曾经解复用到至少一个明文视频样本。不是播放地址就绪，也不是首帧已上屏。
-    #[serde(default)]
-    pub play_shipped: bool,
     /// 注册限制的绝对截止时间（毫秒）。到点之前重启也不注册。
     #[serde(default)]
     pub register_block_until_ms: Option<i64>,
@@ -60,9 +50,7 @@ pub struct BootstrapMeta {
     /// 上次注册失败原因（成功清空；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_error: Option<String>,
-    /// 现役档案的注册代际（[`hongguo_api::register::REGISTER_REGIME`]）。
-    /// 缺失或不符 = 档案出生于旧注册器（被服务端标记、取流不发货），
-    /// 启动时按全新安装语义一次性迁移到当前代际。
+    /// 注册时的客户端与 SDK 版本，供诊断读取。
     #[serde(default)]
     pub register_regime: String,
 }
@@ -401,18 +389,11 @@ fn is_new_device_db(path: &std::path::Path) -> bool {
         })
 }
 
-/// 启动同步装配：读库 → 阵亡名单/远古快照预筛 → 注册产物复检/版本对齐。
-/// 返回 (现役档案, 来源)。不走网络——探针与轮换在壳的 bootstrap 后台任务里。
+/// 本地装载档案并对齐当前版本，已有设备身份保持稳定。
 pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
     match store.device_profile() {
         Ok(Some(p)) => {
-            let dead_listed = RETIRED_STATIC_IIDS.contains(&p.get("iid"));
-            let ancient = p.get("cdid").is_empty();
-            if dead_listed || ancient {
-                return repave_anonymous(store, &p, dead_listed);
-            }
-            // 注册产物钉注册口径，不参与版本对齐——自报版本与注册指纹必须同源，否则取流被拒。
-            if read_meta(store).source == "registered" {
+            if hongguo_api::register::has_registered_ids(&p) {
                 return (heal_registered_profile(store, p), "adopted");
             }
             let mut p = p;
@@ -467,30 +448,6 @@ fn seed_anonymous(store: &Store) -> DeviceProfile {
     profile
 }
 
-/// 预筛命中的重铺：死档案进备份行，匿名档案顶上，元数据记痕迹。
-fn repave_anonymous(
-    store: &Store,
-    dead: &DeviceProfile,
-    dead_listed: bool,
-) -> (DeviceProfile, &'static str) {
-    log::warn!(
-        "[Device] 库内档案已淘汰（iid={}，{}），重铺匿名档案",
-        dead.get("iid"),
-        if dead_listed {
-            "阵亡名单"
-        } else {
-            "缺 cdid 的远古快照"
-        }
-    );
-    let _ = store.backup_device_profile();
-    let profile = seed_anonymous(store);
-    let mut meta = read_meta(store);
-    meta.source = "anonymous".into();
-    meta.previous_iid = Some(dead.get("iid").to_string());
-    write_meta(store, &meta);
-    (profile, "anonymous")
-}
-
 /// 注册产物 → 现役档案：与注册请求共用 [`DeviceProfile::fresh_register_profile`] 构造，
 /// 只补注册响应下发的设备身份。注册口径钉在构造器里，**不做** `align_app_version`
 /// （自报版本与注册指纹必须同源，否则取流被拒）。
@@ -511,11 +468,6 @@ const REGISTER_RETRY_MAX: usize = 30;
 
 /// 元数据没写成时，本进程仍拒绝注册。重启后只认已经落库的限制。
 static REGISTER_FORCE_BLOCK: AtomicBool = AtomicBool::new(false);
-
-/// 注册（带同一材料的瞬态重试）。拒绝、限流、只复用模式都不换身份。
-async fn register_with_retry(state: &AppState, reason: &str) -> bool {
-    register_and_swap(state, reason).await.ok
-}
 
 /// 注册换档结论（壳的设备状态命令用）。
 #[derive(Debug, Clone)]
@@ -569,10 +521,14 @@ async fn register_and_swap_at(
         x_tt_token: None,
     };
     let material = RegisterMaterial::mint();
+    let started = Instant::now();
     match register_retrying(&reg_env, &material, origin, REGISTER_RETRY_MAX, pause).await {
         Ok(r) => {
-            log::info!("[Device] 服务端返回了注册响应（{reason}），开始本地激活");
-            finish_register(state, &mut meta, r, reason).await
+            log::info!(
+                "[Device] 服务端返回了注册响应（{reason}） elapsedMs={}",
+                started.elapsed().as_millis()
+            );
+            activate_registration(state, &mut meta, &r, reason)
         }
         Err(RegisterAttemptError::Blocked(block)) => {
             if let Err(e) = persist_block(state, &mut meta, block) {
@@ -599,21 +555,6 @@ async fn register_and_swap_at(
             }
         }
     }
-}
-
-async fn finish_register(
-    state: &AppState,
-    meta: &mut BootstrapMeta,
-    reg: RegisterResult,
-    reason: &str,
-) -> Registration {
-    let activated = activate_registration(state, meta, &reg, reason);
-    if !activated.ok {
-        return activated;
-    }
-    let warmed = hongguo_api::warmup::run(&state.api_env()).await;
-    log::info!("[Device] 冷启动行为预热完成（{warmed} 条）");
-    activated
 }
 
 /// 本地激活：事务提交并替换内存之后才记成功、才发事件。
@@ -798,46 +739,6 @@ pub fn apply_register_block(meta: &mut BootstrapMeta, block: RegisterBlock) {
     }
 }
 
-/// 空响应是否还要注册。
-///
-/// - `play_ok_blocks_this_vid`：本进程**当前身份代次**下**该 vid**已取流成功 → 不换档（防单 vid 毒化/重试烧档）。
-/// - `same_series_expand`：同剧当前代次已发货，但空包来自**从未发货的后集（窗外）** →
-///   允许再换档，越过冷却，受 `same_series_expand_budget` 约束。否则换档后只覆盖首包暖窗，
-///   后集被系列闩永久挡死。
-/// - `cross_series_rearm`：本进程当前代次已有其它剧 PLAY_OK，当前空包来自**另一部剧** →
-///   允许再换档，且不受冷却压制（否则剧A换档后 10 分钟内剧B永久空，见 REQ-HG-001）。
-/// - `cross_series_budget`：跨剧烧新身份仍有进程内预算；耗尽后不再注册（旧剧回点走已选档复用）。
-/// - 限制窗口一律不注册，只复用模式在进入此判定前返回。
-///
-/// 注意：库内 `play_shipped` **不能**用来抑制换档。req-diff 证据表明隔离同进程
-/// PLAY_OK 后，把同一 DeviceProfile 迁到二次进程再取流会得到 0 字节空包——跨进程
-/// 「已发货」是假阳性，压制换档会让日常永久空响应。
-#[cfg_attr(test, derive(Default))]
-struct EmptyStreamRegistration {
-    in_cooldown: bool,
-    blocked: bool,
-    play_ok_blocks_this_vid: bool,
-    cross_series_rearm: bool,
-    cross_series_budget: bool,
-    same_series_expand: bool,
-    same_series_expand_budget: bool,
-}
-
-impl EmptyStreamRegistration {
-    fn should_register(&self) -> bool {
-        if self.blocked || self.play_ok_blocks_this_vid {
-            return false;
-        }
-        if self.same_series_expand {
-            return self.same_series_expand_budget;
-        }
-        if self.cross_series_rearm {
-            return self.cross_series_budget;
-        }
-        !self.in_cooldown
-    }
-}
-
 /// 备份、现役、元数据同一事务。提交成功后才替换内存。
 fn swap_profile(
     state: &AppState,
@@ -850,7 +751,6 @@ fn swap_profile(
     meta.source = source.to_string();
     meta.previous_iid = Some(old_iid).filter(|i| i != &new_iid);
     meta.register_regime = hongguo_api::register::REGISTER_REGIME.into();
-    meta.play_shipped = false;
     let profile_json = serde_json::to_string(&profile)
         .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
     let meta_json = serde_json::to_string(&*meta)
@@ -861,16 +761,15 @@ fn swap_profile(
     Ok(())
 }
 
-/// 启动后台生命周期：无设备身份（匿名/全新安装）**立即**注册；有身份的先看注册代际，
-/// 旧代际档案按全新安装语义**一次性**迁移到当前代际；代际正常的再打搜索探针，
-/// 空响应（死设备）也转注册。网络类失败随恢复就地重试（`register_with_retry`）。
+/// 补齐缺失的设备身份，已有注册档案直接复用。
 pub async fn ensure_registered(state: &AppState) {
     let _release_playback = crate::cold_start::ReleaseOnDrop;
     if reuse_json_path().is_some() {
         let _ = reuse_refusal(state);
         return;
     }
-    if registration_blocked(&read_meta(&state.store), now_ms()) {
+    let meta = read_meta(&state.store);
+    if registration_blocked(&meta, now_ms()) {
         // G1：离线 QA 下 registration_blocked 早退也要打出清单可检索句，
         // 不改变不注册语义，仅补日志对齐 ZERO-EXTERNAL-CHECKLIST。
         if hongguo_common::offline_qa::enabled() {
@@ -885,451 +784,10 @@ pub async fn ensure_registered(state: &AppState) {
     }
     if !hongguo_api::register::has_registered_ids(&state.device()) {
         log::info!("[Device] 缺少有效注册身份，启动自动注册");
-        register_with_retry(state, "启动自动注册").await;
+        register_and_swap(state, "启动自动注册").await;
         return;
     }
-    let meta = read_meta(&state.store);
-    if needs_regime_migration(&meta) {
-        log::warn!(
-            "[Device] 库内档案出生于旧注册代际（iid={}，regime={:?}），一次性迁移到 {} 代际",
-            state.device().get("iid"),
-            meta.register_regime,
-            hongguo_api::register::REGISTER_REGIME
-        );
-        // 迁移成功即新档出生当前代际（探针不必再做）；拒绝/预算耗尽同样轮不到探针说话
-        register_with_retry(state, "注册代际迁移").await;
-        return;
-    }
-    let env = state.api_env();
-    match probe_alive(&env).await {
-        Some(true) => {}
-        Some(false) => {
-            log::warn!(
-                "[Device] 现役档案探针空响应（iid={}），转注册轮换",
-                state.device().get("iid")
-            );
-            // 成功时 register_and_swap 已同步跑完预热；失败则旧档已死，预热无意义
-            register_with_retry(state, "健康探针判死").await;
-            return;
-        }
-        None => log::info!("[Device] 探针不确定（网络/服务端），按兵不动"),
-    }
-    // 冷启动行为预热：每个进程一次，服务端按行为状态发放深集授权。
-    // 必须等完再放行起播，不能后台 fire-and-forget。
-    let env = state.api_env();
-    let ok = hongguo_api::warmup::run(&env).await;
-    log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
-}
-
-/// 是否需要注册代际迁移：代际标记与当前注册器不符（含缺失——任何
-/// 在标记机制引入前注册的档案都算旧代际）。
-fn needs_regime_migration(meta: &BootstrapMeta) -> bool {
-    meta.register_regime != hongguo_api::register::REGISTER_REGIME
-}
-
-/// 健康探针（找剧搜索是风控最严的一支）：Some(true)=活，Some(false)=
-/// 空响应（死设备信号），None=网络/服务端问题分不清归属。
-async fn probe_alive(env: &ApiEnv) -> Option<bool> {
-    match hongguo_api::search::search_series("热门", 0, "", env).await {
-        Ok(_) => Some(true),
-        Err(hongguo_common::AppError::EmptyResponse(_)) => Some(false),
-        Err(_) => None,
-    }
-}
-
-static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
-/// 本进程已成功取到播放地址的 series_id → 当时的 `device_generation`。
-///
-/// 判定键 = `series_id` + **身份代次**：同剧在当前身份下 PLAY_OK 后空包不自动换档；
-/// 换身份后再回点该剧 Empty，不得被旧代次闩永久挡死（REQ-HG-001 / CROSS-GEAR-RESIDUAL）。
-/// 跨进程「已发货」元数据仍不可信，不能用库内 play_shipped 抑制换档。
-static PLAY_OK_SERIES: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, u64>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-/// 各剧上次 PLAY_OK 时的现役档案：旧剧回点优先复用，避免再烧新身份。
-static PLAY_OK_PROFILES: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, DeviceProfile>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-/// 跨剧烧新身份的进程内上限（不含冷启首次空响应换档）。
-/// 旧剧回点走已选档复用，不计入此上限。独立验 registered=7 的连刷面由此收口。
-const CROSS_SERIES_REGISTER_CAP: u32 = 2;
-static CROSS_SERIES_REGISTER_COUNT: AtomicU32 = AtomicU32::new(0);
-
-/// 已在当前身份代次取到播放地址的 `(series_id, vid)` → 当时的 `device_generation`。
-/// 系列闩只抑制**已发货 vid**的再换档；同剧窗外未发货集走 [`same_series_window_expand`]。
-static PLAY_OK_VIDS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<(String, String), u64>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-/// 同剧窗外（后集从未在当前代次发货）再换档的进程内上限。
-/// 每次换档后会按新集位重跑暖窗，不按集计次；耗尽后不再为同剧后集烧新身份。
-/// 自动连播每跨出约 5 集暖窗会消耗 1 次；有机会话里 cap=2 在 3 分钟内耗尽（窗 17-21 再 21-25）。
-const SAME_SERIES_EXPAND_CAP: u32 = 8;
-static SAME_SERIES_EXPAND_COUNT: AtomicU32 = AtomicU32::new(0);
-
-/// 本剧是否已在本进程**当前身份代次**取流成功 → 抑制该剧自动换档。
-/// `series_id` 缺失时：若当前代次已有任一 PLAY_OK 则保守抑制。
-fn play_ok_blocks_series(series_id: Option<&str>, current_gen: u64) -> bool {
-    let map = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
-    match series_id.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(s) => map.get(s).is_some_and(|g| *g == current_gen),
-        None => map.values().any(|g| *g == current_gen),
-    }
-}
-
-/// 跨剧 / 旧身份回点再换档：本剧未在当前代次发货，且（当前代次已有其它剧 PLAY_OK，
-/// 或本剧曾在旧代次发货——复用档不可用时允许受预算约束的再注册）。
-fn cross_series_rearm(series_id: Option<&str>, current_gen: u64) -> bool {
-    let map = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
-    let any_current = map.values().any(|g| *g == current_gen);
-    match series_id.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(s) => {
-            if map.get(s).is_some_and(|g| *g == current_gen) {
-                return false;
-            }
-            let stale_self = map.get(s).is_some_and(|g| *g != current_gen);
-            any_current || stale_self
-        }
-        None => false,
-    }
-}
-
-fn cross_series_budget_remaining() -> bool {
-    CROSS_SERIES_REGISTER_COUNT.load(Ordering::Relaxed) < CROSS_SERIES_REGISTER_CAP
-}
-
-fn same_series_expand_budget_remaining() -> bool {
-    SAME_SERIES_EXPAND_COUNT.load(Ordering::Relaxed) < SAME_SERIES_EXPAND_CAP
-}
-
-/// 该 vid 是否已在当前身份代次发货。未发货的同剧后集不得用系列闩误伤。
-/// `series_id` 或 vid 缺失时回退到系列级保守抑制，避免扩大换档面。
-fn play_ok_blocks_vid(series_id: Option<&str>, vid: &str, current_gen: u64) -> bool {
-    let vid = vid.trim();
-    let series = series_id.map(str::trim).filter(|s| !s.is_empty());
-    if !vid.is_empty() {
-        let map = PLAY_OK_VIDS.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(s) = series {
-            return map
-                .get(&(s.to_string(), vid.to_string()))
-                .is_some_and(|g| *g == current_gen);
-        }
-        if map.iter().any(|((_, v), g)| v == vid && *g == current_gen) {
-            return true;
-        }
-        return play_ok_blocks_series(None, current_gen);
-    }
-    play_ok_blocks_series(series, current_gen)
-}
-
-/// 同剧当前代次已发货，但本集从未发货 → 窗外扩窗换档。
-fn same_series_window_expand(series_id: Option<&str>, vid: &str, current_gen: u64) -> bool {
-    let vid = vid.trim();
-    let Some(s) = series_id.map(str::trim).filter(|s| !s.is_empty()) else {
-        return false;
-    };
-    if vid.is_empty() {
-        return false;
-    }
-    play_ok_blocks_series(Some(s), current_gen) && !play_ok_blocks_vid(Some(s), vid, current_gen)
-}
-
-/// 该集是否曾在本进程任一身份代次发货。未发货后集不得回切早窗已选档。
-fn vid_ever_shipped(series_id: &str, vid: &str) -> bool {
-    let vid = vid.trim();
-    if series_id.is_empty() || vid.is_empty() {
-        return false;
-    }
-    PLAY_OK_VIDS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .contains_key(&(series_id.to_string(), vid.to_string()))
-}
-
-/// 现役身份本代次是否已为**其它剧**发货——此时不应覆盖本剧已选档。
-fn current_gen_has_other_series(series_id: &str, current_gen: u64) -> bool {
-    PLAY_OK_SERIES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .any(|(sid, g)| sid != series_id && *g == current_gen)
-}
-
-/// 播放地址已解析。只清连续未命中，不表示明文样本或画面就绪。
-/// `series_id`：写入本进程 PLAY_OK 剧集合的判定键；缺失则不记剧（不扩大禁换档面）。
-/// `vid`：写入已发货集，供同剧窗外判定；缺失则只记剧、不放开后集换档。
-/// 同时缓存现役档案，供旧剧回点复用。
-pub fn note_play_address(state: &AppState, series_id: Option<&str>, vid: Option<&str>) {
-    STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
-    if let Some(s) = series_id.map(str::trim).filter(|s| !s.is_empty()) {
-        let device_gen = state.device_generation();
-        PLAY_OK_SERIES
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(s.to_string(), device_gen);
-        if let Some(v) = vid.map(str::trim).filter(|v| !v.is_empty()) {
-            PLAY_OK_VIDS
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert((s.to_string(), v.to_string()), device_gen);
-        }
-        // 同剧窗外换档后必须把已选档更新到新身份，否则后集空包会回切早窗档。
-        // 仅当现役身份本代次已为其它剧发货时保留旧档，避免跨剧误记覆盖回点档。
-        let current = state.device();
-        let current_iid = current.get("iid").to_string();
-        let mut profiles = PLAY_OK_PROFILES.lock().unwrap_or_else(|e| e.into_inner());
-        let keep_old = current_gen_has_other_series(s, device_gen)
-            && profiles.get(s).is_some_and(|p| {
-                let iid = p.get("iid");
-                !iid.is_empty() && iid != current_iid
-            });
-        if !keep_old {
-            profiles.insert(s.to_string(), current);
-        }
-    }
-}
-
-/// 旧剧回点：若缓存档与现役不同，切回该剧 PLAY_OK 时的身份（不注册）。
-fn restore_play_ok_profile(state: &AppState, series_id: &str) -> bool {
-    let Some(profile) = PLAY_OK_PROFILES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(series_id)
-        .cloned()
-    else {
-        return false;
-    };
-    let current_iid = state.device().get("iid").to_string();
-    let cached_iid = profile.get("iid").to_string();
-    if cached_iid.is_empty() || cached_iid == current_iid {
-        return false;
-    }
-    let mut meta = read_meta(&state.store);
-    if let Err(e) = swap_profile(state, &mut meta, profile, "play_ok_reuse") {
-        log::warn!("[Device] 旧剧回点复用已选档失败 series={series_id}: {e}");
-        return false;
-    }
-    hongguo_api::recommend::clear_feed_tabs_cache();
-    hongguo_api::play_url::clear_batch_cache();
-    // 不在此处刷新 PLAY_OK 代次：等 prepare 取址成功走 note_play_address，
-    // 避免复用后仍空时被「本剧已发货」误闩。
-    log::warn!("[Device] 旧剧回点复用已选档 series={series_id} iid={cached_iid}（不注册）");
-    true
-}
-
-/// 调用方已经解复用出至少一个视频样本时才记下。取消、失败、只有地址都不记。
-pub fn note_plain_video_sample(state: &AppState, plain: &[u8]) -> bool {
-    let ready = hongguo_media::demux::demux_bytes(plain)
-        .ok()
-        .and_then(|d| d.video_track().map(|t| !t.info.samples.is_empty()))
-        .unwrap_or(false);
-    if !ready {
-        return false;
-    }
-    let mut meta = read_meta(&state.store);
-    if meta.play_shipped {
-        return true;
-    }
-    meta.play_shipped = true;
-    write_meta_strict(&state.store, &meta).is_ok()
-}
-
-/// 取流未命中记账（有响应体但挑不出可播流）。不换设备——与空响应
-/// （[`recover_after_empty_stream`]）分开。
-pub fn note_stream_miss(_state: &AppState, vid: &str) {
-    let fails = STREAM_MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    log::warn!("[Device] 取流未命中 vid={vid} 连续={fails}（有响应无可播档）");
-}
-
-/// 空响应换档冷却。窗口内只预热，不注册。
-const EMPTY_RECOVER_COOLDOWN_MS: i64 = 10 * 60 * 1000;
-
-/// 空响应恢复串行锁：并发 prepare/prefetch 共用一次换档+预热，避免半新身份上抢打取流。
-static EMPTY_RECOVER_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
-
-/// 刚完成的换档：同代次同 vid 的并发/紧随空包复用结果，避免回切早窗档或再烧一次。
-const RECENT_RECOVER_REUSE_MS: i64 = 60_000;
-static LAST_RECOVER: std::sync::Mutex<Option<(u64, String, i64)>> = std::sync::Mutex::new(None);
-
-fn remember_recover(device_gen: u64, vid: &str) {
-    *LAST_RECOVER.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some((device_gen, vid.trim().to_string(), now_ms()));
-}
-
-fn recent_recover_reuse(device_gen: u64, vid: &str) -> bool {
-    let guard = LAST_RECOVER.lock().unwrap_or_else(|e| e.into_inner());
-    match guard.as_ref() {
-        Some((g, v, ts)) => {
-            *g == device_gen
-                && v == vid.trim()
-                && now_ms().saturating_sub(*ts) < RECENT_RECOVER_REUSE_MS
-        }
-        None => false,
-    }
-}
-
-/// 取流全程空响应时恢复。限制窗口和只复用模式不注册、不预热。
-///
-/// 换档预热窗口会 [`crate::cold_start::rearm`]：并发取流若在预热未完成时打到新身份，
-/// 服务端对该 vid 记空响应后同一设备再取也是空包（见 play_url 单飞注释）。
-pub async fn recover_after_empty_stream(
-    state: &AppState,
-    vid: &str,
-    series_id: Option<&str>,
-) -> bool {
-    if hongguo_common::offline_qa::enabled() {
-        if reuse_json_path().is_some() {
-            let _ = reuse_refusal(state);
-        }
-        log::warn!("[Device] 离线 QA：取流空响应 vid={vid} 不注册、不预热");
-        return false;
-    }
-    let reuse = reuse_json_path().is_some();
-    if reuse {
-        let _ = reuse_refusal(state);
-        log::warn!("[Device] 取流空响应 vid={vid}，只复用模式不注册");
-        return false;
-    }
-
-    let gen_before = state.device_generation();
-    let _recover_guard = EMPTY_RECOVER_LOCK.lock().await;
-    // 等锁期间别人已换档：复用结果，禁止再注册。
-    if state.device_generation() > gen_before {
-        log::info!("[Device] 取流空响应 vid={vid}，复用并发换档结果（不注册）");
-        return true;
-    }
-    if recent_recover_reuse(state.device_generation(), vid) {
-        log::info!("[Device] 取流空响应 vid={vid}，复用刚刚完成的换档（不注册）");
-        return true;
-    }
-
-    // 旧剧回点：换身份后本剧在现役代次尚未发货 → 优先切回该剧已选档，不烧新身份。
-    // 同剧窗外未发货集不得回切早窗档，否则刚完成的扩窗会被撤掉。
-    if let Some(sid) = series_id.map(str::trim).filter(|s| !s.is_empty()) {
-        if !vid_ever_shipped(sid, vid) {
-            // 后集从未发货：跳过回点，走扩窗判定。
-        } else {
-            let current_iid = state.device().get("iid").to_string();
-            let cached_other = PLAY_OK_PROFILES
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(sid)
-                .is_some_and(|p| {
-                    let iid = p.get("iid");
-                    !iid.is_empty() && iid != current_iid
-                });
-            if cached_other {
-                crate::cold_start::rearm();
-                if restore_play_ok_profile(state, sid) {
-                    // 复用档也要预热，否则半冷身份上邻集/首包仍空。
-                    let warmed = hongguo_api::warmup::run(&state.api_env()).await;
-                    log::info!("[Device] 旧剧回点复用档预热完成（{warmed} 条）");
-                    remember_recover(state.device_generation(), vid);
-                    return true;
-                }
-                crate::cold_start::release();
-            }
-        }
-    }
-
-    let now = now_ms();
-    let meta = read_meta(&state.store);
-    let in_cooldown = meta
-        .last_register_attempt_ms
-        .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
-    let blocked = registration_blocked(&meta, now);
-    let current_gen = state.device_generation();
-    let play_ok_blocks = play_ok_blocks_vid(series_id, vid, current_gen);
-    let expand = same_series_window_expand(series_id, vid, current_gen);
-    let expand_budget = same_series_expand_budget_remaining();
-    let rearm_cross = cross_series_rearm(series_id, current_gen);
-    let budget = cross_series_budget_remaining();
-    let registration = EmptyStreamRegistration {
-        in_cooldown,
-        blocked,
-        play_ok_blocks_this_vid: play_ok_blocks,
-        cross_series_rearm: rearm_cross,
-        cross_series_budget: budget,
-        same_series_expand: expand,
-        same_series_expand_budget: expand_budget,
-    };
-    if !registration.should_register() {
-        if blocked {
-            log::warn!("[Device] 取流空响应 vid={vid}，注册限制中，不换身份");
-            return false;
-        }
-        if play_ok_blocks {
-            // 该 vid 在当前身份已发过货：空包更像单 vid 毒化，不换档；也不假恢复重试。
-            log::warn!(
-                "[Device] 取流空响应 vid={vid}，本进程本剧已取流成功，不自动换档 series={}",
-                series_id.unwrap_or("")
-            );
-            return false;
-        }
-        if expand && !expand_budget {
-            log::warn!(
-                "[Device] 取流空响应 vid={vid}，同剧窗外换档达上限（{}/{}），不烧新身份 series={}",
-                SAME_SERIES_EXPAND_COUNT.load(Ordering::Relaxed),
-                SAME_SERIES_EXPAND_CAP,
-                series_id.unwrap_or("")
-            );
-            return false;
-        }
-        if rearm_cross && !budget {
-            log::warn!(
-                "[Device] 取流空响应 vid={vid}，跨剧换档达上限（{}/{}），不烧新身份 series={}",
-                CROSS_SERIES_REGISTER_COUNT.load(Ordering::Relaxed),
-                CROSS_SERIES_REGISTER_CAP,
-                series_id.unwrap_or("")
-            );
-            return false;
-        }
-        log::warn!("[Device] 取流空响应 vid={vid}，冷却中不换档");
-        return false;
-    }
-    if expand {
-        log::warn!(
-            "[Device] 取流空响应 vid={vid}，同剧窗外允许再换档 series={}（判定键=series_id+vid，预算 {}/{}）",
-            series_id.unwrap_or(""),
-            SAME_SERIES_EXPAND_COUNT.load(Ordering::Relaxed),
-            SAME_SERIES_EXPAND_CAP
-        );
-    } else if rearm_cross {
-        log::warn!(
-            "[Device] 取流空响应 vid={vid}，跨剧允许再换档 series={}（判定键=series_id，预算 {}/{}）",
-            series_id.unwrap_or(""),
-            CROSS_SERIES_REGISTER_COUNT.load(Ordering::Relaxed),
-            CROSS_SERIES_REGISTER_CAP
-        );
-    } else {
-        log::warn!("[Device] 取流空响应 vid={vid}，尝试换档");
-    }
-    // 拉上门闩：换档+预热完成前，prepare/prefetch 的 wait 挡住取流，避免烧废新身份。
-    // 成功时不在此 Release——交还 prepare 独占首包批量；否则 recover 返回放闩与
-    // prepare 再 rearm 之间的 READY 窗口会被预取抢跑烧掉新身份（本轮自测 0/5）。
-    // 失败必须放行，避免门闩永久 PENDING。
-    crate::cold_start::rearm();
-    if !register_with_retry(state, "取流空响应恢复").await {
-        crate::cold_start::release();
-        return false;
-    }
-    if expand {
-        let n = SAME_SERIES_EXPAND_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-        log::info!(
-            "[Device] 同剧窗外换档计数 {n}/{SAME_SERIES_EXPAND_CAP} series={}",
-            series_id.unwrap_or("")
-        );
-    } else if rearm_cross {
-        let n = CROSS_SERIES_REGISTER_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-        log::info!(
-            "[Device] 跨剧换档计数 {n}/{CROSS_SERIES_REGISTER_CAP} series={}",
-            series_id.unwrap_or("")
-        );
-    }
-    remember_recover(state.device_generation(), vid);
-    true
+    log::info!("[Device] 启动复用已注册档案");
 }
 
 /// 与在线播放同一份选流口径：HEVC + ByteVC2 探测结论一并传入，
@@ -1346,263 +804,8 @@ mod tests {
     use super::*;
     use hongguo_store::Store;
 
-    static PLAY_OK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn lock_play_ok_state() -> std::sync::MutexGuard<'static, ()> {
-        let guard = PLAY_OK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        PLAY_OK_SERIES
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        PLAY_OK_PROFILES
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        PLAY_OK_VIDS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        SAME_SERIES_EXPAND_COUNT.store(0, Ordering::Relaxed);
-        CROSS_SERIES_REGISTER_COUNT.store(0, Ordering::Relaxed);
-        guard
-    }
-
     fn store() -> Store {
         Store::open_memory().expect("内存库")
-    }
-
-    #[test]
-    fn note_play_address_does_not_mark_a_sample() {
-        let _guard = lock_play_ok_state();
-        STREAM_MISS_COUNT.store(3, Ordering::Relaxed);
-        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
-        note_play_address(&state, Some("series-a"), Some("vid-a"));
-        assert_eq!(STREAM_MISS_COUNT.load(Ordering::Relaxed), 0);
-        assert!(!read_meta(&state.store).play_shipped);
-        assert!(!note_plain_video_sample(&state, b"not-a-video"));
-        assert!(!read_meta(&state.store).play_shipped);
-        let device_gen = state.device_generation();
-        assert!(play_ok_blocks_series(Some("series-a"), device_gen));
-        assert!(!play_ok_blocks_series(Some("series-b"), device_gen));
-        assert!(play_ok_blocks_vid(Some("series-a"), "vid-a", device_gen));
-        assert!(!play_ok_blocks_vid(
-            Some("series-a"),
-            "vid-later",
-            device_gen
-        ));
-        assert!(same_series_window_expand(
-            Some("series-a"),
-            "vid-later",
-            device_gen
-        ));
-        assert!(!same_series_window_expand(
-            Some("series-a"),
-            "vid-a",
-            device_gen
-        ));
-        assert!(cross_series_rearm(Some("series-b"), device_gen));
-        assert!(!cross_series_rearm(Some("series-a"), device_gen));
-        // 换身份代次后：旧剧闩失效，允许恢复路径（回点复用/再换档）。
-        state.replace_device(anonymous_profile(&fresh_cdid()));
-        let device_gen2 = state.device_generation();
-        assert_ne!(device_gen, device_gen2);
-        assert!(!play_ok_blocks_series(Some("series-a"), device_gen2));
-        assert!(!play_ok_blocks_vid(Some("series-a"), "vid-a", device_gen2));
-        assert!(!same_series_window_expand(
-            Some("series-a"),
-            "vid-later",
-            device_gen2
-        ));
-        assert!(cross_series_rearm(Some("series-a"), device_gen2));
-        // 测试隔离：清掉本用例写入的剧集合，避免污染同进程其它用例。
-        PLAY_OK_SERIES
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        PLAY_OK_PROFILES
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        PLAY_OK_VIDS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        SAME_SERIES_EXPAND_COUNT.store(0, Ordering::Relaxed);
-    }
-
-    #[test]
-    fn play_ok_profile_restores_after_identity_change() {
-        let _guard = lock_play_ok_state();
-        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
-        let mut first = anonymous_profile(&fresh_cdid());
-        first.set("iid", "1111111111111111");
-        first.set("device_id", "1111111111111111");
-        let first_iid = first.get("iid").to_string();
-        state.replace_device(first);
-        note_play_address(&state, Some("series-a"), Some("vid-a"));
-        assert!(
-            PLAY_OK_PROFILES
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get("series-a")
-                .is_some_and(|p| p.get("iid") == first_iid)
-        );
-        // 换到另一身份后，旧剧回点应复用已选档（不注册）。
-        let mut other = anonymous_profile(&fresh_cdid());
-        other.set("iid", "2222222222222222");
-        other.set("device_id", "2222222222222222");
-        state.replace_device(other);
-        assert_ne!(state.device().get("iid"), first_iid);
-        assert!(restore_play_ok_profile(&state, "series-a"));
-        assert_eq!(state.device().get("iid"), first_iid);
-        assert_eq!(read_meta(&state.store).source, "play_ok_reuse");
-        PLAY_OK_SERIES
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        PLAY_OK_PROFILES
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        PLAY_OK_VIDS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        SAME_SERIES_EXPAND_COUNT.store(0, Ordering::Relaxed);
-    }
-
-    #[test]
-    fn empty_recovery_does_not_add_unofficial_rolls() {
-        let ready = EmptyStreamRegistration::default();
-        let cooldown = EmptyStreamRegistration {
-            in_cooldown: true,
-            ..ready
-        };
-        let cross_series = EmptyStreamRegistration {
-            cross_series_rearm: true,
-            cross_series_budget: true,
-            ..cooldown
-        };
-        let same_series = EmptyStreamRegistration {
-            same_series_expand: true,
-            same_series_expand_budget: true,
-            ..cooldown
-        };
-        assert!(!cooldown.should_register());
-        assert!(
-            !EmptyStreamRegistration {
-                blocked: true,
-                ..ready
-            }
-            .should_register()
-        );
-        assert!(
-            !EmptyStreamRegistration {
-                play_ok_blocks_this_vid: true,
-                ..ready
-            }
-            .should_register(),
-            "已发货 vid 不自动换档"
-        );
-        assert!(
-            ready.should_register(),
-            "仅库内 play_shipped 不应抑制——二次进程仍应允许换档恢复"
-        );
-        assert!(cross_series.should_register(), "跨剧再换档可越过冷却");
-        assert!(
-            !EmptyStreamRegistration {
-                play_ok_blocks_this_vid: true,
-                ..cross_series
-            }
-            .should_register(),
-            "已发货 vid 优先于跨剧再换档标志"
-        );
-        assert!(
-            !EmptyStreamRegistration {
-                cross_series_budget: false,
-                ..cross_series
-            }
-            .should_register(),
-            "跨剧预算耗尽不再烧新身份"
-        );
-        assert!(
-            same_series.should_register(),
-            "同剧窗外后集可越过冷却再换档"
-        );
-        assert!(
-            !EmptyStreamRegistration {
-                same_series_expand_budget: false,
-                ..same_series
-            }
-            .should_register(),
-            "同剧窗外预算耗尽不再烧新身份"
-        );
-        assert!(
-            !EmptyStreamRegistration {
-                play_ok_blocks_this_vid: true,
-                ..same_series
-            }
-            .should_register(),
-            "已发货 vid 优先于窗外扩窗"
-        );
-    }
-
-    #[test]
-    fn same_series_later_episode_is_not_blocked_by_play_ok_latch() {
-        let _guard = lock_play_ok_state();
-        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
-        note_play_address(&state, Some("series-a"), Some("vid-early"));
-        let device_gen = state.device_generation();
-        assert!(
-            play_ok_blocks_vid(Some("series-a"), "vid-early", device_gen),
-            "已发货集仍抑制换档"
-        );
-        assert!(
-            !play_ok_blocks_vid(Some("series-a"), "vid-later", device_gen),
-            "同剧后集不得被系列闩误伤"
-        );
-        assert!(same_series_window_expand(
-            Some("series-a"),
-            "vid-later",
-            device_gen
-        ));
-        let registration = EmptyStreamRegistration {
-            in_cooldown: true,
-            same_series_expand: true,
-            same_series_expand_budget: same_series_expand_budget_remaining(),
-            ..Default::default()
-        };
-        assert!(registration.should_register());
-        // 预算耗尽后窗外也不再注册。
-        SAME_SERIES_EXPAND_COUNT.store(SAME_SERIES_EXPAND_CAP, Ordering::Relaxed);
-        assert!(
-            !EmptyStreamRegistration {
-                same_series_expand_budget: same_series_expand_budget_remaining(),
-                ..registration
-            }
-            .should_register()
-        );
-        SAME_SERIES_EXPAND_COUNT.store(0, Ordering::Relaxed);
-        // 同剧新身份发货后集：已选档应更新，且未发货后集不得视为可回点。
-        let mut later_id = anonymous_profile(&fresh_cdid());
-        later_id.set("iid", "3333333333333333");
-        later_id.set("device_id", "3333333333333333");
-        state.replace_device(later_id);
-        let gen_later = state.device_generation();
-        assert_ne!(device_gen, gen_later);
-        note_play_address(&state, Some("series-a"), Some("vid-later"));
-        assert_eq!(
-            PLAY_OK_PROFILES
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get("series-a")
-                .map(|p| p.get("iid").to_string())
-                .as_deref(),
-            Some("3333333333333333"),
-            "同剧窗外换档后已选档应跟上新身份"
-        );
-        assert!(!vid_ever_shipped("series-a", "vid-unseen"));
-        assert!(vid_ever_shipped("series-a", "vid-later"));
     }
 
     #[test]
@@ -1709,42 +912,86 @@ mod tests {
         }
     }
 
-    #[test]
-    fn adopt_repaves_dead_listed_profile_with_backup() {
+    #[tokio::test]
+    async fn startup_registers_once_then_reuses_the_activated_profile() {
+        use hongguo_common::model::settings::ProxyMode;
+        use hongguo_common::model::{ProxyConfig, Settings};
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
         let db = store();
-        let mut stale = anonymous_profile("babf8a0e-8586-40ca-bb75-20a1a698b43f");
-        stale.set("iid", "1905892595382586");
-        db.save_device_profile(&stale).expect("写死档案");
+        write_meta_strict(&db, &BootstrapMeta::default()).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
+        let mut events = state.events().subscribe();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        state.replace_settings(Settings {
+            proxy: ProxyConfig {
+                mode: ProxyMode::Manual,
+                url: origin.clone(),
+            },
+            ..Settings::default()
+        });
 
-        let (profile, source) = adopt_sync(&db);
-        assert_eq!(source, "anonymous");
-        assert_eq!(profile.get("iid"), "");
+        let expected = reg_result();
+        let proxy = async {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = BufReader::new(socket);
+            let mut request = String::new();
+            while !request.ends_with("\r\n\r\n") {
+                assert_ne!(socket.read_line(&mut request).await.unwrap(), 0);
+            }
+            let target = request.lines().next().unwrap();
+            assert!(target.starts_with("POST "));
+            assert!(target.contains("/service/2/device_register/"));
+            let content_length: usize = request
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length: "))
+                .unwrap()
+                .parse()
+                .unwrap();
+            socket
+                .read_exact(&mut vec![0; content_length])
+                .await
+                .unwrap();
+            let body = serde_json::json!({"device_id": expected.device_id, "install_id": expected.install_id}).to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\nSet-Cookie: ttreq={}\r\n\r\n{body}",
+                body.len(),
+                expected.ttreq,
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            drop(socket);
+            listener.accept().await.unwrap();
+        };
+        let registration =
+            register_and_swap_at(&state, "测试启动注册", &origin, std::time::Duration::ZERO);
+        let registered = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::select! {
+                result = async {
+                    let registered = registration.await;
+                    assert!(registered.ok, "{:?}", registered.error);
+                    state.store.device_meta_set(&serde_json::json!({
+                        "source": "registered",
+                        "register_regime": "73932"
+                    })).unwrap();
+                    ensure_registered(&state).await;
+                    registered
+                } => result,
+                () = proxy => panic!("设备注册完成前发起了额外网络请求"),
+            }
+        })
+        .await
+        .expect("注册应在收到响应后完成");
 
-        let backup = db
-            .device_profile_backup()
-            .expect("读备份")
-            .expect("旧档已留底");
-        assert_eq!(backup.get("iid"), "1905892595382586", "备份是旧档");
-
-        let meta = read_meta(&db);
-        assert_eq!(meta.source, "anonymous");
-        assert_eq!(meta.previous_iid.as_deref(), Some("1905892595382586"));
-    }
-
-    #[test]
-    fn adopt_repaves_legacy_baked_static_profile() {
-        let db = store();
-        let mut baked = anonymous_profile("babf8a0e-8586-40ca-bb75-20a1a698b43f");
-        baked.set("iid", "2715158266282762");
-        baked.set("device_id", "2715158266032906");
-        db.save_device_profile(&baked).expect("写旧静态档案");
-
-        let (profile, source) = adopt_sync(&db);
-        assert_eq!(source, "anonymous");
-        assert_eq!(profile.get("iid"), "");
+        assert_eq!(registered.iid, expected.install_id);
+        assert_eq!(state.device_generation(), 1);
+        assert_eq!(state.device().get("iid"), expected.install_id);
         assert_eq!(
-            read_meta(&db).previous_iid.as_deref(),
-            Some("2715158266282762")
+            state.store.device_profile().unwrap().unwrap().get("iid"),
+            expected.install_id
+        );
+        assert!(
+            matches!(events.try_recv(), Ok(ServiceEvent::DeviceRegistered(iid)) if iid == expected.install_id)
         );
     }
 
@@ -1999,28 +1246,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn regime_migration_only_for_mismatched_marker() {
-        let mut meta = BootstrapMeta::default();
-        assert!(
-            needs_regime_migration(&meta),
-            "无标记 = 旧注册器产物，需要迁移"
-        );
-        meta.register_regime = "00000".into();
-        assert!(needs_regime_migration(&meta), "旧代际标记需要迁移");
-        // 仅 version_code、无 SDK 指纹的旧标记也要迁（74332 ≠ 74332:4.3.2-rc.44）
-        meta.register_regime = hongguo_signer::REGISTER_VERSION_CODE_STR.into();
-        assert!(
-            needs_regime_migration(&meta),
-            "缺 SDK 指纹的旧代际标记需要迁移"
-        );
-        meta.register_regime = hongguo_api::register::REGISTER_REGIME.into();
-        assert!(
-            !needs_regime_migration(&meta),
-            "当前代际档案不迁（终生不换设备身份）"
-        );
-    }
-
     fn clear_force_block() {
         REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
     }
@@ -2188,10 +1413,8 @@ mod tests {
             unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", path) };
             let before = hongguo_api::register::register_http_sends();
             let registered = register_and_swap(&state, "复用").await;
-            let recovered = recover_after_empty_stream(&state, "vid", None).await;
             ensure_registered(&state).await;
             assert!(!registered.ok);
-            assert!(!recovered);
             assert_eq!(hongguo_api::register::register_http_sends(), before);
             assert_eq!(state.device().get("iid"), old.get("iid"));
         }
@@ -2473,7 +1696,6 @@ mod tests {
         assert_eq!(memory.device().get("iid"), "9999999999999999");
         assert_eq!(hongguo_api::register::register_http_sends(), 0);
         unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
-        assert!(!recover_after_empty_stream(&memory, "vid", None).await);
         assert!(read_meta(&memory.store).register_block_unknown);
         assert_eq!(hongguo_api::register::register_http_sends(), 0);
         match previous_reuse {

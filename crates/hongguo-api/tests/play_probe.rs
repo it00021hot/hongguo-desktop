@@ -188,8 +188,6 @@ async fn probe_sign_1004_with_reuse_device() {
         device.get("device_type"),
         device.ttreq().map(|t| t.len()).unwrap_or(0)
     );
-    let warmed = hongguo_api::warmup::run(&env).await;
-    println!("warmup_ok={warmed}");
 
     // 先拉推荐拿活 vid，再打 brush 失败集
     let mut cases: Vec<(String, i64, String)> = Vec::new();
@@ -242,15 +240,8 @@ async fn probe_single_vid_device() {
         x_tt_token: None,
         device: device.clone(),
     };
-    let warmed = hongguo_api::warmup::run(&env).await;
     hongguo_api::play_url::register_content_type(&vid, ct);
-    println!(
-        "iid={} warmup={} ct={} vid={}",
-        device.get("iid"),
-        warmed,
-        ct,
-        vid
-    );
+    println!("iid={} ct={} vid={}", device.get("iid"), ct, vid);
     match fetch_play_url(&vid, None, DecoderCapability::full(), &env).await {
         Ok(info) => println!(
             "OK def={} codec={} url60={}",

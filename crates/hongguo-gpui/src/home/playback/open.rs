@@ -149,7 +149,6 @@ impl super::HomeView {
                     &ep.vid,
                     &progress_key,
                     preferred_definition,
-                    Some((item.series_id.as_str(), ep.vid_index)),
                 )
                 .await?;
                 // 在线起播后按两壳共用的动态策略预取后续集。

@@ -60,13 +60,13 @@ async fn main() {
     let mut any_ok = false;
     for it in picks {
         register_content_type(&it.vid, it.content_type);
-        print!("try ct={} vid={} title={} … ", it.content_type, it.vid, it.title);
+        print!(
+            "try ct={} vid={} title={} … ",
+            it.content_type, it.vid, it.title
+        );
         match fetch_play_url(&it.vid, None, DecoderCapability::full(), &env).await {
             Ok(info) => {
-                println!(
-                    "PLAY_OK def={} codec={}",
-                    info.definition, info.codec
-                );
+                println!("PLAY_OK def={} codec={}", info.definition, info.codec);
                 any_ok = true;
                 break;
             }
@@ -75,8 +75,8 @@ async fn main() {
     }
     let meta = read_meta(&state.store);
     println!(
-        "done any_ok={any_ok} source={} regime={} play_shipped={}",
-        meta.source, meta.register_regime, meta.play_shipped
+        "done any_ok={any_ok} source={} regime={}",
+        meta.source, meta.register_regime
     );
     if !any_ok {
         std::process::exit(4);

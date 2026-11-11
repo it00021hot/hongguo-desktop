@@ -80,20 +80,11 @@ pub async fn prepare(
     vid: &str,
     progress_key: &str,
     definition: Option<u32>,
-    series_context: Option<(&str, u32)>,
 ) -> AppResult<Prepared> {
     let vid = vid.trim();
     if vid.is_empty() {
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
-    // PLAY_OK 闩判定键 = series_id：优先集窗，其次 progress_key 前缀。
-    let series_id_for_latch: Option<&str> = series_context.map(|(s, _)| s).or_else(|| {
-        progress_key
-            .split(':')
-            .next()
-            .map(str::trim)
-            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
-    });
     crate::cold_start::wait().await;
     let c = cache();
     // 记下当前集：逐出策略保它、预填礼让它、切走后旧填充据此自杀。
@@ -105,15 +96,7 @@ pub async fn prepare(
     // 还没有键可查：先做一次很小的接口调用把流表拿回来，解析出的真实档位才是缓存的键；
     // 贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
     let cap = crate::device::stream_cap();
-    match fetch_with_registry(state, vid, progress_key, definition, cap).await {
-        Err(e @ AppError::StreamMiss(_)) => {
-            crate::device::note_stream_miss(state, vid);
-            return Err(e);
-        }
-        r => {
-            r?;
-        }
-    };
+    fetch_with_registry(state, vid, progress_key, definition, cap).await?;
     let play = super::super::resolution::select(
         state,
         vid,
@@ -157,7 +140,6 @@ pub async fn prepare(
     let owned_key = progress_key.to_string();
     // `cache()` 返回 `&'static StreamCache`，可以直接带进 spawn 的 future
     let c = cache();
-    crate::device::note_play_address(state, series_id_for_latch, Some(vid));
     let state = state.clone();
     crate::runtime::spawn(async move {
         let filled = fill(&state, c, &owned, &owned_key, want, &play, &settings, None).await;

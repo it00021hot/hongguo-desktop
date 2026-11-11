@@ -29,17 +29,15 @@ fn main() {
     meta.register_regime = hongguo_api::register::REGISTER_REGIME.into();
     meta.last_register_error = None;
     meta.last_register_attempt_ms = Some(now_ms());
-    meta.play_shipped = true;
     write_meta(&store, &meta);
 
     let check = store.device_profile().expect("reread").expect("present");
     let meta2 = read_meta(&store);
     println!(
-        "installed iid={} prev={:?} regime={} play_shipped={} source={}",
+        "installed iid={} prev={:?} regime={} source={}",
         check.get("iid"),
         meta2.previous_iid,
         meta2.register_regime,
-        meta2.play_shipped,
         meta2.source
     );
 }

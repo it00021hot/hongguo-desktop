@@ -139,9 +139,6 @@ pub(super) async fn fill(
             if cancelled() {
                 return Ok(());
             }
-            if crate::device::note_plain_video_sample(state, &plain) {
-                log::info!("[Online] {vid} 明文里有视频样本");
-            }
             if !c.store(vid, definition, &plain) {
                 log::info!(
                     "[Online] {vid} 档位 {definition} 已有数据，丢弃重复的 {} 字节",

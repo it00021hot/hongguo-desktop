@@ -1,4 +1,4 @@
-//! Probe existing device: optional warmup via HG_WARMUP=1.
+//! Probe an existing device with the current playback flow.
 use hongguo_api::client::ApiEnv;
 use hongguo_api::play_url::{fetch_play_url, register_content_type};
 use hongguo_api::stream_pick::DecoderCapability;
@@ -7,7 +7,6 @@ use hongguo_signer::device::{DeviceProfile, anonymous_cookie};
 #[tokio::main]
 async fn main() {
     let path = std::env::args().nth(1).expect("device json");
-    let warm = std::env::var("HG_WARMUP").ok().as_deref() == Some("1");
     let device: DeviceProfile =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let env = ApiEnv {
@@ -16,11 +15,6 @@ async fn main() {
         x_tt_token: None,
         device: device.clone(),
     };
-    println!("iid={} warmup_flag={warm}", device.get("iid"));
-    if warm {
-        let warmed = hongguo_api::warmup::run(&env).await;
-        println!("warmup_ok={warmed}");
-    }
     let page = hongguo_api::recommend::fetch_recommend_feed("16", "", 0, &[], &env)
         .await
         .expect("feed");

@@ -375,8 +375,7 @@ fn build_app_state() -> std::sync::Arc<hongguo_service::AppStateInner> {
             std::process::exit(1);
         }
     };
-    // 设备档案：库里没有就落一份静态兜底档案；旧档案的版本身份要对齐到当前客户端版本——服务端按自报 version_code 分发功能 schema
-    // （排行榜选项表在老版本号下退化为扁平结构）。阵亡名单淘汰重铺与启动后的健康探针、失效轮换在 [`bootstrap::device`]。
+    // 本地装载设备档案并对齐版本，缺失身份由 bootstrap::device 注册。
     let (device, device_source) = hongguo_service::device::adopt_sync(&db);
     log::info!(
         "[Device] 现役档案 iid={}（{device_source}）",

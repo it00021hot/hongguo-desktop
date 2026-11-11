@@ -66,15 +66,7 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         request.reset_definition,
     )
     .await?;
-    match online::prepare(
-        state,
-        &vid,
-        &progress_key,
-        request.definition,
-        Some((request.series_id.as_str(), request.vid_index)),
-    )
-    .await
-    {
+    match online::prepare(state, &vid, &progress_key, request.definition).await {
         Ok(prepared) => {
             crate::play_service::schedule_following_episodes(
                 state,
