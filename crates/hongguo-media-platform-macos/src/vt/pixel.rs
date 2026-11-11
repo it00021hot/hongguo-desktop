@@ -458,11 +458,50 @@ mod tests {
         let y = vec![16u8; width * height];
         let c = vec![128u8; width / 2 * height / 2];
         let pool = unsafe { Nv12Pool::new(width, height) }.expect("建池");
+        let attrs = unsafe {
+            let limit = make_int(1);
+            let attrs = make_dict(&[(
+                ffi::kCVPixelBufferPoolAllocationThresholdKey as ffi::CFTypeRef,
+                limit as ffi::CFTypeRef,
+            )]);
+            ffi::CFRelease(limit as ffi::CFTypeRef);
+            attrs
+        };
+        let take = || {
+            let mut raw = std::ptr::null_mut();
+            let status = unsafe {
+                ffi::CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
+                    ffi::kCFAllocatorDefault,
+                    pool.pool,
+                    attrs,
+                    &mut raw,
+                )
+            };
+            if status == ffi::kCVReturnSuccess {
+                Ok(Pb(raw))
+            } else {
+                Err(status)
+            }
+        };
         let first = unsafe { pool.nv12_of(&y, &c, &c, width, height) }.expect("第一块");
-        let first_ptr = first.0;
+        let retained = first.clone();
         drop(first);
-        let second = unsafe { pool.nv12_of(&y, &c, &c, width, height) }.expect("第二块");
-        assert_eq!(second.0, first_ptr, "放手后的缓冲应被池复用");
+        assert_eq!(
+            take().err(),
+            Some(ffi::kCVReturnWouldExceedAllocationThreshold),
+            "编码器仍持有缓冲时不能在单块预算内再次分配"
+        );
+        drop(retained);
+        // CoreVideo 可以更换对象地址；限制分配数后成功取回才证明缓冲可复用。
+        let second = take().expect("放手后应能在单块预算内复用缓冲");
+        assert_eq!(second.dims(), (width, height));
+        let next_y = vec![32u8; width * height];
+        unsafe { fill_i420(&second, &next_y, &c, &c, width, height) }.expect("写入下一帧");
+        assert_eq!(
+            unsafe { read_back(&second, width, height) },
+            (next_y, c.clone(), c)
+        );
+        unsafe { ffi::CFRelease(attrs as ffi::CFTypeRef) };
     }
 
     #[test]
