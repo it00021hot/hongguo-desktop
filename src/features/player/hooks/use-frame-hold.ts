@@ -21,7 +21,6 @@ export function useFrameHold(params: {
   streamKey: string;
   playSrc: string | null;
   error: string | null;
-  compatActive: boolean;
   /** 黑幕在场（同剧切集间隙）：定格帧与封面都退场，观感交给暗转。 */
   veiled: boolean;
 }) {
@@ -35,7 +34,6 @@ export function useFrameHold(params: {
     streamKey,
     playSrc,
     error,
-    compatActive,
     veiled,
   } = params;
   const [transition, setTransition] = useState<SwitchKind | null>(null);
@@ -95,7 +93,6 @@ export function useFrameHold(params: {
     hasFrame: held !== null,
     hasPlaySrc: playSrc !== null,
     error: error !== null,
-    compat: compatActive,
   });
 
   return { frame: held?.canvas ?? null, holdVisible, coverHidden: !coverVisible, capture };
@@ -114,10 +111,8 @@ export function overlayVisibility(v: {
   hasFrame: boolean;
   hasPlaySrc: boolean;
   error: boolean;
-  compat: boolean;
 }): { holdVisible: boolean; coverVisible: boolean } {
-  const holdVisible =
-    v.hasFrame && !v.videoLive && v.hasPlaySrc && !v.error && !v.compat && !v.veiled;
+  const holdVisible = v.hasFrame && !v.videoLive && v.hasPlaySrc && !v.error && !v.veiled;
   const coverVisible = v.veiled
     ? false
     : !holdVisible && (!v.videoLive || (v.switching && v.transition !== 'episode'));

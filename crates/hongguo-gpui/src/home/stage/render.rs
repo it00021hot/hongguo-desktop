@@ -380,7 +380,8 @@ impl HomeView {
             (!in_mini && self.comments_panel_open).then(|| self.render_comment_panel(cx));
         // HEVC 安装引导：本机解不了 HEVC 且本会话没点过「暂不安装」才出现
         // ——选流已提前降档 H.264，这是「提画质」的主动提示，不是失败补救。
-        let hevc_prompt = (!hongguo_service::capability_service::hevc_playable()
+        // 走内置软解直播放时播放不经过系统 HEVC 解码器，`hevc_playback_ready` 恒真，引导不出现。
+        let hevc_prompt = (!hongguo_service::capability_service::hevc_playback_ready()
             && !self.hevc_prompt_dismissed)
             .then(|| self.render_hevc_prompt(cx));
         let rects = Rc::clone(&self.stage_rects);

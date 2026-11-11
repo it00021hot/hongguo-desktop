@@ -38,7 +38,8 @@ hongguo-service = { path = "../hongguo-service" }
 hongguo-protocol = { path = "../hongguo-protocol" }
 # 流线格式（协议胶水把元组产物组装成响应时引用类型）。
 hongguo-stream = { path = "../hongguo-stream" }
-hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false, features = ["vvdec"] }
+# 进程内软解直播放会话（HEVC / ByteVC1 / ByteVC2 的索引与解码）。
+hongguo-softdec = { path = "../hongguo-softdec" }
 # 共用底座（AppError / scheme 常量）与持久化（开库与锁重试）。
 hongguo-common = { path = "../hongguo-common" }
 hongguo-store = { path = "../hongguo-store" }

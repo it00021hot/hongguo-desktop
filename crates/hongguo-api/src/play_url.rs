@@ -50,6 +50,11 @@ pub fn cached_play(
     select_play(cached_model(vid)?.as_ref(), definition, cap)
 }
 
+/// 已取到的这一集有流、但没有一条内置解码器能解时，返回服务端实际给的编码（供报错）。
+pub fn refused_codecs(vid: &str, cap: super::stream_pick::DecoderCapability) -> Option<String> {
+    super::stream_pick::refused_codecs(cached_model(vid)?.as_ref(), cap)
+}
+
 pub fn playback_candidates(
     vid: &str,
     cap: super::stream_pick::DecoderCapability,
@@ -233,15 +238,23 @@ fn select_single_response(
     let value = parse_model_response(bytes)?.ok_or_else(|| {
         AppError::EmptyResponse(format!("取流空响应 vid={vid}（ct={content_type}）"))
     })?;
-    if let Some(model) = parse_video_model(&value, vid)?
-        && let Some(play) = select_play(&model, definition, cap)
-    {
-        return Ok((model, play));
+    let mut refused = None;
+    if let Some(model) = parse_video_model(&value, vid)? {
+        if let Some(play) = select_play(&model, definition, cap) {
+            return Ok((model, play));
+        }
+        refused = super::stream_pick::refused_codecs(&model, cap);
     }
     log::info!(
         "[PlayUrl] v5 单集响应无可播流 vid={vid} {}",
         stream_brief(&value)
     );
+    // 服务端发了货、只是没有内置解码器能解的编码：这不是「没取到」，重试和换设备都没用。
+    if let Some(offered) = refused {
+        return Err(AppError::CodecUnsupported(format!(
+            "vid={vid} 只提供 {offered}"
+        )));
+    }
     Err(AppError::StreamMiss(format!(
         "取流未命中 vid={vid}（ct={content_type}）"
     )))

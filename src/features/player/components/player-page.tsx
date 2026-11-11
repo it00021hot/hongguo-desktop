@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { DanmakuLayer } from './danmaku-layer';
 import { EnhancementLayer } from './enhancement-layer';
 import { setAndroidLandscape } from '@/utils/android-shell';
-import { isAndroid } from '@/utils/platform';
+import { STREAM_SCHEME } from '@/utils/scheme';
 import { applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
 import { InteractionRail } from './interaction-rail';
 import { CommentPanel } from './comment-panel';
@@ -18,9 +18,8 @@ import { Loadbar } from './loadbar';
 import { MiniDragBar } from './mini-drag-bar';
 import { BingeEntryBar } from './binge-entry-bar';
 import { PlayerStageChrome } from './player-stage-chrome';
-import { IdleRecoveryPanel, PlayingRecoveryOverlays } from './player-recovery-ui';
+import { IdleRecoveryPanel } from './player-recovery-ui';
 import {
-  usePlaybackCapability,
   useSeriesDetailMeta,
   useSeriesEpisodes,
   useSettings,
@@ -33,11 +32,8 @@ import { cn } from '@/lib/utils';
 import { useIncognitoMode } from './incognito';
 import { useMinimizeAutoPause } from '../hooks/use-minimize-pause';
 import { usePlaybackSource } from '../hooks/use-playback-source';
-import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
-import { useGrowingCompat } from '../hooks/use-growing-compat';
-import { directBytevc2Audio, directBytevc2Source } from '../hooks/direct-bytevc2';
-import { useDirectBytevc2 } from '../hooks/use-direct-bytevc2';
-import { visibleCompatProgress } from '../hooks/growing-fallback';
+import { directVideoAudio, directVideoSource } from '../hooks/direct-video';
+import { useDirectVideo } from '../hooks/use-direct-video';
 import { useFrameHold } from '../hooks/use-frame-hold';
 import { useSwitchSilence } from '../hooks/use-switch-silence';
 import { useSwitchVeil } from '../hooks/use-switch-veil';
@@ -51,7 +47,7 @@ import { useMiniWindow } from '../hooks/use-mini-window';
 import { usePortraitWindow } from '../hooks/use-portrait-window';
 import { useQuietStart } from '../hooks/use-quiet-start';
 import { useDanmakuWindow } from '../hooks/use-danmaku-window';
-import { useDecodeFailureProxy, useMediaRecovery } from '../hooks/use-media-recovery';
+import { useMediaRecovery } from '../hooks/use-media-recovery';
 import { useVideoLive } from '../hooks/use-video-live';
 import { isPickerClickCooldown, markAutoAdvance } from '../playback-signals';
 import { usePinWindow } from '@/hooks/use-pin-window';
@@ -127,7 +123,6 @@ export function PlayerView({
     autoRetry,
     retryTick,
     srcKey,
-    setSrcKey,
     srcKeyRef,
     lastKnownRef,
     pendingSeek: pendingSeekRef,
@@ -136,7 +131,7 @@ export function PlayerView({
     activeDefinition,
     automaticDefinition,
     definitions,
-    isBytevc2,
+    isDirect,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,
@@ -170,7 +165,6 @@ export function PlayerView({
       episodeKey,
     });
 
-  const { data: hevcPlayable } = usePlaybackCapability();
   const { danmakuOn, danmakuDisplay, updateDanmakuDisplay, toggleDanmaku } = useDanmakuSettings();
   const {
     settings: enhanceSettings,
@@ -179,46 +173,22 @@ export function PlayerView({
     setStatus: setEnhanceStatus,
   } = useEnhancement();
 
-  // 转码兜底：onDecodeFailure 代理须先于 hook 创建
-  const { onDecodeFailure, onDecodeFailureRef } = useDecodeFailureProxy();
   const sourceReady = srcKey === episodeKey && Boolean(src);
-  const directSource = directBytevc2Source(src, isBytevc2);
-  const compatDefinition = sourceReady && activeDefinition > 0 ? activeDefinition : undefined;
-  const {
-    compatSrc,
-    compat: compatProgress,
-    playSrc,
-    streamKey,
-    startCompat,
-    forceCompat,
-    progressive,
-    showCompleteSrc,
-    noteGrowingUnavailable,
-  } = useTranscodeFallback({
-    videoRef,
-    seriesId,
-    vidIndex,
-    episodeKey,
-    error,
-    src,
-    retryTick,
-    srcKeyRef,
-    pendingSeekRef,
-    setSrcKey,
-    currentSeries,
-    hevcPlayable,
-    android: isAndroid(),
-    directPlayback: isBytevc2,
-    definition: compatDefinition,
-    sourceReady,
-    onDecodeFailure,
-  });
+  const directSource = directVideoSource(src, isDirect);
+  /**
+   * 实际喂给 `<video>` 的地址。重试要换 URL：WebView2 可能缓存了失败瞬间的坏响应，同一个地址重试
+   * 永远拿坏数据；后端只解析 path，query 是纯缓存钉（后端已补 no-store，这层双保险兜旧缓存）。
+   */
+  const playSrc =
+    src && src.includes(STREAM_SCHEME) && retryTick > 0 ? `${src}?r=${retryTick}` : src;
+  /** 当前流的指纹：live/stalled 状态读时校验它，换流（切剧/切集/换清晰度）即失效 */
+  const streamKey = playSrc ?? '';
   const { videoLive, videoStalled, markLive, markStalled } = useVideoLive(streamKey);
   const handleDirectError = (reason: unknown) => {
     const detail = reason instanceof Error ? reason.message : String(reason);
-    setError(`${t('error.media')}（ByteVC2: ${detail}）`);
+    setError(`${t('player.directFailed')}（${detail}）`);
   };
-  const isDirectBuffering = useDirectBytevc2({
+  const isDirectBuffering = useDirectVideo({
     source: sourceReady && !error ? directSource : null,
     videoRef,
     canvasRef: directCanvasRef,
@@ -231,34 +201,19 @@ export function PlayerView({
     onWaiting: markStalled,
     onError: handleDirectError,
   });
-  const compat = visibleCompatProgress(compatProgress, videoLive);
-  useGrowingCompat(
-    videoRef,
-    progressive ? playSrc : null,
-    seriesId,
-    vidIndex,
-    noteGrowingUnavailable,
-    compatDefinition,
-  );
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;
   // 切换在途时旧流闭嘴（封面已接管画面，声音不能继续压在新剧上）
   const { isSwitchPause, holdIfSwitching } = useSwitchSilence({ videoRef, switching });
 
-  const { decodeBlocking, handleVideoError, clearDecodeBlocked } = useMediaRecovery({
+  const { handleVideoError } = useMediaRecovery({
     videoRef,
     episodeKey,
-    hevcPlayable,
-    startCompat,
-    forceCompat,
     playSrc,
-    compatSrc,
-    compat,
     error,
     setError,
     setSrc,
     retryOnline,
-    onDecodeFailureRef,
   });
 
   // 剧终三级接力与连播锁定抽在 use-binge-relay
@@ -315,7 +270,6 @@ export function PlayerView({
     episodeKey,
     videoLive,
     error,
-    compatActive: compat != null,
   });
   const {
     frame: heldFrame,
@@ -332,7 +286,6 @@ export function PlayerView({
     streamKey,
     playSrc,
     error,
-    compatActive: compat != null,
     veiled,
   });
 
@@ -489,13 +442,7 @@ export function PlayerView({
                 <video
                   key={playSrc}
                   ref={videoRef}
-                  src={
-                    directSource
-                      ? directBytevc2Audio(directSource)
-                      : showCompleteSrc
-                        ? playSrc
-                        : undefined
-                  }
+                  src={directSource ? directVideoAudio(directSource) : playSrc}
                   crossOrigin="anonymous"
                   className={cn(
                     'absolute inset-0 size-full',
@@ -551,7 +498,7 @@ export function PlayerView({
                 {directSource && (
                   <canvas
                     ref={directCanvasRef}
-                    data-bytevc2-direct=""
+                    data-direct-video=""
                     className={cn(
                       'pointer-events-none absolute inset-0 size-full',
                       coverFill ? 'object-cover' : 'object-contain',
@@ -568,7 +515,7 @@ export function PlayerView({
                   onStatus={setEnhanceStatus}
                 />
                 {coverBackdrop}
-                {(switching || !videoLive) && !compat && !error && (
+                {(switching || !videoLive) && !error && (
                   <div className="absolute inset-0 z-[6] grid place-items-center">
                     <Loader2
                       className="size-8 animate-spin text-white/60"
@@ -689,22 +636,11 @@ export function PlayerView({
                   onControlsEnter={onControlsEnter}
                   onControlsLeave={onControlsLeave}
                 />
-                <PlayingRecoveryOverlays
-                  compat={compat}
-                  compatSrc={compatSrc}
-                  hevcPlayable={hevcPlayable}
-                  decodeBlocking={decodeBlocking}
-                  videoLive={videoLive}
-                  retryOnline={retryOnline}
-                  clearDecodeBlocked={clearDecodeBlocked}
-                  startCompat={startCompat}
-                />
-                {(switching || !videoLive || videoStalled) && !compat && <Loadbar />}
+                {(switching || !videoLive || videoStalled) && <Loadbar />}
               </>
             ) : (
               <IdleRecoveryPanel
                 coverBackdrop={coverBackdrop}
-                compat={compat}
                 chromeShown={chromeShown}
                 miniScreen={miniScreen}
                 vidIndex={vidIndex}

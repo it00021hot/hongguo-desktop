@@ -24,7 +24,6 @@ import {
   feedTabSchema,
   followNoticeSchema,
   followUpdatePageSchema,
-  hevcInstallResultSchema,
   interactionStateSchema,
   mentionUserSchema,
   loginResultSchema,
@@ -34,7 +33,6 @@ import {
   passportUserSchema,
   pictureUploadSchema,
   pickedImageSchema,
-  playbackCapabilitySchema,
   playResponseSchema,
   proxyConfigSchema,
   proxyTestResultSchema,
@@ -56,7 +54,6 @@ import {
   storageSeriesUsageSchema,
   storageUsageSchema,
   suggestItemSchema,
-  transcodePlaybackSchema,
   watchHistoryPageSchema,
 } from '../schema';
 
@@ -91,32 +88,9 @@ export const COMMANDS = {
   /** 退出确认后的真退出（CloseRequested 被拦后唯一的退出路径） */
   exit_app: { args: noArgs, response: voidResp },
 
-  // 解码能力
-  playback_capability: { args: noArgs, response: playbackCapabilitySchema },
-  install_hevc_extension: { args: noArgs, response: hevcInstallResultSchema },
+  // 转码能力（兼容合并用；播放不转码）
   decode_capability: { args: noArgs, response: decodeCapabilitySchema },
   redetect_capability: { args: noArgs, response: decodeCapabilitySchema },
-  transcode_for_playback: {
-    args: z.object({
-      seriesId: z.string(),
-      vidIndex: z.number(),
-      vid: z.string().optional(),
-      definition: z.number().optional(),
-    }),
-    response: transcodePlaybackSchema,
-  },
-  cancel_compat_playback: {
-    args: z.object({
-      seriesId: z.string(),
-      vidIndex: z.number(),
-      definition: z.number().optional(),
-    }),
-    response: voidResp,
-  },
-  qa_offline_local_play: {
-    args: z.object({ filePath: z.string() }),
-    response: transcodePlaybackSchema,
-  },
 
   // 合并
   get_merge_tasks: { args: noArgs, response: mergeTaskSchema.array() },

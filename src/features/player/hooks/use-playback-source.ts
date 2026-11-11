@@ -46,7 +46,11 @@ export function usePlaybackSource(params: {
   const clearResumeHint = usePlayerStore((s) => s.setResumeHint);
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [playbackMaterialsError, setPlaybackMaterialsError] = useState(false);
+  /**
+   * 这次失败重试也没用：在线播放组件校验不过，或这一集只提供内置解码器解不了的编码。
+   * 置位后不自动重试、换设备档案到达时也不重试——反复取流只会拿到同一个结果。
+   */
+  const [retryFutile, setRetryFutile] = useState(false);
   /**
    * srcKeyRef 的 state 镜像（同点写入）：渲染期据此判定「切换在途」——
    * 目标已变、新流未到时新剧的封面+加载胶囊立即接管，否则用户看到「切了没反应」。
@@ -79,7 +83,7 @@ export function usePlaybackSource(params: {
   const [activeDefinition, setActiveDefinition] = useState(0);
   const [automaticDefinition, setAutomaticDefinition] = useState(true);
   const [definitions, setDefinitions] = useState<VideoDefinition[]>([]);
-  const [isBytevc2, setIsBytevc2] = useState(false);
+  const [isDirect, setIsDirect] = useState(false);
 
   const { mutate: play } = usePlay();
 
@@ -95,10 +99,10 @@ export function usePlaybackSource(params: {
   useEvent(
     EVENTS.deviceRegistered,
     useCallback(() => {
-      if (!error || playbackMaterialsError) return;
+      if (!error || retryFutile) return;
       toast.info(t('player.deviceSwappedRetry'));
       retryOnline();
-    }, [error, playbackMaterialsError, retryOnline]),
+    }, [error, retryFutile, retryOnline]),
   );
 
   // 取流失败自动重试：按退避节奏自动重取并显示进度，耗尽才退回手动重试；
@@ -109,7 +113,7 @@ export function usePlaybackSource(params: {
     if (autoRetryRef.current.key !== episodeKey) {
       autoRetryRef.current = { key: episodeKey, attempt: 0 };
     }
-    if (!error || playbackMaterialsError) {
+    if (!error || retryFutile) {
       queueMicrotask(() => setAutoRetry(null));
       return;
     }
@@ -128,7 +132,7 @@ export function usePlaybackSource(params: {
       retryOnline();
     }, delay);
     return () => clearTimeout(timer);
-  }, [error, episodeKey, playbackMaterialsError, retryOnline]);
+  }, [error, episodeKey, retryFutile, retryOnline]);
 
   // 在线取流进度：只认当前这一集，换集后清掉。
   useEvent(
@@ -171,13 +175,16 @@ export function usePlaybackSource(params: {
           if (!active) return;
           srcKeyRef.current = episodeKey;
           setSrcKey(episodeKey);
-          setPlaybackMaterialsError(false);
-          setError(res.error || null);
+          // 只提供 H.264、没标编码或认不出的编码：内置解码器不解，播放也不回落到别的路径。
+          // 这一种用双语词条如实告知；其余在线失败沿用后端原文。
+          const codecUnsupported = res.errorKind === 'error.codecUnsupported';
+          setRetryFutile(codecUnsupported);
+          setError(codecUnsupported ? t('error.codecUnsupported') : res.error || null);
           setSrc(res.error ? null : res.url);
           setActiveDefinition(res.definition);
           setAutomaticDefinition(res.automaticDefinition);
           setDefinitions(res.definitions);
-          setIsBytevc2(res.needsCompat);
+          setIsDirect(res.direct);
           // 续播位置在 metadata 加载后 seek，优先级：本会话播放点 > 本地 resumeAt > 云端历史提示
           pendingSeek.current = res.error
             ? 0
@@ -192,10 +199,10 @@ export function usePlaybackSource(params: {
           if (!active) return;
           srcKeyRef.current = '';
           setSrcKey('');
-          setPlaybackMaterialsError(isAppInvokeError(e) && e.kind === 'error.playbackMaterials');
+          setRetryFutile(isAppInvokeError(e) && e.kind === 'error.playbackMaterials');
           setError(e.message);
           setSrc(null);
-          setIsBytevc2(false);
+          setIsDirect(false);
         },
       },
     );
@@ -277,7 +284,6 @@ export function usePlaybackSource(params: {
     autoRetry,
     retryTick,
     srcKey,
-    setSrcKey,
     srcKeyRef,
     lastKnownRef,
     pendingSeek,
@@ -287,7 +293,7 @@ export function usePlaybackSource(params: {
     activeDefinition,
     automaticDefinition,
     definitions,
-    isBytevc2,
+    isDirect,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,

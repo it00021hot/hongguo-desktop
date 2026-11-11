@@ -24,7 +24,7 @@ const EVENT_TICK: Duration = Duration::from_millis(100);
 /// AVPlayerItem 向前缓冲上限（秒）。自定义 scheme 没有带宽样本，不钉会
 /// 把明文整集塞进 CoreMedia。钉 0 = 系统自选（往往更狠），不能当「关缓存」。
 /// 数据缓存只认 hongguo-stream；这里只压 CoreMedia 工作集（关不掉，只能压）。
-const FORWARD_BUFFER_SECS: f64 = 2.0;
+pub(crate) const FORWARD_BUFFER_SECS: f64 = 2.0;
 
 /// 已备好、尚未挂上播放器的下一集（对齐 Tauri：不提前把下一项塞进
 /// AVQueuePlayer，避免 CoreMedia 同时囤当前+下一集缓冲）。
@@ -44,7 +44,7 @@ impl PreloadSlot {
     }
 }
 
-struct SendRetained(Retained<AnyObject>);
+pub(crate) struct SendRetained(pub(crate) Retained<AnyObject>);
 
 // SAFETY: AVPlayer/AVPlayerItem 的播放控制允许跨线程；对象由 Arc<SystemPlayer>
 // 持有，事件线程只读状态。图层操作另有主线程约束（view.rs）。
@@ -52,37 +52,63 @@ unsafe impl Send for SendRetained {}
 unsafe impl Sync for SendRetained {}
 
 impl SendRetained {
-    fn get(&self) -> &AnyObject {
+    pub(crate) fn get(&self) -> &AnyObject {
         &self.0
     }
 
-    fn clone_ref(&self) -> Self {
+    pub(crate) fn clone_ref(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
 pub struct SystemPlayer {
-    player: SendRetained,
+    pub(crate) player: SendRetained,
     /// 当前集的 resourceLoader 句柄（delegate 是 weak，必须保活到本集结束）。
     /// 接力时换成下一集的句柄，旧句柄随之 Drop——之前用 Vec 只进不出，
     /// 连播几千集就把几千个 Loader + CoreMedia 缓存钉死在进程里。
-    current_loader: Mutex<Option<loader::LoaderHandle>>,
+    pub(crate) current_loader: Mutex<Option<loader::LoaderHandle>>,
     /// 当前集 asset：卸集时 `cancelLoading` + 清 delegate（自定义 scheme
     /// 没有 NSURLCache 可清；松缓冲靠卸 asset，对齐 Tauri 换 `video.src`）。
-    current_asset: Mutex<Option<SendRetained>>,
+    pub(crate) current_asset: Mutex<Option<SendRetained>>,
     stop: Arc<AtomicBool>,
     event_thread: Mutex<Option<JoinHandle<()>>>,
-    paused: AtomicBool,
+    pub(crate) paused: AtomicBool,
     rate: AtomicU64,
     stage: Mutex<(Option<PresenterBounds>, PresenterFit)>,
     /// 已备好的下一集（未入队）；接力时 `replaceCurrentItem` 挂上。
     preloaded: Mutex<Option<PreloadSlot>>,
+    /// item 就绪时是否由本播放器发 `FirstFrame`。内置软解直播放的 item 只有音轨，
+    /// 画面就绪由解码侧在第一帧上屏时报，这里不能抢先报一个 0×0 的首帧。
+    report_first_frame: bool,
 }
 
 impl SystemPlayer {
-    fn spawn_events(&self, events: mpsc::Sender<PlayerEvent>) {
+    /// 包住一个已配置好的 AVPlayer。`asset` / `loader` 可以晚一点再挂（直播放要先读完索引）。
+    pub(crate) fn assemble(
+        player: Retained<AnyObject>,
+        loader: Option<loader::LoaderHandle>,
+        asset: Option<SendRetained>,
+        rate: f64,
+        report_first_frame: bool,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            player: SendRetained(player),
+            current_loader: Mutex::new(loader),
+            current_asset: Mutex::new(asset),
+            stop: Arc::new(AtomicBool::new(false)),
+            event_thread: Mutex::new(None),
+            paused: AtomicBool::new(false),
+            rate: AtomicU64::new(rate.to_bits()),
+            stage: Mutex::new((None, PresenterFit::Contain)),
+            preloaded: Mutex::new(None),
+            report_first_frame,
+        })
+    }
+
+    pub(crate) fn spawn_events(&self, events: mpsc::Sender<PlayerEvent>) {
         let player = self.player.clone_ref();
         let stop = Arc::clone(&self.stop);
+        let report_first_frame = self.report_first_frame;
         let thread = std::thread::Builder::new()
             .name("hongguo-av-events".to_owned())
             .spawn(move || {
@@ -137,10 +163,14 @@ impl SystemPlayer {
                     let ptr = item as *const AnyObject as usize;
                     if ptr != current_ptr {
                         current_ptr = ptr;
-                        let (width, height) = avf::item_presentation_size(item);
-                        log::info!("[AvPresenter] 新 item ready，发 FirstFrame {width}×{height}");
-                        let _ = events.blocking_send(PlayerEvent::FirstFrame { width, height });
-                        let _ = events.blocking_send(PlayerEvent::Ready);
+                        if report_first_frame {
+                            let (width, height) = avf::item_presentation_size(item);
+                            log::info!(
+                                "[AvPresenter] 新 item ready，发 FirstFrame {width}×{height}"
+                            );
+                            let _ = events.blocking_send(PlayerEvent::FirstFrame { width, height });
+                            let _ = events.blocking_send(PlayerEvent::Ready);
+                        }
                         buffering = false;
                         ended = false;
                     }
@@ -291,17 +321,7 @@ pub fn open(
         avf::set_rate(&player, rate as f32);
     }
     let metrics_player = player.clone();
-    let system = Arc::new(SystemPlayer {
-        player: SendRetained(player),
-        current_loader: Mutex::new(loader_handle),
-        current_asset: Mutex::new(Some(current_asset)),
-        stop: Arc::new(AtomicBool::new(false)),
-        event_thread: Mutex::new(None),
-        paused: AtomicBool::new(false),
-        rate: AtomicU64::new(rate.to_bits()),
-        stage: Mutex::new((None, PresenterFit::Contain)),
-        preloaded: Mutex::new(None),
-    });
+    let system = SystemPlayer::assemble(player, loader_handle, Some(current_asset), rate, true);
     system.spawn_events(events);
     if let Some(output) = metrics_output {
         spawn_metrics(
@@ -460,7 +480,7 @@ impl PlayerLike for SystemPlayer {
 
     fn attach(&self, host: &HostWindow) {
         // 只建/复用宿主；可见性由紧随其后的 submit_stage 决定，避免 attach 先把层亮出来、下一行又按 system_ready=false 藏回去的抖动
-        let _ = view::ensure(host, self.player.get());
+        let _ = view::ensure(host, self.player.get(), None);
     }
 
     fn submit_stage(&self, bounds: Option<PresenterBounds>, fit: PresenterFit, visible: bool) {

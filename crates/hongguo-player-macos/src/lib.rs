@@ -6,10 +6,13 @@
 #![cfg(target_os = "macos")]
 
 pub mod avf;
+mod cv;
+mod direct;
 pub mod loader;
 mod player;
 pub(crate) mod view;
 
+pub use direct::open as open_direct;
 pub use player::open;
 
 /// 系统后端启动时调用一次：窗口背景铺黑，给视频层让出洞。

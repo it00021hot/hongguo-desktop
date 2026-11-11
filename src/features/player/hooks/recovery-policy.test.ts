@@ -11,12 +11,9 @@ describe('recoveryAction', () => {
     }
   });
 
-  it('decode 复发才升级兜底——0.4.3 曾把首次 decode 直接送进整集转码', () => {
-    expect(recoveryAction('decode', { ...emptyFailureCounts(), decode: 1 })).toBe('fallback');
-  });
-
-  it('network/other 复发落错误页——0.4.2 语义不变', () => {
-    const counts = { ...emptyFailureCounts(), network: 1, other: 1 };
+  it('复发一律落错误页——播放不转码，没有换路兜底', () => {
+    const counts = { ...emptyFailureCounts(), decode: 1, network: 1, other: 1 };
+    expect(recoveryAction('decode', counts)).toBe('errorPage');
     expect(recoveryAction('network', counts)).toBe('errorPage');
     expect(recoveryAction('other', counts)).toBe('errorPage');
   });
@@ -25,10 +22,5 @@ describe('recoveryAction', () => {
     const counts = { ...emptyFailureCounts(), network: 1 };
     expect(recoveryAction('network', counts)).toBe('errorPage');
     expect(recoveryAction('decode', counts)).toBe('retry');
-  });
-
-  it('已知不可解时 decode 径直兜底——不再烧一次必败的原生重试', () => {
-    expect(recoveryAction('decode', emptyFailureCounts(), true)).toBe('fallback');
-    expect(recoveryAction('network', emptyFailureCounts(), true)).toBe('retry');
   });
 });

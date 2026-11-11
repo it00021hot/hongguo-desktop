@@ -7,18 +7,23 @@ const DISPLAY_LEAD_SECONDS = 0.008;
 const DEFAULT_FRAME_INTERVAL = 1 / 30;
 const HEADER_BYTES = 16;
 const SHARED_BUFFER_TIMEOUT_MS = 5000;
-export const DIRECT_BYTEVC2_FRAME = 'hongguo-bytevc2-frame';
+/** 直播放画布每画出一帧派发一次（画质增强层据此取帧）。 */
+export const DIRECT_VIDEO_FRAME = 'hongguo-direct-frame';
 
 function schemeBase(scheme: string): string {
   return usesSchemeHostForm() ? `http://${scheme}.localhost` : `${scheme}://localhost`;
 }
 
 function directRoot(): string {
-  return `${schemeBase(STREAM_SCHEME)}/bvc2`;
+  return `${schemeBase(STREAM_SCHEME)}/direct`;
 }
 
-export function directBytevc2Source(src: string | null, isBytevc2: boolean): string | null {
-  if (!src || !isBytevc2) return null;
+/**
+ * 起播响应标了 `direct`（内置软解直播放）时，把播放地址换成直播放通道认的来源串；
+ * 否则返回 null，由 `<video>` 直接播。
+ */
+export function directVideoSource(src: string | null, direct: boolean): string | null {
+  if (!src || !direct) return null;
   const streamPrefix = `${schemeBase(STREAM_SCHEME)}/s/`;
   if (src.startsWith(streamPrefix)) {
     const source = src.slice(streamPrefix.length);
@@ -30,12 +35,13 @@ export function directBytevc2Source(src: string | null, isBytevc2: boolean): str
   return /^[a-zA-Z0-9_-]+$/.test(file) ? `local/${file}` : null;
 }
 
-export function directBytevc2Audio(source: string): string {
+export function directVideoAudio(source: string): string {
   return `${directRoot()}/audio/${source}`;
 }
 
 type BufferEvent = Event & {
-  additionalData?: { bytevc2Session?: number };
+  // 键名与 Rust 侧 `direct_video.rs` 的 `post_frames` 写入的元数据必须一字不差。
+  additionalData?: { directSession?: number };
   getBuffer: () => ArrayBuffer;
 };
 
@@ -53,7 +59,7 @@ function getBridge(): WebViewBridge {
   if (installed !== host) {
     host.addEventListener('sharedbufferreceived', (event) => {
       const incoming = event as BufferEvent;
-      const id = incoming.additionalData?.bytevc2Session;
+      const id = incoming.additionalData?.directSession;
       if (id === undefined) return;
       const buffer = incoming.getBuffer();
       const receive = receivers.get(id);
@@ -83,7 +89,7 @@ function framesFrom(buffer: ArrayBuffer, dispose: () => void): Frame[] {
   };
   for (let offset = 0; offset < buffer.byteLength;) {
     if (buffer.byteLength - offset < HEADER_BYTES)
-      throw new Error('Incomplete ByteVC2 frame header');
+      throw new Error('Incomplete direct-playback frame header');
     const width = view.getUint32(offset, true);
     const height = view.getUint32(offset + 4, true);
     const pts = view.getFloat64(offset + 8, true);
@@ -97,7 +103,7 @@ function framesFrom(buffer: ArrayBuffer, dispose: () => void): Frame[] {
       !Number.isFinite(pts) ||
       length > buffer.byteLength - start
     ) {
-      throw new Error('Invalid ByteVC2 frame');
+      throw new Error('Invalid direct-playback frame');
     }
     frames.push({ width, height, pts, pixels: new Uint8Array(buffer, start, length), release });
     offset = start + length;
@@ -126,7 +132,7 @@ type Callbacks = {
   failed: (error: unknown) => void;
 };
 
-export class DirectBytevc2Player {
+export class DirectVideoPlayer {
   private readonly bridge = isWindows() ? getBridge() : undefined;
   private readonly root = directRoot();
   private readonly surface: CanvasRenderingContext2D;
@@ -148,7 +154,7 @@ export class DirectBytevc2Player {
   ) {
     if (typeof VideoFrame !== 'function') throw new Error('VideoFrame is unavailable');
     const surface = canvas.getContext('2d');
-    if (!surface) throw new Error('ByteVC2 canvas is unavailable');
+    if (!surface) throw new Error('The direct-playback canvas is unavailable');
     this.surface = surface;
     const { signal } = this.events;
     audio.addEventListener('seeking', this.seek, { signal });
@@ -252,13 +258,13 @@ export class DirectBytevc2Player {
       if (!response.ok) throw new Error(await response.text());
       if (response.status === 204) {
         run.ended = true;
-        if (!run.first) throw new Error('ByteVC2 returned no frames');
+        if (!run.first) throw new Error('The decoder returned no frames');
       } else if (shared) {
         await Promise.race([
           shared,
           new Promise<never>((_, reject) => {
             timeout = setTimeout(
-              () => reject(new Error('Timed out waiting for the ByteVC2 shared buffer')),
+              () => reject(new Error('Timed out waiting for the shared frame buffer')),
               SHARED_BUFFER_TIMEOUT_MS,
             );
           }),
@@ -289,6 +295,9 @@ export class DirectBytevc2Player {
         codedWidth: frame.width,
         codedHeight: frame.height,
         timestamp: Math.round(frame.pts * 1e6),
+        // 后端已把每帧归一成 BT.601 全范围，这里如实声明。不声明的话各 WebView 各猜各的；
+        // WKWebView 干脆不看这项、固定按 BT.601 全范围画，所以归一的目标选的就是它。
+        colorSpace: { primaries: 'bt709', transfer: 'bt709', matrix: 'smpte170m', fullRange: true },
       });
       try {
         if (this.canvas.width !== frame.width || this.canvas.height !== frame.height) {
@@ -308,7 +317,7 @@ export class DirectBytevc2Player {
     run.lastPts = frame.pts;
     this.canvas.dataset.renderedFrames = String(++this.drawn);
     this.canvas.dataset.droppedFrames = String(this.dropped);
-    this.canvas.dispatchEvent(new Event(DIRECT_BYTEVC2_FRAME));
+    this.canvas.dispatchEvent(new Event(DIRECT_VIDEO_FRAME));
     if (!run.first) {
       run.first = true;
       this.callbacks.firstFrame(frame.width, frame.height);

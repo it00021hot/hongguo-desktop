@@ -7,17 +7,18 @@ if (!Number.isFinite(wallSeconds) || wallSeconds < 1 || wallSeconds > 60) {
 }
 
 async function audit(seconds) {
-  const canvas = document.querySelector('canvas[data-bytevc2-direct]');
+  // 选择器与事件名对着 src/features/player 里的直播放画布（HEVC / ByteVC1 / ByteVC2 共用）。
+  const canvas = document.querySelector('canvas[data-direct-video]');
   const audio = canvas?.parentElement?.querySelector('video');
   if (!canvas || !audio || !canvas.dataset.renderedFrames || !Number.isFinite(audio.duration)) {
-    throw new Error('请先在 Windows Tauri 打开 ByteVC2 直播放并等待出画');
+    throw new Error('请先在 Windows Tauri 打开内置软解直播放并等待出画');
   }
   if (audio.duration < seconds * 3 + 2) {
     throw new Error('片段太短，请缩短每档测试时间');
   }
 
   const original = { time: audio.currentTime, rate: audio.playbackRate, paused: audio.paused };
-  const frameEvent = 'hongguo-bytevc2-frame';
+  const frameEvent = 'hongguo-direct-frame';
   const counter = (key) => Number(canvas.dataset[key] ?? 0);
   const clock = () => ({
     audio: audio.currentTime,

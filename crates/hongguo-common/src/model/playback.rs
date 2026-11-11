@@ -88,6 +88,10 @@ pub struct PlayResponse {
     pub resume_at: f64,
     #[serde(default)]
     pub error: String,
+    /// `error` 非空时它的种类（[`AppError::i18n_key`](crate::AppError::i18n_key)），否则为空。
+    /// 前端按种类取译文，并据此分辨「重试也没用」的失败（如只提供内置解码器解不了的编码）。
+    #[serde(default)]
+    pub error_kind: String,
     /// 实际生效的清晰度档位
     #[serde(default)]
     pub definition: u32,
@@ -100,9 +104,9 @@ pub struct PlayResponse {
     /// 选中流的编码，本地探测失败时为空。
     #[serde(default)]
     pub codec: String,
-    /// 历史字段名，标识应走 ByteVC2 直播放。
+    /// 这条流交给内置软解直播放（HEVC / ByteVC1 / ByteVC2），而不是喂给系统播放器。
     #[serde(default)]
-    pub needs_compat: bool,
+    pub direct: bool,
 }
 
 /// 一档清晰度，发前端 `videoDefinitionSchema`。派生 `Ord`：取流侧按 (档位, 宽, 高) 升序去重后一次反转即得「高到低」，不必写比较函数。
@@ -163,6 +167,7 @@ mod tests {
             online: true,
             resume_at: 12.5,
             error: String::new(),
+            error_kind: String::new(),
             definition: 1080,
             automatic_definition: false,
             definitions: vec![VideoDefinition {
@@ -171,7 +176,7 @@ mod tests {
                 height: 1080,
             }],
             codec: "bytevc1".into(),
-            needs_compat: false,
+            direct: true,
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["url"], "hongguo-stream://v1");
@@ -180,7 +185,8 @@ mod tests {
         assert_eq!(v["definition"], 1080);
         assert_eq!(v["definitions"][0]["value"], 1080);
         assert_eq!(v["codec"], "bytevc1");
-        assert_eq!(v["needsCompat"], false);
+        assert_eq!(v["direct"], true);
+        assert!(v.get("needsCompat").is_none(), "旧字段名不应再出现");
         assert!(v.get("resume_at").is_none());
     }
 

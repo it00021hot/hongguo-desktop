@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DirectBytevc2Player, directBytevc2Source } from './direct-bytevc2';
+import { DirectVideoPlayer, directVideoSource } from './direct-video';
 
 const { isWindows } = vi.hoisted(() => ({ isWindows: vi.fn(() => true) }));
 vi.mock('@/utils/platform', () => ({ isWindows, usesSchemeHostForm: isWindows }));
@@ -51,7 +51,7 @@ function playerHarness(reply = (_url: string): ArrayBuffer | null => null) {
   });
   vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
-  const player = new DirectBytevc2Player(
+  const player = new DirectVideoPlayer(
     'local/video',
     audio as unknown as HTMLVideoElement,
     canvas as unknown as HTMLCanvasElement,
@@ -63,7 +63,7 @@ function playerHarness(reply = (_url: string): ArrayBuffer | null => null) {
     const buffer = frameBytes(times);
     bridge.dispatchEvent(
       Object.assign(new Event('sharedbufferreceived'), {
-        additionalData: { bytevc2Session: id },
+        additionalData: { directSession: id },
         getBuffer: () => buffer,
       }),
     );
@@ -88,10 +88,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('routes macOS online and local ByteVC2 to the direct player', () => {
+it('routes macOS online and local sources to the direct player', () => {
   isWindows.mockReturnValue(false);
-  expect(directBytevc2Source('hongguo-stream://localhost/s/720/v1', true)).toBe('720/v1');
-  expect(directBytevc2Source('hongguo-local://localhost/f/bW92aWUubXA0', true)).toBe(
+  expect(directVideoSource('hongguo-stream://localhost/s/720/v1', true)).toBe('720/v1');
+  expect(directVideoSource('hongguo-local://localhost/f/bW92aWUubXA0', true)).toBe(
     'local/bW92aWUubXA0',
   );
 });
@@ -106,21 +106,23 @@ it('presents binary frames on macOS without a shared-buffer bridge', async () =>
       harness.tick();
       expect(harness.firstFrame).toHaveBeenCalledWith(2, 2);
     });
-    expect(harness.fetchFrame.mock.calls[0]?.[0]).toMatch(/^hongguo-stream:\/\/localhost\/bvc2\//);
+    expect(harness.fetchFrame.mock.calls[0]?.[0]).toMatch(
+      /^hongguo-stream:\/\/localhost\/direct\//,
+    );
     expect(harness.drawImage).toHaveBeenCalledOnce();
   } finally {
     harness.player.dispose();
   }
 });
 
-describe('Windows ByteVC2 playback', () => {
+describe('Windows direct playback', () => {
   it('routes app-owned online and local playback URLs into the same player', () => {
-    expect(directBytevc2Source('http://hongguo-stream.localhost/s/720/v1', true)).toBe('720/v1');
-    expect(directBytevc2Source('http://hongguo-local.localhost/f/bW92aWUubXA0', true)).toBe(
+    expect(directVideoSource('http://hongguo-stream.localhost/s/720/v1', true)).toBe('720/v1');
+    expect(directVideoSource('http://hongguo-local.localhost/f/bW92aWUubXA0', true)).toBe(
       'local/bW92aWUubXA0',
     );
-    expect(directBytevc2Source('http://hongguo-local.localhost/f/bW92aWUubXA0', false)).toBeNull();
-    expect(directBytevc2Source('https://other.example/f/bW92aWUubXA0', true)).toBeNull();
+    expect(directVideoSource('http://hongguo-local.localhost/f/bW92aWUubXA0', false)).toBeNull();
+    expect(directVideoSource('https://other.example/f/bW92aWUubXA0', true)).toBeNull();
   });
 
   it('releases superseded shared buffers when seeking rapidly', () => {

@@ -15,7 +15,6 @@ export const EVENTS = {
   mergeFailed: 'merge-failed',
   onlinePlayProgress: 'online-play-progress',
   loginMfaState: 'login-mfa-state',
-  compatPlayProgress: 'compat-play-progress',
   // 追更更新提醒（follow_service 检查出新高，载荷 = 新增通知）
   followNotices: 'follow-notices',
   // 设备注册换档完成（启动自动注册/轮换，载荷 = 新 iid）：身份敏感数据
