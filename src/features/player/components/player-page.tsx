@@ -134,6 +134,7 @@ export function PlayerView({
     buffering,
     setDefinition,
     activeDefinition,
+    automaticDefinition,
     definitions,
     isBytevc2,
     retryOnline,
@@ -670,6 +671,7 @@ export function PlayerView({
                   pinned={pinned}
                   togglePinned={togglePinned}
                   activeDefinition={activeDefinition}
+                  automaticDefinition={automaticDefinition}
                   definitions={definitions}
                   onDefinitionChange={handleDefinitionChange}
                   playSrc={playSrc}

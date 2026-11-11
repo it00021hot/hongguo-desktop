@@ -91,6 +91,9 @@ pub struct PlayResponse {
     /// 实际生效的清晰度档位
     #[serde(default)]
     pub definition: u32,
+    /// 自动策略与手选可能使用同一档流，模式不得从 definition 推断。
+    #[serde(default)]
+    pub automatic_definition: bool,
     /// 本集提供的全部档位，供切换菜单渲染
     #[serde(default)]
     pub definitions: Vec<VideoDefinition>,
@@ -161,6 +164,7 @@ mod tests {
             resume_at: 12.5,
             error: String::new(),
             definition: 1080,
+            automatic_definition: false,
             definitions: vec![VideoDefinition {
                 value: 1080,
                 width: 1920,
@@ -178,6 +182,23 @@ mod tests {
         assert_eq!(v["codec"], "bytevc1");
         assert_eq!(v["needsCompat"], false);
         assert!(v.get("resume_at").is_none());
+    }
+
+    #[test]
+    fn automatic_selection_is_preserved_when_the_actual_definition_does_not_change() {
+        for automatic in [false, true] {
+            let response: PlayResponse = serde_json::from_value(serde_json::json!({
+                "url":"hongguo-stream://localhost/s/1080/episode",
+                "online":true,"definition":1080,"automaticDefinition":automatic
+            }))
+            .unwrap();
+            let wire = serde_json::to_value(response).unwrap();
+            assert_eq!(wire["definition"], 1080);
+            assert_eq!(
+                wire["automaticDefinition"], automatic,
+                "同一1080P缓存流仍须区分手选与自动，不能从像素档位推断模式"
+            );
+        }
     }
 
     #[test]

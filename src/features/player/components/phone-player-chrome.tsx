@@ -95,6 +95,7 @@ export function PhonePlayerChrome({
   onOpenSeries,
   episodeCount,
   definition,
+  automaticDefinition,
   definitions,
   onDefinitionChange,
   danmakuOn,
@@ -121,6 +122,7 @@ export function PhonePlayerChrome({
   onOpenSeries: () => void;
   episodeCount: number;
   definition: number;
+  automaticDefinition: boolean;
   definitions: VideoDefinition[];
   onDefinitionChange: (definition: number | undefined) => void;
   danmakuOn: boolean;
@@ -335,7 +337,7 @@ export function PhonePlayerChrome({
                 <p className="text-xs text-white/45">{t('player.definitionLocalOnly')}</p>
               ) : (
                 <Segmented
-                  value={definition > 0 ? definition : 0}
+                  value={automaticDefinition ? 0 : definition}
                   options={[0, ...definitions.map((d) => d.value)] as number[]}
                   labelOf={(v) => (v === 0 ? t('player.definitionAuto') : `${v}P`)}
                   onChange={(v) => onDefinitionChange(v === 0 ? undefined : v)}

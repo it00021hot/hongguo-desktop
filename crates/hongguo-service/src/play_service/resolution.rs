@@ -107,13 +107,18 @@ pub(super) fn accept_strategy(state: &AppState, generation: u64, strategy: Strat
 }
 
 /// 取流表到达后再择档；不会再请求一次 URL，也不会把手选流当成“自动最高档”。
+pub(super) struct Selected {
+    pub play: hongguo_api::play_url::PlayInfo,
+    pub automatic: bool,
+}
+
 pub(super) async fn select(
     state: &AppState,
     vid: &str,
     progress_key: &str,
     explicit: Option<u32>,
     purpose: Purpose,
-) -> AppResult<hongguo_api::play_url::PlayInfo> {
+) -> AppResult<Selected> {
     let policy = super::prefetch::policy(state).await;
     let rules = &policy.rules.resolution;
     super::ensure_play_strategy_poller(state).await;
@@ -185,9 +190,13 @@ pub(super) async fn select(
     }
     .ok_or_else(|| AppError::Media("本集没有可播放的清晰度档位".into()))?;
     log::info!("[Resolution] {vid} {purpose:?} 手选 {preferred:?} 缓存 {cached:?} -> {selected}P");
-    hongguo_api::play_url::cached_play(vid, Some(selected), cap)
+    let play = hongguo_api::play_url::cached_play(vid, Some(selected), cap)
         .filter(|play| play.definition == selected)
-        .ok_or_else(|| AppError::Media(format!("选中的 {selected}P 流已失效")))
+        .ok_or_else(|| AppError::Media(format!("选中的 {selected}P 流已失效")))?;
+    Ok(Selected {
+        play,
+        automatic: preferred.is_none(),
+    })
 }
 
 #[cfg(test)]

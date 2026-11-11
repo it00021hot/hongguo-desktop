@@ -77,6 +77,7 @@ export function usePlaybackSource(params: {
   );
   /** 本集实际生效的档位与全部可选档位，由起播响应带回。 */
   const [activeDefinition, setActiveDefinition] = useState(0);
+  const [automaticDefinition, setAutomaticDefinition] = useState(true);
   const [definitions, setDefinitions] = useState<VideoDefinition[]>([]);
   const [isBytevc2, setIsBytevc2] = useState(false);
 
@@ -174,6 +175,7 @@ export function usePlaybackSource(params: {
           setError(res.error || null);
           setSrc(res.error ? null : res.url);
           setActiveDefinition(res.definition);
+          setAutomaticDefinition(res.automaticDefinition);
           setDefinitions(res.definitions);
           setIsBytevc2(res.needsCompat);
           // 续播位置在 metadata 加载后 seek，优先级：本会话播放点 > 本地 resumeAt > 云端历史提示
@@ -283,6 +285,7 @@ export function usePlaybackSource(params: {
     definition,
     setDefinition,
     activeDefinition,
+    automaticDefinition,
     definitions,
     isBytevc2,
     retryOnline,

@@ -65,6 +65,7 @@ pub struct Prepared {
     pub url: String,
     /// 实际选中的档位。请求的档位平台没给时会回退，这里是回退后的真实值。
     pub definition: u32,
+    pub automatic_definition: bool,
     /// 本集提供的全部档位
     pub definitions: Vec<VideoDefinition>,
     /// 选中流编码（`bytevc2` 时前端/壳走兼容转码）。
@@ -97,7 +98,7 @@ pub async fn prepare(
     // 贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
     let cap = crate::device::stream_cap();
     fetch_with_registry(state, vid, progress_key, definition, cap).await?;
-    let play = super::super::resolution::select(
+    let selection = super::super::resolution::select(
         state,
         vid,
         progress_key,
@@ -105,13 +106,15 @@ pub async fn prepare(
         hongguo_api::resolution_policy::Purpose::Playback,
     )
     .await?;
+    let automatic_definition = selection.automatic;
+    let play = selection.play;
     let want = play.definition;
     remember_codec(vid, want, &play.codec);
     // 记真实自动结果供队列查询；它不再跳过下一次的动态决策。
     if definition.is_none() {
         c.remember_auto(vid, want);
     }
-    if let Some(hit) = prepared(c, vid, want) {
+    if let Some(hit) = prepared(c, vid, want, automatic_definition) {
         resume_fill(state, vid, want, progress_key);
         return Ok(hit);
     }
@@ -122,7 +125,7 @@ pub async fn prepare(
 
     if !c.begin_fetch(vid, want) {
         // 抢取流权时又被别人插队（窗口极窄），转为等待
-        let result = wait_for_fetch(c, vid, want).await?;
+        let result = wait_for_fetch(c, vid, want, automatic_definition).await?;
         resume_fill(state, vid, want, progress_key);
         return Ok(result);
     }
@@ -132,6 +135,7 @@ pub async fn prepare(
     let result = Prepared {
         url,
         definition: want,
+        automatic_definition,
         definitions: play.definitions.clone(),
         codec: play.codec.clone(),
     };
@@ -155,10 +159,16 @@ pub async fn prepare(
 }
 
 /// 缓存里这一档已经能供数时，组装出播放响应。
-fn prepared(c: &StreamCache, vid: &str, definition: u32) -> Option<Prepared> {
+fn prepared(
+    c: &StreamCache,
+    vid: &str,
+    definition: u32,
+    automatic_definition: bool,
+) -> Option<Prepared> {
     c.ready(vid, definition).map(|definitions| Prepared {
         url: hongguo_protocol::stream_url(vid, definition),
         definition,
+        automatic_definition,
         definitions,
         codec: remembered_codec(vid, definition),
     })
@@ -196,7 +206,8 @@ pub async fn prefetch_stream(
         None,
         hongguo_api::resolution_policy::Purpose::Prefetch,
     )
-    .await?;
+    .await?
+    .play;
     let want = play.definition;
     c.remember_auto(vid, want);
     if c.is_fetching(vid, want) || c.exists(vid, want) {
@@ -307,14 +318,19 @@ pub fn schedule_next_episode_prefetch(
 /// 等另一个请求把这一档取完，复用它的结果。
 /// 播放页对同一集会并发发两次 `play_series`，第二次等数据落进缓存而不是再发一次下载；
 /// 取流失败时对方会把条目删掉，这里据此判定「等不到」，按失败返回。
-async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResult<Prepared> {
+async fn wait_for_fetch(
+    c: &StreamCache,
+    vid: &str,
+    definition: u32,
+    automatic_definition: bool,
+) -> AppResult<Prepared> {
     const POLL: std::time::Duration = std::time::Duration::from_millis(20);
     // 上限要大于单次取流耗时，但别无限等：网络挂住时给用户一条明确报错而不是永远转圈。
     const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
     let start = std::time::Instant::now();
     loop {
-        if let Some(hit) = prepared(c, vid, definition) {
+        if let Some(hit) = prepared(c, vid, definition, automatic_definition) {
             return Ok(hit);
         }
         if !c.exists(vid, definition) {

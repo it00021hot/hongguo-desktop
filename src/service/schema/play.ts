@@ -17,6 +17,7 @@ export const playResponseSchema = z.object({
   // 实际生效的档位与本集可选的全部档位。
   // 本地文件播放时 definitions 为空数组，前端据此隐藏切换菜单。
   definition: z.number().int().nonnegative(),
+  automaticDefinition: z.boolean(),
   definitions: z.array(videoDefinitionSchema),
   /** 选中流编码，本地探测失败时为空串。 */
   codec: z.string().default(''),
