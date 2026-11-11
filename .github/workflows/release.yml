@@ -34,6 +34,9 @@ concurrency:
 jobs:
   publish:
     name: ${{ matrix.name }}
+    env:
+      SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL: always
+      PKG_CONFIG_ALLOW_CROSS_x86_64_apple_darwin: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +58,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6.1.1
@@ -71,6 +76,17 @@ jobs:
         uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.rust_target }}
+
+      - name: Install pkg-config for VVdeC
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install pkgconf --version 3.0.10 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pkgconfDir = Join-Path $env:ProgramFiles 'pkgconf-3.0.10'
+          & (Join-Path $pkgconfDir 'pkg-config.exe') --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pkgconfDir >> $env:GITHUB_PATH
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2.9.3
@@ -169,6 +185,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Build and upload latest.json
         env:
@@ -187,6 +205,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       # 先传脚本再下载全部资产做校验和：install-macos.sh 自己也进 SHA256SUMS
       - name: Upload macOS install script
