@@ -36,6 +36,8 @@ pub type CMItemCount = isize;
 
 /// `kCVReturnSuccess`：CoreVideo 返回码 0。
 pub const kCVReturnSuccess: i32 = 0;
+#[cfg(test)]
+pub const kCVReturnWouldExceedAllocationThreshold: i32 = -6689;
 
 /// `CMSampleTimingInfo`（CMSampleBuffer.h）。
 #[repr(C)]
@@ -231,6 +233,8 @@ unsafe extern "C" {
     pub static kCVPixelBufferIOSurfacePropertiesKey: CFStringRef;
     /// 输出缓冲池的最小缓冲数：解码会话按它预分配 IOSurface，避免每帧新建/回收（VT 默认按需分配，帧率高时分配开销进帧时延）
     pub static kCVPixelBufferPoolMinimumBufferCountKey: CFStringRef;
+    #[cfg(test)]
+    pub static kCVPixelBufferPoolAllocationThresholdKey: CFStringRef;
 
     pub fn CVPixelBufferCreate(
         allocator: CFAllocatorRef,
@@ -270,6 +274,13 @@ unsafe extern "C" {
     pub fn CVPixelBufferPoolCreatePixelBuffer(
         allocator: CFAllocatorRef,
         pixelBufferPool: CVPixelBufferPoolRef,
+        pixelBufferOut: *mut CVPixelBufferRef,
+    ) -> i32;
+    #[cfg(test)]
+    pub fn CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
+        allocator: CFAllocatorRef,
+        pixelBufferPool: CVPixelBufferPoolRef,
+        auxAttributes: CFDictionaryRef,
         pixelBufferOut: *mut CVPixelBufferRef,
     ) -> i32;
 }
