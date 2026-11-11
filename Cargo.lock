@@ -4303,7 +4303,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-api"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "aes 0.9.4",
  "chrono",
@@ -4326,7 +4326,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-bytevc2"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
@@ -4337,7 +4337,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-common"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "chrono",
  "dirs 7.0.0",
@@ -4353,7 +4353,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-desktop"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-tauri",
  "serde_json",
@@ -4369,7 +4369,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-gpui"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4405,7 +4405,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
@@ -4419,7 +4419,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-bytevc2",
  "hongguo-common",
@@ -4436,7 +4436,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform-android"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -4449,14 +4449,14 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform-api"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-common",
 ]
 
 [[package]]
 name = "hongguo-media-platform-macos"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -4468,7 +4468,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform-windows"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -4482,7 +4482,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-player"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-player-api",
  "hongguo-player-macos",
@@ -4492,7 +4492,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-player-api"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "raw-window-handle",
  "tokio",
@@ -4500,7 +4500,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-player-macos"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-player-api",
  "hongguo-stream",
@@ -4517,7 +4517,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-player-windows"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "gpui-pre-windows",
  "hongguo-player-api",
@@ -4531,7 +4531,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-protocol"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "base64 0.23.1",
  "hongguo-common",
@@ -4548,7 +4548,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-service"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "chrono",
  "futures-util",
@@ -4574,7 +4574,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-signer"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "aes 0.9.4",
  "base64 0.23.1",
@@ -4590,7 +4590,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-store"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "chrono",
  "dirs 7.0.0",
@@ -4606,7 +4606,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-stream"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
@@ -4616,7 +4616,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-tauri"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "chrono",
  "env_logger",
@@ -4656,7 +4656,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-video"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "aes 0.9.4",
  "base64 0.23.1",
