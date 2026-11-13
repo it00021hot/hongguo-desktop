@@ -20,9 +20,9 @@ use hongguo_common::AppResult;
 /// 平台硬编的一次转码请求（与 ffmpeg 侧的 [`crate::ffmpeg::TranscodeRequest`] 同构）。
 pub use hongguo_media_platform_api::PlatformRequest;
 
-/// 平台编码层可用时执行 HEVC→H.264 转码。
+/// 平台编码层可用时执行 HEVC→HEVC 转码。
 /// 返回 `None` 表示本机平台层不接这个源（HEVC 以外、被 `HONGGUO_NO_PLATFORM` 关闭、无可用编解码会话），`Some(Err)` 表示试过但失败——两者都落回分流链的下一条路。
-pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
+pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     if disabled_by_env() {
         return None;
     }
@@ -33,7 +33,7 @@ pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
         target_os = "android"
     ))]
     {
-        imp::transcode_h264(req)
+        imp::transcode_hevc(req)
     }
     #[cfg(not(any(
         target_os = "macos",
@@ -49,7 +49,7 @@ pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
 
 /// 平台**硬编**编码器当前是否可用（含探测缓存）。
 /// 只喂能力徽标与并行度策略——macOS / Windows / Android 的生产闸门是 [`encoder_available`]，软编会话也算数。
-pub fn h264_hw_encoder_available() -> bool {
+pub fn hevc_hw_encoder_available() -> bool {
     if disabled_by_env() {
         return false;
     }
@@ -60,7 +60,7 @@ pub fn h264_hw_encoder_available() -> bool {
         target_os = "android"
     ))]
     {
-        imp::h264_hw_encoder_available()
+        imp::hevc_hw_encoder_available()
     }
     #[cfg(not(any(
         target_os = "macos",
@@ -143,7 +143,7 @@ pub(crate) fn imp_thread<T: Send>(f: impl FnOnce() -> AppResult<T> + Send) -> Ap
 /// macOS / Android 生产入口直接走正式路径；Windows 分发到 `_for_tests`（强制 in-box 软编）。
 /// e2e 统一从这里走，不直接引用 `vt::`/`mf::`/`mc::`（否则另一平台的测试构建编不过）；门控 `test-support`——跨 crate 后 `pub(crate)` 够不着。
 #[cfg(feature = "test-support")]
-pub fn transcode_h264_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
+pub fn transcode_hevc_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -151,7 +151,7 @@ pub fn transcode_h264_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<(
         target_os = "android"
     ))]
     {
-        imp::transcode_h264_for_tests(req)
+        imp::transcode_hevc_for_tests(req)
     }
     #[cfg(not(any(
         target_os = "macos",

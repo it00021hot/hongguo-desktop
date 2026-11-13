@@ -21,7 +21,7 @@ pub(super) struct Nv12Frame {
 /// 不手工驱动解码 MFT 的原因（实机反复实证）：微软 HEVC 扩展解码器手工 `ProcessInput`/`ProcessOutput` 会建会话成功但永远不出帧
 /// （序列头喂 hvcC 或 Annex-B、补 START_OF_STREAM、配 D3D11 管理器都救不回，后者还会段错误——疑似进程级单例 + DXVA 门控）；
 /// SourceReader 对同一文件稳定解出全部帧（内部就是同一套解码 MFT + 参数集/样本形态/DXVA 的正确装配，还自动吃到硬件解）。
-/// h264 编码 MFT 手工驱动则实证可用（NVIDIA/软编都通）——两边驱动契约不对称是 MF 的现实，如实各取所长。
+/// 编码 MFT 使用独立的同步/异步驱动。
 pub(super) struct Decoder {
     reader: IMFSourceReader,
     width: usize,

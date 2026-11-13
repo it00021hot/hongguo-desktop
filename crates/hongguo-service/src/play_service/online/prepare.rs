@@ -189,8 +189,7 @@ pub async fn prefetch_stream(
     }
     crate::cold_start::wait().await;
     let c = cache();
-    // 预取与真实播放同一条选流模式：无 HEVC 机器预取的也必须是 h264，
-    // 否则起播时探测结论翻转会命中一条播不了的缓存流。
+    // 预取与起播共用内置解码约束，缓存中不放入无法播放的流。
     match fetch_with_registry(state, vid, progress_key, None, crate::device::stream_cap()).await {
         Ok(_) => {}
         Err(e) => {

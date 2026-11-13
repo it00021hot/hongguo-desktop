@@ -158,30 +158,6 @@ pub extern "system" fn Java_com_hongguo_nsh_PixelVideoComponent_nativeViewport(
     });
 }
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_hongguo_nsh_PixelVideoComponent_nativeFrame(
-    mut env: JNIEnv<'_>,
-    _: JClass<'_>,
-    handle: jlong,
-    generation: jlong,
-) {
-    boundary(&mut env, |_| {
-        video::frame(handle, generation);
-        Ok(())
-    });
-}
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_hongguo_nsh_PixelVideoComponent_nativeDetached(
-    mut env: JNIEnv<'_>,
-    _: JClass<'_>,
-    handle: jlong,
-    token: jlong,
-) {
-    boundary(&mut env, |_| {
-        video::detached(handle, token);
-        Ok(())
-    });
-}
-#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_hongguo_nsh_PixelVideoComponent_nativeEvent(
     mut env: JNIEnv<'_>,
     _: JClass<'_>,

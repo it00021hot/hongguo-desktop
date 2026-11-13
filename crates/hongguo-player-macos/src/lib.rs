@@ -1,19 +1,18 @@
-//! 红果桌面版 macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader。
+//! macOS 内置视频：AVSampleBufferDisplayLayer 上屏，AVPlayer 只承载音轨。
 //!
 //! 与 Windows 的 `hongguo-player-windows` 一一对应，契约在 `hongguo-player-api`。
 //! 平台专属依赖（objc2 / AppKit / AVFoundation）只在本 crate。
 
 #![cfg(target_os = "macos")]
 
-pub mod avf;
+mod avf;
 mod cv;
 mod direct;
-pub mod loader;
+mod loader;
 mod player;
 pub(crate) mod view;
 
 pub use direct::open as open_direct;
-pub use player::open;
 
 /// 系统后端启动时调用一次：窗口背景铺黑，给视频层让出洞。
 ///

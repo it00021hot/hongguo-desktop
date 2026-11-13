@@ -38,74 +38,6 @@ const MAX_INPUT_PIXELS = 1920 * 1080;
 const SLOW_FRAME_MS = 150;
 /** 连续慢帧上限：低端显卡硬扛只会卡成幻灯片，到限主动放弃退原画。 */
 const SLOW_FRAME_LIMIT = 5;
-/** OffscreenCanvas 桥是 CPU 路径，30fps 上限给主线程留喘息。 */
-const BRIDGED_MAX_FPS = 30;
-
-interface FrameUploader {
-  readonly usesCanvas: boolean;
-  upload(): void;
-  dispose(): void;
-}
-
-/** HEVC 帧没有可导入 GPU backing 的报错特征（OperationError "back resource"）。 */
-function isGpuBackingError(error: unknown): boolean {
-  return (
-    error instanceof DOMException &&
-    error.name === 'OperationError' &&
-    /back resource/i.test(error.message)
-  );
-}
-
-/** 视频帧 → 输入纹理：优先 `copyExternalImageToTexture` GPU 直拷（零拷贝），桥路径经 OffscreenCanvas 中转（每帧 getContext 拿回同一实例）。 */
-type FrameSource = HTMLVideoElement | HTMLCanvasElement;
-
-function frameSize(source: FrameSource): [number, number] {
-  return 'videoWidth' in source
-    ? [source.videoWidth, source.videoHeight]
-    : [source.width, source.height];
-}
-
-function createFrameUploader(
-  source: FrameSource,
-  queue: GPUQueue,
-  texture: GPUTexture,
-  width: number,
-  height: number,
-): FrameUploader {
-  let bridge: OffscreenCanvas | null = null;
-  return {
-    get usesCanvas() {
-      return bridge !== null;
-    },
-    upload() {
-      if (!bridge) {
-        try {
-          queue.copyExternalImageToTexture({ source }, { texture }, [width, height]);
-          return;
-        } catch (error) {
-          // 跨源 taint（自定义协议流可能中招）：换任何上传路径都一样，直接退原画
-          if (error instanceof DOMException && error.name === 'SecurityError') {
-            throw new EnhancementError('restricted', error);
-          }
-          if (!isGpuBackingError(error)) throw error;
-          bridge = new OffscreenCanvas(width, height);
-        }
-      }
-      const context = bridge.getContext('2d', { alpha: false });
-      if (!context) throw new EnhancementError('generic');
-      context.drawImage(source, 0, 0, width, height);
-      queue.copyExternalImageToTexture({ source: bridge }, { texture }, [width, height]);
-    },
-    dispose() {
-      if (bridge) {
-        bridge.width = 0;
-        bridge.height = 0;
-      }
-      bridge = null;
-    },
-  };
-}
-
 /** 显示 pass：全屏三角形 + 纹理采样，附可选 3×3 unsharp 锐化（与 SVG 档同一套核）——Anime4K 输出偏软，锐化叠在 2× 输出上一次采样完成。 */
 const displayShader = `
 struct Params { amount: f32, texel: vec2f }
@@ -161,12 +93,12 @@ export function sharpenUniforms(amount: number, width: number, height: number): 
  * 建管线包在 validation error scope 里——不支持的显卡在这里显式失败而不是画出黑帧。
  */
 export async function createAnime4KRenderer(
-  source: FrameSource,
+  source: HTMLCanvasElement,
   canvas: HTMLCanvasElement,
   { signal, onError, sharpen = 0 }: CreateRendererOptions,
 ): Promise<Anime4KRenderer> {
   if (!navigator.gpu) throw new EnhancementError('noWebgpu');
-  const [width, height] = frameSize(source);
+  const { width, height } = source;
   if (!width || !height) throw new EnhancementError('notReady');
   if (width * height > MAX_INPUT_PIXELS) throw new EnhancementError('inputTooLarge');
   const { CNNx2M } = await import('anime4k-webgpu');
@@ -177,13 +109,11 @@ export async function createAnime4KRenderer(
   const device = await adapter.requestDevice();
 
   let context: GPUCanvasContext | null = null;
-  let uploader: FrameUploader | null = null;
   let disposed = false;
   const dispose = () => {
     if (disposed) return;
     disposed = true;
     signal.removeEventListener('abort', dispose);
-    uploader?.dispose();
     context?.unconfigure();
     device.destroy();
   };
@@ -215,8 +145,6 @@ export async function createAnime4KRenderer(
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
     });
-    const up = createFrameUploader(source, device.queue, input, width, height);
-    uploader = up;
     const anime = new CNNx2M({ device, inputTexture: input });
     const output = anime.getOutputTexture();
     canvas.width = output.width;
@@ -254,7 +182,6 @@ export async function createAnime4KRenderer(
     signal.throwIfAborted();
     if (validationError) throw new EnhancementError('gpuUnsupported', validationError.message);
 
-    let lastFrameAt = -Infinity;
     let slowFrames = 0;
     // 冷启动头几帧要现编译 shader + 驱动管线优化，几乎必然慢——直接判死会把
     // warm-up 尖峰误杀成设备不支持（第一次点必退级、第二次才成功）。给一次宽限，真慢的设备第二轮照旧计满判死
@@ -266,21 +193,22 @@ export async function createAnime4KRenderer(
         writeSharpen(sharpenAmountOf(strength));
       },
       async draw() {
-        if (disposed || ('readyState' in source && (source.readyState < 2 || source.seeking))) {
+        if (disposed) {
           return false;
         }
-        const [frameWidth, frameHeight] = frameSize(source);
+        const { width: frameWidth, height: frameHeight } = source;
         if (frameWidth !== width || frameHeight !== height) {
           throw new EnhancementError('sizeChanged');
         }
         const started = performance.now();
-        // 桥路径 30fps 限速：CPU 中转的帧率收益递减，主线程时间更值钱
-        const playing = 'paused' in source ? !source.paused : true;
-        if (up.usesCanvas && playing && started - lastFrameAt < 1000 / BRIDGED_MAX_FPS) {
-          return false;
+        try {
+          device.queue.copyExternalImageToTexture({ source }, { texture: input }, [width, height]);
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'SecurityError') {
+            throw new EnhancementError('restricted', error);
+          }
+          throw error;
         }
-        lastFrameAt = started;
-        up.upload();
         const encoder = device.createCommandEncoder();
         anime.pass(encoder);
         const pass = encoder.beginRenderPass({

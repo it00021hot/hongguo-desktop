@@ -31,7 +31,7 @@ final class PixelDirect {
         if (closed || playback.generation != epoch || playback.player == null || !playback.prepared) return;
         try {
             nativeClock(handle, epoch, Math.max(0, playback.player.getCurrentPosition()), playback.seeks.audioPending());
-            if (playback.active()) playback.handler.postDelayed(clock, 16);
+            if (playback.active() && playback.player.isPlaying()) playback.handler.postDelayed(clock, 16);
         } catch (RuntimeException error) { playback.error("decoderFailed", "Audio clock is unavailable"); }
     }
     void beginSeek() {

@@ -291,7 +291,7 @@ export function SettingsPage() {
             <span>{t('settings.transcodeBackend')}</span>
             <Badge
               variant={
-                capability?.platformHwEncoder || capability?.h264HwEncoder
+                capability?.platformHwEncoder || capability?.hevcHwEncoder
                   ? 'success'
                   : capability?.platformEncoder || capability?.hasFfmpeg
                     ? 'warning'
@@ -510,7 +510,7 @@ export function SettingsPage() {
 function backendLabel(cap: DecodeCapability | undefined): string {
   if (!cap) return t('common.loading');
   // macOS 无硬编时 VideoToolbox 走 Apple 软编会话，比 ffmpeg 快但编码仍在 CPU，归「软件加速」
-  if (cap.platformHwEncoder || cap.h264HwEncoder) return t('settings.backendFfmpegHw');
+  if (cap.platformHwEncoder || cap.hevcHwEncoder) return t('settings.backendFfmpegHw');
   if (cap.platformEncoder || cap.hasFfmpeg) return t('settings.backendFfmpegSw');
   return t('settings.backendUnavailable');
 }

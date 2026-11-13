@@ -1,4 +1,4 @@
-use crate::{OriginalLayer, OutputError};
+use crate::OutputError;
 use hongguo_nsh_video_api::{ErrorCode, Seek, VideoEvent, VideoProps};
 use objc2::rc::Retained;
 use objc2_quartz_core::{CAMetalLayer, CATransaction};
@@ -59,7 +59,6 @@ impl Shared {
 }
 
 pub(crate) struct Layers {
-    pub original: OriginalLayer,
     pub metal: Retained<CAMetalLayer>,
 }
 
@@ -67,13 +66,12 @@ pub(crate) struct Layers {
 unsafe impl Send for Layers {}
 
 impl Layers {
-    pub fn show_enhanced(&self, enhanced: bool, active: bool) {
+    pub fn set_visible(&self, visible: bool) {
         // The worker has no Cocoa run loop to commit implicit transactions.
-        // Explicit commits make the same-player raw/Metal handoff atomic.
+        // Explicit commits publish visibility without a Cocoa run loop.
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        self.metal.setHidden(!enhanced || !active);
-        self.original.layer().setHidden(enhanced || !active);
+        self.metal.setHidden(!visible);
         CATransaction::commit();
     }
 }
@@ -85,7 +83,6 @@ pub struct PlayerController {
 
 impl PlayerController {
     pub fn spawn(
-        original: OriginalLayer,
         metal: Retained<CAMetalLayer>,
         emit: impl Fn(VideoEvent) + Send + Sync + 'static,
     ) -> Result<Self, OutputError> {
@@ -102,7 +99,7 @@ impl PlayerController {
         });
         let (wake, receiver) = std::sync::mpsc::sync_channel(1);
         let worker = shared.clone();
-        let layers = Layers { original, metal };
+        let layers = Layers { metal };
         std::thread::Builder::new()
             .name("hongguo-pixel-video".into())
             .spawn(move || {
@@ -121,10 +118,11 @@ impl PlayerController {
             || !(0.0..=1.0).contains(&props.volume)
             || props.progress_interval_ms == 0
             || props.enhancement.strength > 100
-            || props
-                .source
-                .as_ref()
-                .is_some_and(|source| source.id.is_empty() || source.url.is_empty())
+            || props.source.as_ref().is_some_and(|source| {
+                source.id.is_empty()
+                    || source.url.is_empty()
+                    || source.frame_source.as_ref().is_none_or(String::is_empty)
+            })
         {
             return Err(OutputError::new(
                 ErrorCode::InvalidProps,

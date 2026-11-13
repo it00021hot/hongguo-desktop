@@ -38,7 +38,7 @@ hongguo-media-platform-ios = { path = "../hongguo-media-platform-ios" }
 
 [features]
 # 壳的跨层 e2e（src/testing/media_pipeline_e2e.rs）要调门面的测试通道
-# `platform::transcode_h264_for_tests`——实现已分居平台 crate，本 feature
+# `platform::transcode_hevc_for_tests`——实现已分居平台 crate，本 feature
 # 转发到对应实现（对齐 hongguo-video 的 fixtures / hongguo-store 的
 # ScopedDataDir 先例）。生产构建不带，函数不编译。
 test-support = [

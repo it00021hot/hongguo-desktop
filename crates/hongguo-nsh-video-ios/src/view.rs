@@ -1,5 +1,5 @@
 use hongguo_nsh_video_api::VideoEvent;
-use hongguo_nsh_video_apple::{OriginalLayer, OutputError, PlayerController};
+use hongguo_nsh_video_apple::{OutputError, PlayerController};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained};
 use objc2_core_foundation::CGRect;
 use objc2_quartz_core::CAMetalLayer;
@@ -49,11 +49,9 @@ impl PixelView {
         &self,
         emit: impl Fn(VideoEvent) + Send + Sync + 'static,
     ) -> Result<Arc<PlayerController>, OutputError> {
-        let original = OriginalLayer::new()?;
         let metal = CAMetalLayer::new();
-        self.layer().addSublayer(&original.layer());
         self.layer().addSublayer(&metal);
-        let controller = Arc::new(PlayerController::spawn(original, metal, emit)?);
+        let controller = Arc::new(PlayerController::spawn(metal, emit)?);
         self.ivars().controller.replace(Some(controller.clone()));
         self.resize();
         Ok(controller)

@@ -116,20 +116,6 @@ pub fn viewport(
     player.wake();
     Ok(())
 }
-pub fn frame(handle: jlong, generation: jlong) {
-    if let Some(player) = player(handle)
-        && generation as u64 == player.generation.load(Ordering::Acquire)
-    {
-        player.frame.store(true, Ordering::Release);
-        player.wake();
-    }
-}
-pub fn detached(handle: jlong, token: jlong) {
-    if let Some(player) = player(handle) {
-        player.detached.store(token as u64, Ordering::Release);
-        player.wake();
-    }
-}
 pub fn event(
     env: &mut JNIEnv<'_>,
     handle: jlong,

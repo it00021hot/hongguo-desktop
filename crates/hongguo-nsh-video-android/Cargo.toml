@@ -11,7 +11,6 @@ hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-enhancement = { path = "../hongguo-enhancement" }
 wgpu = { version = "=29.0.4", default-features = false, features = ["gles", "wgsl"] }
 jni = "0.21"
-glow = "0.17"
 log = "0.4"
 ndk = { version = "0.9", features = ["nativewindow"] }
 raw-window-handle = "0.6"

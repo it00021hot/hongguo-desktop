@@ -2,24 +2,20 @@ use crate::VideoError;
 use hongguo_nsh_video_api::frames::PixelFrame;
 use hongguo_nsh_video_api::{ErrorCode, FrameMetadata, ResizeMode};
 use windows::{
-    Win32::{
-        Foundation::{RECT, S_OK},
-        Graphics::{
-            Direct2D::{
-                Common::{D2D_RECT_F, D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT},
-                D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1, D2D1_INTERPOLATION_MODE_LINEAR,
-                ID2D1Bitmap1, ID2D1Device2, ID2D1DeviceContext,
-            },
-            Direct3D11::{
-                D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
-                D3D11_USAGE_DEFAULT, ID3D11Device, ID3D11Texture2D,
-            },
-            Dxgi::{
-                Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
-                IDXGISurface,
-            },
+    Win32::Graphics::{
+        Direct2D::{
+            Common::{D2D_RECT_F, D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT},
+            D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1, D2D1_INTERPOLATION_MODE_LINEAR,
+            ID2D1Bitmap1, ID2D1Device2, ID2D1DeviceContext,
         },
-        Media::MediaFoundation::{IMFMediaEngine, MFARGB},
+        Direct3D11::{
+            D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
+            D3D11_USAGE_DEFAULT, ID3D11Device, ID3D11Multithread, ID3D11Texture2D,
+        },
+        Dxgi::{
+            Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
+            IDXGISurface,
+        },
     },
     core::Interface,
 };
@@ -29,7 +25,18 @@ pub fn drawing_device(dc: &ID2D1DeviceContext) -> Result<ID3D11Device, VideoErro
     // SAFETY: NativeComponent::draw receives a live D2D context on its COM thread.
     unsafe {
         let device: ID2D1Device2 = dc.GetDevice().map_err(error)?.cast().map_err(error)?;
-        device.GetDxgiDevice().map_err(error)?.cast().map_err(error)
+        let device: ID3D11Device = device
+            .GetDxgiDevice()
+            .map_err(error)?
+            .cast()
+            .map_err(error)?;
+        let multithread: ID3D11Multithread = device
+            .GetImmediateContext()
+            .map_err(error)?
+            .cast()
+            .map_err(error)?;
+        let _ = multithread.SetMultithreadProtected(true);
+        Ok(device)
     }
 }
 
@@ -124,38 +131,6 @@ impl RawFrame {
         metadata.height = frame.height;
         self.metadata = Some(metadata);
         Ok(())
-    }
-
-    pub fn capture(&mut self, engine: &IMFMediaEngine) -> Result<bool, VideoError> {
-        let mut pts = 0;
-        // SAFETY: Read the native HRESULT directly; S_FALSE must not be mistaken for a decoded frame.
-        let status =
-            unsafe { (Interface::vtable(engine).OnVideoStreamTick)(engine.as_raw(), &mut pts) };
-        if status != S_OK {
-            status.ok().map_err(error)?;
-            return Ok(false);
-        }
-        let destination = RECT {
-            left: 0,
-            top: 0,
-            right: self.size.0 as i32,
-            bottom: self.size.1 as i32,
-        };
-        let black = MFARGB {
-            rgbAlpha: 255,
-            rgbRed: 0,
-            rgbGreen: 0,
-            rgbBlue: 0,
-        };
-        // SAFETY: MediaEngine was created on this video-enabled drawing device and fills the complete frame.
-        unsafe { engine.TransferVideoFrame(&self.texture, None, &destination, Some(&black)) }
-            .map_err(error)?;
-        let mut metadata = FrameMetadata::default();
-        metadata.pts_ms = u64::try_from(pts / 10_000).unwrap_or(0);
-        metadata.width = self.size.0;
-        metadata.height = self.size.1;
-        self.metadata = Some(metadata);
-        Ok(true)
     }
 
     pub fn draw(

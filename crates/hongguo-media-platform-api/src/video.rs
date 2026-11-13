@@ -5,15 +5,13 @@
 pub enum VideoCodec {
     /// H.265（HEVC）：序列头是 hvcC。
     Hevc,
-    /// H.264（AVC）：序列头是 avcC。
-    H264,
 }
 
 const ARCHIVE_BITS_PER_PIXEL: f64 = 0.12;
 const MIN_BITRATE: f64 = 800_000.0;
 const MAX_BITRATE: f64 = 12_000_000.0;
 
-/// 归档码率：与 libx264 `-crf 23` 同档（1080p25 ≈ 6.2 Mbps）。
+/// 归档码率标定（1080p25 ≈ 6.2 Mbps）。
 pub fn bitrate_for(width: usize, height: usize, fps: f64) -> i32 {
     let bps = width as f64 * height as f64 * fps.max(1.0) * ARCHIVE_BITS_PER_PIXEL;
     bps.clamp(MIN_BITRATE, MAX_BITRATE) as i32

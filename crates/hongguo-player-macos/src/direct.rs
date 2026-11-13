@@ -2,7 +2,7 @@
 //! 不经过系统视频解码器，也不转码。
 //!
 //! 分工：
-//! - **声音与时钟**：一个普通的 [`SystemPlayer`]（AVPlayer），喂的是同一集的「只剩音轨」视图
+//! - **声音与时钟**：[`AudioPlayer`]（AVPlayer），只读取同一集的音轨视图
 //!   （[`loader::Source::Audio`]）。暂停、倍速、跳转、播完、缓冲都沿用它的实现与事件。
 //! - **画面**：`AVSampleBufferDisplayLayer` 叠在播放层上（`view.rs` 的 overlay），它的时钟直接
 //!   绑到 AVPlayerItem 的时间基——音画同步、暂停、倍速由系统保证，不用自己调度。
@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 
 use super::cv::{self, FramePacker, OpaqueTimebase};
 use super::loader::{self, Source, StallHook};
-use super::player::{FORWARD_BUFFER_SECS, SendRetained, SystemPlayer};
+use super::player::{AudioPlayer, FORWARD_BUFFER_SECS, SendRetained};
 use super::{avf, view};
 
 /// 显示层队列满时多久再看一次。
@@ -44,7 +44,7 @@ const FRAME_SECS: f64 = 1.0 / 30.0;
 static NEXT_ASSET: AtomicU64 = AtomicU64::new(1);
 
 pub struct DirectPlayer {
-    audio: Arc<SystemPlayer>,
+    audio: Arc<AudioPlayer>,
     shared: Arc<Shared>,
 }
 
@@ -73,7 +73,7 @@ struct Shared {
     /// 画面一出来就落后几百毫秒、只能丢帧去追（实测跳转后落后 0.3–0.5 秒、丢 11–19 帧）。
     hold: AtomicBool,
     /// 音轨播放器（放行时要看用户是否暂停、按什么倍速起播）。弱引用：播放器归 [`DirectPlayer`] 所有。
-    audio: std::sync::OnceLock<std::sync::Weak<SystemPlayer>>,
+    audio: std::sync::OnceLock<std::sync::Weak<AudioPlayer>>,
 }
 
 /// 第一帧已经送进显示层：放行被扣住的声音（用户自己暂停着的不动）。
@@ -85,7 +85,7 @@ fn release_hold(shared: &Shared) {
         return;
     };
     if !audio.paused.load(Ordering::SeqCst) {
-        avf::play_immediately(audio.player.get(), PlayerLike::rate(&*audio) as f32);
+        avf::play_immediately(audio.player.get(), audio.rate() as f32);
     }
 }
 
@@ -112,7 +112,7 @@ pub fn open(
     avf::disable_auto_advance(&player);
     avf::disable_wait_to_minimize_stalling(&player);
     avf::set_volume(&player, 1.0);
-    let audio = SystemPlayer::assemble(player.clone(), None, None, rate, false);
+    let audio = AudioPlayer::assemble(player.clone(), rate);
     audio.spawn_events(events.clone());
     let shared = Arc::new(Shared {
         media,
@@ -161,7 +161,7 @@ pub fn open(
 }
 
 /// 建索引、挂上音轨 item、开第一个解码会话。在 `softdec-open` 线程上跑。
-fn prepare(audio: &SystemPlayer, shared: &Arc<Shared>) -> AppResult<()> {
+fn prepare(audio: &AudioPlayer, shared: &Arc<Shared>) -> AppResult<()> {
     let stop = &shared.stop;
     let length = loader::total_bytes(&shared.media, stop)
         .ok_or_else(|| AppError::Media("拿不到这一集的总长度".into()))?;
@@ -492,11 +492,14 @@ fn on_main<F: FnOnce() + Send>(work: F) {
 
 impl PlayerLike for DirectPlayer {
     fn pause(&self) {
-        PlayerLike::pause(&*self.audio);
+        self.audio.pause();
     }
 
     fn resume(&self) {
-        PlayerLike::resume(&*self.audio);
+        self.audio.paused.store(false, Ordering::SeqCst);
+        if !self.shared.hold.load(Ordering::SeqCst) {
+            self.audio.resume();
+        }
     }
 
     fn is_paused(&self) -> bool {
@@ -517,16 +520,19 @@ impl PlayerLike for DirectPlayer {
         // 先扣住声音（不改用户的暂停状态），新会话的第一帧上屏后再放行。
         self.shared.hold.store(true, Ordering::SeqCst);
         avf::pause(self.audio.player.get());
-        PlayerLike::seek(&*self.audio, seconds);
+        self.audio.seek(seconds);
         start_session(&self.shared, seconds);
     }
 
     fn set_rate(&self, rate: f64) {
-        PlayerLike::set_rate(&*self.audio, rate);
+        self.audio.set_rate(rate);
+        if !self.shared.hold.load(Ordering::SeqCst) && !self.audio.is_paused() {
+            avf::set_rate(self.audio.player.get(), rate as f32);
+        }
     }
 
     fn rate(&self) -> f64 {
-        PlayerLike::rate(&*self.audio)
+        self.audio.rate()
     }
 
     fn set_volume(&self, volume: f32) {
@@ -543,7 +549,7 @@ impl PlayerLike for DirectPlayer {
     }
 
     fn attach(&self, host: &HostWindow) {
-        let _ = view::ensure(host, self.audio.player.get(), Some(self.shared.layer.get()));
+        let _ = view::ensure(host, self.shared.layer.get());
     }
 
     fn submit_stage(&self, bounds: Option<PresenterBounds>, fit: PresenterFit, visible: bool) {

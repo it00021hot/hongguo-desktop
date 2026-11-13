@@ -10,8 +10,6 @@ final class PixelSeeks {
     private JSONObject inFlight;
     private JSONObject queued;
     private boolean blocked;
-    private boolean redrawRequested;
-    private boolean redrawInFlight;
     private boolean audioCompleted;
     private final Runnable deadline = this::timeout;
     PixelSeeks(PixelPlayback playback) { this.playback = playback; }
@@ -23,23 +21,14 @@ final class PixelSeeks {
         queued = request;
         advance();
     }
-    void redraw() { redrawRequested = true; advance(); }
     private void advance() {
         if (blocked || inFlight != null || !playback.prepared || playback.player == null) return;
-        if (queued == null && !redrawRequested) return;
+        if (queued == null) return;
         try {
-            redrawInFlight = queued == null;
-            if (redrawInFlight) {
-                redrawRequested = false;
-                inFlight = new JSONObject().put("positionMs", playback.player.getCurrentPosition());
-            } else {
-                inFlight = queued;
-                queued = null;
-                // The user seek itself supplies the current image to the new Surface.
-                redrawRequested = false;
-            }
+            inFlight = queued;
+            queued = null;
             audioCompleted = false;
-            if (playback.direct != null) playback.direct.beginSeek();
+            playback.direct.beginSeek();
             playback.player.seekTo(inFlight.getLong("positionMs"), MediaPlayer.SEEK_CLOSEST);
             playback.handler.postDelayed(deadline, 15_000);
         } catch (RuntimeException | JSONException error) {
@@ -53,20 +42,16 @@ final class PixelSeeks {
     void complete() {
         if (blocked && inFlight == null) { blocked = false; return; }
         if (inFlight == null || playback.player == null || !playback.prepared) return;
-        if (playback.direct != null) {
-            try { playback.direct.audioSeekCompleted(Math.max(0, playback.player.getCurrentPosition())); audioCompleted = true; }
-            catch (java.io.IOException | RuntimeException error) { timeout(); }
-            return;
-        }
-        finish();
+        try { playback.direct.audioSeekCompleted(Math.max(0, playback.player.getCurrentPosition())); audioCompleted = true; }
+        catch (java.io.IOException | RuntimeException error) { timeout(); }
     }
     void videoComplete() {
-        if (playback.direct != null && inFlight != null && audioCompleted) finish();
+        if (inFlight != null && audioCompleted) finish();
     }
     private void finish() {
         playback.handler.removeCallbacks(deadline);
         try {
-            if (!redrawInFlight) playback.emit("seeked", "requestId", inFlight.getString("requestId"), "positionMs", Math.max(0, playback.player.getCurrentPosition()));
+            playback.emit("seeked", "requestId", inFlight.getString("requestId"), "positionMs", Math.max(0, playback.player.getCurrentPosition()));
         } catch (JSONException | RuntimeException error) { failure("MediaPlayer could not confirm the seek position"); }
         inFlight = null;
         advance();
@@ -83,16 +68,13 @@ final class PixelSeeks {
         failure("MediaPlayer seek completion timed out");
     }
     private void failure(String detail) {
-        if (redrawInFlight) android.util.Log.w("HongguoVideo", "Native frame redraw did not complete: " + detail);
-        else playback.error("seekFailed", detail);
+        playback.error("seekFailed", detail);
     }
     void clear() {
         playback.handler.removeCallbacks(deadline);
         inFlight = null;
         queued = null;
         blocked = false;
-        redrawRequested = false;
-        redrawInFlight = false;
         audioCompleted = false;
     }
 }

@@ -13,8 +13,8 @@ use hongguo_media::Backend;
 pub struct DecodeCapability {
     /// 装了 ffmpeg
     pub has_ffmpeg: bool,
-    /// ffmpeg 侧有**真正走硬件**的 H.264 编码器（nvenc/qsv/amf/能开 `-hw_encoding` 的 mf）
-    pub h264_hw_encoder: bool,
+    /// ffmpeg 侧有**真正走硬件**的 HEVC 编码器（nvenc/qsv/amf/能开 `-hw_encoding` 的 mf）
+    pub hevc_hw_encoder: bool,
     /// 平台原生编码层可用（macOS VT / Windows MF / Android MediaCodec 会话可建即真，含各端软编），不依赖用户装任何东西
     pub platform_encoder: bool,
     /// 平台原生**硬编**可用——只用于徽标「硬件加速」档与并行度，不是 macOS 生产闸门（软编会话同样进生产）
@@ -43,7 +43,7 @@ pub fn redetect() -> DecodeCapability {
         "[Media] 重新探测：ffmpeg={} 编码器={} 硬件={} 平台={} → {}",
         c.has_ffmpeg,
         backend.encoder,
-        c.h264_hw_encoder,
+        c.hevc_hw_encoder,
         c.platform_hw_encoder,
         backend.transcode_with
     );
@@ -71,20 +71,20 @@ fn redetect_platform() {}
 fn probe() -> DecodeCapability {
     // 严格按分流优先级探测：平台层（纯原生 API，毫秒级）先探，它可用时 ffmpeg 整层不探——链路不会用它（selected_backend 直接走平台），
     // 设置页安装指引按同一条件隐藏（「装上后转码自动改走它」在那档机器上是假话）；平台层不可用时 ffmpeg 升级为链路兜底与指引的决定者，才付探测的钱。
-    // 转码若在运行期回落 ffmpeg，h264_encoder() 的惰性缓存会在那一刻自己探，与本缓存无关。
-    let (has_ffmpeg, h264_hw) = if platform_available() {
+    // 转码若在运行期回落 ffmpeg，hevc_encoder() 的惰性缓存会在那一刻自己探，与本缓存无关。
+    let (has_ffmpeg, hevc_hw) = if platform_available() {
         (false, false)
     } else {
         (
             crate::ffmpeg::ffmpeg_path().is_some(),
-            crate::ffmpeg::h264_encoder().is_some_and(|e| e.hardware),
+            crate::ffmpeg::hevc_encoder().is_some_and(|e| e.hardware),
         )
     };
     DecodeCapability {
         has_ffmpeg,
-        h264_hw_encoder: h264_hw,
+        hevc_hw_encoder: hevc_hw,
         platform_encoder: crate::platform::encoder_available(),
-        platform_hw_encoder: crate::platform::h264_hw_encoder_available(),
+        platform_hw_encoder: crate::platform::hevc_hw_encoder_available(),
     }
 }
 
@@ -94,7 +94,7 @@ pub fn selected_backend() -> Option<Backend> {
     if platform_available() {
         return Some(Backend::Platform);
     }
-    match crate::ffmpeg::h264_encoder() {
+    match crate::ffmpeg::hevc_encoder() {
         Some(e) if e.hardware => Some(Backend::FfmpegHw),
         Some(_) => Some(Backend::FfmpegSw),
         None => None,
@@ -110,7 +110,7 @@ pub fn warm_up() {
     let c = detect();
     if c.platform_encoder {
         // 平台层可用＝分流已定（selected_backend 直接走平台，ffmpeg 整层没探）——
-        // 日志不能再调 backend_info()，它内部就是 ffmpeg_path()+h264_encoder()，会把省掉的探测全触发回来
+        // 日志不能再调 backend_info()，它内部就是 ffmpeg_path()+hevc_encoder()，会把省掉的探测全触发回来
         log::info!(
             "[Media] 平台编码层可用（硬件={}）→ 分流已定，ffmpeg 兜底层不探测",
             c.platform_hw_encoder
@@ -122,7 +122,7 @@ pub fn warm_up() {
         "[Media] ffmpeg={} 编码器={} 硬件={} 平台={} → {}",
         c.has_ffmpeg,
         backend.encoder,
-        c.h264_hw_encoder,
+        c.hevc_hw_encoder,
         c.platform_hw_encoder,
         backend.transcode_with
     );
@@ -156,15 +156,15 @@ mod tests {
 
     #[test]
     fn hardware_flag_is_not_derived_from_the_encoder_name() {
-        // 回归钉住：曾用 `encoder != "libx264"` 判硬件，h264_mf（软件 MediaFoundation）被误报成「硬件加速」
-        if let Some(enc) = crate::ffmpeg::h264_encoder()
-            && enc.name == "h264_mf"
+        // 回归钉住：曾用 `encoder != "libx265"` 判硬件，hevc_mf（软件 MediaFoundation）被误报成「硬件加速」
+        if let Some(enc) = crate::ffmpeg::hevc_encoder()
+            && enc.name == "hevc_mf"
             && !enc.hardware
         {
             assert!(
-                !detect().h264_hw_encoder
-                    || crate::ffmpeg::h264_encoder().is_some_and(|e| e.hardware),
-                "软件编码的 h264_mf 不能报成硬件"
+                !detect().hevc_hw_encoder
+                    || crate::ffmpeg::hevc_encoder().is_some_and(|e| e.hardware),
+                "软件编码的 hevc_mf 不能报成硬件"
             );
         }
     }

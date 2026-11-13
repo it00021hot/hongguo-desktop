@@ -1,11 +1,11 @@
 //! `AVAssetResourceLoader` 供数：把一集的明文按 offset/length 喂给 AVFoundation。
-//! 数据源：[`Source::Stream`] 生产形态（`hongguo-stream` 的 `(vid, 档位)` 渐进流，按需等待密文区间、惰性解密）与 [`Source::Bytes`]（spike 对照样片）。
+//! 源视频经 [`Source::Audio`] 遮掉视频轨，系统播放器只读取音轨。
 //! 关键语义：`AVAssetResourceLoader.delegate` 是 **weak** 必须由调用方强引用；`contentType` 是 UTI（`public.mpeg-4`）且必须落在
 //! `allowedContentTypes` 内否则 `finishLoading` 抛 ObjC 异常（Rust 侧无法 catch，会 abort）；必须声明 `byteRangeAccessSupported=YES` + `contentLength` 否则 seek 失败；
 //! `shouldWait` 必须**立即返回**、回包进有界工作池（同步阻塞会让 AVFoundation 不消费已回字节，实测首帧 2s 超时）；`didCancelLoadingRequest:` 与 `shouldWait` 在不同线程上跑，取消位才送得进来。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -28,10 +28,6 @@ const LOADER_WORKERS: usize = 4;
 /// 队列容量：AVFoundation 一集通常 2–5 个在途请求，32 留足冗余。
 const LOADER_QUEUE: usize = 32;
 
-pub static REQUESTS: AtomicU64 = AtomicU64::new(0);
-pub static BYTES_SERVED: AtomicU64 = AtomicU64::new(0);
-pub static ERRORS: AtomicU64 = AtomicU64::new(0);
-
 #[link(name = "System")]
 unsafe extern "C" {
     fn dispatch_get_global_queue(identifier: isize, flags: usize) -> *mut AnyObject;
@@ -40,8 +36,6 @@ unsafe extern "C" {
 /// 一集的数据来源。
 #[derive(Clone)]
 pub enum Source {
-    /// 整段明文在内存（Phase 0 对照模式 / 本地小样片）。
-    Bytes(Arc<[u8]>),
     /// hongguo-stream 渐进流。`on_stall` 在每次读前/读失败时调用：让业务层
     /// 按需 `resume_fill`（8MB 预取预算用完后必须有人续填）。
     Stream {
@@ -66,7 +60,6 @@ pub type StallHook = Arc<dyn Fn() + Send + Sync>;
 impl Source {
     pub fn label(&self) -> String {
         match self {
-            Self::Bytes(bytes) => format!("bytes({}B)", bytes.len()),
             Self::Stream {
                 vid, definition, ..
             } => format!("stream({vid}@{definition})"),
@@ -225,7 +218,6 @@ pub fn attach(asset: &AnyObject, source: Source) -> LoaderHandle {
 }
 
 fn serve(source: Source, request: &AnyObject, cancelled: &AtomicBool) {
-    REQUESTS.fetch_add(1, Ordering::Relaxed);
     let Some(total) = total_bytes(&source, cancelled) else {
         if cancelled.load(Ordering::SeqCst) {
             // 请求已取消：不 finish，也不报错。
@@ -233,7 +225,6 @@ fn serve(source: Source, request: &AnyObject, cancelled: &AtomicBool) {
         }
         log::error!("[AvPlayer] {} 拿不到 contentLength", source.label());
         finish_with_error(request, -1, "stream total length unavailable");
-        ERRORS.fetch_add(1, Ordering::Relaxed);
         return;
     };
 
@@ -314,7 +305,6 @@ fn respond_range(
                     position + want
                 );
                 finish_with_error(request, -2, &message);
-                ERRORS.fetch_add(1, Ordering::Relaxed);
                 return false;
             }
         }
@@ -330,11 +320,6 @@ fn read_part(
     cancelled: &AtomicBool,
 ) -> Result<Vec<u8>, ReadStop> {
     match source {
-        Source::Bytes(bytes) => {
-            let from = (start as usize).min(bytes.len());
-            let to = (start.saturating_add(want) as usize).min(bytes.len());
-            Ok(bytes[from..to].to_vec())
-        }
         Source::Stream {
             vid,
             definition,
@@ -417,13 +402,11 @@ fn respond_with_data(request: &AnyObject, bytes: &[u8]) {
     let data = NSData::with_bytes(bytes);
     // SAFETY: data 是本次调用内有效的局部对象。
     let _: () = unsafe { msg_send![request, respondWithData: &*data] };
-    BYTES_SERVED.fetch_add(bytes.len() as u64, Ordering::Relaxed);
 }
 
 /// 等这一档的明文总长。渐进流注册后立即可得；整集模式要等落盘。
 pub(crate) fn total_bytes(source: &Source, cancelled: &AtomicBool) -> Option<u64> {
     match source {
-        Source::Bytes(bytes) => Some(bytes.len() as u64),
         Source::Stream {
             vid, definition, ..
         } => {

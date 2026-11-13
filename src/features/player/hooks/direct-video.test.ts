@@ -90,10 +90,8 @@ afterEach(() => {
 
 it('routes macOS online and local sources to the direct player', () => {
   isWindows.mockReturnValue(false);
-  expect(directVideoSource('hongguo-stream://localhost/s/720/v1', true)).toBe('720/v1');
-  expect(directVideoSource('hongguo-local://localhost/f/bW92aWUubXA0', true)).toBe(
-    'local/bW92aWUubXA0',
-  );
+  expect(directVideoSource('hongguo-stream://localhost/s/720/v1')).toBe('720/v1');
+  expect(directVideoSource('hongguo-local://localhost/f/bW92aWUubXA0')).toBe('local/bW92aWUubXA0');
 });
 
 it('presents binary frames on macOS without a shared-buffer bridge', async () => {
@@ -117,12 +115,12 @@ it('presents binary frames on macOS without a shared-buffer bridge', async () =>
 
 describe('Windows direct playback', () => {
   it('routes app-owned online and local playback URLs into the same player', () => {
-    expect(directVideoSource('http://hongguo-stream.localhost/s/720/v1', true)).toBe('720/v1');
-    expect(directVideoSource('http://hongguo-local.localhost/f/bW92aWUubXA0', true)).toBe(
+    expect(directVideoSource('http://hongguo-stream.localhost/s/720/v1')).toBe('720/v1');
+    expect(directVideoSource('http://hongguo-local.localhost/f/bW92aWUubXA0')).toBe(
       'local/bW92aWUubXA0',
     );
-    expect(directVideoSource('http://hongguo-local.localhost/f/bW92aWUubXA0', false)).toBeNull();
-    expect(directVideoSource('https://other.example/f/bW92aWUubXA0', true)).toBeNull();
+    expect(directVideoSource(null)).toBeNull();
+    expect(directVideoSource('https://other.example/f/bW92aWUubXA0')).toBeNull();
   });
 
   it('releases superseded shared buffers when seeking rapidly', () => {

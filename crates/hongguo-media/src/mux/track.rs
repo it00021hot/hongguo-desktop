@@ -4,7 +4,7 @@
 
 use hongguo_video::r#box::build_box;
 
-use super::avcc::{self, AvcConfig};
+use super::hvcc::{self, HevcConfig};
 use super::{MEDIA_TIMESCALE, MOVIE_TIMESCALE};
 use crate::mp4::TrackSpec;
 
@@ -15,7 +15,7 @@ pub struct VideoSpec {
     pub width: u32,
     pub height: u32,
     /// 参数集
-    pub avc: AvcConfig,
+    pub hevc: HevcConfig,
     /// 逐样本大小
     pub sizes: Vec<u32>,
     /// `stts` 游程
@@ -41,7 +41,7 @@ impl VideoSpec {
             ),
             mdhd: mdhd(MEDIA_TIMESCALE, self.duration),
             hdlr: hdlr(b"vide", "VideoHandler"),
-            stsd: video_stsd(self.width, self.height, &self.avc),
+            stsd: video_stsd(self.width, self.height, &self.hevc),
             header: vmhd(),
             dinf: dinf(),
             sizes: self.sizes.clone(),
@@ -216,8 +216,8 @@ pub fn dinf() -> Vec<u8> {
     build_box(b"dinf", &build_box(b"dref", &dref))
 }
 
-/// `stsd`（视频）：`avc1` sample entry + `avcC`。
-pub fn video_stsd(width: u32, height: u32, avc: &AvcConfig) -> Vec<u8> {
+/// `stsd`（视频）：`hvc1` sample entry + `hvcC`。
+pub fn video_stsd(width: u32, height: u32, hevc: &HevcConfig) -> Vec<u8> {
     let mut entry = Vec::new();
     entry.extend([0u8; 6]); // reserved
     entry.extend(1u16.to_be_bytes()); // data_reference_index
@@ -233,8 +233,8 @@ pub fn video_stsd(width: u32, height: u32, avc: &AvcConfig) -> Vec<u8> {
     entry.extend([0u8; 32]); // compressorname
     entry.extend(0x0018u16.to_be_bytes()); // depth
     entry.extend(0xffffu16.to_be_bytes()); // pre_defined
-    entry.extend(avcc::avcc_box(avc));
-    stsd_of(&build_box(b"avc1", &entry))
+    entry.extend(hvcc::hvcc_box(hevc));
+    stsd_of(&build_box(b"hvc1", &entry))
 }
 
 /// `stsd`（音频）：`mp4a` sample entry + `esds`。
@@ -318,23 +318,20 @@ fn matrix() -> Vec<u8> {
 mod tests {
     use super::*;
 
-    fn avc() -> AvcConfig {
-        AvcConfig {
-            sps: vec![0x67, 0x64, 0x00, 0x1f],
-            pps: vec![0x68, 0xeb],
-        }
+    fn hevc() -> HevcConfig {
+        hvcc::extract(&super::super::fixtures::first()).unwrap()
     }
 
     #[test]
-    fn video_stsd_carries_the_resolution_and_the_avcc() {
-        let stsd = video_stsd(1920, 1080, &avc());
+    fn video_stsd_carries_the_resolution_and_the_hvcc() {
+        let stsd = video_stsd(1920, 1080, &hevc());
         assert_eq!(&stsd[8..12], &[0, 0, 0, 0]);
         assert_eq!(&stsd[12..16], &[0, 0, 0, 1]);
-        assert_eq!(&stsd[20..24], b"avc1");
+        assert_eq!(&stsd[20..24], b"hvc1");
         assert_eq!(&stsd[24 + 24..24 + 26], &[0x07, 0x80], "1920 = 0x0780");
         assert_eq!(&stsd[24 + 26..24 + 28], &[0x04, 0x38], "1080 = 0x0438");
-        // sample entry 的固定体 78 字节之后是 avcC box（头 8 字节）
-        assert_eq!(&stsd[24 + 78 + 4..24 + 78 + 8], b"avcC");
+        // sample entry 固定体之后是 hvcC box。
+        assert_eq!(&stsd[24 + 78 + 4..24 + 78 + 8], b"hvcC");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-media-platform-android"
-description = "红果桌面版 Android 平台原生化：MediaCodec HEVC 解 → H.264 编（契约见 hongguo-media-platform-api）"
+description = "红果桌面版 Android 平台原生化：MediaCodec HEVC 解码与 HEVC 编码（契约见 hongguo-media-platform-api）"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

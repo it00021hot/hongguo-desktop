@@ -1,4 +1,4 @@
-//! 兼容合并：转 H.264/AAC。走 `transcode_service::pipeline` 的单集转码，
+//! 统一编码合并：转 HEVC，AAC 直通。走 `transcode_service::pipeline` 的单集转码，
 //! 逐集转再流复制：内存占用恒定，且能复用单集转码的缓存。
 
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use crate::transcode_service::{cache, pipeline};
 use hongguo_common::model::MergeTask;
 use hongguo_common::{AppError, AppResult};
 
-/// 兼容合并：把每集转成 H.264 后流复制拼接，逐集转码、每完成一集报一次进度；返回 `(输出路径, 输出大小, 参与集数)`。
+/// 把每集统一成 HEVC 后流复制拼接；返回 `(输出路径, 输出大小, 参与集数)`。
 /// `slot` 是运行中任务的占用凭证——取消标志在**每集之间**检查（转码内部不插检查点，最多再浪费一集的时间）。
 pub fn compat_merge(
     state: &AppState,
@@ -126,8 +126,8 @@ pub fn compat_merge(
                     // 本集的集内记账（毫秒拆分的最近比例），完成时结算回账本
                     let last_ms = AtomicI64::new(0);
                     let result = match cache::cached_path(series_id, *vid_index) {
-                        Some(p) => Ok(p),
-                        None => {
+                        Some(p) if pipeline::output_is_hevc_archive(&p) => Ok(p),
+                        _ => {
                             let on_eps = episode_progress(
                                 &live,
                                 &last_ms,
@@ -229,14 +229,13 @@ pub fn compat_merge(
 
 /// 并行度按后端定：GPU 会话受限的硬编铺 4/6 路，CPU 大户的软编压到 2/4 路；线程数只是上限，
 /// 硬编会话超订由 `live_cap` 收敛兜住。不要给并行 ffmpeg 实例加 `-threads N` 限线程——
-/// x264 默认线程数已经调得很好，限线程只会饿着每个编码器、反而更慢。
 fn merge_threads(backend: hongguo_media::Backend, episodes: usize) -> usize {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
     let cap = match backend {
         hongguo_media::Backend::Platform => {
-            if hongguo_media_platform::platform::h264_hw_encoder_available() {
+            if hongguo_media_platform::platform::hevc_hw_encoder_available() {
                 cores.clamp(1, 4)
             } else {
                 // Apple 软编会话：编码吃满 CPU，2 路封顶

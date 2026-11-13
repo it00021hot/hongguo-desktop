@@ -1,7 +1,6 @@
 package com.hongguo.nsh;
 
 import android.app.Activity;
-import android.graphics.SurfaceTexture;
 import android.view.Surface;
 import android.view.View;
 import com.longbridge.nsh.NshComponent;
@@ -44,22 +43,12 @@ public final class PixelVideoComponent implements NshComponent {
             if (!closed && playback.generation == generation) playback.seeks.request(new JSONObject(json));
         });
     }
-    public boolean setDecoderOutput(long generation, long token, Surface surface, SurfaceTexture texture) {
-        if (closed) return true; // destroy releases MediaPlayer before closing the Rust worker.
-        return playback.awaitMain(() -> {
-            if (closed || playback.generation != generation) {
-                nativeDetached(handle, token); // that source's MediaPlayer has already been released.
-                return;
-            }
-            playback.output.bind(generation, token, surface, texture);
-        });
-    }
-    public void prepareEnhancedOutput(long generation) {
+    public void prepareFrameOutput(long generation) {
         playback.post(() -> { if (!closed && playback.generation == generation) playback.output.prepare(); });
     }
-    public void showEnhanced(long generation, boolean enhanced) {
+    public void showFrames(long generation, boolean visible) {
         playback.post(() -> {
-            if (!closed && playback.generation == generation) playback.output.show(enhanced);
+            if (!closed && playback.generation == generation) playback.output.show(visible);
         });
     }
     public void emitVideo(String json, long ignored) {
@@ -70,8 +59,6 @@ public final class PixelVideoComponent implements NshComponent {
     void event(JSONObject event) {
         if (!closed && handle != 0) nativeEvent(handle, playback.generation, event.toString());
     }
-    void frame(long generation) { if (!closed && handle != 0) nativeFrame(handle, generation); }
-    void detached(long token) { if (!closed && handle != 0) nativeDetached(handle, token); }
     String latestState(long generation) {
         return closed || handle == 0 ? null : nativeLatestState(handle, generation);
     }
@@ -105,8 +92,6 @@ public final class PixelVideoComponent implements NshComponent {
     private static native String nativeLatestState(long handle, long generation);
     private static native void nativeSeek(long handle, String request);
     private static native void nativeViewport(long handle, Surface surface, int width, int height);
-    private static native void nativeFrame(long handle, long generation);
-    private static native void nativeDetached(long handle, long token);
     private static native void nativeEvent(long handle, long generation, String event);
     private static native void nativeDestroy(long handle);
 }

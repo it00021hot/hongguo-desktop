@@ -1,10 +1,10 @@
-//! ByteVC2 明文 MP4 → H.264。解码只走 `hongguo-bytevc2`，编码走平台 H.264 会话。
+//! ByteVC2 明文 MP4 → HEVC。解码只走 `hongguo-bytevc2`，编码走平台 HEVC 会话。
 //! 这条路径不调用 ffmpeg / librempeg。
 
 use std::time::Instant;
 
 use hongguo_common::{AppError, AppResult};
-use hongguo_media::mux::{AudioTrack, GrowingH264};
+use hongguo_media::mux::{ArchiveHevc, AudioTrack};
 use hongguo_media_platform_api::PlatformRequest;
 
 #[cfg(any(
@@ -15,7 +15,7 @@ use hongguo_media_platform_api::PlatformRequest;
 ))]
 use crate::platform::{YuvEncoder, imp_thread};
 
-/// 把一集 ByteVC2 明文转成可播的 H.264 MP4。源不是 ByteVC2 时返回错误，不落回 ffmpeg。
+/// 把一集 ByteVC2 明文转成可播的 HEVC MP4。源不是 ByteVC2 时返回错误，不落回 ffmpeg。
 pub fn transcode_bytevc2(req: &PlatformRequest<'_>) -> AppResult<()> {
     #[cfg(any(
         target_os = "macos",
@@ -38,7 +38,7 @@ pub fn transcode_bytevc2(req: &PlatformRequest<'_>) -> AppResult<()> {
     )))]
     {
         let _ = req;
-        Err(AppError::Media("当前平台不能把 ByteVC2 编成 H.264".into()))
+        Err(AppError::Media("当前平台不能把 ByteVC2 编成 HEVC".into()))
     }
 }
 
@@ -59,7 +59,7 @@ const DECODE_QUEUE_FRAMES: usize = 8;
     target_os = "android"
 ))]
 struct LiveFile<'a> {
-    writer: Option<GrowingH264>,
+    writer: Option<ArchiveHevc>,
     audio: Option<&'a AudioTrack>,
     samples: &'a [(f64, Vec<u8>)],
     cursor: usize,
@@ -155,6 +155,7 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
     if live.writer.is_none() {
         return Err(AppError::Media("ByteVC2 没有写出归档片段".into()));
     }
+    live.writer.take().expect("归档写入器已创建").finish()?;
     let width = encoded.width;
     let height = encoded.height;
     let wall_ns = started.elapsed().as_nanos();
@@ -177,7 +178,7 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
             .map_err(|e| AppError::Io(format!("阶段日志写入失败: {e}")))?;
     }
     log::info!(
-        "[ByteVC2] 解帧并编成 H.264：{frames} 帧（{width}x{height}，{fps:.2} fps，decoder={decoder}），耗时 {:?} ≈{realtime_x:.2}× realtime（无 ffmpeg 进程）",
+        "[ByteVC2] 解帧并编成 HEVC：{frames} 帧（{width}x{height}，{fps:.2} fps，decoder={decoder}），耗时 {:?} ≈{realtime_x:.2}× realtime（无 ffmpeg 进程）",
         started.elapsed()
     );
     Ok(())
@@ -370,13 +371,13 @@ fn write_gop(
     req: &PlatformRequest<'_>,
 ) -> AppResult<()> {
     if gop.is_empty() || (live.writer.is_none() && !gop[0].2) {
-        return Err(AppError::Media("H.264 片段缺少同步样本".into()));
+        return Err(AppError::Media("HEVC 片段缺少同步样本".into()));
     }
     let (width, height) = live
         .size
         .ok_or_else(|| AppError::Media("编码器还没有分辨率".into()))?;
     if live.writer.is_none() {
-        live.writer = Some(GrowingH264::create(
+        live.writer = Some(ArchiveHevc::create(
             req.output,
             width,
             height,
@@ -385,7 +386,7 @@ fn write_gop(
         )?);
     }
     let audio = take_audio(live.samples, &mut live.cursor, end_pts).to_vec();
-    let timing = hongguo_media::mux::FragmentTiming {
+    let timing = hongguo_media::mux::ArchiveTiming {
         video_end_secs: end_pts.unwrap_or(live.video_end_secs),
         audio_end_secs: if audio.is_empty() {
             None
@@ -440,6 +441,10 @@ fn take_audio<'a>(
 ))]
 #[path = "bytevc2_audio_publish_tests.rs"]
 mod audio_publish_tests;
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "bytevc2_archive_tests.rs"]
+mod archive_tests;
 
 #[cfg(all(
     test,

@@ -20,8 +20,6 @@ pub(super) struct PlayRequest {
 /// 所以起播链把它带回来。
 pub(super) struct SystemSpec {
     pub(super) source: hongguo_player::PlaySource,
-    /// 交给内置软解直播放（而不是系统播放器）。
-    pub(super) direct: bool,
     pub(super) start_secs: f64,
     pub(super) rate: f64,
     pub(super) events: mpsc::Sender<PlayerEvent>,
@@ -125,19 +123,26 @@ impl super::HomeView {
         // 已经下好就直接读本地文件——离线可播、秒开，且没有档位概念（本地只有
         // 一版，清晰度菜单该是灰的）。记录里路径存在但文件没了（陈旧记录）时
         // 回落在在线流；在线分流（prepare）只在真的没有本地成品时才走。
-        let local_path = state
+        let local = state
             .queue()
             .completed_path(&item.series_id, ep.vid_index)
-            .filter(|p| !p.trim().is_empty() && std::path::Path::new(p).is_file());
-        let (source, definitions, definition, direct) = match local_path {
-            Some(path) => {
-                let direct = hongguo_service::play_service::local::plays_direct_file(&path)?;
-                log::info!("[Home] 本地成品命中，走本地播放（direct={direct}）：{path}");
+            .filter(|path| !path.trim().is_empty())
+            .and_then(|path| {
+                match hongguo_service::play_service::local::local_playback_codec(&path) {
+                    Ok(codec) => Some((path, codec)),
+                    Err(error) => {
+                        log::warn!("[Home] 本地下载记录不可播放，重新获取在线原流: {error}");
+                        None
+                    }
+                }
+            });
+        let (source, definitions, definition) = match local {
+            Some((path, codec)) => {
+                log::info!("[Home] 本地成品命中，内置解码 {codec}：{path}");
                 (
                     hongguo_player::PlaySource::Local { path: path.into() },
                     Vec::new(),
                     0u32,
-                    direct,
                 )
             }
             None => {
@@ -174,7 +179,6 @@ impl super::HomeView {
                     },
                     prepared.definitions,
                     prepared.definition,
-                    true,
                 )
             }
         };
@@ -231,7 +235,6 @@ impl super::HomeView {
         Ok((
             SystemSpec {
                 source,
-                direct,
                 start_secs,
                 rate,
                 events,

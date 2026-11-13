@@ -74,37 +74,36 @@ impl MediaServer {
 
     #[cfg(test)]
     pub(crate) fn file(&self, path: &Path) -> Result<MediaLease, String> {
-        self.register(Source::file(path)?, false)
+        self.publish(uuid::Uuid::new_v4().to_string(), Source::file(path)?, None)
     }
 
-    pub(crate) fn playback_file(&self, path: &Path, direct: bool) -> Result<MediaLease, String> {
-        self.register(Source::file(path)?, direct)
+    pub(crate) fn playback_file(&self, path: &Path) -> Result<MediaLease, String> {
+        self.register(Source::file(path)?)
     }
 
-    pub(crate) fn online(
-        &self,
-        vid: String,
-        definition: u32,
-        direct: bool,
-    ) -> Result<MediaLease, String> {
-        self.register(Source::online(vid, definition)?, direct)
+    pub(crate) fn online(&self, vid: String, definition: u32) -> Result<MediaLease, String> {
+        self.register(Source::online(vid, definition)?)
     }
 
-    fn register(&self, source: Source, direct: bool) -> Result<MediaLease, String> {
+    fn register(&self, source: Source) -> Result<MediaLease, String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let (source, frames) = if direct {
-            let session = Arc::new(
-                hongguo_softdec::DirectSession::open(Arc::new(source.clone()))
-                    .map_err(|error| error.to_string())?,
-            );
-            let frames = hongguo_nsh_video_api::frames::register_frames(
-                &id,
-                Arc::new(direct::Frames::new(session.clone())),
-            )?;
-            (source.audio(session), Some(frames))
-        } else {
-            (source, None)
-        };
+        let session = Arc::new(
+            hongguo_softdec::DirectSession::open(Arc::new(source.clone()))
+                .map_err(|error| error.to_string())?,
+        );
+        let frames = hongguo_nsh_video_api::frames::register_frames(
+            &id,
+            Arc::new(direct::Frames::new(session.clone())),
+        )?;
+        self.publish(id, source.audio(session), Some(frames))
+    }
+
+    fn publish(
+        &self,
+        id: String,
+        source: Source,
+        frames: Option<hongguo_nsh_video_api::frames::FrameRegistration>,
+    ) -> Result<MediaLease, String> {
         self.routes
             .sources
             .lock()

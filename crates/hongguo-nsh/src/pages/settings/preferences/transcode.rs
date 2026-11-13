@@ -23,7 +23,7 @@ pub(super) fn section(runtime: Runtime, message: Signal<SharedString>, external:
                 .child(ui::backend_badge(
                     move || runtime::backend_label(runtime.capability.get()),
                     move || match runtime.capability.get() {
-                        Some(cap) if cap.platform_hw_encoder || cap.h264_hw_encoder => {
+                        Some(cap) if cap.platform_hw_encoder || cap.hevc_hw_encoder => {
                             ui::BackendLevel::Hardware
                         }
                         Some(cap) if cap.platform_encoder || cap.has_ffmpeg => {

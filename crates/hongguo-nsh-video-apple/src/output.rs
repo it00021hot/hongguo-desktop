@@ -1,15 +1,9 @@
-use crate::frame::DecodedFrame;
 use block2::RcBlock;
 use hongguo_nsh_video_api::ErrorCode;
 use objc2::{
     Encode, Encoding, RefEncode, msg_send,
     rc::Retained,
     runtime::{AnyClass, AnyObject, Bool},
-};
-use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
-use objc2_core_video::{
-    CVPixelBuffer, kCVPixelBufferIOSurfacePropertiesKey, kCVPixelBufferMetalCompatibilityKey,
-    kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_32BGRA,
 };
 use objc2_foundation::{NSString, NSURL};
 use std::{
@@ -24,9 +18,6 @@ use std::{
 #[link(name = "AVFoundation", kind = "framework")]
 unsafe extern "C" {
     static AVPlayerItemDidPlayToEndTimeNotification: *const AnyObject;
-    static AVLayerVideoGravityResizeAspect: *const AnyObject;
-    static AVLayerVideoGravityResizeAspectFill: *const AnyObject;
-    static AVLayerVideoGravityResize: *const AnyObject;
 }
 
 #[derive(Debug)]
@@ -94,17 +85,16 @@ impl MediaTime {
     }
 }
 
-pub struct VideoOutput {
+pub(crate) struct AudioOutput {
     player: Retained<AnyObject>,
     item: Retained<AnyObject>,
-    output: Option<Retained<AnyObject>>,
     notifications: Retained<AnyObject>,
     end_observer: Retained<AnyObject>,
     ended: Arc<AtomicBool>,
     held: Arc<AtomicBool>,
 }
 
-impl VideoOutput {
+impl AudioOutput {
     pub(crate) fn control(&self) -> crate::control::PlaybackControl {
         crate::control::PlaybackControl(self.player.clone(), self.held.clone())
     }
@@ -167,38 +157,17 @@ impl VideoOutput {
         Ok(receive)
     }
 
-    pub fn open(url: &str) -> Result<Self, OutputError> {
-        Self::open_tracks(url, true)
-    }
-
     pub(crate) fn open_audio(url: &str) -> Result<Self, OutputError> {
-        Self::open_tracks(url, false)
-    }
-
-    fn open_tracks(url: &str, video: bool) -> Result<Self, OutputError> {
         let url = NSURL::URLWithString(&NSString::from_str(url))
             .ok_or_else(|| OutputError::new(ErrorCode::InvalidProps, "invalid media URL"))?;
         let item_class = class(c"AVPlayerItem")?;
         let player_class = class(c"AVPlayer")?;
-        let output_class = class(c"AVPlayerItemVideoOutput")?;
         let notification_class = class(c"NSNotificationCenter")?;
-        let attributes = pixel_attributes();
-        // SAFETY: These are public AVFoundation constructors; the CF dictionary is toll-free bridged.
-        let (item, player, output) = unsafe {
+        // SAFETY: Public AVFoundation constructors for the audio-only source.
+        let (item, player) = unsafe {
             let item: Retained<AnyObject> = msg_send![item_class, playerItemWithURL: &*url];
-            let output = if video {
-                let output: Retained<AnyObject> = msg_send![
-                    msg_send![output_class, alloc],
-                    initWithPixelBufferAttributes: CFRetained::as_ptr(&attributes).as_ptr().cast::<AnyObject>()
-                ];
-                let _: () = msg_send![&output, setSuppressesPlayerRendering: Bool::YES];
-                let _: () = msg_send![&item, addOutput: &*output];
-                Some(output)
-            } else {
-                None
-            };
             let player: Retained<AnyObject> = msg_send![player_class, playerWithPlayerItem: &*item];
-            (item, player, output)
+            (item, player)
         };
         let ended = Arc::new(AtomicBool::new(false));
         let notify_end = ended.clone();
@@ -217,45 +186,11 @@ impl VideoOutput {
         Ok(Self {
             player,
             item,
-            output,
             notifications,
             end_observer,
             ended,
             held: Arc::new(AtomicBool::new(false)),
         })
-    }
-
-    pub fn set_paused(&self, paused: bool, rate: f32) -> Result<(), OutputError> {
-        if !rate.is_finite() || rate <= 0.0 {
-            return Err(OutputError::new(
-                ErrorCode::InvalidProps,
-                "rate must be finite and positive",
-            ));
-        }
-        // SAFETY: The retained AVPlayer accepts playback control on its owning thread.
-        unsafe {
-            if paused {
-                let _: () = msg_send![&self.player, pause];
-            } else {
-                let _: () = msg_send![&self.player, playImmediatelyAtRate: rate];
-            }
-        }
-        Ok(())
-    }
-
-    pub fn set_volume(&self, volume: f32, muted: bool) -> Result<(), OutputError> {
-        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
-            return Err(OutputError::new(
-                ErrorCode::InvalidProps,
-                "volume must be within 0..1",
-            ));
-        }
-        // SAFETY: Public setters on this instance's retained AVPlayer.
-        unsafe {
-            let _: () = msg_send![&self.player, setVolume: volume];
-            let _: () = msg_send![&self.player, setMuted: Bool::new(muted)];
-        }
-        Ok(())
     }
 
     pub fn position_ms(&self) -> Option<u64> {
@@ -275,101 +210,20 @@ impl VideoOutput {
         status == WAITING
     }
 
-    pub fn attach_original(&self, layer: &OriginalLayer) {
-        // SAFETY: This caller-created public AVPlayerLayer shares this same player and decoded clock.
-        unsafe {
-            let _: () = msg_send![&layer.0, setPlayer: &*self.player];
-            if let Some(output) = &self.output {
-                let _: () = msg_send![output, setSuppressesPlayerRendering: Bool::NO];
-            }
-        }
-    }
-
     pub fn duration_ms(&self) -> Option<u64> {
         // SAFETY: Public CMTime getter on this retained AVPlayerItem.
         let time: MediaTime = unsafe { msg_send![&self.item, duration] };
         time.milliseconds()
     }
-
-    pub fn next_frame(&self) -> Result<Option<DecodedFrame>, OutputError> {
-        let Some(output) = &self.output else {
-            return Ok(None);
-        };
-        const ITEM_STATUS_FAILED: isize = 2;
-        // SAFETY: Public AVFoundation status, time and frame-output methods on retained objects.
-        unsafe {
-            let status: isize = msg_send![&self.item, status];
-            if status == ITEM_STATUS_FAILED {
-                let error: Option<Retained<AnyObject>> = msg_send![&self.item, error];
-                let detail = error.map(|error| {
-                    let description: Retained<NSString> = msg_send![&error, localizedDescription];
-                    description.to_string()
-                });
-                return Err(OutputError::new(
-                    ErrorCode::DecoderFailed,
-                    detail.unwrap_or_else(|| "AVPlayerItem failed without NSError".into()),
-                ));
-            }
-            let now: MediaTime = msg_send![&self.player, currentTime];
-            let available: Bool = msg_send![output, hasNewPixelBufferForItemTime: now];
-            if !available.as_bool() {
-                return Ok(None);
-            }
-            let mut displayed = MediaTime::default();
-            let buffer: *mut CVPixelBuffer = msg_send![
-                output,
-                copyPixelBufferForItemTime: now,
-                itemTimeForDisplay: &mut displayed
-            ];
-            let Some(buffer) = NonNull::new(buffer) else {
-                return Ok(None);
-            };
-            let buffer = CFRetained::from_raw(buffer);
-            let pts_ms = displayed.milliseconds().ok_or_else(|| {
-                OutputError::new(ErrorCode::FrameUnavailable, "decoded frame has invalid PTS")
-            })?;
-            DecodedFrame::new(buffer, pts_ms).map(Some)
-        }
-    }
 }
 
-#[derive(Clone)]
-pub struct OriginalLayer(Retained<objc2_quartz_core::CALayer>);
-
-impl OriginalLayer {
-    pub fn new() -> Result<Self, OutputError> {
-        // SAFETY: AVPlayerLayer is a public CALayer subclass; the framework is linked by this crate.
-        Ok(Self(unsafe { msg_send![class(c"AVPlayerLayer")?, layer] }))
-    }
-
-    pub fn layer(&self) -> Retained<objc2_quartz_core::CALayer> {
-        self.0.clone()
-    }
-
-    pub fn set_resize_mode(&self, mode: hongguo_nsh_video_api::ResizeMode) {
-        use hongguo_nsh_video_api::ResizeMode;
-        // SAFETY: The factory guarantees this is an AVPlayerLayer and these are its documented gravity values.
-        unsafe {
-            let value = match mode {
-                ResizeMode::Contain => AVLayerVideoGravityResizeAspect,
-                ResizeMode::Cover => AVLayerVideoGravityResizeAspectFill,
-                ResizeMode::Stretch => AVLayerVideoGravityResize,
-            };
-            let _: () = msg_send![&self.0, setVideoGravity: value];
-        }
-    }
-}
-
-impl Drop for VideoOutput {
+impl Drop for AudioOutput {
     fn drop(&mut self) {
         // SAFETY: Stop callbacks and remove the output before releasing this instance's objects.
         unsafe {
             let _: () = msg_send![&self.notifications, removeObserver: &*self.end_observer];
             let _: () = msg_send![&self.player, pause];
             let _: () = msg_send![&self.item, cancelPendingSeeks];
-            if let Some(output) = &self.output {
-                let _: () = msg_send![&self.item, removeOutput: &**output];
-            }
             let _: () = msg_send![&self.player, replaceCurrentItemWithPlayerItem: std::ptr::null_mut::<AnyObject>()];
         }
     }
@@ -382,26 +236,6 @@ fn class(name: &std::ffi::CStr) -> Result<&'static AnyClass, OutputError> {
             format!("AVFoundation class {name:?} unavailable"),
         )
     })
-}
-
-fn pixel_attributes() -> CFRetained<CFDictionary<CFString, CFType>> {
-    let format = CFNumber::new_i32(kCVPixelFormatType_32BGRA as i32);
-    let surface = CFDictionary::<CFString, CFType>::empty();
-    // SAFETY: CoreVideo exports process-lifetime CFString constants for these documented attributes.
-    unsafe {
-        CFDictionary::from_slices(
-            &[
-                kCVPixelBufferPixelFormatTypeKey,
-                kCVPixelBufferMetalCompatibilityKey,
-                kCVPixelBufferIOSurfacePropertiesKey,
-            ],
-            &[
-                format.as_ref(),
-                CFBoolean::new(true).as_ref(),
-                surface.as_ref(),
-            ],
-        )
-    }
 }
 
 #[cfg(test)]

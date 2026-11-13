@@ -11,7 +11,9 @@ Android、iOS，Linux/Web 后续迭代。开发前另读 `nsh` 与 `nsh-design-g
 
 Tauri、GPUI、NSH 的播放服务固定使用内置解码能力，无壳选择开关或系统 HEVC 探测分支。
 `PlayResponse.direct` 表示内置视频解码，
-系统媒体只读取原 MP4 的音轨视图并提供时钟；本地 H.264 沿用系统播放。
+系统媒体只读取原 MP4 的音轨视图并提供时钟；H.264 不参与播放或下载选流。
+下载记录中的旧文件失效时重新获取在线原流，显式打开不支持的本地文件则报错。
+同规格原流无损合并；异规格素材统一编码为 HEVC，完成封存普通 MP4 后再拼接。
 禁止恢复兼容播放转码、`.play.mp4`、grow/HLS 播放链路。
 
 **动手前先读两个 skill：用户级 `dev-habits`（跨项目工程宪法，经 Skill 工具调用）→ `.agents/skills/hongguo-dev/SKILL.md`（本项目规范，只写 dev-habits 没有的内容）**，两者互补缺一不可，再按任务读对应参考文档：
@@ -42,20 +44,20 @@ Tauri、GPUI、NSH 的播放服务固定使用内置解码能力，无壳选择�
 - `crates/hongguo-stream/` 在线流契约：内存渐进流（`ProgressiveStream`）、按 (vid, 档位) 分条的缓存（`StreamCache`）、Range 应答（`serve`）+ `range`（RangeSpec/ProtocolResponse）、进程级 `cache()` 单例。**填充侧（service）与应答侧（protocol）共用的上游**——两侧都只往下依赖它，禁止反向。无 tauri 依赖
 - `crates/hongguo-bytevc2/` ByteVC2（`bvc2`）识别、参数集/样本 Annex-B 转换（对照 librempeg `cbs_bvc2` + 官方 `convertByteVC2Extradata`）与解帧（进程内 vvdec，`oxideav` 为回退）；两种解核共用的 8-bit I420 帧与缓冲池（`DecodedFrame` / `FramePool`）也在这里
 - `crates/hongguo-softdec/` 进程内软解直播放会话，两壳共用、不分编码：读 `moov` 建样本索引、关键帧跳转、「只剩音轨」的 MP4 视图、解核分派（HEVC / ByteVC1 → `rusty_h265`，ByteVC2 → `hongguo-bytevc2` 的 vvdec）。数据由调用方回调供给，不碰网络与解密；`tests/fixtures/` 是合成的标准码流小样本。无 tauri/gpui 依赖
-- `crates/hongguo-media/` 媒体公共底座：demux / hevc / mp4（MP4 写出层）/ mux（H.264 封装）/ remux / transcode / codec_probe / disk_space / heif / backend；`tests/fixtures/` 放随代码走的样本。无 tauri 依赖
+- `crates/hongguo-media/` 媒体公共底座：demux / hevc / mp4（MP4 写出层）/ mux（HEVC 封装，`ArchiveHevc.finish` 封存普通 faststart MP4）/ remux / transcode / codec_probe / disk_space / heif / backend；`tests/fixtures/` 放随代码走的样本。无 tauri 依赖
 - `crates/hongguo-media-platform-api/` 平台媒体契约：`PlatformRequest` / 共享码率策略（`bitrate_for`）。实现 crate 的公共上游；本 crate 不依赖任何实现，引用方向反了就是 Cargo 依赖环
 - `crates/hongguo-media-platform-macos/` macOS 平台实现：VideoToolbox 转码链（硬编优先、软编回落）；平台依赖全在 target 表，`#![cfg(target_os = "macos")]`，异目标空壳
-- `crates/hongguo-media-platform-windows/` Windows 平台实现：Media Foundation 转码链（HEVC 硬解 → H.264 硬编）+ WIC 封面静图；`#![cfg(target_os = "windows")]`，异目标空壳
-- `crates/hongguo-media-platform-android/` Android 平台实现：MediaCodec HEVC 解 → H.264 编（硬/软由系统选，契约同 media-platform-api）；`ndk` 依赖只进 android target 表，`#![cfg(target_os = "android")]`，异目标空壳
-- `crates/hongguo-media-platform/` 平台层门面：按编译目标 re-export 实现 crate + 分派无状态操作（转码 / 探测 / 清缓存 / HEIC 封面 `platform::cover`），`ffmpeg`（外部进程的探测与执行）与 `capability`（解码能力探测）聚合并留在此；转码两级分流编排仍在 service 的 `transcode_service::pipeline`。`platform::transcode_h264_for_tests` 由 feature `test-support` 门控（壳 e2e 用）。无 tauri/gpui 依赖
+- `crates/hongguo-media-platform-windows/` Windows 平台实现：Media Foundation HEVC 归档编解码 + WIC 封面静图；编码能力以真实 HEVC 编码探测，`#![cfg(target_os = "windows")]`，异目标空壳
+- `crates/hongguo-media-platform-android/` Android 平台实现：MediaCodec HEVC 归档编解码（硬/软由系统选，契约同 media-platform-api）；`ndk` 依赖只进 android target 表，`#![cfg(target_os = "android")]`，异目标空壳
+- `crates/hongguo-media-platform/` 平台层门面：按编译目标 re-export 实现 crate + 分派无状态操作（HEVC 归档转码 / 探测 / 清缓存 / HEIC 封面 `platform::cover`），`ffmpeg`（外部进程的探测与执行）与 `capability`（实际编码能力探测）聚合并留在此；转码两级分流编排仍在 service 的 `transcode_service::pipeline`。`platform::transcode_hevc_for_tests` 由 feature `test-support` 门控（壳 e2e 用）。无 tauri/gpui 依赖
 - `crates/hongguo-protocol/` 自定义 URI 协议供数逻辑：`url`（按平台的 URL 形态与编解码）+ `local` + `cover`（HEIC 封面三级转码阶梯）+ `pool`（常驻工作池与 panic 加固）+ `serve`（三路供数入口，产出元组）。**无 tauri 依赖**——HTTP 组装与 Builder 注册是壳胶水（hongguo-tauri 的 `protocol.rs`）
 - `crates/hongguo-service/` 业务编排层：`download` / `play` / `merge` / `login` / `series` / `settings` / `storage` / `transcode` / `capability` / `follow` / `history` 各有 `*_service`，另有 `device` 模块（设备档案）+ 全局业务状态 `AppState`（壳经 Tauri `manage` 注入，GPUI 壳直接构造）+ 共用任务运行时 `runtime`（后台任务任意线程可派发）+ 业务事件总线 `events`（`ServiceEvent`，壳订阅适配）。**不依赖任何 UI 框架**（源码静态闸扫 tauri 引用）：进度与状态只发布事件，发送机制由壳决定
 - `crates/hongguo-tauri/` Tauri 装配层：`commands`（IPC 薄层）、`bootstrap`（启动装配）、`diagnostics`（panic 取证）、`protocol.rs`（协议注册胶水）、`events.rs`（service 事件 → 前端事件的原名原载荷转发）、`testing`（跨层 e2e 与守卫元测试）——`prepare()` 产出装好的 Builder，`build(generate_context!)` 留在 crates/hongguo-tauri-app
 - `crates/hongguo-player-api/` 回放契约（无 UI、无平台实现依赖）：`PlayerEvent` / `PlaySource` / `PlayerLike`（统一控制面）/ `PresenterBounds` / `HostWindow`。系统播放器两端实现都吃这一份
-- `crates/hongguo-player-macos/` macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数；另有内置软解直播放（`direct.rs` / `cv.rs`：AVPlayer 只播「只剩音轨」视图并充当时钟，`hongguo-softdec` 解出的帧经 `AVSampleBufferDisplayLayer` 上屏，门面入口 `hongguo_player::open_direct`）；`#![cfg(target_os = "macos")]`，objc2/AppKit 依赖全在本 crate 的 target 表
-- `crates/hongguo-player-windows/` Windows 播放器：HEVC/ByteVC1/ByteVC2 固定由 `hongguo-softdec` 解码，BGRA 帧写入同画布视频 quad；MediaEngine 只放音轨视图并提供时钟。本地 H.264 保留 frame-server 系统播放。内置路径不设环境开关；Windows 真机运行仍待验。`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
+- `crates/hongguo-player-macos/` macOS 内置软解播放器（`direct.rs` / `cv.rs`）：AVPlayer 只播音轨视图并充当时钟，`hongguo-softdec` 解出的帧经 `AVSampleBufferDisplayLayer` 上屏，唯一门面入口 `hongguo_player::open_direct`；无 AVPlayerLayer 系统视频路径。`#![cfg(target_os = "macos")]`，objc2/AppKit 依赖全在本 crate 的 target 表
+- `crates/hongguo-player-windows/` Windows 播放器：HEVC/ByteVC1/ByteVC2 固定由 `hongguo-softdec` 解码，BGRA 帧写入同画布视频 quad；MediaEngine 只放音轨视图并提供时钟，无系统视频解码路径。Windows 真机运行仍待验。`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
 - `crates/hongguo-player/` 系统播放器门面：按编译目标分派到上面两个实现 crate，并把契约原样转出——壳只依赖它
-- `crates/hongguo-gpui/` 完整 GPUI 壳：直接构造 `AppStateInner` 并调用 service/api，**操作与 Tauri 客户端一致**（不复制业务；`make gpui` 运行）。播放经 `hongguo-player` 系统播放器（macOS AVPlayer / Windows MediaEngine frame-server，视频 quad 与 GPUI 同画布）；service 的 async 族由壳内常驻 tokio 运行时经 oneshot 桥接，业务事件经 `events.rs` 事件泵（broadcast→mpsc）接进视图
+- `crates/hongguo-gpui/` 完整 GPUI 壳：直接构造 `AppStateInner` 并调用 service/api，**操作与 Tauri 客户端一致**（不复制业务；`make gpui` 运行）。播放经 `hongguo-player` 内置软解，系统媒体只供音轨与时钟；service 的 async 族由壳内常驻 tokio 运行时经 oneshot 桥接，业务事件经 `events.rs` 事件泵（broadcast→mpsc）接进视图
 - Rust 侧已 workspace 化：根 `Cargo.toml`（members / `resolver` / `[patch]` / `[profile]` 都在根），`Cargo.lock`、`target/`、`vendor/` 也都在仓库根；cargo 一律在**仓库根**跑（`--workspace`）。`vendor/` 被 `[workspace] exclude` 排除，不参与 lint/test/format
 - `captures/` 抓包工具与数据（`addon.py` 抓包 / `audit.py` 参数审计），`docs/` 仓库文档，`scripts/` 构建辅助脚本
 

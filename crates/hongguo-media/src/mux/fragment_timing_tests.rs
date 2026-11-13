@@ -29,12 +29,12 @@ fn singleton_video_and_he_aac_keep_their_real_sample_durations() {
         samples: vec![(0.0, vec![1]), (2048.0 / 44_100.0, vec![2])],
         end_secs: 4096.0 / 44_100.0,
     };
-    let mut movie = GrowingH264::create(&path, 64, 64, Some(&audio), 1.0).unwrap();
+    let mut movie = ArchiveHevc::create(&path, 64, 64, Some(&audio), 1.0).unwrap();
     movie
         .push(
             &[super::tests::idr(0.0)],
             &audio.samples[..1],
-            FragmentTiming {
+            ArchiveTiming {
                 video_end_secs: 1.0 / 30.0,
                 audio_end_secs: Some(audio.samples[1].0),
             },

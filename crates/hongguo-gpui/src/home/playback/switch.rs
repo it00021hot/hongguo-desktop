@@ -354,7 +354,6 @@ impl super::HomeView {
             // 借用已解除：泵消息重入也只是普通的绘制/无障碍路径。
             let opened = crate::platform::open_system_player(
                 spec.source,
-                spec.direct,
                 spec.start_secs,
                 spec.rate,
                 spec.events,

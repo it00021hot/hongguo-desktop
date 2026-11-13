@@ -15,6 +15,7 @@ import {
   writeVolume,
 } from '@/utils/playback-prefs';
 import type { OnlineProgress, VideoDefinition } from '@/service/schema';
+import { directVideoSource } from './direct-video';
 
 /** 取流失败自动重试的节奏：失败页必须持续自动恢复，永不退回死报错。前 4 拍快节奏扛瞬时抖动，之后 30s 一拍长期陪跑。 */
 const AUTO_RETRY_FAST_ATTEMPTS = 4;
@@ -83,7 +84,6 @@ export function usePlaybackSource(params: {
   const [activeDefinition, setActiveDefinition] = useState(0);
   const [automaticDefinition, setAutomaticDefinition] = useState(true);
   const [definitions, setDefinitions] = useState<VideoDefinition[]>([]);
-  const [isDirect, setIsDirect] = useState(false);
 
   const { mutate: play } = usePlay();
 
@@ -177,14 +177,15 @@ export function usePlaybackSource(params: {
           setSrcKey(episodeKey);
           // 只提供 H.264、没标编码或认不出的编码：内置解码器不解，播放也不回落到别的路径。
           // 这一种用双语词条如实告知；其余在线失败沿用后端原文。
-          const codecUnsupported = res.errorKind === 'error.codecUnsupported';
+          const codecUnsupported =
+            res.errorKind === 'error.codecUnsupported' ||
+            (!res.error && (!res.direct || !directVideoSource(res.url)));
           setRetryFutile(codecUnsupported);
           setError(codecUnsupported ? t('error.codecUnsupported') : res.error || null);
-          setSrc(res.error ? null : res.url);
+          setSrc(res.error || codecUnsupported ? null : res.url);
           setActiveDefinition(res.definition);
           setAutomaticDefinition(res.automaticDefinition);
           setDefinitions(res.definitions);
-          setIsDirect(res.direct);
           // 续播位置在 metadata 加载后 seek，优先级：本会话播放点 > 本地 resumeAt > 云端历史提示
           pendingSeek.current = res.error
             ? 0
@@ -202,7 +203,6 @@ export function usePlaybackSource(params: {
           setRetryFutile(isAppInvokeError(e) && e.kind === 'error.playbackMaterials');
           setError(e.message);
           setSrc(null);
-          setIsDirect(false);
         },
       },
     );
@@ -293,7 +293,6 @@ export function usePlaybackSource(params: {
     activeDefinition,
     automaticDefinition,
     definitions,
-    isDirect,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,

@@ -26,8 +26,6 @@ pub(crate) struct Shared {
     pub generation: AtomicU64,
     pub revision: AtomicU64,
     pub stop: AtomicBool,
-    pub frame: AtomicBool,
-    pub detached: AtomicU64,
     pub direct: Mutex<Option<crate::direct::DirectSlot>>,
     pub audio_position: AtomicU64,
     pub audio_seeking: AtomicBool,
@@ -47,8 +45,6 @@ impl Shared {
             generation: AtomicU64::new(0),
             revision: AtomicU64::new(0),
             stop: AtomicBool::new(false),
-            frame: AtomicBool::new(false),
-            detached: AtomicU64::new(u64::MAX),
             direct: Mutex::new(None),
             audio_position: AtomicU64::new(0),
             audio_seeking: AtomicBool::new(false),
@@ -65,6 +61,13 @@ impl Shared {
         let _ = self.wake.try_send(());
     }
     pub fn props(&self, props: VideoProps) -> Result<(), String> {
+        if props
+            .source
+            .as_ref()
+            .is_some_and(|source| source.frame_source.as_deref().is_none_or(str::is_empty))
+        {
+            return Err("Android playback requires a frame source".into());
+        }
         if !props.rate.is_finite()
             || props.rate <= 0.0
             || !props.volume.is_finite()
@@ -81,7 +84,6 @@ impl Shared {
             self.generation.fetch_add(1, Ordering::AcqRel);
             mailbox.size = None;
             mailbox.seek = None;
-            self.frame.store(false, Ordering::Release);
             self.direct.lock().expect("Android direct source").take()
         } else {
             None

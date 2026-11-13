@@ -28,7 +28,7 @@ impl super::SettingsView {
             Some(cap) if !cap.platform_encoder && !cap.has_ffmpeg
         );
         let capability_tag = match &self.capability {
-            Some(cap) if cap.platform_hw_encoder || cap.h264_hw_encoder => {
+            Some(cap) if cap.platform_hw_encoder || cap.hevc_hw_encoder => {
                 Tag::success().child(self.backend_label())
             }
             Some(cap) if cap.platform_encoder || cap.has_ffmpeg => {

@@ -55,7 +55,7 @@ impl super::SettingsView {
         match &self.capability {
             None => crate::i18n::t("common.loading"),
             Some(cap) => {
-                if cap.platform_hw_encoder || cap.h264_hw_encoder {
+                if cap.platform_hw_encoder || cap.hevc_hw_encoder {
                     crate::i18n::t("settings.backendFfmpegHw")
                 } else if cap.platform_encoder || cap.has_ffmpeg {
                     crate::i18n::t("settings.backendFfmpegSw")

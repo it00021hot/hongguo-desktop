@@ -511,7 +511,7 @@ impl Driver {
                             .ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0),
                         "开始流式处理",
                     )?;
-                    // 同步 MFT 也补发 START_OF_STREAM：实测 h264_mf 不发这条会把输入帧当不存在，只吐 SPS/PPS/AUD 不吐 slice
+                    // 同步 MFT 的输出格式变化后也必须恢复流状态。
                     hr(
                         s.xform
                             .ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0),

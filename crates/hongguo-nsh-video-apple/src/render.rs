@@ -18,7 +18,6 @@ pub(crate) struct Completed {
 
 pub(crate) struct Renderer {
     surface: MetalSurface,
-    frames: crate::MetalFrames,
     pipeline: Option<Pipeline>,
     options: Option<Enhancement>,
     viewport: Viewport,
@@ -30,7 +29,6 @@ pub(crate) struct Renderer {
 impl Renderer {
     pub async fn new(layer: Retained<CAMetalLayer>) -> Result<Self, OutputError> {
         let surface = MetalSurface::new(layer).await?;
-        let frames = crate::MetalFrames::new(surface.device())?;
         let failure = Arc::new(Mutex::new(None));
         let lost = failure.clone();
         surface
@@ -47,7 +45,6 @@ impl Renderer {
             }));
         Ok(Self {
             surface,
-            frames,
             pipeline: None,
             options: None,
             viewport: Viewport::default(),
@@ -153,10 +150,6 @@ impl Renderer {
         target.present();
         self.started = Some((epoch, started));
         Ok(true)
-    }
-
-    pub fn import(&self, frame: crate::DecodedFrame) -> Result<ImportedFrame, OutputError> {
-        self.frames.import(frame)
     }
 
     pub fn upload(&self, frame: &hongguo_nsh_video_api::frames::PixelFrame) -> ImportedFrame {

@@ -54,16 +54,14 @@ pub(super) async fn prepare(
     )) {
         let path = hongguo_protocol::local::resolve_path(path)
             .map_err(|error| AppError::Media(error.into()))?;
-        session.media.playback_file(&path, response.direct)
+        session.media.playback_file(&path)
     } else if let Some(path) = source.strip_prefix(&hongguo_protocol::scheme_base(
         hongguo_protocol::STREAM_SCHEME,
     )) {
         let (definition, vid) = hongguo_protocol::parse_stream_path(path)
             .ok_or_else(|| AppError::Media("invalid stream source".into()))?;
         wait_for_stream(vid.to_owned(), definition).await?;
-        session
-            .media
-            .online(vid.to_owned(), definition, response.direct)
+        session.media.online(vid.to_owned(), definition)
     } else {
         return Err(AppError::Media("unexpected playback source".into()));
     }
@@ -119,7 +117,11 @@ pub(super) async fn prepare(
 
 fn check_response(response: &PlayResponse) -> AppResult<()> {
     if response.error.is_empty() {
-        Ok(())
+        if response.direct {
+            Ok(())
+        } else {
+            Err(AppError::CodecUnsupported(response.codec.clone()))
+        }
     } else if response.error_kind == AppError::CodecUnsupported(String::new()).i18n_key() {
         Err(AppError::CodecUnsupported(response.error.clone()))
     } else {
@@ -185,6 +187,11 @@ mod tests {
             Err(AppError::Media(_))
         ));
         response.error.clear();
+        assert!(matches!(
+            super::check_response(&response),
+            Err(AppError::CodecUnsupported(_))
+        ));
+        response.direct = true;
         assert!(super::check_response(&response).is_ok());
     }
     #[test]

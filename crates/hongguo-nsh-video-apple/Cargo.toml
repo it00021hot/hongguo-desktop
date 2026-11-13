@@ -14,7 +14,5 @@ wgpu = { version = "=29.0.4", default-features = false, features = ["metal", "wg
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSDictionary", "NSString", "NSURL", "NSValue", "NSRunLoop", "NSDate"] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFDictionary", "CFNumber", "CFString"] }
-objc2-core-video = { version = "0.3.2", default-features = false, features = ["CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVMetalTexture", "CVMetalTextureCache", "CVReturn", "objc2", "objc2-metal"] }
-objc2-metal = { version = "0.3.2", default-features = false, features = ["MTLDevice", "MTLTexture", "MTLPixelFormat"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFCGTypes"] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CAMetalLayer", "CATransaction"] }

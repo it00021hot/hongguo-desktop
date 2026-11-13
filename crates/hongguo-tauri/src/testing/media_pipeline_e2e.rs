@@ -1,4 +1,4 @@
-//! 真实短剧文件的端到端验证（仅测试用）：用真实码流验证 ① 索引重写在平台封装器产出的文件上同样成立、② 产物被 `ffprobe` 认成一条完整时间轴、③ ffmpeg 路线的 H.264 能播——合成 fixture 证明不了这些。
+//! 真实短剧文件的端到端验证（仅测试用）：用真实码流验证 ① 索引重写在平台封装器产出的文件上同样成立、② 产物被 `ffprobe` 认成一条完整时间轴、③ ffmpeg 路线的 HEVC 能播——合成 fixture 证明不了这些。
 //!
 //! 全部用例由 `HONGGUO_E2E_DIR` 门控：没设就整体跳过，真实文件不进 `make test-rust`。跑法：`HONGGUO_E2E_DIR=<已解密 mp4 所在目录> HONGGUO_DATA_DIR=<临时目录> cargo test --lib testing::media_pipeline_e2e -- --nocapture`。
 
@@ -315,9 +315,9 @@ fn real_merge_is_accepted_by_ffprobe() {
 }
 
 #[test]
-fn ffmpeg_transcode_produces_playable_h264() {
-    let Some(encoder) = ffmpeg::h264_encoder() else {
-        eprintln!("[e2e] 没探到可用的 H.264 编码器，跳过");
+fn ffmpeg_transcode_produces_playable_hevc() {
+    let Some(encoder) = ffmpeg::hevc_encoder() else {
+        eprintln!("[e2e] 没探到可用的 HEVC 编码器，跳过");
         return;
     };
     let Some(mut all) = episodes() else { return };
@@ -329,7 +329,7 @@ fn ffmpeg_transcode_produces_playable_h264() {
     transcode_with_ffmpeg(&plain_req(&src, &out), &encoder).unwrap();
     let elapsed = started.elapsed();
 
-    assert_eq!(video_codec(&out), "h264", "产物应是 H.264");
+    assert_eq!(video_codec(&out), "hevc", "产物应是 HEVC");
     assert_eq!(audio_codec(&out), "aac", "音轨应直通保留为 AAC");
 
     let source = media_seconds(&src);
@@ -347,7 +347,7 @@ fn ffmpeg_transcode_produces_playable_h264() {
 }
 
 #[test]
-fn platform_pipeline_produces_playable_h264() {
+fn platform_pipeline_produces_playable_hevc() {
     let Some(mut all) = episodes() else { return };
     let src = all.swap_remove(0);
     let is_hevc = hongguo_media::demux::demux_file(&src)
@@ -364,7 +364,7 @@ fn platform_pipeline_produces_playable_h264() {
     let dir = scratch("platform-vt-pipeline");
     let out = dir.join("转码.mp4");
 
-    match hongguo_media_platform::platform::transcode_h264_for_tests(
+    match hongguo_media_platform::platform::transcode_hevc_for_tests(
         &hongguo_media_platform::platform::PlatformRequest {
             input: &src,
             output: &out,
@@ -377,7 +377,7 @@ fn platform_pipeline_produces_playable_h264() {
         None => panic!("HEVC 源却返回不可用"),
     }
 
-    assert_eq!(video_codec(&out), "h264", "产物应是 H.264");
+    assert_eq!(video_codec(&out), "hevc", "产物应是 HEVC");
     let src_has_audio = hongguo_media::demux::demux_file(&src)
         .map(|d| d.audio_track().is_some())
         .unwrap_or(false);
@@ -401,8 +401,8 @@ fn platform_pipeline_produces_playable_h264() {
 }
 
 #[test]
-fn platform_transcode_produces_playable_h264() {
-    if !hongguo_media_platform::platform::h264_hw_encoder_available() {
+fn platform_transcode_produces_playable_hevc() {
+    if !hongguo_media_platform::platform::hevc_hw_encoder_available() {
         eprintln!("[e2e] 平台硬编不可用，跳过");
         return;
     }
@@ -423,7 +423,7 @@ fn platform_transcode_produces_playable_h264() {
     let out = dir.join("转码.mp4");
 
     let started = Instant::now();
-    match hongguo_media_platform::platform::transcode_h264(
+    match hongguo_media_platform::platform::transcode_hevc(
         &hongguo_media_platform::platform::PlatformRequest {
             input: &src,
             output: &out,
@@ -437,7 +437,7 @@ fn platform_transcode_produces_playable_h264() {
     }
     let elapsed = started.elapsed();
 
-    assert_eq!(video_codec(&out), "h264", "产物应是 H.264");
+    assert_eq!(video_codec(&out), "hevc", "产物应是 HEVC");
     let src_has_audio = hongguo_media::demux::demux_file(&src)
         .map(|d| d.audio_track().is_some())
         .unwrap_or(false);
@@ -460,8 +460,8 @@ fn platform_transcode_produces_playable_h264() {
 
 #[test]
 fn ffmpeg_output_is_decodable() {
-    let Some(encoder) = ffmpeg::h264_encoder() else {
-        eprintln!("[e2e] 没探到可用的 H.264 编码器，跳过");
+    let Some(encoder) = ffmpeg::hevc_encoder() else {
+        eprintln!("[e2e] 没探到可用的 HEVC 编码器，跳过");
         return;
     };
     let Some(all) = episodes() else { return };
@@ -497,7 +497,7 @@ fn compat_merge_end_to_end_via_ffmpeg() {
     let mut transcoded = Vec::new();
     for (i, src) in inputs.iter().enumerate() {
         let target = dir.join(format!("{:03}.mp4", i + 1));
-        let e2e_enc = ffmpeg::h264_encoder().unwrap();
+        let e2e_enc = ffmpeg::hevc_encoder().unwrap();
         transcode_with_ffmpeg(&plain_req(src, &target), &e2e_enc).unwrap();
         transcoded.push(target);
     }
@@ -512,7 +512,7 @@ fn compat_merge_end_to_end_via_ffmpeg() {
         (got - expected).abs() < expected * 0.02,
         "兼容合并产物时长 {got:.2}s 应对齐各集之和 {expected:.2}s"
     );
-    assert_eq!(video_codec(&out), "h264");
+    assert_eq!(video_codec(&out), "hevc");
     assert_eq!(audio_codec(&out), "aac");
     println!("[e2e] 兼容合并 {count} 集：{got:.2}s（各集之和 {expected:.2}s）");
     let _ = std::fs::remove_dir_all(&dir);
@@ -520,8 +520,8 @@ fn compat_merge_end_to_end_via_ffmpeg() {
 
 #[test]
 fn compat_merge_unifies_mixed_resolutions_by_scaling() {
-    let Some(encoder) = ffmpeg::h264_encoder() else {
-        eprintln!("[e2e] 没探到可用的 H.264 编码器，跳过");
+    let Some(encoder) = ffmpeg::hevc_encoder() else {
+        eprintln!("[e2e] 没探到可用的 HEVC 编码器，跳过");
         return;
     };
     let Some(files) = episodes() else { return };
@@ -596,9 +596,9 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
 
 #[test]
 fn the_installed_ffmpeg_is_actually_used_by_the_transcode_path() {
-    let Some(encoder) = ffmpeg::h264_encoder() else {
+    let Some(encoder) = ffmpeg::hevc_encoder() else {
         eprintln!(
-            "[e2e] 没探到可用的 H.264 编码器，跳过：{:?}",
+            "[e2e] 没探到可用的 HEVC 编码器，跳过：{:?}",
             ffmpeg::ffmpeg_path()
         );
         return;
@@ -612,17 +612,17 @@ fn the_installed_ffmpeg_is_actually_used_by_the_transcode_path() {
     let cap = hongguo_media_platform::capability::probe::detect();
     if cap.platform_encoder {
         assert!(
-            !cap.has_ffmpeg && !cap.h264_hw_encoder,
+            !cap.has_ffmpeg && !cap.hevc_hw_encoder,
             "平台编码层可用时 ffmpeg 兜底层应整层跳过，实际 has_ffmpeg={} hw={}",
             cap.has_ffmpeg,
-            cap.h264_hw_encoder
+            cap.hevc_hw_encoder
         );
     } else {
         assert_eq!(cap.has_ffmpeg, ffmpeg::ffmpeg_path().is_some());
-        assert_eq!(cap.h264_hw_encoder, encoder.hardware);
+        assert_eq!(cap.hevc_hw_encoder, encoder.hardware);
     }
     println!(
         "[e2e] 后端 = {}（硬件={}），能力 = hasFfmpeg:{} hw:{}",
-        backend.transcode_with, encoder.hardware, cap.has_ffmpeg, cap.h264_hw_encoder
+        backend.transcode_with, encoder.hardware, cap.has_ffmpeg, cap.hevc_hw_encoder
     );
 }

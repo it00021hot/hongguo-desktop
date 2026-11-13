@@ -146,13 +146,15 @@ impl Controller {
                 source_id: source.id.clone(),
             });
             let device = drawing_device(dc)?;
-            self.direct = source
-                .frame_source
-                .as_deref()
-                .map(Direct::open)
-                .transpose()?;
+            let handle = source.frame_source.as_deref().ok_or_else(|| {
+                VideoError::new(
+                    ErrorCode::InvalidProps,
+                    "builtin video frame source is required",
+                )
+            })?;
+            self.direct = Some(Direct::open(handle)?);
             let wake = shared.clone();
-            self.decoder = Some(VideoDecoder::open(&device, source.clone(), move || {
+            self.decoder = Some(VideoDecoder::open(source.clone(), move || {
                 wake.context.redraw()
             })?);
             self.device = Some(device);
@@ -187,7 +189,7 @@ impl Controller {
         if let Some(direct) = &mut self.direct {
             direct.poll_presented()?;
         }
-        self.events(shared, decoder, props, dc)?;
+        self.events(shared, decoder)?;
         if let Some(direct) = &self.direct {
             if !self.loaded
                 && let Some(info) = direct.info()?
@@ -251,54 +253,31 @@ impl Controller {
                     "MediaEngine seek completion timed out",
                 ));
             }
-            if self.raw.is_none() && self.direct.is_none() {
-                let (width, height) = decoder.dimensions()?;
-                self.raw = Some(RawFrame::new(dc, width, height)?);
-            }
             if props.active
                 && let Some(direct) = &mut self.direct
+                && let Some(frame) = direct.frame(decoder.position_ms().unwrap_or(0))?
+                && !direct.was_uploaded(&frame)
             {
-                if let Some(frame) = direct.frame(decoder.position_ms().unwrap_or(0))?
-                    && !direct.was_uploaded(&frame)
+                if self
+                    .raw
+                    .as_ref()
+                    .and_then(RawFrame::metadata)
+                    .is_none_or(|old| (old.width, old.height) != (frame.width, frame.height))
                 {
-                    if self
-                        .raw
-                        .as_ref()
-                        .and_then(RawFrame::metadata)
-                        .is_none_or(|old| (old.width, old.height) != (frame.width, frame.height))
-                    {
-                        self.raw = Some(RawFrame::new(dc, frame.width, frame.height)?);
-                    }
-                    let mut snapshot = shared
-                        .raw
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let raw = self.raw.as_mut().expect("direct raw frame initialized");
-                    raw.upload(&frame)?;
-                    *snapshot = raw.metadata().map(|metadata| RawSnapshot {
-                        device: self.device.as_ref().expect("drawing device").clone(),
-                        texture: raw.texture().clone(),
-                        metadata,
-                    });
-                    direct.uploaded(frame);
+                    self.raw = Some(RawFrame::new(dc, frame.width, frame.height)?);
                 }
-            } else if props.active && self.pending.is_none() {
                 let mut snapshot = shared
                     .raw
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let raw = self.raw.as_mut().expect("raw frame initialized");
-                if raw.capture(decoder.engine())? {
-                    *snapshot = raw.metadata().map(|metadata| RawSnapshot {
-                        device: self
-                            .device
-                            .as_ref()
-                            .expect("decoder drawing device")
-                            .clone(),
-                        texture: raw.texture().clone(),
-                        metadata,
-                    });
-                }
+                let raw = self.raw.as_mut().expect("direct raw frame initialized");
+                raw.upload(&frame)?;
+                *snapshot = raw.metadata().map(|metadata| RawSnapshot {
+                    device: self.device.as_ref().expect("drawing device").clone(),
+                    texture: raw.texture().clone(),
+                    metadata,
+                });
+                direct.uploaded(frame);
             }
             if self.progress_at.elapsed()
                 >= Duration::from_millis(u64::from(props.progress_interval_ms))

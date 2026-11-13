@@ -3,14 +3,7 @@
 
 use std::process::Command;
 
-use hongguo_media::mux::{FragmentTiming, GrowingH264};
-
-/// 16×16 灰色 IDR，离线用 libx264（10fps、keyint=1）生成；去掉与解码无关的 SEI。
-const GREY_IDR: &[u8] = &[
-    0, 0, 0, 1, 0x67, 0x42, 0xc0, 0x0a, 0xdd, 0xec, 0x04, 0x40, 0, 0, 3, 0, 0x40, 0, 0, 5, 0x23,
-    0xc4, 0x89, 0xe0, 0, 0, 0, 1, 0x68, 0xce, 0x0f, 0xc8, 0, 0, 1, 0x65, 0x88, 0x84, 0x3a, 0x26,
-    0x28, 0x0e,
-];
+use hongguo_media::mux::{ArchiveHevc, ArchiveTiming};
 
 #[test]
 fn apple_reads_fragmented_movie_without_doubling_its_duration() {
@@ -18,15 +11,28 @@ fn apple_reads_fragmented_movie_without_doubling_its_duration() {
         std::env::temp_dir().join(format!("hongguo-fragment-duration-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("创建独立测试目录");
     let path = dir.join("one-second.mp4");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../hongguo-softdec/tests/fixtures/hevc-main-64x48-no-audio.mp4");
+    let demux = hongguo_media::demux::demux_file(&source).unwrap();
+    let video = &demux.video_track().unwrap().info;
+    let (sets, length) = hongguo_media::hevc::read_parameter_set_nalus(&source, video).unwrap();
+    let mut first = Vec::new();
+    for set in sets {
+        first.extend([0, 0, 0, 1]);
+        first.extend(set);
+    }
+    let (offset, size) = video.samples[0];
+    let raw = hongguo_media::transcode::read_range(&source, offset, size).unwrap();
+    first.extend(hongguo_media::hevc::to_annexb(&raw, length));
     let frames: Vec<_> = (0..10)
-        .map(|index| (f64::from(index) / 10.0, GREY_IDR.to_vec(), true))
+        .map(|index| (f64::from(index) / 10.0, first.clone(), true))
         .collect();
-    let mut movie = GrowingH264::create(&path, 16, 16, None, 1.0).expect("创建渐进文件");
+    let mut movie = ArchiveHevc::create(&path, 64, 48, None, 1.0).expect("创建分片文件");
     movie
         .push(
             &frames[..3],
             &[],
-            FragmentTiming {
+            ArchiveTiming {
                 video_end_secs: 0.3,
                 audio_end_secs: None,
             },
@@ -36,13 +42,13 @@ fn apple_reads_fragmented_movie_without_doubling_its_duration() {
         .push(
             &frames[3..],
             &[],
-            FragmentTiming {
+            ArchiveTiming {
                 video_end_secs: 1.0,
                 audio_end_secs: None,
             },
         )
         .expect("发布后续片段");
-    drop(movie);
+    movie.finish().expect("封存归档 MP4");
 
     let probe = Command::new("/usr/bin/swift")
         .args([

@@ -93,7 +93,7 @@ impl Runtime {
                 async move {
                     if preview {
                         Ok(DecodeCapability {
-                            h264_hw_encoder: true,
+                            hevc_hw_encoder: true,
                             platform_encoder: true,
                             platform_hw_encoder: true,
                             ..Default::default()
@@ -130,7 +130,7 @@ impl Runtime {
         spawn(async move {
             let outcome = if preview {
                 Ok(DecodeCapability {
-                    h264_hw_encoder: true,
+                    hevc_hw_encoder: true,
                     platform_encoder: true,
                     platform_hw_encoder: true,
                     ..Default::default()
@@ -195,7 +195,7 @@ async fn blocking<T: Send + 'static>(
 pub(super) fn backend_label(capability: Option<DecodeCapability>) -> SharedString {
     tr(match capability {
         None => "common.loading",
-        Some(cap) if cap.platform_hw_encoder || cap.h264_hw_encoder => "settings.backendFfmpegHw",
+        Some(cap) if cap.platform_hw_encoder || cap.hevc_hw_encoder => "settings.backendFfmpegHw",
         Some(cap) if cap.platform_encoder || cap.has_ffmpeg => "settings.backendFfmpegSw",
         Some(_) => "settings.backendUnavailable",
     })

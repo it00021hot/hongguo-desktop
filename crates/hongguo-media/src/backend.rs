@@ -10,7 +10,7 @@ pub enum Backend {
     Platform,
     /// 外部 ffmpeg + **真硬件**编码器（nvenc/qsv/amf/能开 `-hw_encoding` 的 mf）
     FfmpegHw,
-    /// 外部 ffmpeg + 软件编码器（libx264 等）
+    /// 外部 ffmpeg + 软件 HEVC 编码器
     FfmpegSw,
 }
 
@@ -39,7 +39,7 @@ mod tests {
         assert!(Backend::FfmpegHw.is_hardware());
         assert!(
             !Backend::FfmpegSw.is_hardware(),
-            "libx264 经 ffmpeg 也不是硬件"
+            "软件 HEVC 编码不应报告硬件"
         );
     }
 

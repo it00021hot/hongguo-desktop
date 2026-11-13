@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use hongguo_store::paths::compat_cache_dir;
 
-// Format 3 preserves real per-track fragment tail durations and codec sync flags.
-const COMPLETION_FORMAT: &str = "3";
+// Format 4 contains HEVC archives; earlier AVC artifacts must be regenerated.
+const COMPLETION_FORMAT: &str = "4";
 
 /// 某集的缓存文件名（归档/合并默认）。
 pub fn cache_file(series_id: &str, vid_index: u32) -> PathBuf {
@@ -153,6 +153,25 @@ pub fn clear() -> usize {
 mod tests {
     use super::*;
     use hongguo_store::paths::ScopedDataDir;
+
+    #[test]
+    fn format_three_avc_archive_is_not_reused() {
+        let dir = scratch_dir("old-avc-format");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = ScopedDataDir::new(&dir);
+        let path = cache_file("old-avc", 1);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = include_bytes!("../../../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4");
+        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(
+            marker_path(&path),
+            format!("3\n{}\n{}\n", bytes.len(), sha256_hex(bytes)),
+        )
+        .unwrap();
+        assert!(!completion_matches(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn a_valid_old_format_marker_does_not_reuse_an_obsolete_apple_movie() {

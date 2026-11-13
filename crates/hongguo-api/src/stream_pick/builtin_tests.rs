@@ -143,8 +143,8 @@ fn refusal_is_only_reported_for_builtin_mode_and_real_streams() {
 }
 
 #[test]
-fn download_selection_is_untouched_and_still_takes_h264() {
+fn download_selection_refuses_h264_without_a_compatibility_candidate() {
     let model = model(vec![stream("h264", "1080p", Some("h264"))]);
-    let picked = pick_stream_at(&model, None, DecoderCapability::full()).expect("下载口径不变");
-    assert_eq!(picked.url, "h264");
+    assert!(pick_stream_at(&model, None, DecoderCapability::full()).is_none());
+    assert!(menu(&model, DecoderCapability::full()).is_empty());
 }

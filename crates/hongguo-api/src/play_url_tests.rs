@@ -61,8 +61,8 @@ fn response(data: Value) -> Vec<u8> {
 fn batch_model_cache_selects_the_requested_definition_and_can_return_to_auto() {
     let vid = "cached-multiple-definitions";
     let video_model = json!({"video_list": [
-        {"main_url": "https://cdn.example/1080.mp4", "video_meta": {"definition": "1080p", "codec_type": "h264"}},
-        {"main_url": "https://cdn.example/720.mp4", "video_meta": {"definition": "720p", "codec_type": "h264"}}
+        {"main_url": "https://cdn.example/1080.mp4", "video_meta": {"definition": "1080p", "codec_type": "hevc"}},
+        {"main_url": "https://cdn.example/720.mp4", "video_meta": {"definition": "720p", "codec_type": "hevc"}}
     ]})
     .to_string();
     let cap = DecoderCapability::full();
@@ -84,8 +84,8 @@ fn batch_model_cache_selects_the_requested_definition_and_can_return_to_auto() {
 #[test]
 fn single_accepts_both_model_response_shapes() {
     for data in [
-        json!({"video_model": model("h264")}),
-        json!({"single-hit": {"video_model": model("h264")}}),
+        json!({"video_model": model("hevc")}),
+        json!({"single-hit": {"video_model": model("hevc")}}),
     ] {
         let (_, play) = select_single_response(
             &response(data),
@@ -95,7 +95,7 @@ fn single_accepts_both_model_response_shapes() {
             DecoderCapability::full(),
         )
         .unwrap();
-        assert_eq!(play.codec, "h264");
+        assert_eq!(play.codec, "hevc");
         assert_eq!(play.definition, 1080);
         assert!(play.encrypted);
     }

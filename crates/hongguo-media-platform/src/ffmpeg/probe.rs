@@ -1,5 +1,5 @@
 //! ffmpeg 可选加速（分流链的调试层）：完整分流顺序见壳内 `service::transcode_service::pipeline`——**平台硬编（`platform`）→（仅当显式 `HONGGUO_ALLOW_FFMPEG=1`）ffmpeg**。
-//! 默认关闭外部 ffmpeg 进程。打开调试开关后：HEVC → H.264 转码可交给 ffmpeg，可用 NVENC/QSV/AMF/MF 硬编码接近实时；未打开且平台编码器也没有时转码做不了，直接报错。
+//! 默认关闭外部 ffmpeg 进程。打开调试开关后：HEVC → HEVC 转码可交给 ffmpeg，可用 NVENC/QSV/AMF/MF 硬编码接近实时；未打开且平台编码器也没有时转码做不了，直接报错。
 //! 快速合并**不经过这里**（走 `hongguo_media::remux` 的纯 Rust 索引重写拼接，任何后端都不调它）。探测结果全局缓存，只查一次。
 
 use std::path::PathBuf;
@@ -28,10 +28,10 @@ const EXTRA_PATHS: &[&str] = &[
 const EXTRA_PATHS: &[&str] = &["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"];
 
 /// 硬件编码器，从快到慢逐个试。能编出帧就算硬件。
-const HARDWARE_ENCODERS: &[&str] = &["h264_nvenc", "h264_qsv", "h264_amf", "h264_mf"];
+const HARDWARE_ENCODERS: &[&str] = &["hevc_nvenc", "hevc_qsv", "hevc_amf", "hevc_mf"];
 
-/// 软件编码器。libx264 在前：实测它比 h264_mf 更快更小（见 [`pick_encoder`]）。
-const SOFTWARE_ENCODERS: &[&str] = &["libx264", "h264_mf"];
+/// 可用的软件 HEVC 编码器。
+const SOFTWARE_ENCODERS: &[&str] = &["libx265", "hevc_mf"];
 
 /// 递归扫描的层数上限：winget 包目录形如
 /// `Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-9.0.2-full_build/bin/ffmpeg.exe`（中间隔两层），给 6 足够宽松又不至于空转。
@@ -188,13 +188,13 @@ fn probe_command(name: &str) -> Option<PathBuf> {
     out.status.success().then(|| PathBuf::from(name))
 }
 
-/// 选中的 H.264 编码器。
+/// 选中的 HEVC 编码器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Encoder {
     /// ffmpeg 的编码器名，转码时直接当 `-c:v` 的值
     pub name: &'static str,
     /// 是否**真的**走硬件。绝大多数编码器能编出帧就必然是硬件（nvenc/qsv/amf 直接对接厂商驱动）；
-    /// 唯一例外 `h264_mf`——`-hw_encoding` 默认 **false**，编出来的是微软软件 MediaFoundation 编码，当硬件报会让人误以为有 GPU 加速。
+    /// 唯一例外 `hevc_mf`——`-hw_encoding` 默认 **false**，编出来的是微软软件 MediaFoundation 编码，当硬件报会让人误以为有 GPU 加速。
     pub hardware: bool,
 }
 
@@ -217,8 +217,8 @@ pub fn ffmpeg_path() -> Option<PathBuf> {
     FFMPEG.write().get_or_insert_with(detect).clone()
 }
 
-/// 选一个可用的 H.264 编码器。
-pub fn h264_encoder() -> Option<Encoder> {
+/// 选一个可用的 HEVC 编码器。
+pub fn hevc_encoder() -> Option<Encoder> {
     let mut slot = ENCODER.write();
     if slot.is_none() {
         *slot = Some(pick_encoder());
@@ -226,8 +226,7 @@ pub fn h264_encoder() -> Option<Encoder> {
     slot.clone().flatten()
 }
 
-/// 探测顺序：**先挑真的硬件编码器，挑不到再退软件**。「列表里有」不等于「能用」（无 N 卡时 `h264_nvenc` 直接失败），逐个实际试编一帧。
-/// `h264_mf` 排在 libx264 **之后**：它多半是软件编码，实测同一集 libx264 veryfast 既更快（7.1s vs 9.3s）产物也更小（23.5MB vs 69.7MB）。
+/// 探测顺序：**先挑真的硬件编码器，挑不到再退软件**。「列表里有」不等于「能用」（无 N 卡时 `hevc_nvenc` 直接失败），逐个实际试编一帧。
 fn pick_encoder() -> Option<Encoder> {
     let ffmpeg = ffmpeg_path()?;
 
@@ -244,7 +243,7 @@ fn pick_encoder() -> Option<Encoder> {
         log::debug!("[FFmpeg] 硬件编码器不可用，跳过: {enc}");
     }
 
-    // 没有硬件：软件里 libx264 优先，h264_mf 兜底（极老的构建可能没有 libx264）
+    // 软件编码仍实际试编，不能只凭编码器列表判定。
     for enc in SOFTWARE_ENCODERS {
         if !listed(enc) {
             continue;
@@ -255,8 +254,8 @@ fn pick_encoder() -> Option<Encoder> {
         log::debug!("[FFmpeg] 编码器不可用，跳过: {enc}");
     }
 
-    // 静态构建有时不列全，最后裸试一次 libx264
-    try_encoder(&ffmpeg, "libx264", false)
+    // 静态构建有时不列全，最后裸试一次 libx265
+    try_encoder(&ffmpeg, "libx265", false)
 }
 
 /// 试编一帧，返回带硬件标记的结果；`force_hardware` 为真时额外加 `-hw_encoding 1`，只有它能编出帧才算真硬件。
@@ -276,7 +275,7 @@ fn try_encoder(ffmpeg: &PathBuf, encoder: &'static str, force_hardware: bool) ->
         "-c:v",
         encoder,
     ];
-    if force_hardware {
+    if force_hardware && encoder == "hevc_mf" {
         args.push("-hw_encoding");
         args.push("1");
     }
@@ -305,7 +304,7 @@ fn run(ffmpeg: &PathBuf, args: &[&str]) -> Option<String> {
 /// 当前解码/编码后端的可读描述，供内部日志与转码流水线使用。
 /// 只留日志真要用的两样（编码器名与整条链路）：**不**带 ffmpeg 路径（[`ffmpeg_path`] 给）与「是否硬件」（在 [`Encoder::hardware`] 上），避免两处口径。
 pub struct BackendInfo {
-    /// 选中的 H.264 编码器名
+    /// 选中的 HEVC 编码器名
     pub encoder: String,
     /// 实际生效的转码方式
     pub transcode_with: String,
@@ -313,7 +312,7 @@ pub struct BackendInfo {
 
 /// 取当前后端信息。
 pub fn backend_info() -> BackendInfo {
-    match (ffmpeg_path(), h264_encoder()) {
+    match (ffmpeg_path(), hevc_encoder()) {
         (Some(_), Some(enc)) => BackendInfo {
             encoder: enc.name.to_string(),
             transcode_with: format!("ffmpeg ({})", enc.name),

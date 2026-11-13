@@ -1,12 +1,40 @@
 use super::MediaServer;
 
 #[tokio::test]
+async fn h264_is_rejected_by_the_builtin_decoder_without_native_fallback() {
+    let path = std::env::temp_dir().join(format!("hg-nsh-rejected-{}.mp4", uuid::Uuid::new_v4()));
+    std::fs::write(
+        &path,
+        include_bytes!("../../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4"),
+    )
+    .unwrap();
+    let server = MediaServer::start().await.unwrap();
+    let lease = server.playback_file(&path).unwrap();
+    let frames = hongguo_nsh_video_api::frames::open_frames(lease.frame_source().unwrap()).unwrap();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match frames.info() {
+                Err(error) => break error,
+                Ok(None) => tokio::time::sleep(std::time::Duration::from_millis(5)).await,
+                Ok(Some(_)) => panic!("H.264 must not become a playable video source"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(error.contains("avc1"), "{error}");
+    drop(lease);
+    assert!(server.routes.sources.lock().unwrap().is_empty());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
 async fn direct_media_serves_only_audio_while_registered_frames_decode_original_video() {
     let path = std::env::temp_dir().join(format!("hg-nsh-direct-{}.mp4", uuid::Uuid::new_v4()));
     let original = include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
     std::fs::write(&path, original).unwrap();
     let server = MediaServer::start().await.unwrap();
-    let lease = server.playback_file(&path, true).unwrap();
+    let lease = server.playback_file(&path).unwrap();
     let frames = hongguo_nsh_video_api::frames::open_frames(lease.frame_source().unwrap()).unwrap();
     let frame = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {

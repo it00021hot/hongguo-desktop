@@ -10,7 +10,7 @@ use hongguo_video::r#box::find_box;
 use hongguo_video::sample_table::TrackInfo;
 
 /// VisualSampleEntry 载荷长度（ISO/IEC 14496-15）：reserved(6)+data_ref_idx(2)+pre_defined(2)+reserved(2)+pre_defined[3](12)+width/height(4)+res(8)+reserved(4)+frame_count(2)+compressorname(32)+depth(2)+pre_defined(2)。
-/// 之后的扩展区才是 hvcC / avcC——`h264` 模块的 avcC 查找共用同一常量。
+/// 之后的扩展区是 hvcC。
 pub(crate) const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;
 
 /// Annex-B 起始码（HEIF 封面软解同样使用）。
@@ -20,6 +20,13 @@ pub(crate) const START_CODE: [u8; 4] = [0, 0, 0, 1];
 /// 判定只写这一份：平台后端前置校验与 [`read_parameter_set_nalus`] 必须给出同一答案，否则出现自相矛盾的失败路径。
 pub fn is_hevc(codec: &str) -> bool {
     codec.starts_with("hev") || codec.starts_with("hvc") || codec == "encv"
+}
+
+pub fn is_random_access_nal(nal: &[u8]) -> bool {
+    nal.len() >= 2
+        && nal[0] & 0x80 == 0
+        && nal[1] & 7 != 0
+        && (16..=23).contains(&((nal[0] >> 1) & 0x3f))
 }
 
 /// 从 MP4 读出 HEVC 参数集，每条一个 NAL（无起始码）。

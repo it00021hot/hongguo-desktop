@@ -1,0 +1,20 @@
+pub const VPS: &[u8] = &[
+    0x40, 1, 0x0c, 1, 0xff, 0xff, 1, 0x60, 0, 0, 3, 0, 0x90, 0, 0, 3, 0, 0, 3, 0, 0x1e, 0x95, 0x98,
+    9,
+];
+pub const SPS: &[u8] = &[
+    0x42, 1, 1, 1, 0x60, 0, 0, 3, 0, 0x90, 0, 0, 3, 0, 0, 3, 0, 0x1e, 0xa0, 0x20, 0x83, 0x16, 0x59,
+    0x59, 0xae, 0x4c, 0xaf, 1, 0x68, 8, 0, 0, 3, 0, 8, 0, 0, 3, 0, 0xc0, 0x40,
+];
+pub const PPS: &[u8] = &[0x44, 1, 0xc1, 0x73, 0xd0, 0x89];
+pub const IDR: &[u8] = &[0x28, 1, 0xaf, 0x1d, 0x80];
+
+pub fn annexb(nals: &[&[u8]]) -> Vec<u8> {
+    nals.iter()
+        .flat_map(|nal| [0, 0, 0, 1].into_iter().chain(nal.iter().copied()))
+        .collect()
+}
+
+pub fn first() -> Vec<u8> {
+    annexb(&[VPS, SPS, PPS, IDR])
+}

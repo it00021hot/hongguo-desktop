@@ -1,5 +1,8 @@
 # 自写 MP4 封装器：替换 vendor/muxide
 
+> 后续 HEVC 迁移已将 `mux_h264` 与 AVC 封装替换为 `mux_hevc`、`hvc1`/`hvcC` 和 `ArchiveHevc`。
+> 下文保留原始封装器落地时的结构与实验记录；现行契约见 [HEVC 归档迁移](hevc-archive-migration.md)。
+
 > 状态：**已落地**（2026-10-24）。`vendor/muxide`、muxide 依赖与根 manifest 的
 > `[patch.crates-io]` 条目都已删除，改用本仓自写的封装层——它复用 `remux` 已有的
 > `moov` 写入能力（现已提到 `crates/hongguo-media/src/mp4.rs`，两条产出路径共用）。
@@ -9,15 +12,15 @@
 `vendor/muxide` 是一份整份上游拷贝（1.47 MB / 76 个文件），真正的改动只有 **1 行**：
 `compute_interleave_schedule` 里视频的排序键 `sample.pts` → `sample.dts`。
 
-| 事实 | 证据 |
-| --- | --- |
-| 上游没修，升级无效 | muxide 最新 0.5.0（2026-10-19）仍是 `sample.pts`（`src/muxer/mp4.rs:1237`） |
-| muxide 没有 interleave 策略开关 | Builder 只有 `fast_start` / `metadata` / `sps` / `pps` |
-| 第三方替代品不支持 B 帧 | `mp4_muxer` 文档："B-frames / DTS ≠ PTS: not supported — encode with pts == dts"，且 AV1-only、无音轨 |
-| 补丁是承重的 | macOS VT 原样透传编码器 PTS（`vt/pipeline.rs:99-102`），真机出过 B 帧流（标题帧被顶进转场中间） |
-| 补丁只在 macOS 触发 | Windows MF 的输出 PTS 被显式强制单调（`mf/pipeline.rs` 的 `emit_outputs`） |
-| muxide 只服务两条平台硬编路径 | ffmpeg 路径自己出 MP4（`ffmpeg/transcode.rs`），不碰 muxide |
-| 我们自己已经有 moov 写入器 | `crates/hongguo-media/src/mp4.rs`（原 `remux/index/moov.rs`）：stts / ctts / elst / stsc / stsz / stco 全有，**ctts 是一等公民** |
+| 事实                            | 证据                                                                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 上游没修，升级无效              | muxide 最新 0.5.0（2026-10-19）仍是 `sample.pts`（`src/muxer/mp4.rs:1237`）                                                      |
+| muxide 没有 interleave 策略开关 | Builder 只有 `fast_start` / `metadata` / `sps` / `pps`                                                                           |
+| 第三方替代品不支持 B 帧         | `mp4_muxer` 文档："B-frames / DTS ≠ PTS: not supported — encode with pts == dts"，且 AV1-only、无音轨                            |
+| 补丁是承重的                    | macOS VT 原样透传编码器 PTS（`vt/pipeline.rs:99-102`），真机出过 B 帧流（标题帧被顶进转场中间）                                  |
+| 补丁只在 macOS 触发             | Windows MF 的输出 PTS 被显式强制单调（`mf/pipeline.rs` 的 `emit_outputs`）                                                       |
+| muxide 只服务两条平台硬编路径   | ffmpeg 路径自己出 MP4（`ffmpeg/transcode.rs`），不碰 muxide                                                                      |
+| 我们自己已经有 moov 写入器      | `crates/hongguo-media/src/mp4.rs`（原 `remux/index/moov.rs`）：stts / ctts / elst / stsc / stsz / stco 全有，**ctts 是一等公民** |
 
 最后一条是关键：**B 帧的 composition offset 在本仓的 moov 写入器里是原生支持的**，
 正是 muxide 要打补丁才能做到的事。所以自写不是从零发明，而是把已有的能力接上另一条产出路径。
@@ -57,13 +60,13 @@ crates/hongguo-media/src/
 
 ## 验证
 
-| 项 | 手段 | 状态 |
-| --- | --- | --- |
-| 容器结构 | 本仓 demuxer 回读产物：轨道数、codec、样本数、样本边界逐字节比对 | ✅ `mux/tests.rs` 7 条用例 |
-| B 帧流 | 移植 mux.rs 的两条回归测试（解码序流 + 3000 帧真实规模 + AAC 交织），另加 `ctts` 合成偏移与音频裁剪两条 | ✅ |
-| 快速合并兼容 | 产物经 `remux::concat_copy` 拼接后仍可解复用 | ✅ `remux` 既有 e2e |
-| 真机产物 | `HONGGUO_E2E_DIR` 门控的 e2e（ffprobe 认时间轴、平台硬编产物可播） | ⏳ **未跑**：需 macOS + 真实剧集文件 |
-| 门禁 | `cargo test --workspace` + clippy 三目标 + fmt + 前端 lint/typecheck | ✅ 全绿 |
+| 项           | 手段                                                                                                    | 状态                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| 容器结构     | 本仓 demuxer 回读产物：轨道数、codec、样本数、样本边界逐字节比对                                        | ✅ `mux/tests.rs` 7 条用例           |
+| B 帧流       | 移植 mux.rs 的两条回归测试（解码序流 + 3000 帧真实规模 + AAC 交织），另加 `ctts` 合成偏移与音频裁剪两条 | ✅                                   |
+| 快速合并兼容 | 产物经 `remux::concat_copy` 拼接后仍可解复用                                                            | ✅ `remux` 既有 e2e                  |
+| 真机产物     | `HONGGUO_E2E_DIR` 门控的 e2e（ffprobe 认时间轴、平台硬编产物可播）                                      | ⏳ **未跑**：需 macOS + 真实剧集文件 |
+| 门禁         | `cargo test --workspace` + clippy 三目标 + fmt + 前端 lint/typecheck                                    | ✅ 全绿                              |
 
 ## 风险
 

@@ -1,4 +1,4 @@
-//! H.264 编码：VTCompressionSession 会话（[`Compressor`]，硬编优先、无硬编回落 Apple 内置软编会话），输出 AVCC 样本转 Annex-B。
+//! HEVC 编码会话，输出带 VPS/SPS/PPS 的 Annex-B 样本。
 //! 编码输出回调 [`encode_cb`] 的 refcon 裸指针指向会话内部的 `Box<Sender>` 队列——回调与所属类型必须同文件。
 
 use std::os::raw::c_void;
@@ -14,8 +14,8 @@ pub(super) struct Compressor {
     rx: Receiver<CmSb>,
     /// 回调 refcon 指进这个 Box，必须与 session 同生命周期
     _tx: Box<Sender<CmSb>>,
-    /// 首个输出样本的格式描述里藏着 SPS/PPS，取一次后复用
-    parameter_sets: Option<Vec<u8>>,
+    /// 首个输出格式的 VPS/SPS/PPS。
+    parameter_sets: Option<(Vec<u8>, usize)>,
 }
 
 impl Drop for Compressor {
@@ -45,8 +45,7 @@ unsafe extern "C" fn encode_cb(
 }
 
 impl Compressor {
-    /// 建 H.264 编码会话：`Enable` 策略——有硬编用硬编，没有就落 Apple 内置软编会话。
-    /// 曾有的 `Require`（探测确认硬编才放行生产）随软编会话转正两态合一，探测的 hw/sw 结论只喂徽标与并行度。
+    /// 优先硬件 HEVC，是否可用由实际编码探测决定。
     pub(super) unsafe fn new(width: usize, height: usize, bitrate: i32) -> AppResult<Self> {
         unsafe {
             let hardware = super::hardware::encoder_enabled();
@@ -88,7 +87,7 @@ impl Compressor {
                 ffi::kCFAllocatorDefault,
                 width as i32,
                 height as i32,
-                ffi::kCMVideoCodecType_H264,
+                ffi::kCMVideoCodecType_HEVC,
                 spec,
                 source_attrs,
                 std::ptr::null(),
@@ -102,7 +101,7 @@ impl Compressor {
             ffi::CFRelease(h as ffi::CFTypeRef);
             ffi::CFRelease(pixel_format as ffi::CFTypeRef);
             ffi::CFRelease(spec as ffi::CFTypeRef);
-            os(status, "建 H.264 硬编会话")?;
+            os(status, "建 HEVC 编码会话")?;
 
             // 质量与码控：VT 没有 CRF，码率按分辨率×帧率标定（见 `bitrate_for`）；ProfileLevel 个别第三方硬编可能不吃，不致命别让会话白建。
             let bitrate_num = make_int(bitrate);
@@ -139,7 +138,7 @@ impl Compressor {
             let _ = ffi::VTSessionSetProperty(
                 session,
                 ffi::kVTCompressionPropertyKey_ProfileLevel,
-                ffi::kVTProfileLevel_H264_High_AutoLevel as ffi::CFTypeRef,
+                ffi::kVTProfileLevel_HEVC_Main_AutoLevel as ffi::CFTypeRef,
             );
             let _ = ffi::VTSessionSetProperty(
                 session,
@@ -148,7 +147,11 @@ impl Compressor {
             );
             ffi::CFRelease(bitrate_num as ffi::CFTypeRef);
             ffi::CFRelease(gop as ffi::CFTypeRef);
-            required?;
+            if let Err(error) = required {
+                ffi::VTCompressionSessionInvalidate(session);
+                ffi::CFRelease(session as ffi::CFTypeRef);
+                return Err(error);
+            }
 
             Ok(Compressor {
                 session,
@@ -233,7 +236,7 @@ impl Compressor {
     }
 
     /// 把一个编码样本转成封装器要的 Annex-B；返回 `(Annex-B, 是否关键帧)`。
-    /// 关键帧前插 SPS/PPS：拼接器重建 moov 时样本描述取自第 1 集，后续各集的码流必须自带参数集才能在第 1 集的 avcC 之下解码。
+    /// 每个同步样本附带当前格式的 VPS/SPS/PPS。
     pub(super) unsafe fn sample_to_unit(&mut self, sb: &CmSb) -> AppResult<(Vec<u8>, bool)> {
         unsafe {
             let block = ffi::CMSampleBufferGetDataBuffer(sb.0);
@@ -245,21 +248,19 @@ impl Compressor {
                 "读编码输出",
             )?;
             let raw = std::slice::from_raw_parts(data, total);
-            // VT 输出的 H.264 是 4 字节长度前缀（AVCC）；Annex-B 转换与 hongguo_media::hevc 是同一份实现
-            let mut annexb = hongguo_media::hevc::to_annexb(raw, 4);
-
-            // 关键帧（同步样本）前插 SPS/PPS；首个输出样本无论标没标都带上（后续各集码流必须自带参数集，理由见函数文档）。
-            // 返回的布尔是 is_keyframe，与 mux_h264 的契约一致——`sync` 就是「可独立解码」。
             let sync = is_sync_sample(sb.0);
-            if sync || self.parameter_sets.is_none() {
+            let with_parameters = sync || self.parameter_sets.is_none();
+            if with_parameters {
                 let desc = ffi::CMSampleBufferGetFormatDescription(sb.0);
-                let params = parameter_sets_annexb(desc);
-                if !params.is_empty() {
-                    if self.parameter_sets.is_none() {
-                        self.parameter_sets = Some(params.clone());
-                    }
-                    annexb.splice(0..0, params);
-                }
+                self.parameter_sets = Some(parameter_sets_annexb(desc)?);
+            }
+            let (parameters, length_size) = self
+                .parameter_sets
+                .as_ref()
+                .expect("sample format was read");
+            let mut annexb = hongguo_media::hevc::to_annexb(raw, *length_size);
+            if with_parameters {
+                annexb.splice(0..0, parameters.iter().copied());
             }
             Ok((annexb, sync))
         }
@@ -288,42 +289,61 @@ unsafe fn is_sync_sample(sb: ffi::CMSampleBufferRef) -> bool {
     }
 }
 
-/// 格式描述里的参数集（SPS/PPS 裸 NAL）拼成 Annex-B。
-unsafe fn parameter_sets_annexb(desc: ffi::CMVideoFormatDescriptionRef) -> Vec<u8> {
+unsafe fn parameter_sets_annexb(
+    desc: ffi::CMVideoFormatDescriptionRef,
+) -> AppResult<(Vec<u8>, usize)> {
     unsafe {
         let mut out = Vec::new();
         if desc.is_null() {
-            return out;
+            return Err(hongguo_common::AppError::Media(
+                "HEVC 编码样本缺少格式描述".into(),
+            ));
         }
         // 总数先探一次（pointer/size 传 NULL 即可）
         let mut count = 0usize;
-        if ffi::CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-            desc,
-            0,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &mut count,
-            std::ptr::null_mut(),
-        ) != ffi::noErr
-        {
-            return out;
-        }
+        let mut length_size = 0;
+        os(
+            ffi::CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+                desc,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut count,
+                &mut length_size,
+            ),
+            "读 HEVC 参数集数目",
+        )?;
+        let mut present = [false; 3];
         for i in 0..count {
             let mut ps: *const u8 = std::ptr::null();
             let mut size = 0usize;
-            let st = ffi::CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-                desc,
-                i,
-                &mut ps,
-                &mut size,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            );
-            if st == ffi::noErr && !ps.is_null() && size > 0 {
+            os(
+                ffi::CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+                    desc,
+                    i,
+                    &mut ps,
+                    &mut size,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ),
+                "读 HEVC 参数集",
+            )?;
+            if !ps.is_null() && size >= 2 {
+                let nal = std::slice::from_raw_parts(ps, size);
+                let kind = (nal[0] >> 1) & 63;
+                if !(32..=34).contains(&kind) {
+                    continue;
+                }
+                present[usize::from(kind - 32)] = true;
                 out.extend_from_slice(&[0, 0, 0, 1]);
-                out.extend_from_slice(std::slice::from_raw_parts(ps, size));
+                out.extend_from_slice(nal);
             }
         }
-        out
+        if !present.into_iter().all(|value| value) || !(1..=4).contains(&length_size) {
+            return Err(hongguo_common::AppError::Media(
+                "HEVC 编码格式缺少 VPS/SPS/PPS 或样本长度无效".into(),
+            ));
+        }
+        Ok((out, length_size as usize))
     }
 }

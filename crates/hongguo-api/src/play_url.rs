@@ -77,7 +77,7 @@ pub fn playback_candidates(
             if !super::stream_pick::is_playable(stream, cap) {
                 return None;
             }
-            let score = super::stream_pick::stream_score_with(stream, cap);
+            let score = super::stream_pick::stream_score(stream);
             if !available.iter().any(|value| value.value == score.def_num) {
                 return None;
             }

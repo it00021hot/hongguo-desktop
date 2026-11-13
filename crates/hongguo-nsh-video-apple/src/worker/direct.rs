@@ -56,8 +56,12 @@ impl Worker {
                 detail: error.detail().into(),
             });
             self.video.take();
+            self.direct.take();
+            self.pending_seek.take();
             self.renderer.take();
             self.frame.take();
+            self.dirty = false;
+            self.layers.set_visible(false);
         }
     }
 
@@ -189,7 +193,7 @@ impl Worker {
         }
         match direct.frames.holding() {
             Ok(false) => {
-                if let Some(position_ms) = self.video.as_ref().and_then(VideoOutput::position_ms) {
+                if let Some(position_ms) = self.video.as_ref().and_then(AudioOutput::position_ms) {
                     self.event(VideoEvent::Seeked {
                         source_id: request.source_id.clone(),
                         request_id: request.request_id.clone(),

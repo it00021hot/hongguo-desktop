@@ -1,7 +1,7 @@
 use hongguo_nsh_video_api::{EVENT_NAME, VideoEvent};
 use jni::{
     JavaVM,
-    objects::{GlobalRef, JObject, JValue},
+    objects::{GlobalRef, JValue},
 };
 use std::{sync::Arc, time::Duration};
 
@@ -95,41 +95,11 @@ impl Bridge {
         })
         .map_err(error)
     }
-    pub fn output(
-        &self,
-        generation: u64,
-        token: u64,
-        enhanced: Option<(&GlobalRef, &GlobalRef)>,
-    ) -> Result<(), String> {
-        let mut env = self.vm.attach_current_thread().map_err(error)?;
-        let null = JObject::null();
-        let (surface, texture) = enhanced.map_or((&null, &null), |(s, t)| (s.as_obj(), t.as_obj()));
-        let acknowledged = env
-            .call_method(
-                &self.owner,
-                "setDecoderOutput",
-                "(JJLandroid/view/Surface;Landroid/graphics/SurfaceTexture;)Z",
-                &[
-                    JValue::Long(generation as i64),
-                    JValue::Long(token as i64),
-                    JValue::Object(surface),
-                    JValue::Object(texture),
-                ],
-            )
-            .map_err(error)?
-            .z()
-            .map_err(error)?;
-        if acknowledged {
-            Ok(())
-        } else {
-            Err("MediaPlayer output detachment was not acknowledged".into())
-        }
-    }
     pub fn show(&self, generation: u64, enhanced: bool) -> Result<(), String> {
         let mut env = self.vm.attach_current_thread().map_err(error)?;
         env.call_method(
             &self.owner,
-            "showEnhanced",
+            "showFrames",
             "(JZ)V",
             &[
                 JValue::Long(generation as i64),
@@ -143,7 +113,7 @@ impl Bridge {
         let mut env = self.vm.attach_current_thread().map_err(error)?;
         env.call_method(
             &self.owner,
-            "prepareEnhancedOutput",
+            "prepareFrameOutput",
             "(J)V",
             &[JValue::Long(generation as i64)],
         )

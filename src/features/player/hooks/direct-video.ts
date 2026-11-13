@@ -18,12 +18,9 @@ function directRoot(): string {
   return `${schemeBase(STREAM_SCHEME)}/direct`;
 }
 
-/**
- * 起播响应标了 `direct`（内置软解直播放）时，把播放地址换成直播放通道认的来源串；
- * 否则返回 null，由 `<video>` 直接播。
- */
-export function directVideoSource(src: string | null, direct: boolean): string | null {
-  if (!src || !direct) return null;
+/** 将应用持有的播放地址转换为内置解码器来源。 */
+export function directVideoSource(src: string | null): string | null {
+  if (!src) return null;
   const streamPrefix = `${schemeBase(STREAM_SCHEME)}/s/`;
   if (src.startsWith(streamPrefix)) {
     const source = src.slice(streamPrefix.length);

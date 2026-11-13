@@ -7,7 +7,7 @@
 //!   它的 `GetCurrentTime` 就是画面的时钟。
 //! - **画面**：解码线程把帧换成 BGRA 放进一个小队列（满了就等，即背压）；渲染泵（壳每帧经
 //!   `submit_stage` 进来，vsync 节奏）取出「到点」的那一帧，`UpdateSubresource` 写进视频 quad 的
-//!   纹理——与系统播放器 `TransferVideoFrame` 的落点是同一套。
+//!   纹理，视频 quad 与 GPUI 内容使用同一画布。
 //! - **扣住声音**：起播与跳转后先不让引擎走，新会话的第一帧上屏后再放行，避免画面一出来就落后。
 //!
 //! Windows 默认使用本路径解码 HEVC / ByteVC1 / ByteVC2；运行验收仍需 Windows 实机。
@@ -141,7 +141,7 @@ pub fn open(
     let start_secs = start_secs.max(0.0);
     let mask = Arc::new(AudioMask::default());
     // 引擎在主线程建好、立刻挂上音轨视图；视图的读会等索引（起播线程建好后放行）。
-    let byte_stream = stream::open_feed(feed.clone(), Some(Arc::clone(&mask)));
+    let byte_stream = stream::open_feed(feed.clone(), Arc::clone(&mask));
     let id = NEXT_ASSET.fetch_add(1, Ordering::Relaxed);
     let audio = player::open_audio(
         byte_stream,

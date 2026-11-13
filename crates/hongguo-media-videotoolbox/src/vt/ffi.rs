@@ -86,8 +86,6 @@ pub type VTCompressionOutputCallback = unsafe extern "C" fn(
 
 // —— 常量 ——
 pub const noErr: OSStatus = 0;
-/// `kCMVideoCodecType_H264`（'avc1'）
-pub const kCMVideoCodecType_H264: OSType = 0x6176_6331;
 /// `kCMVideoCodecType_HEVC`（'hvc1'）
 pub const kCMVideoCodecType_HEVC: OSType = 0x6876_6331;
 /// `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange`（'420v'，NV12）
@@ -179,19 +177,7 @@ unsafe extern "C" {
         extensions: CFDictionaryRef,
         formatDescriptionOut: *mut CMVideoFormatDescriptionRef,
     ) -> OSStatus;
-    /// H.264 参数集建格式描述：参数集顺序必须 SPS 在前、PPS 在后；`NALUnitHeaderLength` 传样本长度前缀字节数（本仓库的 MP4 样本恒 4）。
-    /// 与 HEVC 版本不同：没有 `extensions` 参数，输出类型是 `CMFormatDescriptionRef`（两者都是 `*mut c_void`）。
-    pub fn CMVideoFormatDescriptionCreateFromH264ParameterSets(
-        allocator: CFAllocatorRef,
-        parameterSetCount: usize,
-        parameterSetPointers: *const *const u8,
-        parameterSetSizes: *const usize,
-        NALUnitHeaderLength: i32,
-        formatDescriptionOut: *mut CMVideoFormatDescriptionRef,
-    ) -> OSStatus;
-    /// H.264 描述里的参数集（SPS/PPS）。总数经 `parameterSetCountOut` 返回，
-    /// 没有独立的 Count 函数。
-    pub fn CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+    pub fn CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
         videoDesc: CMVideoFormatDescriptionRef,
         parameterSetIndex: usize,
         parameterSetPointerOut: *mut *const u8,
@@ -306,7 +292,7 @@ unsafe extern "C" {
     pub static kVTCompressionPropertyKey_RealTime: CFStringRef;
     /// 单帧属性：强制本帧为关键帧（首帧起播 / 片段起点）。
     pub static kVTEncodeFrameOptionKey_ForceKeyFrame: CFStringRef;
-    pub static kVTProfileLevel_H264_High_AutoLevel: CFStringRef;
+    pub static kVTProfileLevel_HEVC_Main_AutoLevel: CFStringRef;
 
     pub fn VTSessionCopyProperty(
         session: VTSessionRef,
@@ -363,7 +349,7 @@ unsafe extern "C" {
         sourceFrameRefCon: *mut c_void,
         infoFlagsOut: *mut u32,
     ) -> OSStatus;
-    pub fn VTDecompressionSessionFinishDelayedFrames(
+    pub fn VTDecompressionSessionWaitForAsynchronousFrames(
         session: VTDecompressionSessionRef,
     ) -> OSStatus;
     pub fn VTDecompressionSessionInvalidate(session: VTDecompressionSessionRef);

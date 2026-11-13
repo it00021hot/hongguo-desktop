@@ -1,4 +1,4 @@
-//! 转码管线编排：HEVC→H.264 主流程（[`transcode_h264`] 入口、[`run`] 流水）、
+//! HEVC 转码管线。
 //! 逐帧喂编码的 [`process_frame`] / [`emit_outputs`] 与时间换算小工具。
 
 use std::time::Instant;
@@ -7,16 +7,15 @@ use hongguo_common::{AppError, AppResult};
 use hongguo_video::sample_table::TrackInfo;
 
 use hongguo_media_platform_api::PlatformRequest;
-use hongguo_media_platform_api::video::{VideoCodec, bitrate_for};
+use hongguo_media_platform_api::video::bitrate_for;
 
 use super::decode::Decompressor;
 use super::encode::Compressor;
 use super::ffi;
 use super::pixel::{CmSb, Pb, Transfer};
 
-/// 平台编码层执行 HEVC→H.264 转码；HEVC 以外的源返回 `None`（留给 ffmpeg——H.264 源直转，没必要绕 GPU）。
-/// 闸门是「VT 会话能建」而不是「必须硬编」：没有硬编落 Apple 内置软编会话，仍显著快于 ffmpeg（本机 44.9s 集：VT ≈5.9s vs libx264 18.2s）且同样不依赖用户装任何东西；会话真建不出来（罕见）由管线落回下一条路。
-pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
+/// HEVC 输入重编码；其他输入交由上层解码编排。
+pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
     if !hongguo_media::hevc::is_hevc(&video.info.codec) {
@@ -54,7 +53,6 @@ fn process_frame(
             None => (src_w, src_h),
         };
         let c = unsafe { Compressor::new(out_w, out_h, bitrate_for(out_w, out_h, fps))? };
-        // 编码器自报硬编还是软编——只进日志，产物两边都是能播的 H.264
         let hw = unsafe { c.using_hardware() }.unwrap_or(false);
         log::info!(
             "[Platform/vt] 编码会话已建（{out_w}x{out_h}）：{}",
@@ -141,8 +139,7 @@ fn run(
     // - **解码吐出序不可信**：同步解码（回调在 decode() 内触发）没有 B 帧重排，吐出的是解码序；解码回调把喂入的显示时间原样带回，帧↔显示时间按 PTS 认领，绝不按吐出顺序排位。
     // - **编码器输入必须是显示序**：编码器契约按显示序收帧、自行构造 B 帧 GOP 并写 POC；把解码序直接喂进去，POC 会把解码序固化成显示序——产物按解码序播放
     //   （真实剧集实证：标题帧闪现在转场前，showinfo 呈现序 0, 0.533, 0.067…）。配对好的帧按容器时间槽顺序喂编码器；槽内帧未到就继续解码下一个样本，内存以重排窗口为界。
-    // 转码只处理 HEVC 源（H.264 源在 ffmpeg 侧直转），解码会话固定按 HEVC 建
-    let decoder = unsafe { Decompressor::new(VideoCodec::Hevc, &parameter_sets)? };
+    let decoder = unsafe { Decompressor::new(&parameter_sets)? };
     let mut slot_times = source_pts.clone();
     slot_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mut ready: Vec<(Pb, f64)> = Vec::new();
@@ -244,7 +241,7 @@ fn run(
     hongguo_media::mux::with_audio(req.input, demuxed, req.output, &units, out_w, out_h)?;
 
     log::info!(
-        "[Platform/vt] HEVC→H.264 完成：{} 帧（{out_w}x{out_h}），耗时 {:?}",
+        "[Platform/vt] HEVC 编码完成：{} 帧（{out_w}x{out_h}），耗时 {:?}",
         units.len(),
         started.elapsed()
     );

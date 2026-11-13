@@ -103,7 +103,7 @@ struct Inner {
     /// 本地文件句柄（首次读时打开；一集上千次读，逐次开文件是纯开销）。
     file: Mutex<Option<File>>,
     /// 设了就是「只剩音轨」视图。
-    mask: Option<Arc<AudioMask>>,
+    mask: Arc<AudioMask>,
     position: AtomicU64,
     /// 明文总长；0 = 还没解析出来。
     total: AtomicU64,
@@ -112,20 +112,8 @@ struct Inner {
     pending: Mutex<Vec<(usize, u32)>>,
 }
 
-/// 打开一集的字节流（引擎创建时 `SetSourceFromByteStream` 用）。
-pub(super) fn open(vid: String, definition: u32, on_stall: Option<StallHook>) -> IMFByteStream {
-    open_feed(
-        Feed::Online {
-            vid,
-            definition,
-            on_stall,
-        },
-        None,
-    )
-}
-
 /// 打开任意来源的字节流；`mask` 给了就是「只剩音轨」视图（内置软解直播放用）。
-pub(super) fn open_feed(feed: Feed, mask: Option<Arc<AudioMask>>) -> IMFByteStream {
+pub(super) fn open_feed(feed: Feed, mask: Arc<AudioMask>) -> IMFByteStream {
     ByteStream {
         inner: Arc::new(Inner {
             feed,
@@ -194,10 +182,7 @@ impl Inner {
         if target.is_empty() {
             return Ok(0);
         }
-        let mask = match &self.mask {
-            Some(mask) => Some(mask.wait(&self.closed)?),
-            None => None,
-        };
+        let index = self.mask.wait(&self.closed)?;
         let position = self.position.load(Ordering::SeqCst);
         let served = match &self.feed {
             Feed::Online {
@@ -224,9 +209,7 @@ impl Inner {
                 read_file(file, position, target).map_err(|error| failed(&error.to_string()))?
             }
         };
-        if let Some(index) = mask {
-            index.mask_video_tracks(position, &mut target[..served]);
-        }
+        index.mask_video_tracks(position, &mut target[..served]);
         self.position
             .store(position + served as u64, Ordering::SeqCst);
         Ok(served as u32)

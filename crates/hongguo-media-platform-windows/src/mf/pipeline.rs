@@ -1,6 +1,4 @@
-//! 转码编排（与 vt 侧逐段对应）：HEVC→H.264 主流程（[`transcode_h264`]
-//! 入口、[`run`] 流水）、逐帧喂编码的 [`process_frame`] / [`emit_outputs`]
-//! 与时间换算小工具。
+//! HEVC 重编码：保留源音轨与显示时间轴，可选 NV12 缩放。
 
 use std::time::Instant;
 
@@ -13,21 +11,21 @@ use hongguo_media_platform_api::video::bitrate_for;
 use super::decoder::{Decoder, Nv12Frame};
 use super::encoder::{Encoder, EncoderKind};
 use super::mft::run_on_mf_thread;
-use super::probe::h264_hw_encoder_available;
+use super::probe::hevc_hw_encoder_available;
 use super::scaler::Scaler;
 
-/// 平台编码层执行转码：硬编优先，无硬编回落 in-box 软件 MFT（h264_mf）。
-/// HEVC 以外的源返回 `None`（留给 ffmpeg——H.264 源直转，没必要绕平台层）。
+/// 平台编码层执行 HEVC 转码：硬编优先，其次使用真实可用的软件 HEVC MFT。
+/// HEVC 以外的源返回 `None`，由共用媒体层选择解码来源。
 /// 硬编与软编都不可用时也返回 `None`（落 ffmpeg）；解 HEVC 仍依赖系统扩展。
-pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
+pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
     if !hongguo_media::hevc::is_hevc(&video.info.codec) {
         return None;
     }
-    let kind = if h264_hw_encoder_available() {
+    let kind = if hevc_hw_encoder_available() {
         EncoderKind::Hardware
-    } else if super::probe::h264_sw_encoder_available() {
+    } else if super::probe::hevc_sw_encoder_available() {
         EncoderKind::Software
     } else {
         return None;
@@ -38,7 +36,7 @@ pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
 /// 仅测试构建：强制软件编码器跑完整链路（解码/Annex-B/封装/时间戳），
 /// 让没有硬编的 CI 也能验证管线本身。
 #[cfg(any(test, feature = "test-support"))]
-pub fn transcode_h264_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
+pub fn transcode_hevc_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
     if !hongguo_media::hevc::is_hevc(&video.info.codec) {
@@ -185,7 +183,6 @@ fn run(
     let mut out_dims: Option<(usize, usize)> = None;
     let mut pts_cursor = 0usize;
     // 喂入时间轴与输出时间轴各用各的游标：混用会让输出兜底拿「喂到第几帧」当基准，把首输出时间错顶
-    // （实测 h264_mf 缓冲 33 帧后一次性吐出时，首帧 0.08 被顶成 0.78）
     let mut last_pts: Option<f64> = None;
     let mut out_last: Option<f64> = None;
 
@@ -231,7 +228,7 @@ fn run(
     hongguo_media::mux::with_audio(req.input, demuxed, req.output, &units, out_w, out_h)?;
 
     log::info!(
-        "[Platform/mf] HEVC→H.264 完成：{} 帧（{out_w}x{out_h}），耗时 {:?}",
+        "[Platform/mf] HEVC 重编码完成：{} 帧（{out_w}x{out_h}），耗时 {:?}",
         units.len(),
         started.elapsed()
     );

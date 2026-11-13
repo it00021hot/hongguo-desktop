@@ -9,6 +9,7 @@ mod surface;
 mod worker;
 
 pub use controller::PlayerController;
-pub use frame::{DecodedFrame, ImportedFrame, MetalFrames};
-pub use output::{OriginalLayer, OutputError, VideoOutput};
+use frame::ImportedFrame;
+use output::AudioOutput;
+pub use output::OutputError;
 pub use surface::MetalSurface;

@@ -7,8 +7,7 @@ import { emptyFailureCounts, recoveryAction } from './recovery-policy';
 import type { FailureCounts } from './recovery-policy';
 
 /**
- * 系统 `<video>` 播放失败的裁决（直播放的失败另走 `handleDirectError`）：在线流断供按失败账本先重试，
- * 复发就进错误页。播放不转码，没有「换成 H.264 再播」这条路。
+ * 音轨断供按失败账本重新取流；内置视频解码失败由 `handleDirectError` 处理。
  */
 export function useMediaRecovery(params: {
   videoRef: React.RefObject<HTMLVideoElement | null>;

@@ -11,21 +11,16 @@ use std::sync::{
 };
 use windows::{
     Win32::{
-        Graphics::{
-            Direct3D11::{D3D11_CREATE_DEVICE_VIDEO_SUPPORT, ID3D11Device, ID3D11Multithread},
-            Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
-        },
         Media::MediaFoundation::{
-            CLSID_MFMediaEngineClassFactory, IMFAttributes, IMFDXGIDeviceManager, IMFMediaEngine,
+            CLSID_MFMediaEngineClassFactory, IMFAttributes, IMFMediaEngine,
             IMFMediaEngineClassFactory, IMFMediaEngineEx, IMFMediaEngineNotify,
-            IMFMediaEngineNotify_Impl, MF_MEDIA_ENGINE_CALLBACK, MF_MEDIA_ENGINE_DXGI_MANAGER,
+            IMFMediaEngineNotify_Impl, MF_MEDIA_ENGINE_CALLBACK,
             MF_MEDIA_ENGINE_EVENT_BUFFERINGENDED, MF_MEDIA_ENGINE_EVENT_BUFFERINGSTARTED,
             MF_MEDIA_ENGINE_EVENT_CANPLAY, MF_MEDIA_ENGINE_EVENT_ENDED,
             MF_MEDIA_ENGINE_EVENT_ERROR, MF_MEDIA_ENGINE_EVENT_FIRSTFRAMEREADY,
             MF_MEDIA_ENGINE_EVENT_LOADEDMETADATA, MF_MEDIA_ENGINE_EVENT_PLAYING,
-            MF_MEDIA_ENGINE_EVENT_SEEKED, MF_MEDIA_ENGINE_EVENT_WAITING,
-            MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, MF_VERSION, MFCreateAttributes,
-            MFCreateDXGIDeviceManager, MFSTARTUP_FULL, MFStartup,
+            MF_MEDIA_ENGINE_EVENT_SEEKED, MF_MEDIA_ENGINE_EVENT_WAITING, MF_VERSION,
+            MFCreateAttributes, MFSTARTUP_FULL, MFStartup,
         },
         System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
     },
@@ -49,12 +44,10 @@ pub struct VideoDecoder {
     source: Source,
     events: Receiver<DecoderEvent>,
     overflow: Arc<AtomicBool>,
-    _manager: Option<IMFDXGIDeviceManager>,
 }
 
 impl VideoDecoder {
     pub fn open(
-        device: &ID3D11Device,
         source: Source,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> std::result::Result<Self, VideoError> {
@@ -62,6 +55,12 @@ impl VideoDecoder {
             return Err(VideoError::new(
                 ErrorCode::InvalidProps,
                 "video source identity and URL are required",
+            ));
+        }
+        if source.frame_source.is_none() {
+            return Err(VideoError::new(
+                ErrorCode::InvalidProps,
+                "builtin video frame source is required",
             ));
         }
         startup()?;
@@ -75,31 +74,7 @@ impl VideoDecoder {
         .into();
         // SAFETY: COM has been initialized by the owning native window. All interfaces
         // remain retained for the decoder lifetime and callbacks never re-enter it.
-        let (engine, extended, manager) = unsafe {
-            let video = source.frame_source.is_none();
-            if video && device.GetCreationFlags() & D3D11_CREATE_DEVICE_VIDEO_SUPPORT.0 == 0 {
-                return Err(VideoError::new(
-                    ErrorCode::DecoderUnavailable,
-                    "native drawing device lacks D3D11 video support",
-                ));
-            }
-            let multithread: ID3D11Multithread = device
-                .GetImmediateContext()
-                .map_err(decoder_error)?
-                .cast()
-                .map_err(decoder_error)?;
-            let _ = multithread.SetMultithreadProtected(true);
-            let manager = if video {
-                let mut token = 0;
-                let mut manager = None;
-                MFCreateDXGIDeviceManager(&mut token, &mut manager).map_err(decoder_error)?;
-                let manager = manager
-                    .ok_or_else(|| decoder_error("Media Foundation returned no device manager"))?;
-                manager.ResetDevice(device, token).map_err(decoder_error)?;
-                Some(manager)
-            } else {
-                None
-            };
+        let (engine, extended) = unsafe {
             let mut attributes: Option<IMFAttributes> = None;
             MFCreateAttributes(&mut attributes, 3).map_err(decoder_error)?;
             let attributes = attributes
@@ -107,17 +82,6 @@ impl VideoDecoder {
             attributes
                 .SetUnknown(&MF_MEDIA_ENGINE_CALLBACK, &notify)
                 .map_err(decoder_error)?;
-            if let Some(manager) = &manager {
-                attributes
-                    .SetUnknown(&MF_MEDIA_ENGINE_DXGI_MANAGER, manager)
-                    .map_err(decoder_error)?;
-                attributes
-                    .SetUINT32(
-                        &MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT,
-                        DXGI_FORMAT_B8G8R8A8_UNORM.0 as u32,
-                    )
-                    .map_err(decoder_error)?;
-            }
             let factory: IMFMediaEngineClassFactory =
                 CoCreateInstance(&CLSID_MFMediaEngineClassFactory, None, CLSCTX_INPROC_SERVER)
                     .map_err(decoder_error)?;
@@ -139,7 +103,7 @@ impl VideoDecoder {
                     return Err(error);
                 }
             };
-            (engine, extended, manager)
+            (engine, extended)
         };
         Ok(Self {
             engine,
@@ -147,15 +111,11 @@ impl VideoDecoder {
             source,
             events,
             overflow,
-            _manager: manager,
         })
     }
 
     pub fn source(&self) -> &Source {
         &self.source
-    }
-    pub fn engine(&self) -> &IMFMediaEngine {
-        &self.engine
     }
 
     pub fn next_event(&self) -> std::result::Result<Option<DecoderEvent>, VideoError> {
@@ -228,17 +188,6 @@ impl VideoDecoder {
     pub fn duration_ms(&self) -> Option<u64> {
         // SAFETY: Read-only query on this live MediaEngine.
         milliseconds(unsafe { self.engine.GetDuration() })
-    }
-
-    pub fn dimensions(&self) -> std::result::Result<(u32, u32), VideoError> {
-        let (mut width, mut height) = (0, 0);
-        // SAFETY: Both output pointers are initialized, live u32 values.
-        unsafe {
-            self.engine
-                .GetNativeVideoSize(Some(&mut width), Some(&mut height))
-        }
-        .map_err(decoder_error)?;
-        Ok((width, height))
     }
 }
 

@@ -2,8 +2,6 @@
 //! Tauri 客户端一致（装配序/接口调用逐层同源）。异步桥：壳内常驻 tokio
 //! 运行时线程，GPUI 任务经 `oneshot` 回传（Receiver 不依赖 tokio 上下文）。
 
-#[cfg(target_os = "macos")]
-mod av_spike;
 mod boss_key;
 mod bridge;
 mod comment_text;
@@ -94,13 +92,6 @@ fn main() {
         );
         std::process::abort();
     }));
-    // Phase 0 AVPlayer spike：HONGGUO_AV_SPIKE=1 时整个进程走独立诊断路径，
-    // 不声明数据根、不抢单实例、不碰任何业务状态（默认启动路径零改动）。
-    #[cfg(target_os = "macos")]
-    if crate::av_spike::requested() {
-        crate::av_spike::run();
-        return;
-    }
     // 离屏预览：--render-preview <目录> 直接接管进程；必须在下方声明交互壳
     // 数据根之前分发（set_shell_data_root 是 OnceLock，只有第一次生效）。
     // 管线编在 screenshot feature 里，裸构建明确报错而不是静默忽略。

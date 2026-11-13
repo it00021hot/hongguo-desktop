@@ -1,4 +1,4 @@
-//! Same-adapter D3D11 MediaEngine → DX12/WGPU input frames.
+//! Same-adapter D3D11 soft-decoded BGRA → DX12/WGPU input frames.
 //! Native registration and Direct2D output are separate from this interop boundary.
 
 use hongguo_nsh_video_api::{ErrorCode, FrameMetadata};
@@ -8,7 +8,7 @@ use std::sync::{
 };
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, GENERIC_ALL, HANDLE, RECT, S_OK},
+        Foundation::{CloseHandle, GENERIC_ALL, HANDLE},
         Graphics::{
             Direct3D11::{
                 ID3D11Device, ID3D11Device1, ID3D11Device5, ID3D11DeviceContext4, ID3D11Fence,
@@ -26,7 +26,6 @@ use windows::{
                 IDXGIDevice,
             },
         },
-        Media::MediaFoundation::{IMFMediaEngine, MFARGB},
     },
     core::Interface,
 };
@@ -200,46 +199,7 @@ impl SharedFrames {
         })
     }
 
-    /// Only the latest decoded frame is imported, and no frame overwrites an in-flight GPU read.
-    pub fn capture(&mut self, engine: &IMFMediaEngine) -> Result<Option<FrameLease>, VideoError> {
-        if self.busy.load(Ordering::Acquire) {
-            return Ok(None);
-        }
-        let mut pts = 0;
-        // SAFETY: Reading the HRESULT directly distinguishes S_FALSE (no frame) from S_OK.
-        let ready =
-            unsafe { (Interface::vtable(engine).OnVideoStreamTick)(engine.as_raw(), &mut pts) };
-        if ready != S_OK {
-            ready.ok().map_err(gpu_error)?;
-            return Ok(None);
-        }
-        let rect = RECT {
-            left: 0,
-            top: 0,
-            right: self.size.width as i32,
-            bottom: self.size.height as i32,
-        };
-        let border = MFARGB {
-            rgbAlpha: 255,
-            rgbRed: 0,
-            rgbGreen: 0,
-            rgbBlue: 0,
-        };
-        // SAFETY: The idle shared texture belongs to the same decoder device.
-        unsafe {
-            engine
-                .TransferVideoFrame(&self.texture11, None, &rect, Some(&border))
-                .map_err(gpu_error)?;
-        }
-        let mut metadata = FrameMetadata::default();
-        metadata.pts_ms = u64::try_from(pts / 10_000).unwrap_or(0);
-        metadata.width = self.size.width;
-        metadata.height = self.size.height;
-        self.finish_capture(metadata).map(Some)
-    }
-
-    /// Copies the retained raw fallback rather than asking MediaEngine for another
-    /// frame. Both the original and enhanced paths therefore use one decoder tick.
+    /// Original and enhanced output share the same retained soft-decoded frame.
     pub fn copy_frame(
         &mut self,
         raw: &ID3D11Texture2D,

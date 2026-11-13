@@ -27,31 +27,29 @@ pub fn encoder_available() -> bool {
 }
 
 /// 平台**硬编**是否可用。不再是生产闸门，只喂能力徽标与并行度策略。
-pub fn h264_hw_encoder_available() -> bool {
+pub fn hevc_hw_encoder_available() -> bool {
     probe_once().hardware
 }
 
 fn probe_once() -> ProbeAnswer {
-    let mut slot = PROBE.write();
-    if slot.is_none() {
-        *slot = Some(match unsafe { probe_reports_hardware() } {
-            Ok(hardware) => ProbeAnswer {
-                available: true,
-                hardware,
-            },
-            Err(e) => {
-                log::warn!("[Platform/vt] 平台编码探测失败，按不可用处理: {e}");
-                ProbeAnswer {
-                    available: false,
-                    hardware: false,
-                }
-            }
-        });
+    if let Some(answer) = *PROBE.read() {
+        return answer;
     }
-    slot.unwrap_or(ProbeAnswer {
-        available: false,
-        hardware: false,
-    })
+    let answer = match unsafe { probe_reports_hardware() } {
+        Ok(hardware) => ProbeAnswer {
+            available: true,
+            hardware,
+        },
+        Err(e) => {
+            log::warn!("[Platform/vt] 平台编码探测失败，按不可用处理: {e}");
+            ProbeAnswer {
+                available: false,
+                hardware: false,
+            }
+        }
+    };
+    *PROBE.write() = Some(answer);
+    answer
 }
 
 /// 丢弃探测缓存。
@@ -70,7 +68,10 @@ unsafe fn probe_reports_hardware() -> AppResult<bool> {
         c.encode(&frame, 0.0, 1.0 / 30.0, true)?;
         c.finish()?;
         let outputs = c.take_outputs();
-        drop(outputs);
+        let first = outputs
+            .first()
+            .ok_or_else(|| hongguo_common::AppError::Media("HEVC 编码探测未产出样本".into()))?;
+        c.sample_to_unit(first)?;
         c.using_hardware()
     }
 }

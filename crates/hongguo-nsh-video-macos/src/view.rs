@@ -1,5 +1,5 @@
 use hongguo_nsh_video_api::VideoEvent;
-use hongguo_nsh_video_apple::{OriginalLayer, OutputError, PlayerController};
+use hongguo_nsh_video_apple::{OutputError, PlayerController};
 use nsh_platform_macos::{
     objc2_app_kit::NSView,
     objc2_foundation::{NSPoint, NSRect, NSSize},
@@ -53,13 +53,11 @@ impl PixelView {
         emit: impl Fn(VideoEvent) + Send + Sync + 'static,
     ) -> Result<Rc<PlayerController>, OutputError> {
         let root = CALayer::new();
-        let original = OriginalLayer::new()?;
         let metal = CAMetalLayer::new();
         self.setWantsLayer(true);
         self.setLayer(Some(&root));
-        root.addSublayer(&original.layer());
         root.addSublayer(&metal);
-        let controller = Rc::new(PlayerController::spawn(original, metal, emit)?);
+        let controller = Rc::new(PlayerController::spawn(metal, emit)?);
         self.ivars().controller.replace(Some(controller.clone()));
         self.resize();
         Ok(controller)

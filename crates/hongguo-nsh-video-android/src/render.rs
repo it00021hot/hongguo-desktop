@@ -1,8 +1,4 @@
-use crate::{
-    SurfaceFrames,
-    bridge::{Bridge, error},
-    surface::OutputSurface,
-};
+use crate::{bridge::error, surface::OutputSurface};
 use hongguo_enhancement::Pipeline;
 use hongguo_nsh_video_api::frames::PixelFrame;
 use hongguo_nsh_video_api::{Enhancement, ErrorCode, ResizeMode};
@@ -31,8 +27,7 @@ struct Submission {
 
 pub(crate) struct Renderer {
     pub surface: OutputSurface,
-    pub frames: Option<SurfaceFrames>,
-    direct: Option<crate::direct_texture::DirectTexture>,
+    direct: crate::direct_texture::DirectTexture,
     pipeline: Pipeline,
     options: Enhancement,
     failure: Arc<Mutex<Option<String>>>,
@@ -41,12 +36,10 @@ pub(crate) struct Renderer {
 }
 impl Renderer {
     pub async fn new(
-        bridge: &Bridge,
         window: NativeWindow,
         output: (u32, u32),
         size: (u32, u32),
         options: Enhancement,
-        direct: bool,
     ) -> Result<Self, (ErrorCode, String)> {
         let surface = OutputSurface::new(window, output.0, output.1)
             .await
@@ -69,16 +62,7 @@ impl Renderer {
         surface.device.on_uncaptured_error(Arc::new(move |error| {
             *invalid.lock().expect("Android GPU failure") = Some(format!("{error}"));
         }));
-        let frames = if direct {
-            None
-        } else {
-            Some(
-                SurfaceFrames::new(surface.device.clone(), bridge.vm.clone(), size.0, size.1)
-                    .map_err(|error| (error.code(), error.to_string()))?,
-            )
-        };
-        let direct = direct
-            .then(|| crate::direct_texture::DirectTexture::new(&surface.device, size.0, size.1));
+        let direct = crate::direct_texture::DirectTexture::new(&surface.device, size.0, size.1);
         let mut pipeline = Pipeline::new(
             surface.device.clone(),
             surface.queue.clone(),
@@ -90,7 +74,6 @@ impl Renderer {
         pipeline.prepare(options).await.map_err(enhancement)?;
         Ok(Self {
             surface,
-            frames,
             direct,
             pipeline,
             options,
@@ -104,7 +87,6 @@ impl Renderer {
     }
     pub fn ready(&self) -> bool {
         self.finished.load(Ordering::Acquire)
-            && self.frames.as_ref().is_none_or(|frames| !frames.is_busy())
     }
     pub fn poll(&mut self) -> Result<Option<Completed>, (ErrorCode, String)> {
         self.surface
@@ -126,7 +108,6 @@ impl Renderer {
     }
     pub async fn draw(
         &mut self,
-        fresh: bool,
         dirty: bool,
         options: Enhancement,
         mode: ResizeMode,
@@ -135,36 +116,18 @@ impl Renderer {
         if !self.finished.load(Ordering::Acquire) {
             return Ok(false);
         }
-        let mut frame = if fresh && let Some(frames) = &mut self.frames {
-            frames
-                .capture()
-                .map_err(|error| (error.code(), error.to_string()))?
-        } else {
-            None
-        };
-        if frame.is_none()
-            && dirty
-            && let Some(frames) = &self.frames
-        {
-            frame = frames.retained_frame();
-        }
-        let direct_changed = if let (Some(direct), Some(pixel)) = (&mut self.direct, pixel) {
-            direct.upload(&self.surface.queue, pixel).map_err(gpu)?
+        let direct_changed = if let Some(pixel) = pixel {
+            self.direct
+                .upload(&self.surface.queue, pixel)
+                .map_err(gpu)?
         } else {
             false
         };
-        let pixels = self.direct.as_ref().and_then(|direct| direct.frame.clone());
-        let texture = if let Some(frame) = &frame {
-            frame.texture()
-        } else if let Some(direct) = self
-            .direct
-            .as_ref()
-            .filter(|_| pixels.is_some() && (dirty || direct_changed))
-        {
-            &direct.texture
-        } else {
+        let pixels = self.direct.frame.clone();
+        if pixels.is_none() || !(dirty || direct_changed) {
             return Ok(false);
-        };
+        }
+        let texture = &self.direct.texture;
         // A lease is always submitted, including a failed prepare/presentation.
         // This retires the exact single-slot image only after all GPU reads.
         let started = Instant::now();
@@ -188,11 +151,7 @@ impl Renderer {
         .await;
         let presented = result.as_ref().is_ok_and(|target| target.is_some());
         self.finished.store(false, Ordering::Release);
-        if let Some(frame) = frame {
-            frame.submit(encoder, &self.surface.queue);
-        } else {
-            self.surface.queue.submit([encoder.finish()]);
-        }
+        self.surface.queue.submit([encoder.finish()]);
         let finished = self.finished.clone();
         self.surface
             .queue

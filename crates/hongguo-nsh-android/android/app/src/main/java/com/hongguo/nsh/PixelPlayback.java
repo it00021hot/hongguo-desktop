@@ -23,12 +23,10 @@ final class PixelPlayback {
     final PixelAudio audio;
     MediaPlayer player;
     PixelDirect direct;
-    boolean directMode;
     long generation;
     String sourceId = "";
     boolean prepared;
     private boolean reportedProgress;
-    private boolean reportedFrame;
     private JSONObject props;
     private volatile boolean released;
     private final Runnable progress = this::progress;
@@ -70,15 +68,11 @@ final class PixelPlayback {
             releasePlayer();
             generation = version;
             sourceId = id;
-            directMode = source != null && !source.isNull("frameSource") && !source.optString("frameSource").isEmpty();
             reportedProgress = false;
-            reportedFrame = false;
             output.sourceChanged();
         }
         props = next;
         output.root.setAlpha(next.getBoolean("active") ? 1f : 0f);
-        output.resizeMode = next.getString("resizeMode");
-        output.fit();
         if (source == null || url.isEmpty()) return;
         if (player == null && changed) create(url, version, source.optString("frameSource", ""));
         controls();
@@ -87,43 +81,22 @@ final class PixelPlayback {
         final MediaPlayer candidate = new MediaPlayer();
         player = candidate;
         candidate.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build());
-        if (directMode) {
-            direct = new PixelDirect(this, version, frames);
-            candidate.setVolume(0f, 0f);
-            output.prepare();
-        } else candidate.setSurface(output.rawSurface);
+        if (frames.isEmpty()) throw new java.io.IOException("Android playback requires a frame source");
+        direct = new PixelDirect(this, version, frames);
+        candidate.setVolume(0f, 0f);
+        output.prepare();
         candidate.setOnPreparedListener(ready -> {
             if (!current(ready, version)) return;
             prepared = true;
-            if (direct != null) { direct.prepared(); reapplyControls(); return; }
-            output.videoWidth = ready.getVideoWidth();
-            output.videoHeight = ready.getVideoHeight();
-            output.fit();
-            emit("load", "durationMs", duration(ready), "width", output.videoWidth, "height", output.videoHeight);
-            seeks.prepared();
+            direct.prepared();
             reapplyControls();
         });
-        candidate.setOnVideoSizeChangedListener((video, width, height) -> {
-            if (!current(video, version)) return;
-            if (direct != null) return;
-            output.videoWidth = width; output.videoHeight = height; output.fit();
-            if (prepared) emit("load", "durationMs", duration(video), "width", width, "height", height);
-        });
-        candidate.setOnCompletionListener(video -> { if (current(video, version)) { audio.abandon(); if (direct != null) direct.ended(); else emit("end"); } });
+        candidate.setOnCompletionListener(video -> { if (current(video, version)) { audio.abandon(); direct.ended(); } });
         candidate.setOnSeekCompleteListener(video -> { if (current(video, version)) seeks.complete(); });
         candidate.setOnInfoListener((video, what, extra) -> {
             if (!current(video, version)) return true;
-            if (direct != null) {
-                if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) direct.audioBuffering(true);
-                if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) direct.audioBuffering(false);
-                return false;
-            }
-            if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START && !reportedFrame) {
-                reportedFrame = true;
-                android.util.Log.i("HongguoVideo", "First native frame generation=" + version);
-            }
-            if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) emit("buffer", "isBuffering", true);
-            if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END || what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) emit("buffer", "isBuffering", false);
+            if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) direct.audioBuffering(true);
+            if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) direct.audioBuffering(false);
             return false;
         });
         candidate.setOnErrorListener((video, what, extra) -> {
@@ -138,9 +111,9 @@ final class PixelPlayback {
     private void controls() throws JSONException {
         handler.removeCallbacks(progress);
         if (player == null || !prepared || props == null) return;
-        boolean play = props.getBoolean("active") && !props.getBoolean("paused") && (direct == null || direct.mayPlay());
+        boolean play = props.getBoolean("active") && !props.getBoolean("paused") && direct.mayPlay();
         float volume = props.getBoolean("muted") ? 0f : (float) props.getDouble("volume");
-        player.setVolume(direct != null && !direct.mayPlay() ? 0f : volume, direct != null && !direct.mayPlay() ? 0f : volume);
+        player.setVolume(direct.mayPlay() ? volume : 0f, direct.mayPlay() ? volume : 0f);
         if (!play) {
             if (player.isPlaying()) player.pause();
             audio.update(false);
@@ -152,7 +125,7 @@ final class PixelPlayback {
             audio.update(true);
         }
         if (props.getBoolean("active")) handler.postDelayed(progress, interval());
-        if (direct != null) direct.wake();
+        direct.wake();
     }
     private int interval() { return props == null ? 250 : Math.max(16, Math.min(10_000, props.optInt("progressIntervalMs", 250))); }
     void reapplyControls() {

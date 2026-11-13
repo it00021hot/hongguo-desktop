@@ -131,7 +131,6 @@ export function PlayerView({
     activeDefinition,
     automaticDefinition,
     definitions,
-    isDirect,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,
@@ -174,7 +173,7 @@ export function PlayerView({
   } = useEnhancement();
 
   const sourceReady = srcKey === episodeKey && Boolean(src);
-  const directSource = directVideoSource(src, isDirect);
+  const directSource = directVideoSource(src);
   /**
    * 实际喂给 `<video>` 的地址。重试要换 URL：WebView2 可能缓存了失败瞬间的坏响应，同一个地址重试
    * 永远拿坏数据；后端只解析 path，query 是纯缓存钉（后端已补 no-store，这层双保险兜旧缓存）。
@@ -437,30 +436,28 @@ export function PlayerView({
               slideDir === -1 ? 'slide-in-from-top-10' : 'slide-in-from-bottom-10',
             )}
           >
-            {playSrc ? (
+            {playSrc && directSource ? (
               <>
                 <video
                   key={playSrc}
                   ref={videoRef}
-                  src={directSource ? directVideoAudio(directSource) : playSrc}
+                  src={directVideoAudio(directSource)}
                   crossOrigin="anonymous"
                   className={cn(
                     'absolute inset-0 size-full',
                     coverFill ? 'object-cover' : 'object-contain',
-                    directSource && 'opacity-0',
+                    'opacity-0',
                   )}
-                  autoPlay={!directSource}
-                  onLoadedMetadata={() => handleLoadedMetadataWithDanmaku(!directSource)}
+                  autoPlay={false}
+                  onLoadedMetadata={() => handleLoadedMetadataWithDanmaku(false)}
                   onPlay={(e) => {
                     if (holdIfSwitching(e.currentTarget)) return;
                     markPlayed();
                     setPaused(false);
                   }}
                   onPlaying={(event) => {
-                    if (!directSource) markLive();
                     markStalled(false);
                     report(event.currentTarget.currentTime);
-                    if (!directSource) onFirstFrame?.();
                   }}
                   onPause={(e) => {
                     if (isSwitchPause(e.currentTarget)) return;
@@ -469,19 +466,12 @@ export function PlayerView({
                     setPaused(true);
                     persist(e.currentTarget.currentTime, true);
                   }}
-                  onLoadedData={() => {
-                    if (!directSource) markLive();
-                  }}
                   onWaiting={() => markStalled(true)}
                   onSeeking={seeking}
                   onCanPlay={() => {
                     if (!isDirectBuffering()) markStalled(false);
                   }}
                   onTimeUpdate={(e) => {
-                    if (!directSource && e.currentTarget.currentTime > 0.1) {
-                      markLive();
-                      onFirstFrame?.();
-                    }
                     if (!isDirectBuffering()) markStalled(false);
                     persist(e.currentTarget.currentTime);
                     report(e.currentTarget.currentTime);
@@ -489,25 +479,19 @@ export function PlayerView({
                   onEnded={handleEnded}
                   onRateChange={handleRateChange}
                   onVolumeChange={handleVolumeChange}
-                  onError={(event) => {
-                    if (directSource)
-                      handleDirectError(event.currentTarget.error?.message || t('error.media'));
-                    else handleVideoError();
-                  }}
+                  onError={handleVideoError}
                 />
-                {directSource && (
-                  <canvas
-                    ref={directCanvasRef}
-                    data-direct-video=""
-                    className={cn(
-                      'pointer-events-none absolute inset-0 size-full',
-                      coverFill ? 'object-cover' : 'object-contain',
-                    )}
-                  />
-                )}
+                <canvas
+                  ref={directCanvasRef}
+                  data-direct-video=""
+                  className={cn(
+                    'pointer-events-none absolute inset-0 size-full',
+                    coverFill ? 'object-cover' : 'object-contain',
+                  )}
+                />
                 <EnhancementLayer
-                  videoRef={videoRef}
-                  directCanvasRef={directSource ? directCanvasRef : undefined}
+                  audioRef={videoRef}
+                  directCanvasRef={directCanvasRef}
                   src={playSrc}
                   available={videoLive}
                   cover={coverFill}

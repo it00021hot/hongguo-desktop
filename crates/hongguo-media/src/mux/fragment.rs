@@ -1,14 +1,23 @@
-//! 可追加的 H.264 fMP4。首个封闭 GOP 写成独立片段后文件即可从 0 解起，后续 GOP 只追加 `moof+mdat`。
+//! 可追加的 HEVC fMP4。首个封闭 GOP 写成独立片段后文件即可从 0 解起，后续 GOP 只追加 `moof+mdat`。
 //! 电影/轨道声明整段时间轴；初始媒体表为空，其 `mdhd` 时长必须为零，实际时间由片段给出。
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::io::{Seek, Write};
+use std::path::{Path, PathBuf};
+
+#[path = "archive.rs"]
+mod archive;
+
+#[cfg(test)]
+#[path = "fragment_inspection.rs"]
+mod inspection;
+#[cfg(test)]
+use inspection::{prefix_is_independently_decodable, read_fragment_video, read_u32};
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_video::r#box::{build_box, parse_boxes};
 
-use super::avcc;
+use super::hvcc;
 use super::track::{audio_stsd, dinf, hdlr, mdhd, mvhd, smhd, tkhd, video_stsd, vmhd};
 use super::{AudioTrack, MEDIA_TIMESCALE, MOVIE_TIMESCALE};
 
@@ -22,7 +31,6 @@ const TFHD_DEFAULT_BASE_IS_MOOF: u32 = 0x020000;
 const TRUN_FLAGS: u32 = 0x0001 | 0x0100 | 0x0200 | 0x0400 | 0x0800;
 const SAMPLE_SYNC: u32 = 0x0200_0000;
 const SAMPLE_NON_SYNC: u32 = 0x0101_0000;
-const NON_SYNC_BIT: u32 = 0x0001_0000;
 
 struct AudioHeader {
     channels: u16,
@@ -30,30 +38,35 @@ struct AudioHeader {
     esds: Option<Vec<u8>>,
 }
 
-/// 已经开始写、并且还会继续追加的 H.264 文件。
-pub struct GrowingH264 {
+/// 分批写入归档样本；必须调用 finish 封存为普通 faststart MP4。
+pub struct ArchiveHevc {
     file: File,
+    path: PathBuf,
     sequence: u32,
     timeline_secs: f64,
     width: usize,
     height: usize,
     audio: Option<AudioHeader>,
     started: bool,
+    config: Option<hvcc::HevcConfig>,
+    video_samples: Vec<archive::RecordedSample>,
+    audio_samples: Vec<archive::RecordedSample>,
 }
 
 /// 一次追加后文件上能看到的视频时间。
-pub struct FragmentVideo {
+#[cfg(test)]
+struct FragmentVideo {
     pub pts: Vec<f64>,
     pub first_is_sync: bool,
     pub fragment_bases: Vec<u64>,
 }
 
-pub struct FragmentTiming {
+pub struct ArchiveTiming {
     pub video_end_secs: f64,
     pub audio_end_secs: Option<f64>,
 }
 
-impl GrowingH264 {
+impl ArchiveHevc {
     pub fn create(
         path: &Path,
         width: usize,
@@ -72,6 +85,7 @@ impl GrowingH264 {
             hongguo_common::offline_qa::qa_create(path).map_err(|e| AppError::Io(e.to_string()))?;
         Ok(Self {
             file,
+            path: path.to_path_buf(),
             sequence: 1,
             timeline_secs,
             width,
@@ -82,6 +96,9 @@ impl GrowingH264 {
                 esds: track.esds.clone(),
             }),
             started: false,
+            config: None,
+            video_samples: Vec::new(),
+            audio_samples: Vec::new(),
         })
     }
 
@@ -90,9 +107,15 @@ impl GrowingH264 {
         &mut self,
         video: &[(f64, Vec<u8>, bool)],
         audio: &[(f64, Vec<u8>)],
-        timing: FragmentTiming,
+        timing: ArchiveTiming,
     ) -> AppResult<u64> {
-        if video.is_empty() || (!self.started && !video[0].2) {
+        if video.is_empty()
+            || (!self.started
+                && (!video[0].2
+                    || !hvcc::split(&video[0].1)
+                        .into_iter()
+                        .any(crate::hevc::is_random_access_nal)))
+        {
             return Err(AppError::Media("片段缺少同步样本".into()));
         }
         let timed = time_samples(video, true, timing.video_end_secs)?;
@@ -111,6 +134,7 @@ impl GrowingH264 {
             },
         )?;
         if !self.started {
+            self.config = Some(hvcc::extract(&video[0].1)?);
             let init = init_segment(
                 self.width,
                 self.height,
@@ -124,6 +148,17 @@ impl GrowingH264 {
             self.started = true;
         }
         let fragment = fragment_bytes(self.sequence, &timed, &audio_timed)?;
+        let position = self
+            .file
+            .stream_position()
+            .map_err(|error| AppError::Io(error.to_string()))?;
+        let mut offset = position
+            + u64::from(u32::from_be_bytes(
+                fragment[..4].try_into().expect("moof length"),
+            ))
+            + 8;
+        archive::record(&mut self.video_samples, &timed, &mut offset)?;
+        archive::record(&mut self.audio_samples, &audio_timed, &mut offset)?;
         self.sequence += 1;
         self.file
             .write_all(&fragment)
@@ -183,195 +218,6 @@ pub fn split_completed_gop(units: &mut Vec<AnnexbFrame>) -> Option<(Vec<AnnexbFr
     Some((units.drain(0..second).collect(), next_pts))
 }
 
-/// 文件里已经有至少一个视频同步样本。经典 MP4（没有 `moof`）返回 false。
-pub fn prefix_is_independently_decodable(path: &Path) -> bool {
-    read_fragment_video(path)
-        .ok()
-        .is_some_and(|video| video.first_is_sync && !video.pts.is_empty())
-}
-
-/// 按片段顺序读出视频显示时间。损坏的箱返回错误。
-pub fn read_fragment_video(path: &Path) -> AppResult<FragmentVideo> {
-    let mut file = File::open(path).map_err(|e| AppError::Io(e.to_string()))?;
-    let len = file
-        .metadata()
-        .map_err(|e| AppError::Io(e.to_string()))?
-        .len();
-    let mut pos = 0u64;
-    let mut pts = Vec::new();
-    let mut first_is_sync = false;
-    let mut saw_sample = false;
-    let mut fragment_bases = Vec::new();
-    while pos + 8 <= len {
-        file.seek(SeekFrom::Start(pos))
-            .map_err(|e| AppError::Io(e.to_string()))?;
-        let mut header = [0u8; 16];
-        file.read_exact(&mut header[..8])
-            .map_err(|e| AppError::Io(e.to_string()))?;
-        let size32 = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-        let (box_size, header_len) = match size32 {
-            1 => {
-                file.read_exact(&mut header[8..16])
-                    .map_err(|e| AppError::Io(e.to_string()))?;
-                (
-                    u64::from_be_bytes(header[8..16].try_into().expect("8 字节")),
-                    16u64,
-                )
-            }
-            0 => (len - pos, 8u64),
-            n => (u64::from(n), 8u64),
-        };
-        if box_size < header_len || pos + box_size > len {
-            return Err(AppError::Media("片段箱长度越界".into()));
-        }
-        if &header[4..8] == b"moof" {
-            let mut payload = vec![0u8; (box_size - header_len) as usize];
-            file.read_exact(&mut payload)
-                .map_err(|e| AppError::Io(e.to_string()))?;
-            let (base, sync) = collect_video(&payload, &mut pts)?;
-            if let Some(base) = base {
-                fragment_bases.push(base);
-            }
-            if !saw_sample {
-                first_is_sync = sync;
-                saw_sample = !pts.is_empty();
-            }
-        }
-        pos += box_size;
-    }
-    Ok(FragmentVideo {
-        pts,
-        first_is_sync,
-        fragment_bases,
-    })
-}
-
-fn collect_video(payload: &[u8], pts: &mut Vec<f64>) -> AppResult<(Option<u64>, bool)> {
-    let mut base = None;
-    let mut first_sync = false;
-    let mut saw = false;
-    for traf in parse_boxes(payload, 0, payload.len())
-        .into_iter()
-        .filter(|b| b.is("traf"))
-    {
-        let body = &payload[traf.start..traf.start + traf.size];
-        let children = parse_boxes(body, 0, body.len());
-        let Some(tfhd) = children.iter().find(|b| b.is("tfhd")) else {
-            continue;
-        };
-        let tfhd_body = &body[tfhd.start..tfhd.start + tfhd.size];
-        if tfhd_body.len() < 8 {
-            return Err(AppError::Media("tfhd 过短".into()));
-        }
-        let track_id = u32::from_be_bytes(tfhd_body[4..8].try_into().expect("4 字节"));
-        if track_id != VIDEO_TRACK {
-            continue;
-        }
-        let Some(tfdt) = children.iter().find(|b| b.is("tfdt")) else {
-            return Err(AppError::Media("视频片段缺少 tfdt".into()));
-        };
-        let tfdt_body = &body[tfdt.start..tfdt.start + tfdt.size];
-        let dts_base = read_tfdt(tfdt_body)?;
-        let Some(trun) = children.iter().find(|b| b.is("trun")) else {
-            return Err(AppError::Media("视频片段缺少 trun".into()));
-        };
-        let trun_body = &body[trun.start..trun.start + trun.size];
-        let sync = append_trun(trun_body, dts_base, pts)?;
-        if !saw {
-            first_sync = sync;
-            saw = true;
-        }
-        base = Some(dts_base);
-    }
-    Ok((base, first_sync))
-}
-
-fn read_tfdt(payload: &[u8]) -> AppResult<u64> {
-    if payload.is_empty() {
-        return Err(AppError::Media("tfdt 过短".into()));
-    }
-    if payload[0] == 1 {
-        if payload.len() < 12 {
-            return Err(AppError::Media("tfdt 过短".into()));
-        }
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&payload[4..12]);
-        return Ok(u64::from_be_bytes(buf));
-    }
-    if payload.len() < 8 {
-        return Err(AppError::Media("tfdt 过短".into()));
-    }
-    Ok(u32::from_be_bytes(payload[4..8].try_into().expect("4 字节")) as u64)
-}
-
-fn append_trun(payload: &[u8], base: u64, pts: &mut Vec<f64>) -> AppResult<bool> {
-    if payload.len() < 8 {
-        return Err(AppError::Media("trun 过短".into()));
-    }
-    let flags = u32::from_be_bytes([0, payload[1], payload[2], payload[3]]);
-    let count = u32::from_be_bytes(payload[4..8].try_into().expect("4 字节")) as usize;
-    let mut off = 8usize;
-    if flags & 0x1 != 0 {
-        off += 4;
-    }
-    if flags & 0x4 != 0 {
-        off += 4;
-    }
-    let has_dur = flags & 0x100 != 0;
-    let has_size = flags & 0x200 != 0;
-    let has_flags = flags & 0x400 != 0;
-    let has_cto = flags & 0x800 != 0;
-    let mut dts = base;
-    let mut first_sync = false;
-    for index in 0..count {
-        let dur = if has_dur {
-            let v = read_u32(payload, off)?;
-            off += 4;
-            v
-        } else {
-            0
-        };
-        if has_size {
-            off += 4;
-        }
-        let sample_flags = if has_flags {
-            let v = read_u32(payload, off)?;
-            off += 4;
-            v
-        } else {
-            0
-        };
-        let cto = if has_cto {
-            let v = read_i32(payload, off)?;
-            off += 4;
-            v
-        } else {
-            0
-        };
-        if index == 0 {
-            first_sync = sample_flags & NON_SYNC_BIT == 0;
-        }
-        let stamp = dts as i64 + i64::from(cto);
-        pts.push(stamp as f64 / f64::from(MEDIA_TIMESCALE));
-        dts += u64::from(dur);
-    }
-    Ok(first_sync)
-}
-
-fn read_u32(data: &[u8], at: usize) -> AppResult<u32> {
-    let end = at + 4;
-    let bytes: [u8; 4] = data
-        .get(at..end)
-        .ok_or_else(|| AppError::Media("trun 字段越界".into()))?
-        .try_into()
-        .expect("4 字节");
-    Ok(u32::from_be_bytes(bytes))
-}
-
-fn read_i32(data: &[u8], at: usize) -> AppResult<i32> {
-    Ok(read_u32(data, at)? as i32)
-}
-
 struct TimedSample {
     dts: u64,
     dur: u32,
@@ -392,7 +238,7 @@ fn trex_box(track_id: u32) -> Vec<u8> {
 
 fn time_samples(
     frames: &[(f64, Vec<u8>, bool)],
-    as_avcc: bool,
+    as_video: bool,
     end_secs: f64,
 ) -> AppResult<Vec<TimedSample>> {
     if frames.is_empty() {
@@ -414,8 +260,8 @@ fn time_samples(
                 dts: dts[index],
                 dur: durations[index],
                 cto,
-                data: if as_avcc {
-                    avcc::to_avcc(data)
+                data: if as_video {
+                    hvcc::to_sample(data)?
                 } else {
                     data.clone()
                 },
@@ -472,8 +318,7 @@ fn init_segment(
     first_video: &[u8],
     timeline_secs: f64,
 ) -> AppResult<Vec<u8>> {
-    let config =
-        avcc::extract(first_video).ok_or_else(|| AppError::Media("首段没有 SPS/PPS".into()))?;
+    let config = hvcc::extract(first_video)?;
     let movie_ticks = (timeline_secs * f64::from(MOVIE_TIMESCALE)).round() as u64;
     let mut moov = mvhd(movie_ticks, if audio.is_some() { 3 } else { 2 });
     moov.extend(video_trak(
@@ -506,7 +351,7 @@ fn ftyp() -> Vec<u8> {
     build_box(b"ftyp", &payload)
 }
 
-fn video_trak(width: u32, height: u32, movie_ticks: u64, config: &avcc::AvcConfig) -> Vec<u8> {
+fn video_trak(width: u32, height: u32, movie_ticks: u64, config: &hvcc::HevcConfig) -> Vec<u8> {
     trak(TrakParts {
         track_id: VIDEO_TRACK,
         movie_ticks,
@@ -706,15 +551,11 @@ mod tests {
     }
 
     pub(super) fn idr(at: f64) -> (f64, Vec<u8>, bool) {
-        (
-            at,
-            annexb(&[&[0x67, 0x42, 0x00, 0x1f], &[0x68, 0xce], &[0x65, 0x88]]),
-            true,
-        )
+        (at, super::super::fixtures::first(), true)
     }
 
     fn inter(at: f64) -> (f64, Vec<u8>, bool) {
-        (at, annexb(&[&[0x41, 0x9a, 0x11]]), false)
+        (at, annexb(&[&[0x02, 1, 0x9a, 0x11]]), false)
     }
 
     #[test]
@@ -797,12 +638,12 @@ mod tests {
             samples: vec![(0.0, vec![0x11, 0x22]), (STEP * 2.0, vec![0x33])],
             end_secs: STEP * 4.0,
         };
-        let mut growing = GrowingH264::create(&path, 64, 64, Some(&audio), 1.0).unwrap();
+        let mut growing = ArchiveHevc::create(&path, 64, 64, Some(&audio), 1.0).unwrap();
         let bytes = growing
             .push(
                 &[idr(0.0), inter(STEP)],
                 &[audio.samples[0].clone()],
-                FragmentTiming {
+                ArchiveTiming {
                     video_end_secs: STEP * 2.0,
                     audio_end_secs: Some(STEP * 2.0),
                 },
@@ -818,7 +659,7 @@ mod tests {
             .push(
                 &[idr(STEP * 2.0), inter(STEP * 3.0)],
                 &[audio.samples[1].clone()],
-                FragmentTiming {
+                ArchiveTiming {
                     video_end_secs: STEP * 4.0,
                     audio_end_secs: Some(audio.end_secs),
                 },

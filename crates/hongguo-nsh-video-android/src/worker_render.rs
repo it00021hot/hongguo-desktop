@@ -1,10 +1,7 @@
 use super::Worker;
 use crate::render::Renderer;
 use hongguo_nsh_video_api::{EnhancementPhase, ErrorCode};
-use std::{
-    sync::atomic::Ordering,
-    time::{Duration, Instant},
-};
+use std::sync::atomic::Ordering;
 
 impl Worker {
     pub(super) fn prepare_renderer(&mut self, size: Option<(u32, u32)>) -> bool {
@@ -18,9 +15,6 @@ impl Worker {
             .filter(|(settings, _, _)| *settings == self.props.enhancement)
         {
             self.phase_for(settings, EnhancementPhase::Error, Some(code), detail);
-            if !self.direct() {
-                return false;
-            }
         }
         if !self.requested_output {
             self.phase(EnhancementPhase::Loading, None, String::new());
@@ -41,38 +35,17 @@ impl Worker {
             }
             self.phase(EnhancementPhase::Loading, None, String::new());
             let result = pollster::block_on(Renderer::new(
-                &self.shared.bridge,
                 window,
                 (self.viewport.width, self.viewport.height),
                 size,
                 self.options(),
-                self.direct(),
             ));
             match result {
                 Ok(renderer)
                     if self.current()
                         && self.shared.revision.load(Ordering::Acquire) == self.revision =>
                 {
-                    self.output_token = self.output_token.wrapping_add(1);
-                    self.renderer_generation = self.generation;
                     self.renderer = Some(renderer);
-                    let renderer = self
-                        .renderer
-                        .as_ref()
-                        .expect("retained before decoder attachment");
-                    if let Some(frames) = &renderer.frames
-                        && let Err(error) = self.shared.bridge.output(
-                            self.generation,
-                            self.output_token,
-                            Some((frames.surface(), frames.surface_texture())),
-                        )
-                    {
-                        self.fallback(ErrorCode::FrameUnavailable, error);
-                        return false;
-                    }
-                    if !self.direct() {
-                        self.first_frame = Some(Instant::now());
-                    }
                 }
                 Ok(_) => return false,
                 Err((code, error)) => {
@@ -99,7 +72,6 @@ impl Worker {
                     return;
                 }
                 if completed.presented
-                    && (self.direct() || completed.settings == self.props.enhancement)
                     && self.shared.revision.load(Ordering::Acquire) == self.revision
                 {
                     if let (Some(frame), Some(lease)) = (&completed.frame, self.direct_lease()) {
@@ -141,8 +113,7 @@ impl Worker {
                         self.fallback(ErrorCode::GpuFailed, error);
                         return;
                     }
-                    self.first_frame = None;
-                    if self.failed.is_none() {
+                    if self.failed.is_none() && completed.settings == self.props.enhancement {
                         self.phase(EnhancementPhase::Ready, None, String::new());
                     }
                 }
@@ -157,16 +128,6 @@ impl Worker {
                 return;
             }
             _ => {}
-        }
-        if self
-            .first_frame
-            .is_some_and(|started| started.elapsed() > Duration::from_secs(3))
-        {
-            self.fallback(
-                ErrorCode::FrameUnavailable,
-                "The decoder did not supply a frame to the enhancement output".into(),
-            );
-            return;
         }
         let options = self.options();
         if !self
@@ -209,10 +170,6 @@ impl Worker {
             None
         };
         let renderer = self.renderer.as_mut().expect("renderer initialized");
-        // Consume one notification only once input/GPU are writable. A duplicate
-        // timestamp must not leave updateTexImage spinning, and an event that
-        // arrives during the submission must remain queued for the next frame.
-        let fresh = self.shared.frame.swap(false, Ordering::AcqRel);
         let resized = match renderer
             .surface
             .resize(self.viewport.width, self.viewport.height)
@@ -223,13 +180,8 @@ impl Worker {
                 return;
             }
         };
-        match pollster::block_on(renderer.draw(
-            fresh,
-            self.dirty,
-            options,
-            self.props.resize_mode,
-            pixel,
-        )) {
+        match pollster::block_on(renderer.draw(self.dirty, options, self.props.resize_mode, pixel))
+        {
             Ok(true) => {
                 // EGL's first swap after resize can retire the old-size back
                 // buffer. Present this same real image once more while paused.

@@ -1,5 +1,10 @@
 # 内置播放后的媒体接口清理
 
+> 本文保留第一轮清理及测试的历史记录。其中本地 H.264 系统播放例外、H.264 归档编码和 `GrowingH264` 均已淘汰。
+> 当前统一使用内置视频解码；下载旧文件无效时重新获取在线原流，混合素材合并输出 HEVC。
+> ByteVC2 归档封装已使用 `ArchiveHevc` 完成封存，旧 `GrowingH264` 名称及播放增长供数接口不再使用。
+> 现行编码、缓存与能力契约见 [HEVC 归档迁移](hevc-archive-migration.md)，下文旧实验结果不代表新路线验收。
+
 HEVC/ByteVC1/ByteVC2 内置播放经 `hongguo-softdec::DirectSession` 与各壳帧呈现；H.264 沿现有系统播放路径。本次移除旧播放转码专属接口，保留合并归档编码。
 
 共用播放服务固定使用内置能力，不再保留壳声明、系统播放模式或 Windows opt-in。
@@ -27,13 +32,13 @@ GPUI、Tauri、NSH 的 HEVC/ByteVC1/ByteVC2 均直接内置解码；失败明确
 
 2026-11-13 定向结果（`target/nsh-commit-20261113/`）：
 
-| 检查 | 结果 | 日志 |
-| --- | --- | --- |
-| 清理前码率 / ffmpeg 归档参数特征测试 | 1 + 1 通过 | `archive-{bitrate,ffmpeg}-before-cleanup.log` |
-| platform / platform-api lib | 24 + 1 通过 | `archive-cleanup-tests.log` |
-| media lib（含保留的归档时序、音频与封装校验） | 99 通过 | `archive-media-cleanup-tests.log` |
-| VideoToolbox lib（含实际灰帧 H.264 编码） | 6 通过 | `archive-vt-cleanup-tests.log` |
-| 三个相关 crate Clippy lib/tests | exit 0 | `archive-cleanup-strict.log` |
+| 检查                                          | 结果        | 日志                                          |
+| --------------------------------------------- | ----------- | --------------------------------------------- |
+| 清理前码率 / ffmpeg 归档参数特征测试          | 1 + 1 通过  | `archive-{bitrate,ffmpeg}-before-cleanup.log` |
+| platform / platform-api lib                   | 24 + 1 通过 | `archive-cleanup-tests.log`                   |
+| media lib（含保留的归档时序、音频与封装校验） | 99 通过     | `archive-media-cleanup-tests.log`             |
+| VideoToolbox lib（含实际灰帧 H.264 编码）     | 6 通过      | `archive-vt-cleanup-tests.log`                |
+| 三个相关 crate Clippy lib/tests               | exit 0      | `archive-cleanup-strict.log`                  |
 
 跨目标整体验证由主集成记录，此表不将本机测试推定为 Windows/Android/iOS 通过。
 

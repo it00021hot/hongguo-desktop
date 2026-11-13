@@ -1,5 +1,5 @@
 use crate::{
-    DecodedFrame, ImportedFrame, OutputError, VideoOutput,
+    AudioOutput, ImportedFrame, OutputError,
     controller::{Layers, Shared, Viewport},
     render::Renderer,
 };
@@ -30,9 +30,8 @@ struct Worker {
     viewport: Viewport,
     revision: u64,
     source: Option<Source>,
-    video: Option<VideoOutput>,
+    video: Option<AudioOutput>,
     renderer: Option<Renderer>,
-    decoded: Option<DecodedFrame>,
     frame: Option<ImportedFrame>,
     pending_seek: Option<(Seek, Receiver<bool>, Instant)>,
     last_metadata: Option<(Option<u64>, u32, u32)>,
@@ -46,7 +45,7 @@ struct Worker {
 }
 
 pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, emit: Sink) {
-    layers.show_enhanced(false, false);
+    layers.set_visible(false);
     let mut worker = Worker {
         shared,
         layers,
@@ -57,7 +56,6 @@ pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, e
         source: None,
         video: None,
         renderer: None,
-        decoded: None,
         frame: None,
         pending_seek: None,
         last_metadata: None,
@@ -73,7 +71,7 @@ pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, e
         objc2::rc::autoreleasepool(|_| worker.step());
         let _ = receiver.recv_timeout(FRAME_TICK);
     }
-    worker.layers.show_enhanced(false, false);
+    worker.layers.set_visible(false);
     worker.video.take();
     worker
         .shared
@@ -117,19 +115,7 @@ impl Worker {
     }
 
     fn fallback(&mut self, error: OutputError) {
-        if self.direct.is_some() {
-            self.direct_failure(error);
-            return;
-        }
-        self.layers.show_enhanced(false, self.props.active);
-        self.failed = Some(self.props.enhancement);
-        self.renderer.take();
-        self.frame.take();
-        if self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on {
-            self.status(EnhancementPhase::Error, Some(&error));
-        } else {
-            self.status(EnhancementPhase::Idle, None);
-        }
+        self.direct_failure(error);
     }
 
     fn step(&mut self) {
@@ -155,14 +141,11 @@ impl Worker {
         if !self.props.active || self.video.is_none() {
             return;
         }
-        self.confirm_seek();
+        self.confirm_direct_seek();
         self.poll_render();
         self.read_video();
-        self.prepare_frame();
-        if self.dirty
-            && (self.direct.is_some() || self.failed != Some(self.props.enhancement))
-            && self.frame.is_some()
-        {
+        self.prepare_direct();
+        if self.dirty && self.frame.is_some() {
             self.draw();
         }
     }
@@ -181,7 +164,6 @@ impl Worker {
         self.props = props;
         self.revision = revision;
         self.dirty = true;
-        self.layers.original.set_resize_mode(self.props.resize_mode);
         if self.viewport != viewport {
             self.viewport = viewport;
             CATransaction::begin();
@@ -190,16 +172,14 @@ impl Worker {
                 CGPoint::ZERO,
                 CGSize::new(viewport.width_points, viewport.height_points),
             );
-            self.layers.original.layer().setFrame(frame);
             self.layers.metal.setFrame(frame);
             self.layers.metal.setContentsScale(viewport.scale_factor);
             CATransaction::commit();
         }
         if changed_source {
-            self.layers.show_enhanced(false, self.props.active);
+            self.layers.set_visible(false);
             self.video.take();
             self.renderer.take();
-            self.decoded.take();
             self.frame.take();
             self.pending_seek.take();
             self.direct.take();
@@ -212,11 +192,7 @@ impl Worker {
                 self.event(VideoEvent::LoadStart {
                     source_id: source.id.clone(),
                 });
-                match if source.frame_source.is_some() {
-                    VideoOutput::open_audio(&source.url)
-                } else {
-                    VideoOutput::open(&source.url)
-                } {
+                match AudioOutput::open_audio(&source.url) {
                     Ok(video) => {
                         if let Some(url) = &source.frame_source {
                             match direct::Direct::open(url) {
@@ -232,7 +208,12 @@ impl Worker {
                             }
                             video.hold(true);
                         } else {
-                            video.attach_original(&self.layers.original);
+                            self.event(VideoEvent::Error {
+                                source_id: source.id.clone(),
+                                code: ErrorCode::InvalidProps,
+                                detail: "missing builtin video frame source".into(),
+                            });
+                            return;
                         }
                         let control = video.control();
                         let mut target = self
@@ -271,11 +252,9 @@ impl Worker {
             }
         }
         if changed_mode || changed_active || !self.props.active {
-            self.layers.show_enhanced(false, self.props.active);
+            self.layers.set_visible(false);
         }
-        if (!self.enhanced() && self.direct.is_none()) || !self.props.active {
-            // Original AVPlayerLayer remains independent of GPU availability, even
-            // while the window is occluded or a previous device has failed.
+        if !self.props.active {
             self.renderer.take();
             self.frame.take();
             self.status(EnhancementPhase::Idle, None);
@@ -292,9 +271,8 @@ impl Worker {
         {
             return;
         }
-        self.layers.show_enhanced(false, self.props.active);
+        self.layers.set_visible(false);
         self.frame.take();
-        self.decoded.take();
         if let Some(direct) = &mut self.direct {
             if let Err(error) = direct.seek(request.position_ms) {
                 self.direct_failure(OutputError::new(ErrorCode::SeekFailed, error));
@@ -307,53 +285,8 @@ impl Worker {
         if let Some(video) = &self.video {
             match video.seek(request.position_ms) {
                 Ok(completion) => self.pending_seek = Some((request, completion, Instant::now())),
-                Err(error) if self.direct.is_some() => self.direct_failure(error),
-                Err(error) => self.event(VideoEvent::Error {
-                    source_id: self.source_id(),
-                    code: error.code(),
-                    detail: error.detail().to_owned(),
-                }),
+                Err(error) => self.direct_failure(error),
             }
-        }
-    }
-
-    fn confirm_seek(&mut self) {
-        if self.direct.is_some() {
-            self.confirm_direct_seek();
-            return;
-        }
-        let Some((request, completion, started)) = &self.pending_seek else {
-            return;
-        };
-        match completion.try_recv() {
-            Ok(true) => {
-                if let Some(position_ms) = self.video.as_ref().and_then(VideoOutput::position_ms) {
-                    self.event(VideoEvent::Seeked {
-                        source_id: request.source_id.clone(),
-                        request_id: request.request_id.clone(),
-                        position_ms,
-                    });
-                    self.shared.reconcile_playback(&request.source_id);
-                }
-                self.pending_seek = None;
-            }
-            Ok(false) | Err(TryRecvError::Disconnected) => {
-                self.event(VideoEvent::Error {
-                    source_id: request.source_id.clone(),
-                    code: ErrorCode::SeekFailed,
-                    detail: "AVPlayer did not finish the current seek".into(),
-                });
-                self.pending_seek = None;
-            }
-            Err(TryRecvError::Empty) if started.elapsed() >= Duration::from_secs(15) => {
-                self.event(VideoEvent::Error {
-                    source_id: request.source_id.clone(),
-                    code: ErrorCode::SeekFailed,
-                    detail: "AVPlayer seek completion timed out".into(),
-                });
-                self.pending_seek = None;
-            }
-            Err(TryRecvError::Empty) => {}
         }
     }
 
@@ -363,8 +296,10 @@ impl Worker {
         };
         match renderer.poll() {
             Ok(Some(completed)) if completed.epoch == self.revision => {
-                if self.direct.is_some() {
-                    self.present_direct();
+                self.layers.set_visible(self.props.active);
+                self.present_direct();
+                if self.video.is_none() {
+                    return;
                 }
                 if (self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on)
                     && self.failed != Some(self.props.enhancement)
@@ -376,7 +311,6 @@ impl Worker {
                     ));
                     return;
                 }
-                self.layers.show_enhanced(true, self.props.active);
                 if self.failed != Some(self.props.enhancement) {
                     self.status(
                         if self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on {
@@ -439,76 +373,11 @@ impl Worker {
                 });
             }
         }
-        if self.direct.is_some() {
-            self.read_direct();
-            return;
-        }
-        match video.next_frame() {
-            Ok(Some(frame)) => {
-                let metadata = frame.metadata();
-                let loaded = (duration_ms, metadata.width, metadata.height);
-                if self.last_metadata != Some(loaded) {
-                    self.last_metadata = Some(loaded);
-                    self.event(VideoEvent::Load {
-                        source_id,
-                        duration_ms,
-                        width: metadata.width,
-                        height: metadata.height,
-                    });
-                }
-                self.decoded = Some(frame);
-                self.frame.take();
-                self.dirty = true;
-            }
-            Ok(None) => {}
-            Err(error) => {
-                self.event(VideoEvent::Error {
-                    source_id,
-                    code: error.code(),
-                    detail: error.detail().to_owned(),
-                });
-                self.video.take();
-            }
-        }
+        self.read_direct();
     }
 
     fn enhanced(&self) -> bool {
         self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on
-    }
-
-    fn prepare_frame(&mut self) {
-        if self.direct.is_some() {
-            self.prepare_direct();
-            return;
-        }
-        if !self.enhanced() || self.failed == Some(self.props.enhancement) || self.frame.is_some() {
-            return;
-        }
-        let Some(decoded) = self.decoded.clone() else {
-            return;
-        };
-        if self.renderer.is_none() {
-            self.status(EnhancementPhase::Loading, None);
-            match pollster::block_on(Renderer::new(self.layers.metal.clone())) {
-                Ok(renderer) => self.renderer = Some(renderer),
-                Err(error) => {
-                    self.fallback(error);
-                    return;
-                }
-            }
-        }
-        match self
-            .renderer
-            .as_ref()
-            .expect("renderer initialized")
-            .import(decoded)
-        {
-            Ok(frame) => {
-                self.frame = Some(frame);
-                self.dirty = true;
-            }
-            Err(error) => self.fallback(error),
-        }
     }
 
     fn draw(&mut self) {
@@ -531,7 +400,7 @@ impl Worker {
                 .draw(
                     frame,
                     self.viewport,
-                    if self.direct.is_some() && self.failed == Some(self.props.enhancement) {
+                    if self.failed == Some(self.props.enhancement) {
                         Enhancement::default()
                     } else {
                         self.props.enhancement

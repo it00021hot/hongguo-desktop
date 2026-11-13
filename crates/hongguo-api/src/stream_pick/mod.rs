@@ -17,36 +17,15 @@ const UNRANKED_CODEC: u8 = 3;
 /// `bytevc2` 可播时的偏好位（次于 bytevc1；需 `cap.bytevc2`）。
 const BYTEVC2_RANK: u8 = 2;
 
-/// 无 HEVC 模式的编码层级（官方 FALLBACK 序列的桌面版）。
-const NO_HEVC_H264: u8 = 0;
-const NO_HEVC_UNKNOWN: u8 = 1;
-const NO_HEVC_HEVC: u8 = 2;
-
-/// 编码器偏好排序：`h265`/`h264` > `bytevc1` > `bytevc2` > 其余。
+/// 编码偏好：HEVC > bytevc1 > bytevc2 > 其余。
 fn codec_rank(codec: &str) -> u8 {
     if hongguo_bytevc2::is_bytevc2(codec) {
         return BYTEVC2_RANK;
     }
     match codec {
-        "h265" | "h264" | "h265_hvc1" | "hevc" | "hvc1" | "avc1" => 0,
+        "h265" | "h265_hvc1" | "hevc" | "hvc1" | "hev1" => 0,
         "bytevc1" => 1,
         _ => UNRANKED_CODEC,
-    }
-}
-
-/// 是否为 H.264 系（无 HEVC 机器上唯一必然可解的编码）。
-fn is_h264(codec: &str) -> bool {
-    matches!(codec, "h264" | "avc1")
-}
-
-/// 无 HEVC 模式的编码层级。
-fn codec_tier_no_hevc(codec: &str, cap: DecoderCapability) -> u8 {
-    if is_h264(codec) || (cap.bytevc2 && hongguo_bytevc2::is_bytevc2(codec)) {
-        NO_HEVC_H264
-    } else if codec.is_empty() {
-        NO_HEVC_UNKNOWN
-    } else {
-        NO_HEVC_HEVC
     }
 }
 
@@ -114,7 +93,7 @@ pub fn refused_codecs(model: &Value, cap: DecoderCapability) -> Option<String> {
 }
 
 /// 计算一条流在指定能力模式下的分数。
-pub fn stream_score_with(v: &Value, cap: DecoderCapability) -> StreamScore {
+pub fn stream_score(v: &Value) -> StreamScore {
     let meta = v.get("video_meta");
 
     let definition = meta
@@ -143,12 +122,6 @@ pub fn stream_score_with(v: &Value, cap: DecoderCapability) -> StreamScore {
         pixels: dim("vwidth").saturating_mul(dim("vheight")),
         codec_rank: codec_rank(codec),
         bitrate,
-        no_hevc: !cap.hevc,
-        codec_tier: if cap.hevc {
-            0
-        } else {
-            codec_tier_no_hevc(codec, cap)
-        },
     }
 }
 
@@ -194,7 +167,7 @@ fn definition_digits(s: &str) -> Option<u32> {
 pub use hongguo_common::model::VideoDefinition as Definition;
 
 /// 列出一集**能播**的清晰度档位，按高到低（同档位多条流只给一项）；播不了的档位
-/// 不进菜单（列出来点了就是黑屏），过滤必须逐集判断；`NoHevc` 下纯 HEVC 档也不进菜单。
+/// 不进菜单，过滤必须逐集判断。
 pub fn list_definitions(model: &Value, cap: DecoderCapability) -> Vec<Definition> {
     let Some(list) = model.get("video_list").and_then(Value::as_array) else {
         return Vec::new();
@@ -207,10 +180,7 @@ pub fn list_definitions(model: &Value, cap: DecoderCapability) -> Vec<Definition
         if !is_playable(v, cap) {
             continue;
         }
-        let score = stream_score_with(v, cap);
-        if !cap.hevc && score.codec_tier >= NO_HEVC_HEVC {
-            continue;
-        }
+        let score = stream_score(v);
         // def_num 为 0 说明元数据缺失，列出来只会让菜单多一个看不懂的项
         if score.def_num == 0 {
             continue;
@@ -231,13 +201,11 @@ pub fn list_definitions(model: &Value, cap: DecoderCapability) -> Vec<Definition
     seen.into_iter().rev().collect()
 }
 
-/// 在候选列表里挑最优流。`decodable_only` 为 true 时只看「必然/大概率可解」
-/// 的层级（h264 / 未知编码），供 NoHevc 模式的分轮择优。
+/// 在候选列表里挑最优流。
 fn best_in(
     list: &[Value],
     cap: DecoderCapability,
     target: Option<u32>,
-    decodable_only: bool,
 ) -> Option<(StreamScore, &Value)> {
     let mut best: Option<(StreamScore, &Value)> = None;
     for v in list {
@@ -247,10 +215,7 @@ fn best_in(
         if !is_playable(v, cap) {
             continue;
         }
-        let score = stream_score_with(v, cap);
-        if decodable_only && score.codec_tier >= NO_HEVC_HEVC {
-            continue;
-        }
+        let score = stream_score(v);
         if target.is_some_and(|t| score.def_num != t) {
             continue;
         }
@@ -263,21 +228,13 @@ fn best_in(
 
 /// 从 `video_model` 里挑指定清晰度的那条流：`target` 为 `None` 挑最高档，指定档位在
 /// 该档内按编码偏好 > 码率择优；播不了的流不参与挑选（缺档/私有编码档静默回退能播的最高档）；
-/// `NoHevc` 模式分轮择优（先可解层级再全集），HEVC 系为末选——整集只有 HEVC 时仍取流靠转码兜底。
 pub fn pick_stream_at(
     model: &Value,
     target: Option<u32>,
     cap: DecoderCapability,
 ) -> Option<PlayStream> {
     let list = model.get("video_list")?.as_array()?;
-    let chosen = if cap.hevc {
-        best_in(list, cap, target, false).or_else(|| best_in(list, cap, None, false))
-    } else {
-        best_in(list, cap, target, true)
-            .or_else(|| best_in(list, cap, None, true))
-            .or_else(|| best_in(list, cap, target, false))
-            .or_else(|| best_in(list, cap, None, false))
-    };
+    let chosen = best_in(list, cap, target).or_else(|| best_in(list, cap, None));
     let (score, v) = chosen?;
     Some(PlayStream {
         url: v.get("main_url")?.as_str()?.to_string(),
@@ -372,11 +329,11 @@ mod tests {
 
     #[test]
     fn bytevc2_is_selectable_without_a_system_hevc_decoder() {
-        let cap = DecoderCapability::no_hevc().with_bytevc2(true);
+        let cap = DecoderCapability::builtin();
         let defs = list_definitions(&real_model(), cap);
         assert_eq!(
             defs.iter().map(|d| d.value).collect::<Vec<_>>(),
-            vec![720, 360]
+            vec![1080, 720, 360]
         );
         let stream = pick_stream_at(&real_model(), Some(720), cap).unwrap();
         assert_eq!(stream.definition, 720);
@@ -442,7 +399,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|v| stream_score_with(v, DecoderCapability::full()))
+            .map(stream_score)
             .collect();
         assert_eq!(
             scores.iter().map(|s| s.def_num).collect::<Vec<_>>(),
@@ -467,10 +424,7 @@ mod tests {
     #[test]
     fn bitrate_falls_back_to_real_bitrate() {
         let v = json!({ "video_meta": { "real_bitrate": 88888, "codec_type": "h265" } });
-        assert_eq!(
-            stream_score_with(&v, DecoderCapability::full()).bitrate,
-            88888
-        );
+        assert_eq!(stream_score(&v).bitrate, 88888);
     }
 
     #[test]
@@ -519,113 +473,5 @@ mod tests {
             .is_none()
         );
         assert!(pick_stream_at(&json!({}), None, DecoderCapability::full()).is_none());
-    }
-
-    fn hevc_vs_h264_model() -> Value {
-        json!({
-            "video_list": [
-                { "main_url": "https://cdn/1080-hevc.mp4",
-                  "video_meta": { "definition": "1080p", "vwidth": 1080, "vheight": 1920,
-                                  "bitrate": 503006, "codec_type": "h265" } },
-                { "main_url": "https://cdn/720-h264.mp4",
-                  "video_meta": { "definition": "720p", "vwidth": 720, "vheight": 1280,
-                                  "bitrate": 400000, "codec_type": "h264" } }
-            ]
-        })
-    }
-
-    #[test]
-    fn no_hevc_machine_drops_to_the_playable_definition() {
-        let s = pick_stream_at(&hevc_vs_h264_model(), None, DecoderCapability::no_hevc()).unwrap();
-        assert_eq!(s.url, "https://cdn/720-h264.mp4");
-        assert_eq!(s.codec.as_deref(), Some("h264"));
-        assert_eq!(s.definition, 720);
-        let s = pick_stream_at(&hevc_vs_h264_model(), None, DecoderCapability::full()).unwrap();
-        assert_eq!(s.url, "https://cdn/1080-hevc.mp4");
-    }
-
-    #[test]
-    fn no_hevc_machine_keeps_hevc_only_gears_out_of_the_menu() {
-        let defs = list_definitions(&hevc_vs_h264_model(), DecoderCapability::no_hevc());
-        assert_eq!(
-            defs.iter().map(|d| d.value).collect::<Vec<_>>(),
-            vec![720],
-            "HEVC-only 档在无扩展机器上点了必黑屏，不能进菜单"
-        );
-    }
-
-    #[test]
-    fn no_hevc_same_definition_prefers_h264_over_higher_bitrate_hevc() {
-        let model = json!({
-            "video_list": [
-                { "main_url": "hevc", "video_meta": { "definition": "720p", "vwidth": 720,
-                    "vheight": 1280, "bitrate": 400000, "codec_type": "h265" } },
-                { "main_url": "h264", "video_meta": { "definition": "720p", "vwidth": 720,
-                    "vheight": 1280, "bitrate": 600000, "codec_type": "h264" } }
-            ]
-        });
-        let s = pick_stream_at(&model, Some(720), DecoderCapability::no_hevc()).unwrap();
-        assert_eq!(s.url, "h264");
-    }
-
-    #[test]
-    fn no_hevc_last_resort_skips_bytevc2_but_keeps_standard_hevc() {
-        let s = pick_stream_at(&multi_codec_model(), None, DecoderCapability::no_hevc()).unwrap();
-        assert_eq!(s.codec.as_deref(), Some("bytevc1"));
-    }
-
-    #[test]
-    fn no_hevc_whole_hevc_episode_still_yields_a_stream_as_last_resort() {
-        let s = pick_stream_at(&real_model(), None, DecoderCapability::no_hevc()).unwrap();
-        assert_eq!(s.definition, 1080, "末选取 HEVC 里最高的 1080p bytevc1");
-    }
-
-    #[test]
-    fn no_hevc_unknown_codec_stays_as_the_last_resort() {
-        let model = json!({
-            "video_list": [
-                { "main_url": "mystery", "video_meta": { "definition": "720p",
-                    "vwidth": 720, "vheight": 1280, "bitrate": 300000 } }
-            ]
-        });
-        let s = pick_stream_at(&model, None, DecoderCapability::no_hevc()).unwrap();
-        assert_eq!(s.url, "mystery");
-    }
-
-    #[test]
-    fn no_hevc_prefers_h264_over_unknown_at_same_definition() {
-        let model = json!({
-            "video_list": [
-                { "main_url": "mystery", "video_meta": { "definition": "720p",
-                    "vwidth": 720, "vheight": 1280, "bitrate": 500000 } },
-                { "main_url": "h264", "video_meta": { "definition": "720p",
-                    "vwidth": 720, "vheight": 1280, "bitrate": 400000, "codec_type": "h264" } }
-            ]
-        });
-        let s = pick_stream_at(&model, Some(720), DecoderCapability::no_hevc()).unwrap();
-        assert_eq!(s.url, "h264", "同档位确定的 h264 优先于未知编码");
-    }
-
-    #[test]
-    fn no_hevc_pinned_hevc_only_definition_falls_back_silently() {
-        let s = pick_stream_at(&real_model(), Some(720), DecoderCapability::no_hevc()).unwrap();
-        assert_eq!(s.definition, 1080);
-    }
-
-    #[test]
-    fn no_hevc_unknown_gear_stays_in_the_menu_as_risky_but_playable() {
-        let model = json!({
-            "video_list": [
-                { "main_url": "mystery", "video_meta": { "definition": "1080p",
-                    "vwidth": 1080, "vheight": 1920, "bitrate": 500000 } },
-                { "main_url": "h264", "video_meta": { "definition": "720p",
-                    "vwidth": 720, "vheight": 1280, "bitrate": 400000, "codec_type": "h264" } }
-            ]
-        });
-        let defs = list_definitions(&model, DecoderCapability::no_hevc());
-        assert_eq!(
-            defs.iter().map(|d| d.value).collect::<Vec<_>>(),
-            vec![1080, 720]
-        );
     }
 }

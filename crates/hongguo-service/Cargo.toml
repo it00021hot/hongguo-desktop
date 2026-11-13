@@ -19,7 +19,7 @@ hongguo-api = { path = "../hongguo-api" }
 hongguo-signer = { path = "../hongguo-signer" }
 # 持久化（Turso 内嵌库）。
 hongguo-store = { path = "../hongguo-store" }
-# 媒体公共底座（Backend 标识 / demux / H.264 封装 / 封面软解）。
+# 媒体公共底座（Backend 标识 / demux / HEVC 封装 / 封面软解）。
 hongguo-media = { path = "../hongguo-media" }
 # ByteVC2 识别（哪些流交给直播放、哪些要转码的判定）。
 hongguo-bytevc2 = { path = "../hongguo-bytevc2" }

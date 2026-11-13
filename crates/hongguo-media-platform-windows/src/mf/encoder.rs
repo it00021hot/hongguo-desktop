@@ -1,5 +1,4 @@
-//! 编码：H.264 MFT（硬件优先，无硬编回落 in-box 软件），跑在 [`super::mft::Driver`]
-//! 的统一驱动之上；参数集的来源与码流形态归一见 [`super::annexb`]。
+//! NV12 → HEVC；MFT 与 COM 对象由调用方的 MF 线程独占。
 
 use std::collections::VecDeque;
 
@@ -7,7 +6,7 @@ use windows::Win32::Media::MediaFoundation::*;
 
 use hongguo_common::{AppError, AppResult};
 
-use super::annexb::{param_sets_annexb_or_none, read_type_param_sets};
+use super::annexb::{normalize, param_sets_annexb_or_none, read_type_param_sets};
 use super::decoder::Nv12Frame;
 use super::mft::{Driver, enum_activates, hr, set_codecapi_u32, type_info};
 use super::sample::{
@@ -19,19 +18,20 @@ use super::sample::{
 pub(super) enum EncoderKind {
     /// 硬件 MFT（`MFT_ENUM_FLAG_HARDWARE`），探测验证过才用
     Hardware,
-    /// in-box 软件编码器（h264_mf，同步 MFT）——无硬编时正式分流回落
+    /// 实际可用的软件 HEVC MFT。
     Software,
 }
 
 pub(super) struct Encoder {
     driver: Driver,
     stride: usize,
-    /// SPS/PPS（Annex-B），关键帧前插用（拼接器重建 moov 时样本描述取自第 1 集，后续各集码流必须自带参数集）。
-    /// 编码器把它放在输出类型的 `MF_MT_MPEG_SEQUENCE_HEADER` 或首个输出样本里，两处都试。
+    /// 每个关键帧携带完整 VPS/SPS/PPS。
     param_sets: Option<Vec<u8>>,
     out_type: IMFMediaType,
-    /// 每次喂帧记录的显示时间（秒），输出按到达顺序配对取用——实测 h264_mf 无视输入时间戳、按自己的 30fps 假设重打输出时间，NVENC 则原样保留；不信任回传值，统一用喂入值。
+    /// 无重排输出按输入时间轴配对。
     fed_pts: VecDeque<f64>,
+    emitted: bool,
+    pending_headers: Vec<u8>,
 }
 
 impl Encoder {
@@ -54,13 +54,13 @@ impl Encoder {
             MFT_CATEGORY_VIDEO_ENCODER,
             flags,
             Some(&type_info(MFMediaType_Video, MFVideoFormat_NV12)),
-            Some(&type_info(MFMediaType_Video, MFVideoFormat_H264)),
+            Some(&type_info(MFMediaType_Video, MFVideoFormat_HEVC)),
         )?;
         let label = match kind {
             EncoderKind::Hardware => "硬件",
             EncoderKind::Software => "软件",
         };
-        let mut last = AppError::Media(format!("没有可用的{label} H.264 编码 MFT"));
+        let mut last = AppError::Media(format!("没有可用的{label} HEVC 编码 MFT"));
         for a in &activaes {
             match Self::try_build(a, width, height, fps_num, fps_den, bitrate) {
                 Ok(e) => return Ok(e),
@@ -81,16 +81,7 @@ impl Encoder {
         fps_den: u32,
         bitrate: i32,
     ) -> AppResult<Encoder> {
-        // 类型协商顺序：硬件编码 MFT 普遍要求**先设输出类型再设输入**（NVIDIA 的 MFT 先设输入直接回 MF_E_INVALIDTYPE 0xC00D6D60），
-        // in-box 软件编码器两种顺序都收——两种顺序各试一遍
-        let mut last = AppError::Media("编码 MFT 类型协商失败".into());
-        for output_first in [true, false] {
-            match Self::negotiate_types(a, width, height, fps_num, fps_den, bitrate, output_first) {
-                Ok(e) => return Ok(e),
-                Err(e) => last = e,
-            }
-        }
-        Err(last)
+        Self::negotiate_types(a, width, height, fps_num, fps_den, bitrate)
     }
 
     fn negotiate_types(
@@ -100,7 +91,6 @@ impl Encoder {
         fps_num: u32,
         fps_den: u32,
         bitrate: i32,
-        output_first: bool,
     ) -> AppResult<Encoder> {
         let (mut driver, xform) = Driver::new(a)?;
         let build_input = |xform: &IMFTransform| -> AppResult<()> {
@@ -133,8 +123,6 @@ impl Encoder {
             }
         };
         let build_output = |xform: &IMFTransform| -> AppResult<()> {
-            // 码控走 ICodecAPI（对齐 ffmpeg mfenc 的配置面）：不设的话 h264_mf 处于不可用的默认码控状态——
-            // 实测只吐 SPS/PPS/AUD、一帧 slice 都不编。全部尽力而为，硬要求仍只有媒体类型上的码率
             set_codecapi_u32(
                 xform,
                 &CODECAPI_AVEncCommonRateControlMode,
@@ -151,25 +139,22 @@ impl Encoder {
             set_codecapi_u32(xform, &CODECAPI_AVEncMPVDefaultBPictureCount, 0, "关 B 帧");
             set_codecapi_u32(xform, &CODECAPI_AVEncCommonRealTime, 1, "实时码控");
             unsafe {
-                // 输出类型：H.264 + 码率。只有码率是硬性要求（码控失效=质量目标失效，对齐 vt 侧的分档）；profile 与 GOP 间隔尽力而为
-                let o = video_type(MFVideoFormat_H264)?;
+                let o = video_type(MFVideoFormat_HEVC)?;
                 set_size_rate(&o, width as u32, height as u32, fps_num, fps_den)?;
                 hr(
                     o.SetUINT32(&MF_MT_AVG_BITRATE, bitrate.max(1) as u32),
                     "设码率",
                 )?;
-                let _ = o.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32);
+                hr(
+                    o.SetUINT32(&MF_MT_VIDEO_PROFILE, eAVEncH265VProfile_Main_420_8.0 as u32),
+                    "设 HEVC Main profile",
+                )?;
                 let _ = o.SetUINT32(&MF_MT_MAX_KEYFRAME_SPACING, 250);
                 hr(xform.SetOutputType(0, &o, 0), "设编码输出类型")
             }
         };
-        if output_first {
-            build_output(&xform)?;
-            build_input(&xform)?;
-        } else {
-            build_input(&xform)?;
-            build_output(&xform)?;
-        }
+        build_output(&xform)?;
+        build_input(&xform)?;
         driver.begin_streaming()?;
         let in_cur = hr(unsafe { xform.GetInputCurrentType(0) }, "读编码输入类型")?;
         let stride = type_stride(&in_cur, width);
@@ -181,6 +166,8 @@ impl Encoder {
             param_sets,
             out_type,
             fed_pts: VecDeque::new(),
+            emitted: false,
+            pending_headers: Vec::new(),
         })
     }
 
@@ -221,33 +208,48 @@ impl Encoder {
         let mut units = Vec::with_capacity(samples.len());
         for s in samples {
             let (raw, t, _d) = sample_to_bytes(&s)?;
-            let keyframe = sample_is_clean(&s);
+            let clean = sample_is_clean(&s);
+            let (mut annexb, has_video, irap) = normalize(&raw)?;
             if self.param_sets.is_none() {
                 // 类型里没有就重读一次（有的 MFT 首样本后才填序列头），再不行从这个样本里解析（两处形态都见过）
                 let mut ps = read_type_param_sets(&self.out_type);
                 if ps.is_none() {
-                    ps = param_sets_annexb_or_none(&raw);
+                    self.pending_headers.extend_from_slice(&annexb);
+                    if self.pending_headers.len() > 1024 * 1024 {
+                        return Err(AppError::Media("HEVC 编码参数集超过限制".into()));
+                    }
+                    ps = param_sets_annexb_or_none(&self.pending_headers);
                 }
                 self.param_sets = ps;
+                if self.param_sets.is_some() {
+                    self.pending_headers.clear();
+                }
             }
-            // 编码器输出格式实测不统一：h264_mf 直接吐 Annex-B（起始码开头），别的可能给 AVCC——按单元嗅探，
-            // 别把 Annex-B 当 AVCC 转换（长度字段走读会错读起始码，把 slice 整段丢掉）
-            let mut annexb = if raw.starts_with(&[0, 0, 0, 1]) || raw.starts_with(&[0, 0, 1]) {
-                raw.clone()
-            } else {
-                hongguo_media::hevc::to_annexb(&raw, 4)
-            };
-            // 关键帧（以及首个样本，无论标没标）前插 SPS/PPS
-            let first = units.is_empty();
-            if (keyframe || first)
-                && let Some(ps) = self.param_sets.as_deref()
-                && !ps.is_empty()
-            {
+            if !has_video {
+                continue;
+            }
+            let keyframe = clean || irap;
+            if !self.emitted && !keyframe {
+                return Err(AppError::Media("HEVC 编码首帧不是随机访问帧".into()));
+            }
+            if keyframe {
+                let ps = self
+                    .param_sets
+                    .as_deref()
+                    .ok_or_else(|| AppError::Media("HEVC 编码输出缺少完整 VPS/SPS/PPS".into()))?;
                 annexb.splice(0..0, ps.iter().copied());
             }
-            let _ = t;
-            let pts = self.fed_pts.pop_front().unwrap_or(f64::NAN);
+            let pts = self
+                .fed_pts
+                .pop_front()
+                .ok_or_else(|| AppError::Media("HEVC 编码器返回了未提交的帧".into()))?;
+            if t < 0 || t.abs_diff(secs_to_hns(pts)) > 1 {
+                return Err(AppError::Media(
+                    "HEVC 编码器重排或改写了输入显示时间".into(),
+                ));
+            }
             units.push((pts, annexb, keyframe));
+            self.emitted = true;
         }
         Ok(units)
     }

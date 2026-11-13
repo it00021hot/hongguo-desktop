@@ -1,4 +1,4 @@
-//! 已解码的 I420 帧 → VideoToolbox H.264。ByteVC2 不经过 ffmpeg。
+//! 显示序 I420 帧经 VideoToolbox 编成 HEVC。
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_media_platform_api::video::bitrate_for;
@@ -7,7 +7,7 @@ use hongguo_media_platform_api::{EncodedVideo, I420View};
 use super::encode::Compressor;
 use super::pixel::{Nv12Pool, Pb, Transfer};
 
-/// 把显示序 I420 编成 H.264 Annex-B。
+/// 把显示序 I420 编成 HEVC Annex-B。
 pub struct YuvEncoder {
     scale_to: Option<(usize, usize)>,
     fps: f64,
@@ -82,7 +82,7 @@ impl YuvEncoder {
             .out_dims
             .ok_or_else(|| AppError::Media("ByteVC2 编码没有分辨率".into()))?;
         if self.units.is_empty() {
-            return Err(AppError::Media("平台编码器没有产出 H.264".into()));
+            return Err(AppError::Media("平台编码器没有产出 HEVC".into()));
         }
         Ok(EncodedVideo {
             width: w,
@@ -139,7 +139,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn one_grey_frame_becomes_h264_annexb() {
+    fn one_grey_frame_becomes_hevc_with_all_parameter_sets() {
         let mut encoder = YuvEncoder::new(None, 25.0);
         let y = vec![128u8; 256 * 256];
         let chroma = vec![128u8; 128 * 128];
@@ -156,10 +156,81 @@ mod tests {
             .expect("送入灰帧");
         let encoded = encoder.finish().expect("收尾");
         assert_eq!((encoded.width, encoded.height), (256, 256));
-        assert!(!encoded.units.is_empty(), "应有 H.264 样本");
+        assert!(!encoded.units.is_empty(), "应有 HEVC 样本");
+        let first = &encoded.units[0];
+        assert!(first.2, "first HEVC sample must be independently decodable");
+        for kind in [32, 33, 34] {
+            assert!(
+                first
+                    .1
+                    .windows(5)
+                    .any(|bytes| bytes[..4] == [0, 0, 0, 1] && (bytes[4] >> 1) & 63 == kind),
+                "missing HEVC parameter set {kind}"
+            );
+        }
         assert!(
             encoded.units.iter().any(|(_, data, _)| data.len() > 4),
             "样本应带载荷"
+        );
+        let output =
+            std::env::temp_dir().join(format!("hongguo-vt-hevc-grey-{}.mp4", std::process::id()));
+        hongguo_media::mux::mux_hevc(&output, &encoded.units, encoded.width, encoded.height, None)
+            .unwrap();
+        let demuxed = hongguo_media::demux::demux_file(&output).unwrap();
+        let track = &demuxed.video_track().unwrap().info;
+        assert_eq!(track.codec, "hvc1");
+        let (parameters, _) =
+            hongguo_media::hevc::read_parameter_set_nalus(&output, track).unwrap();
+        let decoder = unsafe { super::super::decode::Decompressor::new(&parameters).unwrap() };
+        let sample =
+            hongguo_media::transcode::read_range(&output, track.samples[0].0, track.samples[0].1)
+                .unwrap();
+        unsafe {
+            decoder.decode(&sample, 0.0, 0.04).unwrap();
+            decoder.finish().unwrap();
+        }
+        let mut frames = Vec::new();
+        decoder.drain(&mut frames);
+        assert_eq!(frames.len(), 1);
+        let frame = &frames[0].0;
+        assert_eq!(frame.dims(), (256, 256));
+        unsafe {
+            use super::super::ffi;
+            assert_eq!(ffi::CVPixelBufferLockBaseAddress(frame.0, 0), 0);
+            let luma = *(ffi::CVPixelBufferGetBaseAddressOfPlane(frame.0, 0) as *const u8);
+            ffi::CVPixelBufferUnlockBaseAddress(frame.0, 0);
+            assert!((120..=136).contains(&luma), "decoded grey luma: {luma}");
+        }
+        std::fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn scaling_two_frames_keeps_display_timestamps() {
+        let mut encoder = YuvEncoder::new(Some((256, 256)), 25.0);
+        let y = vec![128; 320 * 256];
+        let chroma = vec![128; 160 * 128];
+        for pts in [1.0, 1.04] {
+            encoder
+                .push(&I420View {
+                    y: &y,
+                    u: &chroma,
+                    v: &chroma,
+                    width: 320,
+                    height: 256,
+                    pts,
+                    dur: 0.04,
+                })
+                .unwrap();
+        }
+        let output = encoder.finish().unwrap();
+        assert_eq!((output.width, output.height), (256, 256));
+        assert_eq!(
+            output
+                .units
+                .iter()
+                .map(|(pts, _, _)| *pts)
+                .collect::<Vec<_>>(),
+            [1.0, 1.04]
         );
     }
 }

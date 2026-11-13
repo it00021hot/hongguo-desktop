@@ -1,11 +1,10 @@
-//! HEVC / H.264 解码：同步解码会话（[`Decompressor`]，VTDecompressionSession）。
+//! HEVC 同步解码会话。
 //! 解码输出回调 [`decode_cb`] 的 refcon 裸指针指向会话内部的 `Box<Sender>` 队列——回调与所属类型必须同文件。
 
 use std::os::raw::c_void;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use hongguo_common::AppResult;
-use hongguo_media_platform_api::video::VideoCodec;
 
 use super::ffi;
 use super::pipeline::cm_time_secs;
@@ -82,43 +81,23 @@ unsafe extern "C" fn decode_cb(
 }
 
 impl Decompressor {
-    /// 用参数集（HEVC 的 VPS/SPS/PPS，或 H.264 的 SPS/PPS，均为裸 NAL）建
-    /// 同步解码会话，输出 NV12（VideoRange '420v'，转码链既定格式）。
-    pub(super) unsafe fn new(codec: VideoCodec, parameter_sets: &[Vec<u8>]) -> AppResult<Self> {
+    pub(super) unsafe fn new(parameter_sets: &[Vec<u8>]) -> AppResult<Self> {
         unsafe {
-            let label = match codec {
-                VideoCodec::Hevc => "HEVC",
-                VideoCodec::H264 => "H.264",
-            };
             let sizes: Vec<usize> = parameter_sets.iter().map(|n| n.len()).collect();
             let ptrs: Vec<*const u8> = parameter_sets.iter().map(|n| n.as_ptr()).collect();
             let mut format = std::ptr::null_mut();
-            // 两种编码的参数集顺序各有讲究：HEVC 要 VPS/SPS/PPS、H.264 要 SPS/PPS（提取函数按这个次序给出）；样本长度前缀恒 4（hvcC/avcC 声明的 length_size，提取时已归一校验）
-            match codec {
-                VideoCodec::Hevc => os(
-                    ffi::CMVideoFormatDescriptionCreateFromHEVCParameterSets(
-                        ffi::kCFAllocatorDefault,
-                        parameter_sets.len(),
-                        ptrs.as_ptr(),
-                        sizes.as_ptr(),
-                        4,
-                        std::ptr::null(),
-                        &mut format,
-                    ),
-                    "建 HEVC 格式描述",
-                )?,
-                VideoCodec::H264 => os(
-                    ffi::CMVideoFormatDescriptionCreateFromH264ParameterSets(
-                        ffi::kCFAllocatorDefault,
-                        parameter_sets.len(),
-                        ptrs.as_ptr(),
-                        sizes.as_ptr(),
-                        4,
-                        &mut format,
-                    ),
-                    "建 H.264 格式描述",
-                )?,
-            };
+            os(
+                ffi::CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                    ffi::kCFAllocatorDefault,
+                    parameter_sets.len(),
+                    ptrs.as_ptr(),
+                    sizes.as_ptr(),
+                    4,
+                    std::ptr::null(),
+                    &mut format,
+                ),
+                "建 HEVC 格式描述",
+            )?;
 
             // 恒按 420v（VideoRange，硬件原生）：曾测 420f（FullRange）会让 VT 在硬解输出后逐帧插一次色域换算，吞吐掉一个数量级
             // （1080p HEVC 420v 675–785 fps vs 420f 55–67 fps）；转码链重编码前本来就要做色彩处理，420v 是唯一正确的选择
@@ -181,7 +160,7 @@ impl Decompressor {
             if rt != ffi::noErr {
                 log::warn!("[Platform/vt] 解码器拒收 RealTime（OSStatus {rt}），按默认档继续");
             }
-            log_hardware(session, label);
+            log_hardware(session, "HEVC");
 
             Ok(Decompressor {
                 session,
@@ -216,15 +195,16 @@ impl Decompressor {
                 ),
                 "建样本块",
             )?;
-            os(
-                ffi::CMBlockBufferReplaceDataBytes(
-                    sample.as_ptr() as *const c_void,
-                    block,
-                    0,
-                    sample.len(),
-                ),
-                "填充样本块",
-            )?;
+            let copied = ffi::CMBlockBufferReplaceDataBytes(
+                sample.as_ptr() as *const c_void,
+                block,
+                0,
+                sample.len(),
+            );
+            if copied != ffi::noErr {
+                ffi::CFRelease(block as ffi::CFTypeRef);
+                return os(copied, "填充样本块");
+            }
             let size = sample.len();
             const TS: i32 = 90_000;
             let timing = ffi::CMSampleTimingInfo {
@@ -236,20 +216,19 @@ impl Decompressor {
                 decodeTimeStamp: ffi::kCMTimeInvalid,
             };
             let mut sbuf: ffi::CMSampleBufferRef = std::ptr::null_mut();
-            os(
-                ffi::CMSampleBufferCreateReady(
-                    ffi::kCFAllocatorDefault,
-                    block,
-                    self.format,
-                    1,
-                    1,
-                    &timing,
-                    1,
-                    &size,
-                    &mut sbuf,
-                ),
-                "建样本缓冲",
-            )?;
+            let created = ffi::CMSampleBufferCreateReady(
+                ffi::kCFAllocatorDefault,
+                block,
+                self.format,
+                1,
+                1,
+                &timing,
+                1,
+                &size,
+                &mut sbuf,
+            );
+            ffi::CFRelease(block as ffi::CFTypeRef);
+            os(created, "建样本缓冲")?;
             // 异步模式：`kVTDecodeFrame_EnableAsynchronousDecompression` 让 VT 把解码排队到内部队列，DecodeFrame 立即返回、结果经回调异步到达。
             // 同步模式（不设标志）会让本调用阻塞到帧出来——实测 1080p HEVC 每帧 46.5ms，硬件再快也排不成流水线；异步让硬件并行吃满
             let mut info_flags = 0u32;
@@ -269,7 +248,7 @@ impl Decompressor {
     pub(super) unsafe fn finish(&self) -> AppResult<()> {
         unsafe {
             os(
-                ffi::VTDecompressionSessionFinishDelayedFrames(self.session),
+                ffi::VTDecompressionSessionWaitForAsynchronousFrames(self.session),
                 "收尾解码",
             )
         }

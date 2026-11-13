@@ -22,7 +22,7 @@ pub struct TranscodeRequest<'a> {
     pub on_progress: Option<&'a (dyn Fn(f64) + Send + Sync)>,
 }
 
-/// 转码一集：视频参数对齐现版（H.264 + yuv420p）。音轨是**直通**（`-c:a copy`），与平台编码路径的 AAC 搬运保持一致——
+/// 转码一集：视频参数对齐现版（HEVC + yuv420p）。音轨是**直通**（`-c:a copy`），与平台编码路径的 AAC 搬运保持一致——
 /// 源音轨解密后已是明文 AAC，重新编码既慢又多一轮有损压缩，还会让「装不装 ffmpeg」产出两种不同的音频。
 pub fn transcode_with_ffmpeg(req: &TranscodeRequest<'_>, encoder: &Encoder) -> AppResult<()> {
     let Some(ffmpeg) = ffmpeg_path() else {
@@ -114,11 +114,13 @@ fn build_args(req: &TranscodeRequest<'_>, encoder: &Encoder, temp: &Path) -> Vec
         .filter(|(w, h)| *w > 0 && *h > 0)
         .map(|(w, h)| (even(w), even(h)));
     if let Some((w, h)) = scale {
-        // H.264 要求宽高为偶数，否则 ffmpeg 直接拒绝
+        // HEVC 要求宽高为偶数，否则 ffmpeg 直接拒绝
         args.extend(["-vf".to_string(), format!("scale={w}:{h}")]);
     }
 
     args.extend([
+        "-tag:v".to_string(),
+        "hvc1".to_string(),
         "-pix_fmt".to_string(),
         "yuv420p".to_string(),
         "-c:a".to_string(),
@@ -143,9 +145,9 @@ fn even(v: u32) -> u32 {
 
 fn quality_args_for(encoder: &Encoder) -> Vec<String> {
     let owned: &[&str] = match encoder.name {
-        "h264_nvenc" => &[
+        "hevc_nvenc" => &[
             "-c:v",
-            "h264_nvenc",
+            "hevc_nvenc",
             "-preset",
             "p4",
             "-cq",
@@ -153,13 +155,13 @@ fn quality_args_for(encoder: &Encoder) -> Vec<String> {
             "-b:v",
             "0",
         ],
-        "h264_qsv" => &["-c:v", "h264_qsv", "-global_quality", "23"],
-        "h264_amf" => &[
-            "-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23",
+        "hevc_qsv" => &["-c:v", "hevc_qsv", "-global_quality", "23"],
+        "hevc_amf" => &[
+            "-c:v", "hevc_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23",
         ],
-        "h264_mf" => &[
+        "hevc_mf" => &[
             "-c:v",
-            "h264_mf",
+            "hevc_mf",
             "-rate_control",
             "quality",
             "-quality",
@@ -173,9 +175,7 @@ fn quality_args_for(encoder: &Encoder) -> Vec<String> {
             "-crf",
             "23",
             "-profile:v",
-            "high",
-            "-level",
-            "4.2",
+            "main",
         ],
     };
     owned.iter().map(|s| (*s).to_string()).collect()
@@ -184,12 +184,12 @@ fn quality_args_for(encoder: &Encoder) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffmpeg::h264_encoder;
+    use crate::ffmpeg::hevc_encoder;
 
     #[test]
     fn archive_keeps_quality_audio_copy_and_atomic_output_options() {
         let encoder = Encoder {
-            name: "libx264",
+            name: "libx265",
             hardware: false,
         };
         let args = build_args(
@@ -205,8 +205,8 @@ mod tests {
         for pair in [
             ["-preset", "veryfast"],
             ["-crf", "23"],
-            ["-profile:v", "high"],
-            ["-level", "4.2"],
+            ["-profile:v", "main"],
+            ["-tag:v", "hvc1"],
             ["-c:a", "copy"],
             ["-movflags", "+faststart"],
         ] {
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn transcode_without_ffmpeg_errors() {
-        if h264_encoder().is_some() {
+        if hevc_encoder().is_some() {
             return; // 装了 ffmpeg 就跳过这条
         }
         let r = transcode_with_ffmpeg(
@@ -233,7 +233,7 @@ mod tests {
                 on_progress: None,
             },
             &Encoder {
-                name: "libx264",
+                name: "libx265",
                 hardware: false,
             },
         );
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn scale_is_emitted_only_when_requested() {
         let enc = Encoder {
-            name: "libx264",
+            name: "libx265",
             hardware: false,
         };
         let plain = build_args(
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn odd_dimensions_are_rounded_down_to_even() {
         let enc = Encoder {
-            name: "libx264",
+            name: "libx265",
             hardware: false,
         };
         let args = build_args(
@@ -308,7 +308,7 @@ mod tests {
                 on_progress: None,
             },
             &Encoder {
-                name: "libx264",
+                name: "libx265",
                 hardware: false,
             },
             Path::new("/o.enc.tmp"),
@@ -327,7 +327,7 @@ mod tests {
                 on_progress: None,
             },
             &Encoder {
-                name: "libx264",
+                name: "libx265",
                 hardware: false,
             },
             Path::new("/t.tmp"),
@@ -349,7 +349,7 @@ mod tests {
                 on_progress: None,
             },
             &Encoder {
-                name: "libx264",
+                name: "libx265",
                 hardware: false,
             },
             Path::new("/t.tmp"),

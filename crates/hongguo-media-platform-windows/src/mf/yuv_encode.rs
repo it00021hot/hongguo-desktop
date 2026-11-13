@@ -1,4 +1,4 @@
-//! 已解码的 I420 帧 → Media Foundation H.264。ByteVC2 不经过 ffmpeg。
+//! 已解码的 I420 帧 → Media Foundation HEVC。ByteVC2 不经过 ffmpeg。
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_media_platform_api::video::bitrate_for;
@@ -7,11 +7,11 @@ use hongguo_media_platform_api::{EncodedVideo, I420View};
 use super::decoder::Nv12Frame;
 use super::encoder::{Encoder, EncoderKind};
 use super::mft::run_on_mf_thread;
-use super::probe::{h264_hw_encoder_available, h264_sw_encoder_available};
+use super::probe::{hevc_hw_encoder_available, hevc_sw_encoder_available};
 use super::sample::secs_to_hns;
 use super::scaler::Scaler;
 
-/// 把显示序 I420 编成 H.264 Annex-B。必须在 MF 线程上使用。
+/// 把显示序 I420 编成 HEVC Annex-B。必须在 MF 线程上使用。
 pub struct YuvEncoder {
     scale_to: Option<(usize, usize)>,
     fps: f64,
@@ -79,7 +79,7 @@ impl YuvEncoder {
             .out_dims
             .ok_or_else(|| AppError::Media("ByteVC2 编码没有分辨率".into()))?;
         if self.units.is_empty() {
-            return Err(AppError::Media("平台编码器没有产出 H.264".into()));
+            return Err(AppError::Media("平台编码器没有产出 HEVC".into()));
         }
         Ok(EncodedVideo {
             width: w,
@@ -101,19 +101,19 @@ impl YuvEncoder {
             Some((w, h)) => (w, h),
             None => (width, height),
         };
-        let kind = if h264_hw_encoder_available() {
+        let kind = if hevc_hw_encoder_available() {
             EncoderKind::Hardware
-        } else if h264_sw_encoder_available() {
+        } else if hevc_sw_encoder_available() {
             EncoderKind::Software
         } else {
             return Err(AppError::Media(
-                "没有可用的 H.264 编码器，ByteVC2 不能改走 ffmpeg 解码".into(),
+                "没有可用的 HEVC 编码器，ByteVC2 不能改走 ffmpeg 解码".into(),
             ));
         };
         let bitrate = bitrate_for(out_w, out_h, self.fps);
         self.encoder = Some(Encoder::new(out_w, out_h, fps_num, 1, bitrate, kind)?);
         self.out_dims = Some((out_w, out_h));
-        log::info!("[ByteVC2] Media Foundation H.264 编码会话 {out_w}x{out_h} backend={kind:?}");
+        log::info!("[ByteVC2] Media Foundation HEVC 编码会话 {out_w}x{out_h} backend={kind:?}");
         Ok(())
     }
 }
