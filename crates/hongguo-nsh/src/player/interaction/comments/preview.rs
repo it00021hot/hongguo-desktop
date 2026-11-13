@@ -107,10 +107,20 @@ pub(crate) fn comments_preview() -> View {
             let editor = emoji::Editor::new(signal(String::new()), 200);
             let attachment = signal(None::<emoji::Attachment>);
             let next = element_ref();
+            let pagination = view().child(
+                super::more_button(feed, false)
+                    .on_press(move || {
+                        feed.update(|feed| feed.total = feed.items.len() as i64);
+                    })
+                    .style_when(
+                        move || feed.with(|feed| feed.total <= feed.items.len() as i64),
+                        |style| style.hidden(),
+                    ),
+            );
             view()
                 .flex_1()
                 .min_h_0()
-                .child(render(feed, threads, false, view(), view()))
+                .child(render(feed, threads, false, view(), pagination))
                 .child(
                     view()
                         .p_3()
@@ -203,7 +213,7 @@ fn seed(review: bool) -> Signal<Feed> {
                 })
             })
             .collect();
-        feed.total = 80;
+        feed.total = if review { 80 } else { 100 };
         feed.summary = Some(ReviewSummary {
             score: "8.3".into(),
             count: 1001,

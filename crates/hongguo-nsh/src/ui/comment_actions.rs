@@ -2,6 +2,55 @@ use crate::i18n::tr;
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
+pub(crate) fn comment_more(
+    label: impl IntoReactive<SharedString>,
+    pending: impl IntoReactive<bool>,
+) -> nsh_base::ButtonElement {
+    let pending = pending.into_reactive();
+    let pending = computed(move || pending.get());
+    super::controls::surface_height(super::ButtonVariant::Quiet, 32.0)
+        .self_center()
+        .my_3()
+        .h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
+        .px_3()
+        .py_0()
+        .gap(px(6.0))
+        .border_1()
+        .border_color(move || {
+            if dark() {
+                theme().input
+            } else {
+                theme().border
+            }
+        })
+        .bg(move || {
+            if dark() {
+                theme().input.opacity(0.3)
+            } else {
+                theme().background
+            }
+        })
+        .hover(|style| {
+            style.bg(move || {
+                if dark() {
+                    theme().input.opacity(0.5)
+                } else {
+                    theme().accent
+                }
+            })
+        })
+        .disabled(move || pending.get())
+        .child(when(
+            move || pending.get(),
+            move || {
+                super::browse_loading::browse_spinner()
+                    .size(px(14.0))
+                    .mr_1()
+            },
+        ))
+        .child(text(label).text_sm().font_weight(FontWeight::MEDIUM))
+}
+
 pub(crate) fn comment_notice(message: impl IntoReactive<SharedString>, reviews: bool) -> View {
     let message = message.into_reactive();
     let visible = message.clone();

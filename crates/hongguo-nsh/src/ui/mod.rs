@@ -128,8 +128,12 @@ pub(crate) use danmaku_settings::{
 pub(crate) use player_menu::player_danmaku_panel;
 mod comment_actions;
 mod comment_panel;
+mod player_hint;
+pub(crate) use player_hint::{player_danmaku_settings, player_danmaku_toggle, player_hint};
 mod reviews;
-pub(crate) use comment_actions::{comment_like, comment_link, comment_notice, comment_thread_row};
+pub(crate) use comment_actions::{
+    comment_like, comment_link, comment_more, comment_notice, comment_thread_row,
+};
 pub(crate) use comment_panel::comment_panel;
 pub(crate) use reviews::{
     ReviewFocus, review_card, review_like, review_link, review_rating, review_stars, review_summary,

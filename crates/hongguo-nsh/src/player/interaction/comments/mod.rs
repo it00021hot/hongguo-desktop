@@ -180,13 +180,18 @@ fn thread_with_header(
             .child(when(
                 move || feed.with(|feed| feed.has_more),
                 move || {
-                    ui::button(
-                        move || tr("player.emoticon.loadMore"),
-                        ButtonVariant::Secondary,
-                    )
-                    .element_ref(&context.focus.more)
-                    .disabled(move || loaded.loading())
-                    .on_press(move || cursor.set(feed.get_untracked().cursor))
+                    let button = if root_review {
+                        ui::button(
+                            move || tr("player.emoticon.loadMore"),
+                            ButtonVariant::Secondary,
+                        )
+                        .disabled(move || loaded.loading())
+                    } else {
+                        more_button(feed, move || loaded.loading())
+                    };
+                    button
+                        .element_ref(&context.focus.more)
+                        .on_press(move || cursor.set(feed.get_untracked().cursor))
                 },
             ))
             .child(ui::status(message))
@@ -336,6 +341,16 @@ fn thread_with_header(
                     .child(form())
             },
         ))
+}
+
+fn more_button(feed: Signal<Feed>, pending: impl IntoReactive<bool>) -> nsh_base::ButtonElement {
+    ui::comment_more(
+        move || {
+            let remaining = feed.with(|feed| (feed.total - feed.items.len() as i64).max(0));
+            tr("player.comments.loadMore").replace("{n}", &remaining.to_string())
+        },
+        pending,
+    )
 }
 
 fn reply_footer(thread: threads::ReplyThread) -> View {

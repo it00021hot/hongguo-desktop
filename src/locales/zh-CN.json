@@ -241,6 +241,8 @@
     "removeRecordDesc": "这部剧的观看进度会被清掉，下次打开从第一集开始。已下载的文件不受影响。",
     "removedRecord": "已清除《{title}》的观看记录",
     "danmaku": "弹幕",
+    "danmakuOn": "开启弹幕",
+    "danmakuOff": "关闭弹幕",
     "empty": "还没有在播放的内容",
     "emptyHint": "从推荐或历史里挑一部剧即可开始播放",
     "danmakuSettings": "弹幕设置",

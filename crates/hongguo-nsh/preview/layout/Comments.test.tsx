@@ -3,6 +3,30 @@ import { expect, open, test as registerTest } from 'nsh/test';
 const test: (name: string, body: () => Promise<void>) => void = registerTest;
 
 for (const scheme of ['dark', 'light'] as const) {
+  test(
+    'desktop corrections comments pagination matches compact centered Tauri button ' + scheme,
+    async () => {
+      const app = await open('.', {
+        width: 1280,
+        height: 840,
+        colorScheme: scheme,
+        locale: 'zh-CN',
+      });
+      await app.waitFor('id:app-toolbar-rest');
+      await app.press('role:button[倍速]');
+      await app.waitFor('text:1.5x');
+      await app.keyboard.press('escape');
+      await app.keyboard.press('mod+shift+c');
+      await app.waitFor('id:player-comments-panel');
+      await app.scroll('id:comments-list', 5000);
+      await app.scroll('id:comments-list', 5000);
+      await app.waitFor('role:button[加载更多评论（还有 20 条）]');
+      await app.screenshot('target/nsh-preview/comments-pagination-' + scheme + '.png');
+      await app.press('role:button[加载更多评论（还有 20 条）]');
+      expect(app.shows('role:button[加载更多评论（还有 20 条）]')).toBe(false);
+    },
+  );
+
   test('comments finishing desktop interaction and editor ' + scheme, async () => {
     const app = await open('.', { width: 1280, height: 840, colorScheme: scheme, locale: 'zh-CN' });
     await app.waitFor('id:app-toolbar-rest');

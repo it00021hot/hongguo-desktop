@@ -556,10 +556,12 @@ pub(crate) fn player_toggle_icon(
     let active = active.into_reactive();
     let active = computed(move || active.get());
     let label = label.into_reactive();
+    let label = computed(move || label.get());
     super::video::player_surface()
         .accessibility_label(move || Some(label.get()))
         .size(px(if is_desktop() { 32.0 } else { 48.0 }))
         .p_0()
+        .child(super::player_hint(move || label.get()))
         .child(
             view()
                 .relative()

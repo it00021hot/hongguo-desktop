@@ -297,122 +297,126 @@ pub(crate) fn controls<E: IntoElement>(
                                 .ml_1(),
                             )
                             .child(composer.with(|render| render(before_composer)))
-                            .child(menus::rate(
-                                state.menus,
-                                state.rate,
-                                state.busy,
-                                labelled(Icon::Speed, move || format!("{}x", state.rate.get()))
-                                    .accessibility_label(move || tr("player.playbackRate")),
-                                move |intent| action.with(|action| action(intent.into())),
-                            ))
-                            .child(menus::quality(
-                                state.menus,
-                                state.busy,
-                                labelled(Icon::Quality, move || {
-                                    if state.menus.selected_definition.get().is_none() {
-                                        tr("player.definitionAuto")
-                                    } else {
-                                        state.quality.get()
-                                    }
-                                })
-                                .accessibility_label(move || tr("player.definition")),
-                                move |intent| action.with(|action| action(intent.into())),
-                            ))
-                            .child(enhancement_control(state.advanced.enhancement))
-                            .child(menus::episodes(
-                                state.menus,
-                                state.busy,
-                                labelled(Icon::Episodes, move || {
-                                    format!(
-                                        "{} · {}",
-                                        tr("player.episodes"),
-                                        tr("player.totalEpisodes").replace(
-                                            "{count}",
-                                            &state.episode_count.get().to_string()
-                                        )
-                                    )
-                                }),
-                                move |intent| action.with(|action| action(intent.into())),
-                            ))
                             .child(
-                                labelled(Icon::Download, move || tr("player.download")).on_press(
-                                    move || action.with(|action| action(ControlAction::Download)),
-                                ),
-                            )
-                            .child(
-                                ui::player_icon_button(Icon::MiniWindow, move || {
-                                    tr("player.miniWindow")
-                                })
-                                .disabled(move || !state.advanced.window_modes.get())
-                                .on_press(move || extra(AdvancedControl::MiniWindow)),
-                            )
-                            .child(ui::player_danmaku_panel(
-                                move || state.danmaku_settings.open.get(),
-                                move |open| {
-                                    if open != state.danmaku_settings.open.get_untracked() {
-                                        extra(AdvancedControl::DanmakuSettings);
-                                    }
-                                },
-                                ui::player_icon_button(Icon::Danmaku, move || {
-                                    tr("player.danmakuSettings")
-                                }),
-                                move || ui::danmaku_settings(state.danmaku_settings),
-                            ))
-                            .child(
-                                ui::player_icon_button(Icon::Danmaku, move || tr("player.danmaku"))
-                                    .selected(state.danmaku_enabled)
-                                    .text_color(move || {
-                                        nsh_base::theme()
-                                            .color("video-controls")
-                                            .expect("controls")
-                                            .opacity(if state.danmaku_enabled.get() {
-                                                1.0
+                                view()
+                                    .ml(auto())
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(menus::rate(
+                                        state.menus,
+                                        state.rate,
+                                        state.busy,
+                                        labelled(Icon::Speed, move || {
+                                            format!("{}x", state.rate.get())
+                                        })
+                                        .accessibility_label(move || tr("player.playbackRate")),
+                                        move |intent| action.with(|action| action(intent.into())),
+                                    ))
+                                    .child(menus::quality(
+                                        state.menus,
+                                        state.busy,
+                                        labelled(Icon::Quality, move || {
+                                            if state.menus.selected_definition.get().is_none() {
+                                                tr("player.definitionAuto")
                                             } else {
-                                                0.4
-                                            })
-                                    })
-                                    .on_press(move || {
-                                        action.with(|action| action(ControlAction::Danmaku))
-                                    }),
-                            )
-                            .child(menus::volume(
-                                state.menus,
-                                ui::player_toggle_icon(
-                                    Icon::Volume,
-                                    Icon::Muted,
-                                    move || {
-                                        state.menus.muted.get() || state.menus.volume.get() <= 0.0
-                                    },
-                                    move || tr("player.volume"),
-                                ),
-                                move |intent| action.with(|action| action(intent.into())),
-                            ))
-                            .child(
-                                ui::player_privacy_button(state.advanced.incognito)
-                                    .disabled(move || !state.advanced.window_modes.get())
-                                    .on_press(move || extra(AdvancedControl::Incognito)),
-                            )
-                            .child(
-                                ui::player_icon_button(Icon::Portrait, move || {
-                                    tr("player.portrait")
-                                })
-                                .disabled(move || !state.advanced.window_modes.get())
-                                .on_press(move || extra(AdvancedControl::Portrait)),
-                            )
-                            .child(
-                                ui::player_icon_button(Icon::WebFullscreen, move || {
-                                    tr("player.frameless")
-                                })
-                                .disabled(move || !state.advanced.window_modes.get())
-                                .on_press(move || extra(AdvancedControl::WebFullscreen)),
-                            )
-                            .child(
-                                ui::player_icon_button(Icon::Fullscreen, move || {
-                                    tr("player.fullscreen")
-                                })
-                                .on_press(move || {
-                                    action.with(|action| action(ControlAction::Fullscreen))
-                                }),
+                                                state.quality.get()
+                                            }
+                                        })
+                                        .accessibility_label(move || tr("player.definition")),
+                                        move |intent| action.with(|action| action(intent.into())),
+                                    ))
+                                    .child(enhancement_control(state.advanced.enhancement))
+                                    .child(menus::episodes(
+                                        state.menus,
+                                        state.busy,
+                                        labelled(Icon::Episodes, move || {
+                                            format!(
+                                                "{} · {}",
+                                                tr("player.episodes"),
+                                                tr("player.totalEpisodes").replace(
+                                                    "{count}",
+                                                    &state.episode_count.get().to_string()
+                                                )
+                                            )
+                                        }),
+                                        move |intent| action.with(|action| action(intent.into())),
+                                    ))
+                                    .child(
+                                        labelled(Icon::Download, move || tr("player.download"))
+                                            .on_press(move || {
+                                                action
+                                                    .with(|action| action(ControlAction::Download))
+                                            }),
+                                    )
+                                    .child(
+                                        ui::player_icon_button(Icon::MiniWindow, move || {
+                                            tr("player.miniWindow")
+                                        })
+                                        .disabled(move || !state.advanced.window_modes.get())
+                                        .on_press(move || extra(AdvancedControl::MiniWindow)),
+                                    )
+                                    .child(ui::player_danmaku_panel(
+                                        move || state.danmaku_settings.open.get(),
+                                        move |open| {
+                                            if open != state.danmaku_settings.open.get_untracked() {
+                                                extra(AdvancedControl::DanmakuSettings);
+                                            }
+                                        },
+                                        ui::player_danmaku_settings(state.danmaku_settings.open),
+                                        move || ui::danmaku_settings(state.danmaku_settings),
+                                    ))
+                                    .child(
+                                        ui::player_danmaku_toggle(state.danmaku_enabled).on_press(
+                                            move || {
+                                                action.with(|action| action(ControlAction::Danmaku))
+                                            },
+                                        ),
+                                    )
+                                    .child(menus::volume(
+                                        state.menus,
+                                        ui::player_toggle_icon(
+                                            Icon::Volume,
+                                            Icon::Muted,
+                                            move || {
+                                                state.menus.muted.get()
+                                                    || state.menus.volume.get() <= 0.0
+                                            },
+                                            move || tr("player.volume"),
+                                        ),
+                                        move |intent| action.with(|action| action(intent.into())),
+                                    ))
+                                    .child(
+                                        ui::player_privacy_button(state.advanced.incognito)
+                                            .disabled(move || !state.advanced.window_modes.get())
+                                            .on_press(move || extra(AdvancedControl::Incognito)),
+                                    )
+                                    .child(
+                                        ui::player_icon_button(Icon::Portrait, move || {
+                                            tr("player.portrait")
+                                        })
+                                        .disabled(move || !state.advanced.window_modes.get())
+                                        .on_press(move || extra(AdvancedControl::Portrait)),
+                                    )
+                                    .child(
+                                        ui::player_icon_button(Icon::WebFullscreen, move || {
+                                            tr("player.frameless")
+                                        })
+                                        .disabled(move || !state.advanced.window_modes.get())
+                                        .on_press(move || extra(AdvancedControl::WebFullscreen)),
+                                    )
+                                    .child(
+                                        ui::player_icon_button(Icon::Fullscreen, move || {
+                                            tr("player.fullscreen")
+                                        })
+                                        .on_press(
+                                            move || {
+                                                action.with(|action| {
+                                                    action(ControlAction::Fullscreen)
+                                                })
+                                            },
+                                        ),
+                                    ),
                             )
                     },
                 ))
@@ -489,12 +493,20 @@ fn enhancement_control(available: Memo<bool>) -> View {
 }
 
 fn labelled(glyph: Icon, label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
+    let label = label.into_reactive();
+    let label = computed(move || label.get());
     ui::player_control("")
         .flex_row()
         .gap_1p5()
+        .child(ui::player_hint(move || match glyph {
+            Icon::Speed => tr("player.playbackRate"),
+            Icon::Quality => tr("player.definition"),
+            Icon::Episodes => tr("player.episodes"),
+            _ => label.get(),
+        }))
         .child(ui::icon(glyph))
         .child(
-            text(label)
+            text(move || label.get())
                 .text_sm()
                 .line_height(px(20.0))
                 .font_weight(FontWeight::NORMAL),

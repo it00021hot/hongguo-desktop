@@ -11,3 +11,16 @@
 动效清单：系统窗口几何直接设置，系统全屏使用 OS 自带过渡；不对视频平面作入退场动画。壳 DisplayNone 切换保留子树 owner。紧凑控制条仅复用已有 chrome 渐隐/减少动效策略；按钮复用共享 hover/press/focus，seek 复用真实 Slider，不另建假的进度条。隐身的暂停送达窗口是行为时序，不用视觉透明度冒充原生隐藏。
 
 预览 driver 只记录 typed 请求并由 fixture 显式 ack，不调整 LayoutPreview 实际窗口。系统行为只在自建实例验收；Headless/宿主编译不冒充跨平台运行通过。
+
+2026-11-13 桌面全屏底栏修正：Tauri `player-controls.tsx` 的倍速至全屏为
+`ml-auto flex` 右组；NSH 原先缺少自动左边距，全屏隐藏224点侧栏后右缘停在1083点，
+而 seek 与舞台早已扩至1280点，并非原生视频宽度未更新。共享控制条补同一右组后，
+真实布局回归从1083/1264失败转为通过；1280及1600视口分别保持16点右内边距，
+全屏退出后同一舞台仍在。日志 `target/nsh-commit-20261113/fullscreen-controls-{red,green}.log`。
+
+独立LayoutPreview原生2/2通过（`fullscreen-controls-native.xml`）：全屏dark与无边框light
+切换、退出后顶栏/侧栏返回、舞台仅一份。两图
+`target/nsh-preview/window-{fullscreen-trailing-dark,frameless-trailing-light}.png`
+已逐张目检，底栏全屏按钮与进度条右缘均保留16点边距，右侧不再空出旧宽度差。
+这验证共享舞台真实AppKit布局与交互；窗口模式由预览driver确认，不代表重新测试macOS系统全屏动画。
+未操作用户实例，也未运行移动端。

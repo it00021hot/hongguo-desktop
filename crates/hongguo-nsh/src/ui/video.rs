@@ -363,10 +363,12 @@ pub(crate) fn player_icon_button(
     label: impl IntoReactive<SharedString>,
 ) -> nsh_base::ButtonElement {
     let label = label.into_reactive();
+    let label = computed(move || label.get());
     player_surface()
         .accessibility_label(move || label.get())
         .size(move || px(if is_desktop() { 32.0 } else { 48.0 }))
         .p_0()
+        .child(super::player_hint(move || label.get()))
         .child(icon(glyph).size(px(16.0)))
 }
 

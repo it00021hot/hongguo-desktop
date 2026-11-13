@@ -3,6 +3,8 @@ mod chrome;
 mod desktop;
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 mod geometry;
+#[cfg(test)]
+mod layout_tests;
 mod platform;
 mod preview;
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
