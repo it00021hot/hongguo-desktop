@@ -129,7 +129,9 @@ pub(crate) use player_menu::player_danmaku_panel;
 mod comment_actions;
 mod comment_panel;
 mod player_hint;
+mod player_send_popover;
 pub(crate) use player_hint::{player_danmaku_settings, player_danmaku_toggle, player_hint};
+pub(crate) use player_send_popover::player_send_popover;
 mod reviews;
 pub(crate) use comment_actions::{
     comment_like, comment_link, comment_more, comment_notice, comment_thread_row,

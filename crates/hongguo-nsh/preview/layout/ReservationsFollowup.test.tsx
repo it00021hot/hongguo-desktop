@@ -28,7 +28,7 @@ for (const scheme of ['dark', 'light'] as const) {
     await app.keyboard.press('tab');
     await app.keyboard.press('mod+shift+a');
     await app.waitFor('role:button[管理]');
-    await app.press('role:button[已上线  3]');
+    await app.press('role:button[已上线  2]');
     await app.waitFor('text:归途有风');
     await app.hover('id:app-toolbar-rest');
     await app.screenshot('target/nsh-followup-20261113/reservations-filtered-' + scheme + '.png');

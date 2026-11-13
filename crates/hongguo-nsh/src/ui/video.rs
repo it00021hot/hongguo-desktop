@@ -239,11 +239,17 @@ pub(crate) fn player_send_surface(variant: Memo<PlayerComposerVariant>) -> View 
             move || variant.get() == PlayerComposerVariant::Landscape,
             |style| style.w_full().h_9().ml_0().pl_2p5(),
         )
-        .min_w(px(0.0))
+        .min_w(move || {
+            px(if variant.get() == PlayerComposerVariant::Toolbar {
+                208.0
+            } else {
+                0.0
+            })
+        })
         .flex_row()
         .items_center()
-        .gap_1()
-        .pl_3()
+        .gap_0p5()
+        .pl_2()
         .pr_1()
         .rounded_full()
         .bg(move || {
@@ -277,7 +283,7 @@ pub(crate) fn player_send_action(
                 24.0
             })
         })
-        .px_2p5()
+        .px_2()
         .py_0()
         .rounded_full()
         .bg(move || {

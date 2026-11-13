@@ -95,7 +95,7 @@ pub(crate) fn player_danmaku_toggle(enabled: Signal<bool>) -> nsh_base::ButtonEl
         )
 }
 
-fn danmaku_glyph() -> View {
+pub(super) fn danmaku_glyph() -> View {
     view()
         .absolute()
         .inset_0()

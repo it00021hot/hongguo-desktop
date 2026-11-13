@@ -36,7 +36,15 @@ pub(crate) fn emoji_trigger(
         .accessibility_label(move || Some(label.get()))
         .min_h_0()
         .p_1()
-        .size(move || px(if is_desktop() { 32.0 } else { 48.0 }))
+        .size(move || {
+            px(if !is_desktop() {
+                48.0
+            } else if matches!(skin, EmojiTextStyle::Caption) {
+                24.0
+            } else {
+                32.0
+            })
+        })
         .text_color(move || match skin {
             EmojiTextStyle::Body | EmojiTextStyle::Review | EmojiTextStyle::ReviewReply => {
                 theme().foreground

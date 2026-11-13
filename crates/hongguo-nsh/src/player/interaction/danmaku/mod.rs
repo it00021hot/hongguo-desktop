@@ -144,7 +144,9 @@ impl Handle {
             editor,
             move || pending.get(),
             crate::player::stage::ComposerEvents {
-                emoji: Some(crate::emoji::system_picker(editor, next).into_element()),
+                emoji: Some(Box::new(move || {
+                    crate::emoji::system_picker(editor, next).into_element()
+                })),
                 previous,
                 next,
                 send: Box::new(move || {

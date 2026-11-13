@@ -8,6 +8,8 @@ use crate::{
 };
 use nsh_core::prelude::*;
 
+const DESKTOP_SHORT_LABEL_WIDTH: f32 = 1024.0;
+
 #[derive(Clone, Copy)]
 pub(crate) struct AdvancedState {
     pub enhancement: Memo<bool>,
@@ -99,8 +101,9 @@ pub(crate) fn controls<E: IntoElement>(
     let action = stored(Box::new(action) as Box<dyn Fn(ControlAction)>);
     let dragging = signal(false);
     let seek = signal(state.position.get_untracked().0);
-    let toolbar_wrapped =
-        computed(move || super::desktop_toolbar_wrapped(state.geometry.viewport.get().0));
+    let tight = computed(move || {
+        is_desktop() && state.geometry.viewport.get().0 < DESKTOP_SHORT_LABEL_WIDTH
+    });
     effect(move || {
         let position = state.position.get();
         if state.busy.get() {
@@ -242,7 +245,6 @@ pub(crate) fn controls<E: IntoElement>(
                             .flex_row()
                             .items_center()
                             .gap_1()
-                            .style_when(toolbar_wrapped, |style| style.flex_wrap())
                             .child(
                                 ui::player_toggle_icon(
                                     Icon::Play,
@@ -299,16 +301,13 @@ pub(crate) fn controls<E: IntoElement>(
                                 .font_weight(FontWeight::NORMAL)
                                 .ml_1(),
                             )
-                            .child(composer.with(|render| render(before_composer)))
                             .child(
                                 view()
                                     .ml(auto())
                                     .flex_row()
                                     .items_center()
                                     .gap_1()
-                                    .style_when(toolbar_wrapped, |style| {
-                                        style.basis(percentage(1.0)).w_full().justify_end()
-                                    })
+                                    .child(composer.with(|render| render(before_composer)))
                                     .child(menus::rate(
                                         state.menus,
                                         state.rate,
@@ -337,6 +336,9 @@ pub(crate) fn controls<E: IntoElement>(
                                         state.menus,
                                         state.busy,
                                         labelled(Icon::Episodes, move || {
+                                            if tight.get() {
+                                                return tr("player.episodes").to_string();
+                                            }
                                             format!(
                                                 "{} · {}",
                                                 tr("player.episodes"),
@@ -349,11 +351,20 @@ pub(crate) fn controls<E: IntoElement>(
                                         move |intent| action.with(|action| action(intent.into())),
                                     ))
                                     .child(
-                                        labelled(Icon::Download, move || tr("player.download"))
-                                            .on_press(move || {
+                                        labelled(Icon::Download, move || {
+                                            if tight.get() {
+                                                SharedString::default()
+                                            } else {
+                                                tr("player.download")
+                                            }
+                                        })
+                                        .accessibility_label(move || tr("player.download"))
+                                        .on_press(
+                                            move || {
                                                 action
                                                     .with(|action| action(ControlAction::Download))
-                                            }),
+                                            },
+                                        ),
                                     )
                                     .child(
                                         ui::player_icon_button(Icon::MiniWindow, move || {
@@ -449,15 +460,7 @@ pub(crate) fn controls<E: IntoElement>(
                 .left_3()
                 .right_3()
                 .z_index(10)
-                .bottom(move || {
-                    px(if compact() {
-                        40.0
-                    } else if toolbar_wrapped.get() {
-                        56.0 + super::DESKTOP_TOOLBAR_EXTRA_HEIGHT
-                    } else {
-                        56.0
-                    })
-                })
+                .bottom(move || px(if compact() { 40.0 } else { 56.0 }))
                 .style_when(
                     move || !is_desktop() && compact(),
                     |style| style.left_4().right_4().bottom_20(),
@@ -516,15 +519,19 @@ fn labelled(glyph: Icon, label: impl IntoReactive<SharedString>) -> nsh_base::Bu
             Icon::Speed => tr("player.playbackRate"),
             Icon::Quality => tr("player.definition"),
             Icon::Episodes => tr("player.episodes"),
+            Icon::Download => tr("player.download"),
             _ => label.get(),
         }))
         .child(ui::icon(glyph))
-        .child(
-            text(move || label.get())
-                .text_sm()
-                .line_height(px(20.0))
-                .font_weight(FontWeight::NORMAL),
-        )
+        .child(when(
+            move || !label.get().is_empty(),
+            move || {
+                text(move || label.get())
+                    .text_sm()
+                    .line_height(px(20.0))
+                    .font_weight(FontWeight::NORMAL)
+            },
+        ))
 }
 impl From<MenuAction> for ControlAction {
     fn from(action: MenuAction) -> Self {

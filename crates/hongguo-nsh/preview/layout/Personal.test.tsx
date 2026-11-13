@@ -26,10 +26,20 @@ for (const scheme of ['dark', 'light'] as const) {
       await app.press('role:button[管理]');
       expect(app.shows('role:button[退出管理]')).toBe(true);
       await app.press('role:button[全选]');
-      await app.waitFor('text:已选 3 项');
+      await app.waitFor('text:已选 ' + (page === 'reservations' ? '2' : '3') + ' 项');
       expect(app.shows('role:button[取消全选]')).toBe(true);
       await app.hover('id:app-toolbar-rest');
       await app.screenshot('target/nsh-preview/' + page + '-' + scheme + '-manage-1280x840.png');
+      if (page === 'reservations') {
+        await app.press('role:button[退出管理]');
+        await app.press('role:button[待上线  1]');
+        await app.waitFor('text:下一段故事');
+        expect(app.shows('role:button[取消预约]')).toBe(true);
+        await app.hover('id:app-toolbar-rest');
+        await app.screenshot(
+          'target/nsh-preview/reservations-upcoming-' + scheme + '-1280x840.png',
+        );
+      }
     });
   }
 }

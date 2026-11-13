@@ -33,15 +33,14 @@ pub(crate) fn compact() -> bool {
         })
 }
 
-const DESKTOP_TOOLBAR_WRAP_WIDTH: f32 = 1024.0;
-const DESKTOP_TOOLBAR_EXTRA_HEIGHT: f32 = 36.0;
+const DESKTOP_COMPOSER_COLLAPSE_WIDTH: f32 = 1152.0;
 
-fn desktop_toolbar_wrapped(width: f32) -> bool {
+fn desktop_composer_collapsed(width: f32) -> bool {
     is_desktop()
         && !compact()
         && !landscape::active()
         && width > 0.0
-        && width < DESKTOP_TOOLBAR_WRAP_WIDTH
+        && width < DESKTOP_COMPOSER_COLLAPSE_WIDTH
 }
 
 /// The production stage has one video plane and independent chrome slots.
@@ -56,9 +55,6 @@ pub(crate) fn surface(
     let chrome = super::chrome::Chrome::current();
     let modes = crate::window_modes::WindowModes::current();
     let geometry = use_context::<ui::PlayerGeometry>();
-    let toolbar_wrapped = computed(move || {
-        geometry.is_some_and(|geometry| desktop_toolbar_wrapped(geometry.viewport.get().0))
-    });
     let overlay = ui::player_chrome(computed(move || {
         chrome.is_none_or(|chrome| chrome.shown().get())
     }))
@@ -66,15 +62,7 @@ pub(crate) fn surface(
         view()
             .absolute()
             .left_3()
-            .bottom(move || {
-                px(if compact() {
-                    40.0
-                } else if toolbar_wrapped.get() {
-                    112.0 + DESKTOP_TOOLBAR_EXTRA_HEIGHT
-                } else {
-                    112.0
-                })
-            })
+            .bottom(move || px(if compact() { 40.0 } else { 112.0 }))
             .w(percentage(0.62))
             .style_when(
                 move || !is_desktop() && compact(),

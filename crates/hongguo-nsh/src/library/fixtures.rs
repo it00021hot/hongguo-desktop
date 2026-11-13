@@ -14,6 +14,8 @@ use hongguo_api::{
     interact::{BookshelfEntry, FollowUpdateItem, InteractionItem},
 };
 use nsh_core::prelude::*;
+#[cfg(test)]
+mod program_tests;
 mod reservations;
 
 pub(super) fn page(nav: Navigation, kind: Kind) -> Screen {

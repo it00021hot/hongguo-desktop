@@ -62,16 +62,32 @@ impl Frames {
 }
 
 fn right(app: &Headless, frames: &Arc<Mutex<Frames>>) -> Result<f32, String> {
+    let bounds = control_bounds(app, frames, "role:button[全屏]")?;
+    Ok(bounds.origin.x.0 + bounds.size.width.0)
+}
+
+fn control_bounds(
+    app: &Headless,
+    frames: &Arc<Mutex<Frames>>,
+    selector: &str,
+) -> Result<Bounds<Points>, String> {
     let node = app
         .screen()
-        .press_target("role:button[全屏]")?
-        .ok_or("fullscreen button missing")?;
-    let bounds = frames
+        .press_target(selector)?
+        .ok_or("missing control")?;
+    frames
         .lock()
         .unwrap()
         .root_bounds(node)
-        .ok_or("fullscreen button has no frame")?;
-    Ok(bounds.origin.x.0 + bounds.size.width.0)
+        .ok_or("missing frame".into())
+}
+
+fn sender_is_next_to_rate(app: &Headless, frames: &Arc<Mutex<Frames>>) -> Result<(), String> {
+    let sender = control_bounds(app, frames, "role:button[发送弹幕]")?;
+    let rate = control_bounds(app, frames, "role:button[倍速]")?;
+    assert_eq!(sender.origin.y, rate.origin.y);
+    assert_eq!(rate.origin.x - sender.origin.x - sender.size.width, px(4.0));
+    Ok(())
 }
 
 #[test]
@@ -79,6 +95,7 @@ fn desktop_fullscreen_keeps_the_trailing_controls_at_the_stage_edge() -> Result<
     let (mut app, frames) = start(1280.0, 840.0)?;
     app.wait_for("id:player-stage")?;
     app.wait_for("role:button[全屏]")?;
+    sender_is_next_to_rate(&app, &frames)?;
     let normal = right(&app, &frames)?;
     assert!(
         (normal - 1264.0).abs() < 1.0,
@@ -109,28 +126,42 @@ fn desktop_fullscreen_keeps_the_trailing_controls_at_the_stage_edge() -> Result<
 }
 
 #[test]
-fn narrow_desktop_keeps_input_on_the_first_row_and_all_controls_inside_the_stage()
--> Result<(), String> {
+fn narrow_desktop_keeps_a_single_row_and_all_controls_inside_the_stage() -> Result<(), String> {
     let (mut app, frames) = start(1100.0, 840.0)?;
     app.wait_for("role:button[全屏]")?;
-    let bounds = |selector: &str| -> Result<Bounds<Points>, String> {
-        let node = app
-            .screen()
-            .press_target(selector)?
-            .ok_or("missing control")?;
-        frames
-            .lock()
-            .unwrap()
-            .root_bounds(node)
-            .ok_or("missing frame".into())
-    };
-    let play = bounds("role:button[播放]")?;
-    let fullscreen = bounds("role:button[全屏]")?;
-    assert_eq!(fullscreen.origin.y - play.origin.y, px(36.0));
+    let play = control_bounds(&app, &frames, "role:button[播放]")?;
+    let fullscreen = control_bounds(&app, &frames, "role:button[全屏]")?;
+    assert_eq!(fullscreen.origin.y, play.origin.y);
     assert!((right(&app, &frames)? - 1084.0).abs() < 1.0);
-    app.type_text("label:发条友善的弹幕吧", "中文 Abc123")?;
+    sender_is_next_to_rate(&app, &frames)?;
+    let trigger = "role:button[发送弹幕]";
+    let popup = "id:player-danmaku-send-popup";
+    let input = "label:发条友善的弹幕吧";
+    app.press(trigger)?;
+    app.wait_for(popup)?;
+    app.type_text(input, "中文 Abc123")?;
     app.wait_for("text:中文 Abc123")?;
-    assert!(!app.screen().shows("text:0.75x"));
+    app.press_key("enter")?;
+    app.wait_for("text:中文 Abc123")?;
+    app.press("role:button[发送]")?;
+    app.press_key("escape")?;
+    app.wait_for_gone(popup, Duration::from_secs(2))?;
+    // Escape must return actual keyboard focus to the trigger, not a hidden editor.
+    app.press_key("space")?;
+    app.wait_for(popup)?;
+    app.wait_for("text:中文 Abc123")?;
+    app.press_key("escape")?;
+    app.wait_for_gone(popup, Duration::from_secs(2))?;
+    app.set_viewport(nsh_engine::Size::new(px(1600.0), px(840.0)))?;
+    app.wait_for(input)?;
+    app.wait_for("text:中文 Abc123")?;
+    assert!(!app.screen().shows(trigger));
+    app.set_viewport(nsh_engine::Size::new(px(1100.0), px(840.0)))?;
+    app.wait_for(trigger)?;
+    app.press(trigger)?;
+    app.wait_for("text:中文 Abc123")?;
+    app.press_key("escape")?;
+    app.wait_for_gone(popup, Duration::from_secs(2))?;
     Ok(())
 }
 

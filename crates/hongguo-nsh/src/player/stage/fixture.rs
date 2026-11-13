@@ -298,7 +298,9 @@ fn build(frame: ImageSrc, on_open_details: impl Fn() + Copy + 'static, mode: Fix
                         false,
                         super::ComposerEvents {
                             send: Box::new(|| {}),
-                            emoji: Some(crate::emoji::system_picker(editor, next).into_element()),
+                            emoji: Some(Box::new(move || {
+                                crate::emoji::system_picker(editor, next).into_element()
+                            })),
                             previous,
                             next,
                         },
