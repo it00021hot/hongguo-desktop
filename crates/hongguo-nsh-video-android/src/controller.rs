@@ -28,7 +28,9 @@ pub(crate) struct Shared {
     pub stop: AtomicBool,
     pub frame: AtomicBool,
     pub detached: AtomicU64,
-    pub reader: Mutex<Option<crate::reader::ReaderSlot>>,
+    pub direct: Mutex<Option<crate::direct::DirectSlot>>,
+    pub audio_position: AtomicU64,
+    pub audio_seeking: AtomicBool,
     wake: SyncSender<()>,
 }
 impl Shared {
@@ -47,7 +49,9 @@ impl Shared {
             stop: AtomicBool::new(false),
             frame: AtomicBool::new(false),
             detached: AtomicU64::new(u64::MAX),
-            reader: Mutex::new(None),
+            direct: Mutex::new(None),
+            audio_position: AtomicU64::new(0),
+            audio_seeking: AtomicBool::new(false),
             wake,
         });
         let worker = shared.clone();
@@ -73,28 +77,28 @@ impl Shared {
         if mailbox.props == props {
             return Ok(());
         }
-        let old_reader = if mailbox.props.source != props.source {
+        let old_direct = if mailbox.props.source != props.source {
             self.generation.fetch_add(1, Ordering::AcqRel);
             mailbox.size = None;
             mailbox.seek = None;
             self.frame.store(false, Ordering::Release);
-            self.reader.lock().expect("Android media reader").take()
+            self.direct.lock().expect("Android direct source").take()
         } else {
             None
         };
         mailbox.props = props;
         self.revision.fetch_add(1, Ordering::Release);
         drop(mailbox);
-        if let Some(reader) = old_reader {
-            reader.lease.close();
+        if let Some(direct) = old_direct {
+            direct.lease.close();
         }
         self.wake();
         Ok(())
     }
-    pub fn close_reader(&self) {
-        let old = self.reader.lock().expect("Android media reader").take();
-        if let Some(reader) = old {
-            reader.lease.close();
+    pub fn close_direct(&self) {
+        let old = self.direct.lock().expect("Android direct source").take();
+        if let Some(direct) = old {
+            direct.lease.close();
         }
     }
     pub fn event(&self, generation: u64, event: VideoEvent) {

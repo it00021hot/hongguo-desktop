@@ -1,5 +1,10 @@
+mod events;
+mod picture;
+
 use crate::{
-    DecoderEvent, DisplayedFrame, RawFrame, VideoDecoder, VideoError, drawing_device,
+    DecoderEvent, DisplayedFrame, RawFrame, VideoDecoder, VideoError,
+    direct::Direct,
+    drawing_device,
     state::{RawSnapshot, Shared},
 };
 use hongguo_nsh_video_api::{ErrorCode, Seek, Source, VideoEvent, VideoProps};
@@ -15,6 +20,7 @@ use windows::Win32::Graphics::{
 pub(crate) struct Controller {
     source: Option<Source>,
     decoder: Option<VideoDecoder>,
+    direct: Option<Direct>,
     device: Option<ID3D11Device>,
     raw: Option<RawFrame>,
     loaded: bool,
@@ -30,6 +36,7 @@ impl Default for Controller {
         Self {
             source: None,
             decoder: None,
+            direct: None,
             device: None,
             raw: None,
             loaded: false,
@@ -46,6 +53,7 @@ impl Controller {
     pub fn set_props(&mut self, props: &VideoProps) -> Result<(), VideoError> {
         if self.source != props.source {
             self.decoder.take();
+            self.direct.take();
             self.source = None;
             self.raw = None;
             self.loaded = false;
@@ -60,9 +68,10 @@ impl Controller {
                 self.queued = None;
             }
         } else if let Some(decoder) = &self.decoder {
-            if self.loaded {
-                Self::apply(&mut self.applied, decoder, props)?;
-            } else if props.paused || !props.active {
+            if self.loaded && self.direct.as_ref().is_none_or(|direct| direct.audio_ready) {
+                let hold = self.hold()?;
+                Self::apply(&mut self.applied, decoder, props, hold)?;
+            } else if self.direct.is_some() || props.paused || !props.active {
                 decoder.pause()?;
             }
         }
@@ -86,11 +95,21 @@ impl Controller {
         }
         self.bitmap = None;
         self.raw = None;
-        if self.pending.is_some() || !self.loaded {
+        if self.pending.is_some()
+            || !self.loaded
+            || self
+                .direct
+                .as_ref()
+                .is_some_and(|direct| !direct.audio_ready)
+        {
             self.queued = Some(request);
             return Ok(());
         }
         if let Some(decoder) = &self.decoder {
+            if let Some(direct) = &mut self.direct {
+                decoder.pause()?;
+                direct.seek(request.position_ms)?;
+            }
             decoder.seek(request.position_ms)?;
             self.pending = Some((request, Instant::now()));
         } else {
@@ -112,6 +131,7 @@ impl Controller {
             .clone();
         if self.source != props.source {
             self.decoder.take();
+            self.direct.take();
             self.raw = None;
             self.bitmap = None;
             self.applied = None;
@@ -126,6 +146,11 @@ impl Controller {
                 source_id: source.id.clone(),
             });
             let device = drawing_device(dc)?;
+            self.direct = source
+                .frame_source
+                .as_deref()
+                .map(Direct::open)
+                .transpose()?;
             let wake = shared.clone();
             self.decoder = Some(VideoDecoder::open(&device, source.clone(), move || {
                 wake.context.redraw()
@@ -149,66 +174,68 @@ impl Controller {
         size: (f32, f32),
     ) -> Result<(), VideoError> {
         let source_id = decoder.source().id.clone();
-        while let Some(event) = decoder.next_event()? {
-            match event {
-                DecoderEvent::Metadata | DecoderEvent::Ready if !self.loaded => {
-                    let (width, height) = decoder.dimensions()?;
-                    if width > 0 && height > 0 {
-                        let duration_ms = decoder.duration_ms();
-                        self.raw = Some(RawFrame::new(dc, width, height)?);
-                        self.loaded = true;
-                        shared.emit(VideoEvent::Load {
-                            source_id: source_id.clone(),
-                            duration_ms,
-                            width,
-                            height,
-                        });
-                    }
-                }
-                DecoderEvent::Buffering(is_buffering) => shared.emit(VideoEvent::Buffer {
+        let device = drawing_device(dc)?;
+        if self.device.as_ref() != Some(&device) {
+            self.device = Some(device);
+            self.raw = None;
+            self.bitmap = None;
+            shared.clear_frames();
+            if let Some(direct) = &mut self.direct {
+                direct.reset_device();
+            }
+        }
+        if let Some(direct) = &mut self.direct {
+            direct.poll_presented()?;
+        }
+        self.events(shared, decoder, props, dc)?;
+        if let Some(direct) = &self.direct {
+            if !self.loaded
+                && let Some(info) = direct.info()?
+            {
+                self.raw = Some(RawFrame::new(dc, info.width, info.height)?);
+                self.loaded = true;
+                shared.emit(VideoEvent::Load {
                     source_id: source_id.clone(),
-                    is_buffering,
-                }),
-                DecoderEvent::Ended if self.pending.is_none() => shared.emit(VideoEvent::End {
+                    duration_ms: decoder.duration_ms(),
+                    width: info.width,
+                    height: info.height,
+                });
+            }
+            if direct.seek_complete() && self.pending.is_some() {
+                let (completed, _) = self.pending.take().expect("pending direct seek");
+                let position_ms = decoder.position_ms().ok_or_else(|| {
+                    VideoError::new(
+                        ErrorCode::SeekFailed,
+                        "audio seek completed without a finite position",
+                    )
+                })?;
+                shared.emit(VideoEvent::Seeked {
                     source_id: source_id.clone(),
-                }),
-                DecoderEvent::Seeked => {
-                    if let Some((completed, _)) = self.pending.take() {
-                        if let Some(next) = self.queued.take() {
-                            decoder.seek(next.position_ms)?;
-                            self.pending = Some((next, Instant::now()));
-                        } else if let Some(position_ms) = decoder.position_ms() {
-                            shared.emit(VideoEvent::Seeked {
-                                source_id: source_id.clone(),
-                                request_id: completed.request_id,
-                                position_ms,
-                            });
-                            // MediaEngine may have paused itself at EOF even though
-                            // the caller's playing props did not change for a repeat.
-                            decoder.apply(props)?;
-                            self.applied = Some(props.clone());
-                        } else {
-                            return Err(VideoError::new(
-                                ErrorCode::SeekFailed,
-                                "native seek completed without a finite position",
-                            ));
-                        }
-                    }
-                }
-                DecoderEvent::Failed { kind, code } => {
-                    return Err(VideoError::new(
-                        ErrorCode::DecoderFailed,
-                        format!("MediaEngine failed: kind={kind}, HRESULT=0x{code:08x}"),
-                    ));
-                }
-                _ => {}
+                    request_id: completed.request_id,
+                    position_ms,
+                });
+                self.applied = None;
             }
         }
         if self.loaded {
-            Self::apply(&mut self.applied, decoder, props)?;
+            if self
+                .direct
+                .as_ref()
+                .is_some_and(|direct| !direct.audio_ready)
+            {
+                decoder.pause()?;
+            } else {
+                let hold = self.hold()?;
+                Self::apply(&mut self.applied, decoder, props, hold)?;
+            }
             if self.pending.is_none()
+                && self.direct.as_ref().is_none_or(|direct| direct.audio_ready)
                 && let Some(request) = self.queued.take()
             {
+                if let Some(direct) = &mut self.direct {
+                    decoder.pause()?;
+                    direct.seek(request.position_ms)?;
+                }
                 decoder.seek(request.position_ms)?;
                 self.pending = Some((request, Instant::now()));
             }
@@ -224,11 +251,38 @@ impl Controller {
                     "MediaEngine seek completion timed out",
                 ));
             }
-            if self.raw.is_none() {
+            if self.raw.is_none() && self.direct.is_none() {
                 let (width, height) = decoder.dimensions()?;
                 self.raw = Some(RawFrame::new(dc, width, height)?);
             }
-            if props.active && self.pending.is_none() {
+            if props.active
+                && let Some(direct) = &mut self.direct
+            {
+                if let Some(frame) = direct.frame(decoder.position_ms().unwrap_or(0))?
+                    && !direct.was_uploaded(&frame)
+                {
+                    if self
+                        .raw
+                        .as_ref()
+                        .and_then(RawFrame::metadata)
+                        .is_none_or(|old| (old.width, old.height) != (frame.width, frame.height))
+                    {
+                        self.raw = Some(RawFrame::new(dc, frame.width, frame.height)?);
+                    }
+                    let mut snapshot = shared
+                        .raw
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let raw = self.raw.as_mut().expect("direct raw frame initialized");
+                    raw.upload(&frame)?;
+                    *snapshot = raw.metadata().map(|metadata| RawSnapshot {
+                        device: self.device.as_ref().expect("drawing device").clone(),
+                        texture: raw.texture().clone(),
+                        metadata,
+                    });
+                    direct.uploaded(frame);
+                }
+            } else if props.active && self.pending.is_none() {
                 let mut snapshot = shared
                     .raw
                     .lock()
@@ -260,57 +314,18 @@ impl Controller {
                 }
             }
         }
-        if !props.active {
-            self.bitmap = None;
-            return Ok(());
-        }
-        let picture = shared
-            .picture
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .filter(|picture| shared.valid(picture.revision))
-            .map(|picture| picture.frame.clone());
-        if let Some(frame) = picture {
-            let result = (|| {
-                if self
-                    .bitmap
-                    .as_ref()
-                    .is_none_or(|(old, _)| !old.same_slot(&frame))
-                {
-                    self.bitmap = Some((frame.clone(), frame.bitmap(dc)?));
-                }
-                frame.draw(
-                    dc,
-                    &self.bitmap.as_ref().expect("bitmap initialized").1,
-                    size,
-                    props.resize_mode,
-                )
-            })();
-            match result {
-                Ok(()) => return Ok(()),
-                Err(error) => {
-                    self.bitmap = None;
-                    *shared
-                        .gpu_error
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
-                }
-            }
-        } else {
-            self.bitmap = None;
-        }
-        if let Some(raw) = &self.raw {
-            raw.draw(dc, size, props.resize_mode)?;
-        }
-        Ok(())
+        self.draw_picture(shared, props, dc, size)
     }
 
     fn apply(
         applied: &mut Option<VideoProps>,
         decoder: &VideoDecoder,
         props: &VideoProps,
+        hold: bool,
     ) -> Result<(), VideoError> {
+        let mut effective = props.clone();
+        effective.paused |= hold;
+        let props = &effective;
         if applied.as_ref().is_none_or(|old| {
             old.paused != props.paused
                 || old.active != props.active
@@ -326,7 +341,15 @@ impl Controller {
 
     pub fn stop(&mut self) {
         self.decoder.take();
+        self.direct.take();
         self.pending = None;
         self.queued = None;
+    }
+
+    fn hold(&self) -> Result<bool, VideoError> {
+        match &self.direct {
+            Some(direct) => Ok(direct.hold()? || self.queued.is_some()),
+            None => Ok(false),
+        }
     }
 }

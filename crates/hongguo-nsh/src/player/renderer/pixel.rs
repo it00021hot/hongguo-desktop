@@ -27,6 +27,7 @@ pub(super) fn mount(state: State, callbacks: Callbacks) -> View {
         let mut source = Source::default();
         source.id = source_id.get();
         source.url = state.url.clone();
+        source.frame_source = state.frame_source.clone();
         let mut props = VideoProps::default();
         props.source = Some(source);
         props.paused = state.paused.get();

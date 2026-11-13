@@ -67,14 +67,16 @@ export const storage = {
 
 ## 三、事件推送
 
-**service 侧（唯一发布点，无任何 UI/事件机制）**：业务事件是闭集强类型枚举 `hongguo_service::events::ServiceEvent`（15 个变体：下载 6 / 合并 4 / 在线取流 `OnlineProgress` / 兼容转码 `CompatProgress` / 登录 MFA `LoginMfa` / 追更 `FollowNotices` / 设备注册换档 `DeviceRegistered(String)`，前端名 `device-registered`，常量 `device::DEVICE_REGISTERED`），经 `AppState` 的 broadcast 总线发布（容量 1024，订阅者滞后丢旧记日志）。**service 不持有 `AppHandle`，命令层也不发业务事件**。
+**service 侧（唯一发布点，无任何 UI/事件机制）**：业务事件是闭集强类型枚举 `hongguo_service::events::ServiceEvent`（14 个变体：下载 6 / 合并 4 / 在线取流 `OnlineProgress` / 登录 MFA `LoginMfa` / 追更 `FollowNotices` / 设备注册换档 `DeviceRegistered(String)`，前端名 `device-registered`，常量 `device::DEVICE_REGISTERED`），经 `AppState` 的 broadcast 总线发布（容量 1024，订阅者滞后丢旧记日志）。**service 不持有 `AppHandle`，命令层也不发业务事件**。
 
 **壳专属事件**（不进 `ServiceEvent`，只由 Tauri 壳发出，前端 `EVENTS` / `EVENT_PAYLOADS` 仍要登记）：`boss-key-hidden`（`boss_key_cmd::BOSS_KEY_HIDDEN`）、`close-requested`（`lib.rs` 拦截关闭）、`window-minimize`（`lib.rs` 最小化状态翻转才发）、`incognito-visibility`（`incognito_cmd`）。不要把它们加进 service 枚举。
+
+Tauri/GPUI 转发器显式忽略它，不恢复已经删除的 `compat-play-progress` 前端契约。
 
 **壳侧转发**（`crates/hongguo-tauri/src/events.rs`）：bootstrap 阶段订阅一次，`forward` 把每个变体映射成**原名原载荷**的 `app.emit`（`let _ =` 忽略失败，前端不在场发不出去无害）。
 
 ```rust
-// 事件名常量在各域 events 模块：下载/合并/在线/兼容集中在
+// 事件名常量在各域 events 模块：下载/合并/在线集中在
 // download_service::events::names，登录在 login_service::events::LOGIN_MFA_STATE，
 // 追更在 follow_service::events::FOLLOW_NOTICES，
 // 设备注册在 device::DEVICE_REGISTERED（载荷 = 新 iid 字符串）

@@ -80,6 +80,33 @@ impl HomeView {
                 {
                     self.set_rate(rate, cx);
                 }
+                // 取证：HONGGUO_AV_SCRIPT=+20,-15,pause,resume,def:720,def:auto 首帧后每隔 3 秒按顺序执行一步，
+                // 进程内只跑一轮。`+N`/`-N` 相对跳转（秒），`pause`/`resume` 暂停/恢复，`def:N`/`def:auto` 切清晰度。
+                // 每步前后都打当前位置——在不碰键鼠的情况下验跳转、暂停（位置不动）与切档（同位重播）。
+                if let Ok(plan) = std::env::var("HONGGUO_AV_SCRIPT") {
+                    static ONCE: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(false);
+                    let steps: Vec<String> = plan
+                        .split(',')
+                        .map(|step| step.trim().to_owned())
+                        .filter(|step| !step.is_empty())
+                        .collect();
+                    if !steps.is_empty() && !ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        cx.spawn(async move |this, cx| {
+                            for step in steps {
+                                cx.background_executor()
+                                    .timer(std::time::Duration::from_secs(3))
+                                    .await;
+                                let applied =
+                                    this.update(cx, |view, cx| view.run_evidence_step(&step, cx));
+                                if applied.is_err() {
+                                    return;
+                                }
+                            }
+                        })
+                        .detach();
+                    }
+                }
                 self.prefetch_next_stream(cx);
                 // 相邻剧分集档案预取（换剧秒回）：挂在首帧而不是周期事件上
                 // ——首帧每次起播必到，不必多等一次 resolve 的网络往返。
@@ -128,6 +155,35 @@ impl HomeView {
             }
         }
         cx.notify();
+    }
+
+    /// 执行 `HONGGUO_AV_SCRIPT` 的一步（取证专用，见首帧事件里的说明）。走的都是用户操作的同一入口。
+    fn run_evidence_step(&mut self, step: &str, cx: &mut Context<Self>) {
+        let state = |view: &Self| {
+            view.player
+                .as_ref()
+                .map(|player| (player.position_secs(), player.is_paused()))
+        };
+        log::info!("[AvPresenter] 取证脚本 {step} 之前 {:?}", state(self));
+        let paused = self
+            .player
+            .as_ref()
+            .is_some_and(|player| player.is_paused());
+        match step {
+            "pause" if !paused => self.toggle_pause(cx),
+            "resume" if paused => self.toggle_pause(cx),
+            "pause" | "resume" => {}
+            "def:auto" => self.switch_definition(None, cx),
+            _ => {
+                if let Some(value) = step.strip_prefix("def:").and_then(|v| v.parse().ok()) {
+                    self.switch_definition(Some(value), cx);
+                } else if let Ok(seconds) = step.parse::<f64>() {
+                    self.seek_by(seconds, cx);
+                } else {
+                    log::warn!("[AvPresenter] 取证脚本：看不懂的一步 {step:?}");
+                }
+            }
+        }
     }
 
     pub(in crate::home) fn toggle_pause(&mut self, cx: &mut Context<Self>) {

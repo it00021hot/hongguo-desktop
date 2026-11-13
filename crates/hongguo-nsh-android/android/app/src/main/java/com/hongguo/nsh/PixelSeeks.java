@@ -12,8 +12,11 @@ final class PixelSeeks {
     private boolean blocked;
     private boolean redrawRequested;
     private boolean redrawInFlight;
+    private boolean audioCompleted;
     private final Runnable deadline = this::timeout;
     PixelSeeks(PixelPlayback playback) { this.playback = playback; }
+    boolean pending() { return inFlight != null || queued != null; }
+    boolean audioPending() { return inFlight != null && !audioCompleted; }
     void request(JSONObject request) throws JSONException {
         if (!request.getString("sourceId").equals(playback.sourceId)) return;
         if (blocked) { playback.error("seekFailed", "A previous platform seek did not complete"); return; }
@@ -35,6 +38,8 @@ final class PixelSeeks {
                 // The user seek itself supplies the current image to the new Surface.
                 redrawRequested = false;
             }
+            audioCompleted = false;
+            if (playback.direct != null) playback.direct.beginSeek();
             playback.player.seekTo(inFlight.getLong("positionMs"), MediaPlayer.SEEK_CLOSEST);
             playback.handler.postDelayed(deadline, 15_000);
         } catch (RuntimeException | JSONException error) {
@@ -48,6 +53,17 @@ final class PixelSeeks {
     void complete() {
         if (blocked && inFlight == null) { blocked = false; return; }
         if (inFlight == null || playback.player == null || !playback.prepared) return;
+        if (playback.direct != null) {
+            try { playback.direct.audioSeekCompleted(Math.max(0, playback.player.getCurrentPosition())); audioCompleted = true; }
+            catch (java.io.IOException | RuntimeException error) { timeout(); }
+            return;
+        }
+        finish();
+    }
+    void videoComplete() {
+        if (playback.direct != null && inFlight != null && audioCompleted) finish();
+    }
+    private void finish() {
         playback.handler.removeCallbacks(deadline);
         try {
             if (!redrawInFlight) playback.emit("seeked", "requestId", inFlight.getString("requestId"), "positionMs", Math.max(0, playback.player.getCurrentPosition()));
@@ -77,5 +93,6 @@ final class PixelSeeks {
         blocked = false;
         redrawRequested = false;
         redrawInFlight = false;
+        audioCompleted = false;
     }
 }

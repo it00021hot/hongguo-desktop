@@ -1,40 +1,59 @@
 use super::MediaServer;
 
-#[path = "media_hls.rs"]
-mod hls_tests;
-#[path = "media_native_read.rs"]
-mod native_read_tests;
-
 #[tokio::test]
-async fn a_media_lease_reports_only_a_successfully_finalized_source() {
-    let path = std::env::temp_dir().join(format!("hg-nsh-finalized-{}.mp4", uuid::Uuid::new_v4()));
-    std::fs::write(&path, b"prefix").unwrap();
-    hongguo_protocol::grow::open(&path).unwrap();
-    hongguo_protocol::grow::commit(&path, 6);
+async fn direct_media_serves_only_audio_while_registered_frames_decode_original_video() {
+    let path = std::env::temp_dir().join(format!("hg-nsh-direct-{}.mp4", uuid::Uuid::new_v4()));
+    let original = include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
+    std::fs::write(&path, original).unwrap();
     let server = MediaServer::start().await.unwrap();
-    let lease = server.file(&path).unwrap();
-    assert!(!lease.is_complete().unwrap());
-    hongguo_protocol::grow::finish(&path);
-    assert!(lease.is_complete().unwrap());
-    let fixed = server.file(&path).unwrap();
-    assert!(fixed.is_complete().unwrap());
-    drop(server);
-    assert!(lease.is_complete().is_err());
-    std::fs::remove_file(path).unwrap();
-}
-
-#[tokio::test]
-async fn an_empty_finished_growing_source_has_a_range_error_instead_of_panicking() {
-    let path = std::env::temp_dir().join(format!("hg-nsh-empty-{}.mp4", uuid::Uuid::new_v4()));
-    std::fs::write(&path, b"").unwrap();
-    hongguo_protocol::grow::open(&path).unwrap();
-    let server = MediaServer::start().await.unwrap();
-    let lease = server.file(&path).unwrap();
-    hongguo_protocol::grow::finish(&path);
-    let response = reqwest::get(lease.url()).await.unwrap();
-    assert_eq!(response.status(), 416);
-    assert_eq!(response.headers()["content-range"], "bytes */0");
-    assert!(response.bytes().await.unwrap().is_empty());
+    let lease = server.playback_file(&path, true).unwrap();
+    let frames = hongguo_nsh_video_api::frames::open_frames(lease.frame_source().unwrap()).unwrap();
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(frame) = frames.frame_at(0).unwrap() {
+                break frame;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!((frame.width, frame.height), (136, 76));
+    assert!(
+        frame
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 255)
+    );
+    assert!(frames.holding().unwrap());
+    assert!(frames.presented(frame.generation, frame.serial).unwrap());
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let audio = client
+        .get(lease.url())
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(audio.len(), original.len());
+    let index =
+        hongguo_softdec::IndexedVideo::open(original.len() as u64, |offset, length, out| {
+            out.clear();
+            out.extend_from_slice(&original[offset as usize..(offset + length) as usize]);
+            Ok(())
+        })
+        .unwrap();
+    let mut masked = original.to_vec();
+    index.mask_video_tracks(0, &mut masked);
+    assert_ne!(masked, original);
+    assert_eq!(audio.as_ref(), masked);
+    let url = lease.url().to_owned();
+    drop(lease);
+    assert!(frames.frame_at(0).is_err());
+    assert_eq!(client.get(url).send().await.unwrap().status(), 404);
     std::fs::remove_file(path).unwrap();
 }
 
@@ -63,7 +82,7 @@ async fn media_urls_are_scoped_and_support_head_and_ranges() {
     std::fs::write(&path, b"0123456789").unwrap();
     let server = MediaServer::start().await.unwrap();
     let lease = server.file(&path).unwrap();
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let response = client
         .get(lease.url())
         .header("Range", "bytes=2-5")

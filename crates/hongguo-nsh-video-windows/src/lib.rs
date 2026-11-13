@@ -3,10 +3,13 @@
 mod component;
 mod controller;
 mod decoder;
+mod direct;
 mod draw;
 mod gpu_worker;
 mod output;
+mod presentation;
 mod render;
+mod seek_gate;
 mod shared;
 mod state;
 

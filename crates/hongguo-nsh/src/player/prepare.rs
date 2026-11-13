@@ -1,7 +1,7 @@
 use crate::{bootstrap::Session, media::MediaLease};
 use hongguo_common::{
     AppError, AppResult,
-    model::{LocalHistoryItem, PlayRequest, VideoDefinition},
+    model::{LocalHistoryItem, PlayRequest, PlayResponse, VideoDefinition},
 };
 use std::sync::Arc;
 
@@ -13,7 +13,6 @@ pub(super) struct Playback {
     pub(super) definitions: Vec<VideoDefinition>,
     pub(super) social: super::interaction::Target,
     pub(super) expected_duration: Option<f64>,
-    pub(super) growing: bool,
     pub(super) active_definition: u32,
     pub(super) automatic_definition: bool,
     pub(super) previous_episode: Option<u32>,
@@ -25,7 +24,6 @@ pub(super) async fn prepare(
     id: String,
     episode: u32,
     definition: Option<u32>,
-    compatibility: bool,
     reset_definition: bool,
 ) -> AppResult<Playback> {
     let downloaded = session
@@ -38,9 +36,7 @@ pub(super) async fn prepare(
         &play_request(&id, episode, downloaded, definition, reset_definition),
     )
     .await?;
-    if !response.error.is_empty() {
-        return Err(AppError::Media(response.error));
-    }
+    check_response(&response)?;
     let series = session
         .state
         .store
@@ -51,35 +47,23 @@ pub(super) async fn prepare(
         .iter()
         .find(|item| item.vid_index == episode)
         .ok_or_else(|| AppError::NotFound(episode.to_string()))?;
-    let (source, growing) = if response.needs_compat || compatibility {
-        let (vid, definition) = compat_inputs(response.online, &current.vid, response.definition);
-        let converted =
-            hongguo_service::play_service::compat_play::compat_for_native_playback_prefix(
-                &session.state,
-                &id,
-                episode,
-                vid.map(str::to_owned),
-                definition,
-            )
-            .await?;
-        (converted.url, converted.progressive)
-    } else {
-        (response.url, false)
-    };
+    let source = response.url;
     let lease = if let Some(path) = source.strip_prefix(&format!(
         "{}/f/",
         hongguo_protocol::scheme_base(hongguo_protocol::LOCAL_SCHEME)
     )) {
         let path = hongguo_protocol::local::resolve_path(path)
             .map_err(|error| AppError::Media(error.into()))?;
-        session.media.playback_file(&path).await
+        session.media.playback_file(&path, response.direct)
     } else if let Some(path) = source.strip_prefix(&hongguo_protocol::scheme_base(
         hongguo_protocol::STREAM_SCHEME,
     )) {
         let (definition, vid) = hongguo_protocol::parse_stream_path(path)
             .ok_or_else(|| AppError::Media("invalid stream source".into()))?;
         wait_for_stream(vid.to_owned(), definition).await?;
-        session.media.online(vid.to_owned(), definition)
+        session
+            .media
+            .online(vid.to_owned(), definition, response.direct)
     } else {
         return Err(AppError::Media("unexpected playback source".into()));
     }
@@ -126,12 +110,21 @@ pub(super) async fn prepare(
         definitions: response.definitions,
         social,
         expected_duration,
-        growing,
         active_definition: response.definition,
         automatic_definition: response.automatic_definition,
         previous_episode,
         episode_indices,
     })
+}
+
+fn check_response(response: &PlayResponse) -> AppResult<()> {
+    if response.error.is_empty() {
+        Ok(())
+    } else if response.error_kind == AppError::CodecUnsupported(String::new()).i18n_key() {
+        Err(AppError::CodecUnsupported(response.error.clone()))
+    } else {
+        Err(AppError::Media(response.error.clone()))
+    }
 }
 
 fn play_request(
@@ -148,14 +141,6 @@ fn play_request(
         prefer_online: reset || definition.is_some() || !downloaded,
         definition,
         reset_definition: reset,
-    }
-}
-
-fn compat_inputs(online: bool, vid: &str, definition: u32) -> (Option<&str>, Option<u32>) {
-    if online {
-        (Some(vid), Some(definition))
-    } else {
-        (None, None)
     }
 }
 
@@ -185,6 +170,24 @@ async fn wait_for_stream(vid: String, definition: u32) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn unsupported_codec_response_preserves_its_terminal_classification() {
+        use hongguo_common::{AppError, model::PlayResponse};
+        let mut response: PlayResponse = serde_json::from_value(serde_json::json!({
+            "url":"", "error":"offered codec cannot be decoded", "errorKind":AppError::CodecUnsupported(String::new()).i18n_key()
+        })).unwrap();
+        assert!(matches!(
+            super::check_response(&response),
+            Err(AppError::CodecUnsupported(_))
+        ));
+        response.error_kind.clear();
+        assert!(matches!(
+            super::check_response(&response),
+            Err(AppError::Media(_))
+        ));
+        response.error.clear();
+        assert!(super::check_response(&response).is_ok());
+    }
+    #[test]
     fn explicit_auto_resets_manual_memory_even_when_a_download_exists() {
         let request = super::play_request("series", 2, true, None, true);
         assert!(request.reset_definition);
@@ -209,16 +212,5 @@ mod tests {
             "the request failed before the background stream registered"
         );
         assert!(result.is_ok());
-    }
-    #[test]
-    fn online_compatibility_uses_the_resolved_episode_identity_and_definition() {
-        assert_eq!(
-            super::compat_inputs(true, "episode-vid", 3),
-            (Some("episode-vid"), Some(3))
-        );
-    }
-    #[test]
-    fn local_compatibility_does_not_request_an_online_stream() {
-        assert_eq!(super::compat_inputs(false, "episode-vid", 3), (None, None));
     }
 }

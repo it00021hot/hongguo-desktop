@@ -1,4 +1,5 @@
 use crate::VideoError;
+use hongguo_nsh_video_api::frames::PixelFrame;
 use hongguo_nsh_video_api::{ErrorCode, FrameMetadata, ResizeMode};
 use windows::{
     Win32::{
@@ -85,6 +86,44 @@ impl RawFrame {
     }
     pub fn metadata(&self) -> Option<FrameMetadata> {
         self.metadata
+    }
+
+    pub fn upload(&mut self, frame: &PixelFrame) -> Result<(), VideoError> {
+        let row = frame
+            .width
+            .checked_mul(4)
+            .ok_or_else(|| error("BGRA row overflow"))?;
+        let length = u64::from(frame.stride) * u64::from(frame.height);
+        if (frame.width, frame.height) != self.size
+            || frame.stride < row
+            || length > frame.pixels.len() as u64
+        {
+            return Err(error("BGRA frame storage does not match the raw texture"));
+        }
+        // SAFETY: Immutable BGRA storage covers every row. The DEFAULT texture and
+        // its immediate context belong to this window's drawing device.
+        unsafe {
+            let context = self
+                .texture
+                .GetDevice()
+                .map_err(error)?
+                .GetImmediateContext()
+                .map_err(error)?;
+            context.UpdateSubresource(
+                &self.texture,
+                0,
+                None,
+                frame.pixels.as_ptr().cast(),
+                frame.stride,
+                0,
+            );
+        }
+        let mut metadata = FrameMetadata::default();
+        metadata.pts_ms = frame.pts_ms;
+        metadata.width = frame.width;
+        metadata.height = frame.height;
+        self.metadata = Some(metadata);
+        Ok(())
     }
 
     pub fn capture(&mut self, engine: &IMFMediaEngine) -> Result<bool, VideoError> {

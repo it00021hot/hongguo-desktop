@@ -15,11 +15,13 @@ nsh-core.workspace = true
 nsh-base.workspace = true
 env_logger = "0.11"
 hongguo-api = { path = "../hongguo-api" }
+hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false }
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-common = { path = "../hongguo-common" }
 hongguo-media = { path = "../hongguo-media" }
 hongguo-media-platform = { path = "../hongguo-media-platform" }
 hongguo-service = { path = "../hongguo-service" }
+hongguo-softdec = { path = "../hongguo-softdec" }
 hongguo-store = { path = "../hongguo-store" }
 hongguo-stream = { path = "../hongguo-stream" }
 hongguo-protocol = { path = "../hongguo-protocol" }

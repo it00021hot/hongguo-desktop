@@ -20,6 +20,7 @@ use std::{
 
 type Sink = Arc<dyn Fn(VideoEvent) + Send + Sync>;
 const FRAME_TICK: Duration = Duration::from_millis(16);
+mod direct;
 
 struct Worker {
     shared: Arc<Shared>,
@@ -41,6 +42,7 @@ struct Worker {
     failed: Option<Enhancement>,
     budget: FrameBudget,
     phase: Option<(EnhancementPhase, Enhancement, Option<ErrorCode>, String)>,
+    direct: Option<direct::Direct>,
 }
 
 pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, emit: Sink) {
@@ -65,6 +67,7 @@ pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, e
         failed: None,
         budget: FrameBudget::default(),
         phase: None,
+        direct: None,
     };
     while !worker.shared.stop.load(Ordering::Acquire) {
         objc2::rc::autoreleasepool(|_| worker.step());
@@ -114,6 +117,10 @@ impl Worker {
     }
 
     fn fallback(&mut self, error: OutputError) {
+        if self.direct.is_some() {
+            self.direct_failure(error);
+            return;
+        }
         self.layers.show_enhanced(false, self.props.active);
         self.failed = Some(self.props.enhancement);
         self.renderer.take();
@@ -152,7 +159,10 @@ impl Worker {
         self.poll_render();
         self.read_video();
         self.prepare_frame();
-        if self.dirty && self.failed != Some(self.props.enhancement) && self.frame.is_some() {
+        if self.dirty
+            && (self.direct.is_some() || self.failed != Some(self.props.enhancement))
+            && self.frame.is_some()
+        {
             self.draw();
         }
     }
@@ -192,6 +202,7 @@ impl Worker {
             self.decoded.take();
             self.frame.take();
             self.pending_seek.take();
+            self.direct.take();
             self.source = self.props.source.clone();
             self.last_metadata = None;
             self.phase = None;
@@ -201,9 +212,28 @@ impl Worker {
                 self.event(VideoEvent::LoadStart {
                     source_id: source.id.clone(),
                 });
-                match VideoOutput::open(&source.url) {
+                match if source.frame_source.is_some() {
+                    VideoOutput::open_audio(&source.url)
+                } else {
+                    VideoOutput::open(&source.url)
+                } {
                     Ok(video) => {
-                        video.attach_original(&self.layers.original);
+                        if let Some(url) = &source.frame_source {
+                            match direct::Direct::open(url) {
+                                Ok(direct) => self.direct = Some(direct),
+                                Err(error) => {
+                                    self.event(VideoEvent::Error {
+                                        source_id: source.id.clone(),
+                                        code: ErrorCode::DecoderFailed,
+                                        detail: error,
+                                    });
+                                    return;
+                                }
+                            }
+                            video.hold(true);
+                        } else {
+                            video.attach_original(&self.layers.original);
+                        }
                         let control = video.control();
                         let mut target = self
                             .shared
@@ -243,7 +273,7 @@ impl Worker {
         if changed_mode || changed_active || !self.props.active {
             self.layers.show_enhanced(false, self.props.active);
         }
-        if !self.enhanced() || !self.props.active {
+        if (!self.enhanced() && self.direct.is_none()) || !self.props.active {
             // Original AVPlayerLayer remains independent of GPU availability, even
             // while the window is occluded or a previous device has failed.
             self.renderer.take();
@@ -265,9 +295,19 @@ impl Worker {
         self.layers.show_enhanced(false, self.props.active);
         self.frame.take();
         self.decoded.take();
+        if let Some(direct) = &mut self.direct {
+            if let Err(error) = direct.seek(request.position_ms) {
+                self.direct_failure(OutputError::new(ErrorCode::SeekFailed, error));
+                return;
+            }
+            if let Some(video) = &self.video {
+                video.hold(true);
+            }
+        }
         if let Some(video) = &self.video {
             match video.seek(request.position_ms) {
                 Ok(completion) => self.pending_seek = Some((request, completion, Instant::now())),
+                Err(error) if self.direct.is_some() => self.direct_failure(error),
                 Err(error) => self.event(VideoEvent::Error {
                     source_id: self.source_id(),
                     code: error.code(),
@@ -278,6 +318,10 @@ impl Worker {
     }
 
     fn confirm_seek(&mut self) {
+        if self.direct.is_some() {
+            self.confirm_direct_seek();
+            return;
+        }
         let Some((request, completion, started)) = &self.pending_seek else {
             return;
         };
@@ -319,7 +363,11 @@ impl Worker {
         };
         match renderer.poll() {
             Ok(Some(completed)) if completed.epoch == self.revision => {
+                if self.direct.is_some() {
+                    self.present_direct();
+                }
                 if (self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on)
+                    && self.failed != Some(self.props.enhancement)
                     && self.budget.observe(completed.elapsed)
                 {
                     self.fallback(OutputError::new(
@@ -329,14 +377,16 @@ impl Worker {
                     return;
                 }
                 self.layers.show_enhanced(true, self.props.active);
-                self.status(
-                    if self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on {
-                        EnhancementPhase::Ready
-                    } else {
-                        EnhancementPhase::Idle
-                    },
-                    None,
-                );
+                if self.failed != Some(self.props.enhancement) {
+                    self.status(
+                        if self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on {
+                            EnhancementPhase::Ready
+                        } else {
+                            EnhancementPhase::Idle
+                        },
+                        None,
+                    );
+                }
             }
             Ok(_) => {}
             Err(error) => self.fallback(error),
@@ -365,7 +415,11 @@ impl Worker {
                 source_id: source_id.clone(),
             });
         }
-        let buffering = video.buffering();
+        let buffering = video.buffering()
+            || self
+                .direct
+                .as_ref()
+                .is_some_and(|direct| direct.frames.holding().unwrap_or(true));
         if buffering != self.buffered {
             self.buffered = buffering;
             self.event(VideoEvent::Buffer {
@@ -384,6 +438,10 @@ impl Worker {
                     duration_ms,
                 });
             }
+        }
+        if self.direct.is_some() {
+            self.read_direct();
+            return;
         }
         match video.next_frame() {
             Ok(Some(frame)) => {
@@ -419,6 +477,10 @@ impl Worker {
     }
 
     fn prepare_frame(&mut self) {
+        if self.direct.is_some() {
+            self.prepare_direct();
+            return;
+        }
         if !self.enhanced() || self.failed == Some(self.props.enhancement) || self.frame.is_some() {
             return;
         }
@@ -469,14 +531,26 @@ impl Worker {
                 .draw(
                     frame,
                     self.viewport,
-                    self.props.enhancement,
+                    if self.direct.is_some() && self.failed == Some(self.props.enhancement) {
+                        Enhancement::default()
+                    } else {
+                        self.props.enhancement
+                    },
                     self.props.resize_mode,
                     revision,
                     valid,
                 ),
         );
         match result {
-            Ok(true) => self.dirty = false,
+            Ok(true) => {
+                if let Some(direct) = &mut self.direct {
+                    direct.submitted = direct
+                        .pixels
+                        .as_ref()
+                        .map(|frame| (frame.generation, frame.serial));
+                }
+                self.dirty = false;
+            }
             Ok(false) => {}
             Err(error) => self.fallback(error),
         }

@@ -97,15 +97,43 @@ impl MediaTime {
 pub struct VideoOutput {
     player: Retained<AnyObject>,
     item: Retained<AnyObject>,
-    output: Retained<AnyObject>,
+    output: Option<Retained<AnyObject>>,
     notifications: Retained<AnyObject>,
     end_observer: Retained<AnyObject>,
     ended: Arc<AtomicBool>,
+    held: Arc<AtomicBool>,
 }
 
 impl VideoOutput {
     pub(crate) fn control(&self) -> crate::control::PlaybackControl {
-        crate::control::PlaybackControl(self.player.clone())
+        crate::control::PlaybackControl(self.player.clone(), self.held.clone())
+    }
+    pub(crate) fn hold(&self, held: bool) -> bool {
+        let previous = self.held.swap(held, Ordering::AcqRel);
+        if held {
+            self.control().pause();
+        }
+        previous
+    }
+
+    pub(crate) fn ready(&self) -> Result<bool, OutputError> {
+        // SAFETY: AVPlayerItem exposes its status and NSError on retained objects.
+        unsafe {
+            let status: isize = msg_send![&self.item, status];
+            if status == 2 {
+                let error: Option<Retained<AnyObject>> = msg_send![&self.item, error];
+                let detail = error
+                    .map(|error| {
+                        let description: Retained<NSString> =
+                            msg_send![&error, localizedDescription];
+                        description.to_string()
+                    })
+                    .unwrap_or_else(|| "AVPlayerItem failed without NSError".into());
+                Err(OutputError::new(ErrorCode::DecoderFailed, detail))
+            } else {
+                Ok(status == 1)
+            }
+        }
     }
     pub fn seek(&self, position_ms: u64) -> Result<std::sync::mpsc::Receiver<bool>, OutputError> {
         self.ended.store(false, Ordering::Release);
@@ -140,6 +168,14 @@ impl VideoOutput {
     }
 
     pub fn open(url: &str) -> Result<Self, OutputError> {
+        Self::open_tracks(url, true)
+    }
+
+    pub(crate) fn open_audio(url: &str) -> Result<Self, OutputError> {
+        Self::open_tracks(url, false)
+    }
+
+    fn open_tracks(url: &str, video: bool) -> Result<Self, OutputError> {
         let url = NSURL::URLWithString(&NSString::from_str(url))
             .ok_or_else(|| OutputError::new(ErrorCode::InvalidProps, "invalid media URL"))?;
         let item_class = class(c"AVPlayerItem")?;
@@ -150,12 +186,17 @@ impl VideoOutput {
         // SAFETY: These are public AVFoundation constructors; the CF dictionary is toll-free bridged.
         let (item, player, output) = unsafe {
             let item: Retained<AnyObject> = msg_send![item_class, playerItemWithURL: &*url];
-            let output: Retained<AnyObject> = msg_send![
-                msg_send![output_class, alloc],
-                initWithPixelBufferAttributes: CFRetained::as_ptr(&attributes).as_ptr().cast::<AnyObject>()
-            ];
-            let _: () = msg_send![&output, setSuppressesPlayerRendering: Bool::YES];
-            let _: () = msg_send![&item, addOutput: &*output];
+            let output = if video {
+                let output: Retained<AnyObject> = msg_send![
+                    msg_send![output_class, alloc],
+                    initWithPixelBufferAttributes: CFRetained::as_ptr(&attributes).as_ptr().cast::<AnyObject>()
+                ];
+                let _: () = msg_send![&output, setSuppressesPlayerRendering: Bool::YES];
+                let _: () = msg_send![&item, addOutput: &*output];
+                Some(output)
+            } else {
+                None
+            };
             let player: Retained<AnyObject> = msg_send![player_class, playerWithPlayerItem: &*item];
             (item, player, output)
         };
@@ -180,6 +221,7 @@ impl VideoOutput {
             notifications,
             end_observer,
             ended,
+            held: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -237,7 +279,9 @@ impl VideoOutput {
         // SAFETY: This caller-created public AVPlayerLayer shares this same player and decoded clock.
         unsafe {
             let _: () = msg_send![&layer.0, setPlayer: &*self.player];
-            let _: () = msg_send![&self.output, setSuppressesPlayerRendering: Bool::NO];
+            if let Some(output) = &self.output {
+                let _: () = msg_send![output, setSuppressesPlayerRendering: Bool::NO];
+            }
         }
     }
 
@@ -248,6 +292,9 @@ impl VideoOutput {
     }
 
     pub fn next_frame(&self) -> Result<Option<DecodedFrame>, OutputError> {
+        let Some(output) = &self.output else {
+            return Ok(None);
+        };
         const ITEM_STATUS_FAILED: isize = 2;
         // SAFETY: Public AVFoundation status, time and frame-output methods on retained objects.
         unsafe {
@@ -264,13 +311,13 @@ impl VideoOutput {
                 ));
             }
             let now: MediaTime = msg_send![&self.player, currentTime];
-            let available: Bool = msg_send![&self.output, hasNewPixelBufferForItemTime: now];
+            let available: Bool = msg_send![output, hasNewPixelBufferForItemTime: now];
             if !available.as_bool() {
                 return Ok(None);
             }
             let mut displayed = MediaTime::default();
             let buffer: *mut CVPixelBuffer = msg_send![
-                &self.output,
+                output,
                 copyPixelBufferForItemTime: now,
                 itemTimeForDisplay: &mut displayed
             ];
@@ -320,7 +367,9 @@ impl Drop for VideoOutput {
             let _: () = msg_send![&self.notifications, removeObserver: &*self.end_observer];
             let _: () = msg_send![&self.player, pause];
             let _: () = msg_send![&self.item, cancelPendingSeeks];
-            let _: () = msg_send![&self.item, removeOutput: &*self.output];
+            if let Some(output) = &self.output {
+                let _: () = msg_send![&self.item, removeOutput: &**output];
+            }
             let _: () = msg_send![&self.player, replaceCurrentItemWithPlayerItem: std::ptr::null_mut::<AnyObject>()];
         }
     }

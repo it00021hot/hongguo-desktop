@@ -44,6 +44,8 @@ members = [
     "crates/hongguo-protocol",
     "crates/hongguo-service",
     "crates/hongguo-signer",
+    # 进程内软解直播放会话（HEVC / ByteVC2），两个壳共用。
+    "crates/hongguo-softdec",
     "crates/hongguo-store",
     "crates/hongguo-stream",
     "crates/hongguo-tauri",
@@ -124,10 +126,17 @@ debug = "line-tables-only"
 #
 # 它确实只是一条断言：release 不编译它，该段 SIMD 路径又由 `if ok` 守住
 # 会整段跳过。不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
-# 现状消费者是 HEIC 封面软解（`hongguo-media::heif`）——纯 Rust 视频转码
-# 兜底移除后，转码不再经过 rusty_h265。
+# 消费者是 HEIC 封面软解（`hongguo-media::heif`）与 HEVC 软解直播放
+# （`hongguo-softdec`）——后者每一帧都过这段滤波，这条配置对它是必需的。
 [profile.dev.package.rusty_h265-accel]
 debug-assertions = false
+
+# 软解直播放的出帧打包（解码器的 u16 平面 → 8-bit I420）是逐像素循环，1080p 一帧
+# 三百多万次。零优化下它不向量化：macOS dev 构建采样，解码线程约 63% 的时间耗在
+# 这一个循环上，1080p 30fps 的片子 1× 就吃满一个核，2× 直接跟不上（2026-11-11 实测）。
+# workspace 成员默认不吃下面那条 `"*"`，所以单独点名；release 不受影响。
+[profile.dev.package.hongguo-softdec]
+opt-level = 2
 
 # 依赖在 dev 下也开 O2：GPUI 壳（gpui-pre Windows 平台层）每个 vsync 都
 # 全量重绘一次窗口，dev 档零优化的 taffy 布局 + 绘制 + 文字排版让内容页

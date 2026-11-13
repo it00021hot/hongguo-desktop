@@ -75,9 +75,19 @@ public final class PixelVideoComponent implements NshComponent {
     String latestState(long generation) {
         return closed || handle == 0 ? null : nativeLatestState(handle, generation);
     }
-    PixelDataSource openDataSource(long generation, String url) throws java.io.IOException {
+    long nativeHandle() throws java.io.IOException {
         if (closed || handle == 0) throw new java.io.IOException("Media controller is closed");
-        return PixelDataSource.tryOpen(handle, generation, url);
+        return handle;
+    }
+    public void directPresented(long epoch, long generation, long serial, long pts, int width, int height) {
+        playback.post(() -> {
+            if (!closed && playback.generation == epoch && playback.direct != null) playback.direct.presented(generation, serial, pts, width, height);
+        });
+    }
+    public void directHolding(long epoch, boolean holding) {
+        playback.post(() -> {
+            if (!closed && playback.generation == epoch && playback.direct != null) playback.direct.holding(holding);
+        });
     }
     void viewport(Surface surface, int width, int height) {
         if (!closed && handle != 0) nativeViewport(handle, surface, width, height);

@@ -69,6 +69,12 @@ pub enum AppError {
     #[error("{0}")]
     Unsupported(String),
 
+    /// 这一集（或这一档）没有内置解码器能解的流：只给了 H.264、没标编码、或是认不出的编码。
+    /// 单独成变体而不并进 [`AppError::Media`]：它不是「处理失败」，重试、重下都没用，
+    /// 也绝不能被哪条恢复逻辑当成「换条路再试」的信号。消息里带服务端实际给的编码，供排查。
+    #[error("没有内置解码器能播放的流: {0}")]
+    CodecUnsupported(String),
+
     /// 内部错误（后台任务 join 失败等不应发生的状态），不是网络问题，别与 [`AppError::Network`] 混用。
     #[error("内部错误: {0}")]
     Internal(String),
@@ -96,6 +102,7 @@ impl AppError {
             AppError::Cancelled => "error.cancelled",
             AppError::Busy(_) => "error.busy",
             AppError::Unsupported(_) => "error.unsupported",
+            AppError::CodecUnsupported(_) => "error.codecUnsupported",
             AppError::Internal(_) => "error.internal",
         }
     }

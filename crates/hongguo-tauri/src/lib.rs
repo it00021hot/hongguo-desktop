@@ -5,8 +5,8 @@
 pub mod bootstrap;
 pub mod commands;
 mod diagnostics;
-mod direct_bytevc2;
-mod direct_bytevc2_source;
+mod direct_video;
+mod direct_video_source;
 mod events;
 mod protocol;
 #[cfg(test)]
@@ -48,6 +48,10 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
     // release 构建此行整体不存在，不留任何自动化面。
     #[cfg(debug_assertions)]
     let builder = builder.plugin(tauri_plugin_webdriver::init());
+
+    // Tauri 的播放器（桌面与 Android）把 HEVC / ByteVC1 / ByteVC2 都交给进程内软解直接播放，
+    // 选流照此收口：只收内置解码器能解的编码，不经系统视频解码器、不转码。必须早于任何取流。
+    hongguo_service::capability_service::enable_builtin_playback();
 
     // 自定义协议要在 setup 之前注册（Builder 阶段）
     let builder = protocol::register(builder);
@@ -313,15 +317,9 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::play_cmd::play_prefetch,
             commands::play_cmd::save_playback_position,
             commands::play_cmd::series_progress,
-            // 播放解码能力（探测 / HEVC 扩展按需安装）
-            commands::capability_cmd::playback_capability,
-            commands::capability_cmd::install_hevc_extension,
-            // 转码（合并功能用；播放兜底已下线）
+            // 转码能力（兼容合并用；播放不转码，HEVC / ByteVC1 / ByteVC2 一律内置软解直播放）
             commands::transcode_cmd::decode_capability,
             commands::transcode_cmd::redetect_capability,
-            commands::transcode_cmd::transcode_for_playback,
-            commands::transcode_cmd::cancel_compat_playback,
-            commands::transcode_cmd::qa_offline_local_play,
             // 存储
             commands::storage_cmd::get_storage_usage,
             commands::storage_cmd::get_storage_series,

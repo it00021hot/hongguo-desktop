@@ -2,6 +2,8 @@
 //! ⚠️ 流元数据全在 `video_meta` 子对象、`definition` 带 `p` 后缀——照旧 schema 读会全取到 0；
 //! 无 HEVC 机器走 [`DecoderCapability::no_hevc`]（语义对齐官方 CodecStrategy：宁选能播的 720p h264）。
 
+#[cfg(test)]
+mod builtin_tests;
 mod model;
 
 pub use model::{DecoderCapability, PlayStream, StreamScore};
@@ -56,10 +58,26 @@ fn codec_of(v: &Value) -> &str {
         .unwrap_or_default()
 }
 
+/// 内置软解器能解的编码：HEVC 系（服务端称 `h265` / `bytevc1`，容器里是 `hvc1` / `hev1`）
+/// 与 ByteVC2。接口的编码名和 MP4 四字码都认——在线选流拿到的是前者，本地文件探到的是后者。
+/// H.264 不在其中：内置解码器不解它，播放也不回落到系统解码器。
+pub fn builtin_decodable(codec: &str) -> bool {
+    hongguo_bytevc2::is_bytevc2(codec)
+        || matches!(
+            codec,
+            "h265" | "h265_hvc1" | "hevc" | "hvc1" | "hev1" | "bytevc1"
+        )
+}
+
 /// 这条流本机最终能否播：标准编码可直喂；`bytevc2` 需内置 Rust 解码器再转码；
 /// 没报编码器按能播处理（明确不可播才排除）。
+/// [`DecoderCapability::builtin_only`] 下口径反过来——只有认得出、内置解码器能解的才算，
+/// 没报编码的不赌。
 pub fn is_playable(v: &Value, cap: DecoderCapability) -> bool {
     let codec = codec_of(v);
+    if cap.builtin_only {
+        return builtin_decodable(codec) && (cap.bytevc2 || !hongguo_bytevc2::is_bytevc2(codec));
+    }
     if codec.is_empty() {
         return true;
     }
@@ -67,6 +85,32 @@ pub fn is_playable(v: &Value, cap: DecoderCapability) -> bool {
         return cap.bytevc2;
     }
     codec_rank(codec) < UNRANKED_CODEC
+}
+
+/// 这一集有流、但没有一条内置解码器能解时，说出服务端实际给了哪些编码（去重、保序，
+/// 没标编码的记作「未标注」）。有可播的流、流表为空或不在内置模式时返回 `None`——
+/// 那些情况各有各的报法，不归这里。
+pub fn refused_codecs(model: &Value, cap: DecoderCapability) -> Option<String> {
+    if !cap.builtin_only {
+        return None;
+    }
+    let mut offered: Vec<&str> = Vec::new();
+    for stream in model.get("video_list")?.as_array()? {
+        if stream.get("main_url").and_then(Value::as_str).is_none() {
+            continue;
+        }
+        if is_playable(stream, cap) {
+            return None;
+        }
+        let codec = match codec_of(stream) {
+            "" => "未标注",
+            codec => codec,
+        };
+        if !offered.contains(&codec) {
+            offered.push(codec);
+        }
+    }
+    (!offered.is_empty()).then(|| offered.join("、"))
 }
 
 /// 计算一条流在指定能力模式下的分数。

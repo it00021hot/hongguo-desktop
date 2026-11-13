@@ -6,7 +6,10 @@ use objc2::{
 };
 
 #[derive(Clone)]
-pub(crate) struct PlaybackControl(pub Retained<AnyObject>);
+pub(crate) struct PlaybackControl(
+    pub Retained<AnyObject>,
+    pub std::sync::Arc<std::sync::atomic::AtomicBool>,
+);
 
 // SAFETY: AVPlayer's playback controls are thread-safe; this handle never touches AppKit/UIKit views.
 unsafe impl Send for PlaybackControl {}
@@ -35,7 +38,7 @@ impl PlaybackControl {
         unsafe {
             let _: () = msg_send![&self.0, setVolume: props.volume];
             let _: () = msg_send![&self.0, setMuted: Bool::new(props.muted)];
-            if props.paused || !props.active {
+            if props.paused || !props.active || self.1.load(std::sync::atomic::Ordering::Acquire) {
                 let _: () = msg_send![&self.0, pause];
             } else {
                 let _: () = msg_send![&self.0, playImmediatelyAtRate: props.rate as f32];

@@ -9,6 +9,11 @@ NSH 第三壳正在开发（NSH 0.4.0，纯 Rust）：`crates/hongguo-nsh` 是�
 Android、iOS，Linux/Web 后续迭代。开发前另读 `nsh` 与 `nsh-design-guides`，
 项目接入与验证说明见 `.agents/skills/hongguo-dev/references/nsh.md`。
 
+NSH 与 Tauri/已启用直播放的 GPUI 使用内置软解；启动请求前声明
+`enable_builtin_playback()`。`PlayResponse.direct` 表示内置视频解码，
+系统媒体只读取原 MP4 的音轨视图并提供时钟；本地 H.264 沿用系统播放。
+禁止恢复兼容播放转码、`.play.mp4`、grow/HLS 播放链路。
+
 **动手前先读两个 skill：用户级 `dev-habits`（跨项目工程宪法，经 Skill 工具调用）→ `.agents/skills/hongguo-dev/SKILL.md`（本项目规范，只写 dev-habits 没有的内容）**，两者互补缺一不可，再按任务读对应参考文档：
 
 > 用户级 `dev-habits` 等 skill 装自 <https://github.com/it00021hot/skills>；新机器缺失时补装：`npx skills add it00021hot/skills@dev-habits -g`（`-g` 装到 `~/.agents/skills/`，不带则装进当前项目）。`find-skills` / `impeccable` 不在此仓库，来自社区源。
@@ -35,7 +40,8 @@ Android、iOS，Linux/Web 后续迭代。开发前另读 `nsh` 与 `nsh-design-g
 - `crates/hongguo-api/` 官方接口客户端。业务域 18 个：`calendar` / `danmaku` / `detail` / `discover` / `emoticon` / `history` / `interact` / `login` / `new_drama` / `play_strategy` / `play_url` / `rank` / `recommend` / `register` / `reservation` / `search` / `stream_pick` / `warmup`（另有 `client` / `params`）。改端点或参数前必读 `docs/hongguo-api-endpoints.md`。commentapi 互动枚举（object_type / comment_type / commit_source / data_type 等，值即契约）集中在 `params::interaction`，使用点只引用不写字面量
 - `crates/hongguo-store/` 持久化：Turso 内嵌库（`db` 连接与 schema 迁移 / `entity/` 八个模块 `device` / `follow` / `local_history` / `merge` / `playback` / `series` / `settings` / `task` / `bridge` 同步门面）；`paths::ScopedDataDir` 是 feature `test-support` 门控的测试辅助（落盘用例把数据目录重定向到临时目录）。无 tauri 依赖
 - `crates/hongguo-stream/` 在线流契约：内存渐进流（`ProgressiveStream`）、按 (vid, 档位) 分条的缓存（`StreamCache`）、Range 应答（`serve`）+ `range`（RangeSpec/ProtocolResponse）、进程级 `cache()` 单例。**填充侧（service）与应答侧（protocol）共用的上游**——两侧都只往下依赖它，禁止反向。无 tauri 依赖
-- `crates/hongguo-bytevc2/` ByteVC2（`bvc2`）识别与参数集/样本 Annex-B 转换（对照 librempeg `cbs_bvc2` + 官方 `convertByteVC2Extradata`）；不解帧，解码交给带 `bvc2` 的 ffmpeg（librempeg）
+- `crates/hongguo-bytevc2/` ByteVC2（`bvc2`）识别、参数集/样本 Annex-B 转换（对照 librempeg `cbs_bvc2` + 官方 `convertByteVC2Extradata`）与解帧（进程内 vvdec，`oxideav` 为回退）；两种解核共用的 8-bit I420 帧与缓冲池（`DecodedFrame` / `FramePool`）也在这里
+- `crates/hongguo-softdec/` 进程内软解直播放会话，两壳共用、不分编码：读 `moov` 建样本索引、关键帧跳转、「只剩音轨」的 MP4 视图、解核分派（HEVC / ByteVC1 → `rusty_h265`，ByteVC2 → `hongguo-bytevc2` 的 vvdec）。数据由调用方回调供给，不碰网络与解密；`tests/fixtures/` 是合成的标准码流小样本。无 tauri/gpui 依赖
 - `crates/hongguo-media/` 媒体公共底座：demux / hevc / mp4（MP4 写出层）/ mux（H.264 封装）/ remux / transcode / codec_probe / disk_space / heif / backend；`tests/fixtures/` 放随代码走的样本。无 tauri 依赖
 - `crates/hongguo-media-platform-api/` 平台媒体契约：`PlatformRequest` / 共享码率策略（`bitrate_for`）。实现 crate 的公共上游；本 crate 不依赖任何实现，引用方向反了就是 Cargo 依赖环
 - `crates/hongguo-media-platform-macos/` macOS 平台实现：VideoToolbox 转码链（硬编优先、软编回落）；平台依赖全在 target 表，`#![cfg(target_os = "macos")]`，异目标空壳
@@ -46,8 +52,8 @@ Android、iOS，Linux/Web 后续迭代。开发前另读 `nsh` 与 `nsh-design-g
 - `crates/hongguo-service/` 业务编排层：`download` / `play` / `merge` / `login` / `series` / `settings` / `storage` / `transcode` / `capability` / `follow` / `history` 各有 `*_service`，另有 `device` 模块（设备档案）+ 全局业务状态 `AppState`（壳经 Tauri `manage` 注入，GPUI 壳直接构造）+ 共用任务运行时 `runtime`（后台任务任意线程可派发）+ 业务事件总线 `events`（`ServiceEvent`，壳订阅适配）。**不依赖任何 UI 框架**（源码静态闸扫 tauri 引用）：进度与状态只发布事件，发送机制由壳决定
 - `crates/hongguo-tauri/` Tauri 装配层：`commands`（IPC 薄层）、`bootstrap`（启动装配）、`diagnostics`（panic 取证）、`protocol.rs`（协议注册胶水）、`events.rs`（service 事件 → 前端事件的原名原载荷转发）、`testing`（跨层 e2e 与守卫元测试）——`prepare()` 产出装好的 Builder，`build(generate_context!)` 留在 crates/hongguo-tauri-app
 - `crates/hongguo-player-api/` 回放契约（无 UI、无平台实现依赖）：`PlayerEvent` / `PlaySource` / `PlayerLike`（统一控制面）/ `PresenterBounds` / `HostWindow`。系统播放器两端实现都吃这一份
-- `crates/hongguo-player-macos/` macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数；`#![cfg(target_os = "macos")]`，objc2/AppKit 依赖全在本 crate 的 target 表
-- `crates/hongguo-player-windows/` Windows 系统播放器：Media Foundation Media Engine（frame-server 模式：每帧 `TransferVideoFrame` 写进渲染器纹理）+ 自定义 `IMFByteStream` 供数 + 视频 quad 同画布（vendored `gpui-pre-windows` 补丁）；`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
+- `crates/hongguo-player-macos/` macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数；另有内置软解直播放（`direct.rs` / `cv.rs`：AVPlayer 只播「只剩音轨」视图并充当时钟，`hongguo-softdec` 解出的帧经 `AVSampleBufferDisplayLayer` 上屏，门面入口 `hongguo_player::open_direct`）；`#![cfg(target_os = "macos")]`，objc2/AppKit 依赖全在本 crate 的 target 表
+- `crates/hongguo-player-windows/` Windows 系统播放器：Media Foundation Media Engine（frame-server 模式：每帧 `TransferVideoFrame` 写进渲染器纹理）+ 自定义 `IMFByteStream` 供数 + 视频 quad 同画布（vendored `gpui-pre-windows` 补丁）；另有内置软解直播放（`direct.rs`：MediaEngine 只放「只剩音轨」视图并充当时钟，`hongguo-softdec` 解出的帧换成 BGRA 写进同一个视频 quad），**未经 Windows 真机验证、默认关闭**，`HONGGUO_WIN_DIRECT=1` 才启用；`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
 - `crates/hongguo-player/` 系统播放器门面：按编译目标分派到上面两个实现 crate，并把契约原样转出——壳只依赖它
 - `crates/hongguo-gpui/` 完整 GPUI 壳：直接构造 `AppStateInner` 并调用 service/api，**操作与 Tauri 客户端一致**（不复制业务；`make gpui` 运行）。播放经 `hongguo-player` 系统播放器（macOS AVPlayer / Windows MediaEngine frame-server，视频 quad 与 GPUI 同画布）；service 的 async 族由壳内常驻 tokio 运行时经 oneshot 桥接，业务事件经 `events.rs` 事件泵（broadcast→mpsc）接进视图
 - Rust 侧已 workspace 化：根 `Cargo.toml`（members / `resolver` / `[patch]` / `[profile]` 都在根），`Cargo.lock`、`target/`、`vendor/` 也都在仓库根；cargo 一律在**仓库根**跑（`--workspace`）。`vendor/` 被 `[workspace] exclude` 排除，不参与 lint/test/format

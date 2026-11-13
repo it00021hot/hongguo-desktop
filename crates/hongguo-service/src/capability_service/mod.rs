@@ -5,9 +5,64 @@
 //! `docs/faq.md`。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use hongguo_api::stream_pick::DecoderCapability;
 use hongguo_common::model::ProxyConfig;
 use hongguo_common::{AppError, AppResult};
+
+static BUILTIN_PLAYBACK: AtomicBool = AtomicBool::new(false);
+
+/// 壳在启动时声明：它的播放器会把选中的流交给内置软解器直接播放。
+///
+/// 这是壳的能力而不是机器的能力，所以由壳来说：声明之后播放选流只收内置解码器能解的编码，
+/// 不再看系统有没有 HEVC 解码器，也不再把 H.264 当候选。没声明的壳（直播放还没接通的那些）
+/// 保持原来按系统能力选流的口径——在它们能直接上屏之前改选流，只会选到播不出来的流。
+pub fn enable_builtin_playback() {
+    BUILTIN_PLAYBACK.store(true, Ordering::Relaxed);
+}
+
+/// 这个壳的播放能不能放 HEVC——GPUI「装 HEVC 视频扩展」引导的数据源。
+///
+/// 声明了内置软解（见 [`enable_builtin_playback`]）就恒为真：HEVC 都交内置解码器直播放，
+/// 系统有没有扩展无关紧要；这时还走系统播放的只剩本地 H.264 成品，也不需要扩展。
+/// 没声明时（GPUI Windows 默认）才看系统 HEVC 解码器（[`hevc_playable`]）。
+pub fn hevc_playback_ready() -> bool {
+    hevc_ready_for(BUILTIN_PLAYBACK.load(Ordering::Relaxed), hevc_playable)
+}
+
+fn hevc_ready_for(builtin: bool, system_hevc: impl FnOnce() -> bool) -> bool {
+    builtin || system_hevc()
+}
+
+/// 在线与预取共用的选流能力。
+pub(crate) fn playback_cap() -> DecoderCapability {
+    let bytevc2 = hongguo_media_platform::capability::bytevc2_decode_available();
+    // 内置模式不读系统 HEVC 探测：结论用不上，探测本身（Windows 上要枚举解码器）也没必要触发。
+    cap_for(
+        BUILTIN_PLAYBACK.load(Ordering::Relaxed),
+        hevc_playable,
+        bytevc2,
+    )
+}
+
+fn cap_for(builtin: bool, system_hevc: impl FnOnce() -> bool, bytevc2: bool) -> DecoderCapability {
+    if builtin {
+        DecoderCapability::builtin().with_bytevc2(bytevc2)
+    } else {
+        DecoderCapability::from_probes(system_hevc(), false)
+    }
+}
+
+/// 这个编码的流是否交给壳的直播放。`codec` 可以是接口的编码名，也可以是 MP4 四字码。
+/// 只有声明了内置软解的壳上才可能为真；没声明的壳全部交系统播放器。
+pub fn plays_direct(codec: &str) -> bool {
+    direct_for(BUILTIN_PLAYBACK.load(Ordering::Relaxed), codec)
+}
+
+fn direct_for(builtin: bool, codec: &str) -> bool {
+    builtin && hongguo_api::stream_pick::builtin_decodable(codec)
+}
 
 /// 本机 HEVC 播放能力（选流模式的裁决输入，见
 /// `hongguo_api::stream_pick::DecoderCapability`）。壳层统一从这里取，
@@ -135,4 +190,93 @@ fn run_add_appx(_path: &Path) -> AppResult<()> {
     Err(AppError::InvalidArgs(
         "HEVC 视频扩展只需在 Windows 上安装（macOS 原生支持 HEVC）".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_playback_selects_by_the_builtin_decoders_and_never_probes_the_system() {
+        let cap = cap_for(true, || panic!("内置模式不该探测系统 HEVC"), true);
+        assert_eq!(cap, DecoderCapability::builtin());
+        // ByteVC2 解码器被显式关掉时如实带出去，选流才不会挑到解不了的流。
+        assert!(!cap_for(true, || true, false).bytevc2);
+    }
+
+    #[test]
+    fn shells_without_direct_playback_keep_selecting_by_system_capability() {
+        assert_eq!(
+            cap_for(false, || false, true),
+            DecoderCapability::from_probes(false, false)
+        );
+        assert!(!cap_for(false, || true, true).builtin_only);
+        // 系统播放器解不了 ByteVC2、播放也不转码：没声明内置软解的壳不收它。
+        assert!(!cap_for(false, || true, true).bytevc2);
+    }
+
+    #[test]
+    fn playback_modes_offer_only_the_gears_their_route_can_consume() {
+        use hongguo_api::stream_pick::{list_definitions, pick_stream_at};
+        let model = serde_json::json!({ "video_list": [
+            { "main_url": "h264", "video_meta": { "codec_type": "h264", "definition": "1080p" } },
+            { "main_url": "bvc2", "video_meta": { "codec_type": "bytevc2", "definition": "720p" } },
+            { "main_url": "hevc", "video_meta": { "codec_type": "bytevc1", "definition": "480p" } }
+        ] });
+        for (mode, expected) in [(false, vec![1080, 480]), (true, vec![720, 480])] {
+            let cap = cap_for(mode, || true, true);
+            let menu: Vec<_> = list_definitions(&model, cap)
+                .iter()
+                .map(|gear| gear.value)
+                .collect();
+            assert_eq!(menu, expected);
+            let chosen = pick_stream_at(&model, None, cap).unwrap();
+            assert_eq!(chosen.definition, expected[0]);
+        }
+    }
+
+    #[test]
+    fn a_bytevc2_only_episode_requires_a_real_decoder_and_an_explicit_playback_route() {
+        use hongguo_api::stream_pick::pick_stream_at;
+        let model = serde_json::json!({ "video_list": [
+            { "main_url": "bvc2", "video_meta": { "codec_type": "bytevc2", "definition": "720p" } }
+        ] });
+        for mode in [false, true] {
+            for available in [false, true] {
+                let cap = cap_for(mode, || false, available);
+                let chosen = pick_stream_at(&model, None, cap);
+                assert_eq!(chosen.is_some(), mode && available);
+            }
+        }
+    }
+
+    #[test]
+    fn builtin_playback_sends_hevc_and_bytevc2_to_the_direct_player() {
+        for codec in ["bytevc1", "h265", "hvc1", "hev1", "bytevc2", "bvc2"] {
+            assert!(direct_for(true, codec), "{codec} 应走直播放");
+        }
+        for codec in ["h264", "avc1", ""] {
+            assert!(!direct_for(true, codec), "{codec:?} 不是内置解码器能解的");
+        }
+    }
+
+    #[test]
+    fn builtin_playback_needs_no_hevc_extension_and_never_probes_for_one() {
+        assert!(hevc_ready_for(true, || panic!("内置模式不该探测系统 HEVC")));
+        assert!(
+            !hevc_ready_for(false, || false),
+            "未声明的壳仍按系统能力提示装扩展"
+        );
+        assert!(hevc_ready_for(false, || true));
+    }
+
+    #[test]
+    fn without_builtin_playback_nothing_is_direct() {
+        for codec in ["bytevc2", "bytevc1", "h264"] {
+            assert!(
+                !direct_for(false, codec),
+                "未声明的壳把 {codec} 交给系统播放器"
+            );
+        }
+    }
 }

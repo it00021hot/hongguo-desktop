@@ -62,9 +62,7 @@ fn forward(app: &tauri::AppHandle, event: ServiceEvent) {
         ServiceEvent::OnlineProgress(ev) => {
             let _ = app.emit(names::ONLINE_PROGRESS, ev);
         }
-        ServiceEvent::CompatProgress(ev) => {
-            let _ = app.emit(names::COMPAT_PROGRESS, ev);
-        }
+        // NSH 原生壳仍消费内部兼容转码进度；Tauri 直播放不暴露这条旧前端事件。
         ServiceEvent::LoginMfa(ev) => {
             let _ = app.emit(hongguo_service::login_service::events::LOGIN_MFA_STATE, ev);
         }
@@ -170,16 +168,6 @@ mod tests {
                 }),
             ),
             (
-                names::COMPAT_PROGRESS,
-                ServiceEvent::CompatProgress(
-                    hongguo_service::play_service::compat_play::CompatProgressEvent {
-                        key: "1:1".into(),
-                        percent: 0.0,
-                        phase: hongguo_service::play_service::compat_play::CompatPhase::Downloading,
-                    },
-                ),
-            ),
-            (
                 hongguo_service::login_service::events::LOGIN_MFA_STATE,
                 ServiceEvent::LoginMfa(LoginMfaStateEvent::Success { name: "甲".into() }),
             ),
@@ -211,7 +199,6 @@ mod tests {
                 "merge-completed",
                 "merge-failed",
                 "online-play-progress",
-                "compat-play-progress",
                 "login-mfa-state",
                 "follow-notices",
                 "device-registered",

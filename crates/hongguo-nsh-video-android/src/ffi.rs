@@ -156,7 +156,7 @@ pub fn destroy(handle: jlong) {
         .remove(&handle);
     if let Some(player) = player {
         player.stop.store(true, Ordering::Release);
-        player.close_reader();
+        player.close_direct();
         player.wake();
     }
 }

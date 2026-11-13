@@ -18,7 +18,9 @@ impl Worker {
             .filter(|(settings, _, _)| *settings == self.props.enhancement)
         {
             self.phase_for(settings, EnhancementPhase::Error, Some(code), detail);
-            return false;
+            if !self.direct() {
+                return false;
+            }
         }
         if !self.requested_output {
             self.phase(EnhancementPhase::Loading, None, String::new());
@@ -43,7 +45,8 @@ impl Worker {
                 window,
                 (self.viewport.width, self.viewport.height),
                 size,
-                self.props.enhancement,
+                self.options(),
+                self.direct(),
             ));
             match result {
                 Ok(renderer)
@@ -57,15 +60,19 @@ impl Worker {
                         .renderer
                         .as_ref()
                         .expect("retained before decoder attachment");
-                    if let Err(error) = self.shared.bridge.output(
-                        self.generation,
-                        self.output_token,
-                        Some((renderer.frames.surface(), renderer.frames.surface_texture())),
-                    ) {
+                    if let Some(frames) = &renderer.frames
+                        && let Err(error) = self.shared.bridge.output(
+                            self.generation,
+                            self.output_token,
+                            Some((frames.surface(), frames.surface_texture())),
+                        )
+                    {
                         self.fallback(ErrorCode::FrameUnavailable, error);
                         return false;
                     }
-                    self.first_frame = Some(Instant::now());
+                    if !self.direct() {
+                        self.first_frame = Some(Instant::now());
+                    }
                 }
                 Ok(_) => return false,
                 Err((code, error)) => {
@@ -80,7 +87,10 @@ impl Worker {
         let completed = self.renderer.as_mut().expect("renderer initialized").poll();
         match completed {
             Ok(Some(completed)) if self.current() => {
-                if self.budget.observe(completed.elapsed) {
+                if self.failed.is_none()
+                    && (completed.settings.anime4k_on || completed.settings.sharpen_on)
+                    && self.budget.observe(completed.elapsed)
+                {
                     self.fallback_for(
                         completed.settings,
                         ErrorCode::EnhancementSlow,
@@ -89,15 +99,52 @@ impl Worker {
                     return;
                 }
                 if completed.presented
-                    && completed.settings == self.props.enhancement
+                    && (self.direct() || completed.settings == self.props.enhancement)
                     && self.shared.revision.load(Ordering::Acquire) == self.revision
                 {
+                    if let (Some(frame), Some(lease)) = (&completed.frame, self.direct_lease()) {
+                        if self.shared.audio_seeking.load(Ordering::Acquire) {
+                            return;
+                        }
+                        match lease.presented(frame.generation, frame.serial) {
+                            Ok(true) => {
+                                // Queue visibility before the callback can release
+                                // audio on the main handler.
+                                if let Err(error) = self.shared.bridge.show(self.generation, true) {
+                                    self.fallback(ErrorCode::GpuFailed, error);
+                                    return;
+                                }
+                                if let Err(error) =
+                                    self.shared.bridge.direct_presented(self.generation, frame)
+                                {
+                                    self.error(ErrorCode::GpuFailed, error);
+                                    return;
+                                }
+                            }
+                            // presented is a one-shot audio release. A viewport
+                            // rebuild must also show the already released image.
+                            Ok(false) => match lease.holding() {
+                                Ok(false) => {}
+                                Ok(true) => return,
+                                Err(error) => {
+                                    self.error(ErrorCode::DecoderFailed, error);
+                                    return;
+                                }
+                            },
+                            Err(error) => {
+                                self.error(ErrorCode::DecoderFailed, error);
+                                return;
+                            }
+                        }
+                    }
                     if let Err(error) = self.shared.bridge.show(self.generation, true) {
                         self.fallback(ErrorCode::GpuFailed, error);
                         return;
                     }
                     self.first_frame = None;
-                    self.phase(EnhancementPhase::Ready, None, String::new());
+                    if self.failed.is_none() {
+                        self.phase(EnhancementPhase::Ready, None, String::new());
+                    }
                 }
             }
             Err((code, error)) => {
@@ -121,10 +168,47 @@ impl Worker {
             );
             return;
         }
-        let renderer = self.renderer.as_mut().expect("renderer initialized");
-        if !renderer.ready() {
+        let options = self.options();
+        if !self
+            .renderer
+            .as_ref()
+            .expect("renderer initialized")
+            .ready()
+        {
             return;
         }
+        let pixel = if let Some(lease) = self.direct_lease() {
+            let frame = if self.shared.audio_seeking.load(Ordering::Acquire) {
+                None
+            } else {
+                match lease.frame_at(self.shared.audio_position.load(Ordering::Acquire)) {
+                    Ok(frame) => frame,
+                    Err(error) => {
+                        self.error(ErrorCode::DecoderFailed, error);
+                        return;
+                    }
+                }
+            };
+            match lease.holding() {
+                Ok(holding) if self.holding != Some(holding) => {
+                    self.holding = Some(holding);
+                    if let Err(error) = self.shared.bridge.direct_holding(self.generation, holding)
+                    {
+                        self.error(ErrorCode::DecoderFailed, error);
+                        return;
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    self.error(ErrorCode::DecoderFailed, error);
+                    return;
+                }
+            }
+            frame
+        } else {
+            None
+        };
+        let renderer = self.renderer.as_mut().expect("renderer initialized");
         // Consume one notification only once input/GPU are writable. A duplicate
         // timestamp must not leave updateTexImage spinning, and an event that
         // arrives during the submission must remain queued for the next frame.
@@ -142,8 +226,9 @@ impl Worker {
         match pollster::block_on(renderer.draw(
             fresh,
             self.dirty,
-            self.props.enhancement,
+            options,
             self.props.resize_mode,
+            pixel,
         )) {
             Ok(true) => {
                 // EGL's first swap after resize can retire the old-size back

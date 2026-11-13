@@ -160,7 +160,7 @@ fn step(
     revision: u64,
     options: Enhancement,
     renderer: &mut Option<GpuRenderer>,
-    dimensions: &mut Option<(u32, u32)>,
+    dimensions: &mut Option<(windows::Win32::Graphics::Direct3D11::ID3D11Device, u32, u32)>,
     last: &mut Option<(u64, u64)>,
     budget: &mut FrameBudget,
 ) -> Result<Option<EnhancementPhase>, VideoError> {
@@ -195,11 +195,15 @@ fn step(
     };
     let size = (metadata.width, metadata.height);
     let mut loading = false;
-    if *dimensions != Some(size) || renderer.is_none() {
+    if dimensions
+        .as_ref()
+        .is_none_or(|(old, width, height)| old != &device || (*width, *height) != size)
+        || renderer.is_none()
+    {
         *renderer = Some(pollster::block_on(GpuRenderer::new(
             &device, size.0, size.1,
         ))?);
-        *dimensions = Some(size);
+        *dimensions = Some((device, size.0, size.1));
         *last = None;
         loading = true;
     }

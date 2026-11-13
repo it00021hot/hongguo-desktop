@@ -4,10 +4,8 @@
 //! 红线：起后台填充任务一律走共用任务运行时 [`crate::runtime`]，不裸 `tokio::spawn`——
 //! `resume_fill` 是同步入口、可能被协议/回调线程调用（无 Tokio 上下文，裸 spawn 会 panic→abort）。
 
-mod cached;
 pub(crate) mod disk;
 mod fill;
-pub(in crate::play_service) use cached::plain as cached_plain;
 mod plain;
 mod prepare;
 mod progress;

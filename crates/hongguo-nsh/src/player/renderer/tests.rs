@@ -46,6 +46,7 @@ fn ReplacedVideo() -> impl IntoElement {
                 pixel::mount(
                     State {
                         url: format!("https://example.invalid/{generation}.mp4"),
+                        frame_source: Some(format!("hongguo-frames://fixture-{generation}")),
                         control: Control::new(),
                         rate: computed(|| 1.0),
                         interval: computed(|| 250.0),
@@ -108,6 +109,10 @@ fn replacing_native_source_disposes_row_bindings_before_parent_updates() -> Resu
             assert_eq!(
                 props.source.as_ref().unwrap().url,
                 format!("https://example.invalid/{generation}.mp4")
+            );
+            assert_eq!(
+                props.source.as_ref().unwrap().frame_source.as_deref(),
+                Some(format!("hongguo-frames://fixture-{generation}").as_str())
             );
             assert!(!props.active);
             assert_eq!(bindings.opacity.get(id), Some(&0.0));
@@ -177,6 +182,7 @@ fn Video() -> impl IntoElement {
         .child(pixel::mount(
             State {
                 url: "https://example.invalid/synthetic.mp4".into(),
+                frame_source: None,
                 control,
                 rate: computed(|| 1.0),
                 interval: computed(|| 250.0),

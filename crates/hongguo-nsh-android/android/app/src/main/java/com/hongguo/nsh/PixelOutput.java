@@ -32,13 +32,13 @@ final class PixelOutput {
         raw.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
                 rawSurface = new Surface(texture);
-                try { if (playback.player != null && inputTexture == null) playback.player.setSurface(rawSurface); }
+                try { if (!playback.directMode && playback.player != null && inputTexture == null) playback.player.setSurface(rawSurface); }
                 catch (RuntimeException error) { playback.error("decoderFailed", "MediaPlayer display attachment failed"); }
                 fit();
             }
             @Override public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int width, int height) { fit(); }
             @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
-                try { if (playback.player != null && inputTexture == null) playback.player.setSurface(null); }
+                try { if (!playback.directMode && playback.player != null && inputTexture == null) playback.player.setSurface(null); }
                 catch (RuntimeException error) { playback.error("decoderFailed", "MediaPlayer display detachment failed"); }
                 if (rawSurface != null) rawSurface.release();
                 rawSurface = null;
@@ -71,6 +71,7 @@ final class PixelOutput {
         root.addView(enhanced, new FrameLayout.LayoutParams(-1, -1));
     }
     void bind(long generation, long token, Surface surface, SurfaceTexture texture) {
+        if (playback.directMode) { playback.owner.detached(token); return; }
         if (playback.player != null) playback.player.setSurface(surface == null ? rawSurface : surface);
         if (inputTexture != null) inputTexture.setOnFrameAvailableListener(null);
         inputTexture = texture;
@@ -88,7 +89,7 @@ final class PixelOutput {
     }
     void show(boolean visible) {
         if (enhanced != null) enhanced.setAlpha(visible ? 1f : 0f);
-        raw.setAlpha(visible ? 0f : 1f);
+        raw.setAlpha(playback.directMode || visible ? 0f : 1f);
     }
     void sourceChanged() {
         if (inputTexture != null) inputTexture.setOnFrameAvailableListener(null);

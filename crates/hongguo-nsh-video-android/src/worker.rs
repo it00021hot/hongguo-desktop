@@ -30,6 +30,8 @@ struct Worker {
     retiring: bool,
     renderer_generation: u64,
     output_token: u64,
+    holding: Option<bool>,
+    terminal: bool,
 }
 pub(crate) fn run(shared: Arc<Shared>, receiver: Receiver<()>) {
     let vm = shared.bridge.vm.clone();
@@ -57,10 +59,12 @@ pub(crate) fn run(shared: Arc<Shared>, receiver: Receiver<()>) {
         retiring: false,
         renderer_generation: 0,
         output_token: 0,
+        holding: None,
+        terminal: false,
     };
     while !worker.shared.stop.load(Ordering::Acquire) {
         worker.step();
-        if worker.renderer.is_some() && !worker.retiring {
+        if (worker.renderer.is_some() || worker.direct()) && !worker.retiring {
             let _ = receiver.recv_timeout(FRAME_TICK);
         } else if receiver.recv().is_err() {
             break;
@@ -70,17 +74,47 @@ pub(crate) fn run(shared: Arc<Shared>, receiver: Receiver<()>) {
     worker.renderer.take();
 }
 impl Worker {
+    fn direct(&self) -> bool {
+        self.props
+            .source
+            .as_ref()
+            .is_some_and(|source| source.frame_source.is_some())
+    }
+    fn direct_lease(&self) -> Option<Arc<hongguo_nsh_video_api::frames::FrameLease>> {
+        self.shared
+            .direct
+            .lock()
+            .expect("Android direct source")
+            .as_ref()
+            .filter(|slot| slot.epoch == self.generation)
+            .map(|slot| slot.lease.clone())
+    }
+    fn options(&self) -> Enhancement {
+        if self.direct()
+            && self
+                .failed
+                .as_ref()
+                .is_some_and(|(settings, _, _)| *settings == self.props.enhancement)
+        {
+            Enhancement::default()
+        } else {
+            self.props.enhancement
+        }
+    }
     fn enabled(&self) -> bool {
         self.props.active
+            && !self.terminal
             && self.props.source.is_some()
-            && (self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on)
+            && (self.direct()
+                || self.props.enhancement.anime4k_on
+                || self.props.enhancement.sharpen_on)
     }
     fn current(&self) -> bool {
         !self.shared.stop.load(Ordering::Acquire)
             && self.generation == self.shared.generation.load(Ordering::Acquire)
     }
     fn step(&mut self) {
-        let (props, viewport, size, seek, revision, generation) = {
+        let (props, viewport, mut size, seek, revision, generation) = {
             let mut mailbox = self.shared.mailbox.lock().expect("Android video mailbox");
             (
                 mailbox.props.clone(),
@@ -91,17 +125,17 @@ impl Worker {
                 self.shared.generation.load(Ordering::Acquire),
             )
         };
-        if size != self.video_size {
-            self.detach();
-            self.video_size = size;
-        }
         if revision != self.revision {
             let source_changed = props.source != self.props.source;
             let changed_mode = props.enhancement != self.props.enhancement;
             let props_changed = props != self.props;
             if source_changed
                 || !props.active
-                || !(props.enhancement.anime4k_on || props.enhancement.sharpen_on)
+                || (props
+                    .source
+                    .as_ref()
+                    .is_none_or(|source| source.frame_source.is_none())
+                    && !(props.enhancement.anime4k_on || props.enhancement.sharpen_on))
                 || viewport.version != self.viewport.version
             {
                 self.detach();
@@ -111,8 +145,10 @@ impl Worker {
                 self.status = None;
             }
             if source_changed {
+                self.terminal = false;
                 self.budget = FrameBudget::default();
                 self.requested_output = false;
+                self.holding = None;
             }
             self.props = props;
             self.generation = generation;
@@ -149,6 +185,23 @@ impl Worker {
                 return;
             }
         }
+        if self.terminal {
+            return;
+        }
+        if let Some(lease) = self.direct_lease() {
+            match lease.info() {
+                Ok(Some(info)) => size = Some((info.width, info.height)),
+                Ok(None) => {}
+                Err(error) => {
+                    self.error(ErrorCode::DecoderFailed, error);
+                    return;
+                }
+            }
+        }
+        if size != self.video_size {
+            self.detach();
+            self.video_size = size;
+        }
         if let Some(seek) = seek {
             // The raw TextureView is intentionally detached during enhancement.
             // Keep the last enhanced image until the seek supplies a real new
@@ -166,7 +219,8 @@ impl Worker {
         }
     }
     fn detach(&mut self) {
-        if self.renderer.is_some()
+        if !self.direct()
+            && self.renderer.is_some()
             && let Err(error) =
                 self.shared
                     .bridge
@@ -189,11 +243,24 @@ impl Worker {
     }
     fn fallback_for(&mut self, settings: Enhancement, code: ErrorCode, detail: String) {
         self.shared.bridge.clear_exception();
-        self.detach();
+        if self.direct() && !(settings.anime4k_on || settings.sharpen_on) {
+            self.error(code, detail);
+            return;
+        }
+        if !self.direct() {
+            self.detach();
+        }
         self.failed = Some((settings, code, detail.clone()));
+        self.dirty = true;
         self.phase_for(settings, EnhancementPhase::Error, Some(code), detail);
     }
-    fn error(&self, code: ErrorCode, detail: String) {
+    fn error(&mut self, code: ErrorCode, detail: String) {
+        if self.direct() {
+            if self.terminal {
+                return;
+            }
+            self.terminal = true;
+        }
         if self.current()
             && let Some(source) = &self.props.source
         {

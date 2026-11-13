@@ -130,7 +130,6 @@ pub async fn prepare(
     }
     c.set_definitions(vid, want, &play.definitions);
     remember_codec(vid, want, &play.codec);
-    super::cached::remember(vid, &play);
     let url = hongguo_protocol::stream_url(vid, want);
     // play 整份 move 进后台填充任务，这里先把要回给调用方的字段取出来
     let result = Prepared {
@@ -219,7 +218,6 @@ pub async fn prefetch_stream(
     }
     c.set_definitions(vid, want, &play.definitions);
     remember_codec(vid, want, &play.codec);
-    super::cached::remember(vid, &play);
     // 显式标记预取：keep_only 只豁免这一条，别让在途填充占住串行队列
     c.mark_prefetch(vid, want);
     log::info!("[Online] 预取 {vid} 档位 {want}，后台渐进填充开始");

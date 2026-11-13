@@ -19,9 +19,6 @@ pub(super) async fn serve(
         Ok(source) => source,
         Err(status) => return status.into_response(),
     };
-    if source.is_growing() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
     let Some(total) = source.len() else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };

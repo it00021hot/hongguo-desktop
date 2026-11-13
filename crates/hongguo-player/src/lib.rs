@@ -37,6 +37,46 @@ pub fn open(
     imp::open(source, start_secs, rate, events, on_stall)
 }
 
+/// 本目标有没有（启用的）内置软解直播放（HEVC / ByteVC1 / ByteVC2 由进程内解码器解、画面自己上屏）。
+/// 壳据此决定要不要把选流切到「只收内置解码器能解的编码」。
+/// macOS 恒开；Windows 的实现没有在真机上验证过，默认关，`HONGGUO_WIN_DIRECT=1` 才开。
+pub fn direct_playback_available() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        imp::direct_playback_enabled()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        cfg!(target_os = "macos")
+    }
+}
+
+/// 打开一集内置软解直播放；`None` = 本目标没有实现或线程起不来，调用方走起播失败。
+/// 与 [`open`] 同一套契约（事件、控制面、舞台几何），区别只在画面不经过系统视频解码器。
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub fn open_direct(
+    source: PlaySource,
+    start_secs: f64,
+    rate: f64,
+    events: tokio::sync::mpsc::Sender<PlayerEvent>,
+    on_stall: Option<StallHook>,
+) -> Option<Player> {
+    imp::open_direct(source, start_secs, rate, events, on_stall)
+}
+
+/// 没有直播放实现的目标：恒 `None`。壳不应在这些目标上调用它——
+/// [`direct_playback_available`] 为假时选流不会切到内置模式。
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn open_direct(
+    _source: PlaySource,
+    _start_secs: f64,
+    _rate: f64,
+    _events: tokio::sync::mpsc::Sender<PlayerEvent>,
+    _on_stall: Option<StallHook>,
+) -> Option<Player> {
+    None
+}
+
 /// 系统后端启动时调用一次：把宿主窗口交给播放器实现。
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn prepare_window(host: &HostWindow) {

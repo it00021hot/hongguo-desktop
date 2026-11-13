@@ -8,6 +8,7 @@ use nsh_testing::Headless;
 fn LaggingNativePosition() -> impl IntoElement {
     let position = signal((20.0_f64, 169.0_f64));
     let pending = signal(false);
+    let paused = signal(true);
     let requested = signal(None::<f64>);
     let state = ControlState {
         geometry: ui::PlayerGeometry {
@@ -15,7 +16,7 @@ fn LaggingNativePosition() -> impl IntoElement {
             viewport: signal((0.0, 0.0)),
         },
         caption: computed(ui::WindowCaption::default),
-        paused: signal(true),
+        paused,
         rate: signal(1.0),
         position,
         quality: computed(|| "720P".into()),
@@ -44,7 +45,20 @@ fn LaggingNativePosition() -> impl IntoElement {
         .flex_1()
         .child(text(move || format!("requested:{:?}", requested.get())))
         .child(surface(
-            view(),
+            view()
+                .w_full()
+                .h_full()
+                .pointer_events(PointerEvents::BoxOnly)
+                .focusable(false)
+                .role(nsh_core::AccessibilityRole::Button)
+                .label(move || {
+                    crate::i18n::tr(if paused.get() {
+                        "player.playVideo"
+                    } else {
+                        "player.pauseVideo"
+                    })
+                })
+                .on_press(move || paused.update(|paused| *paused = !*paused)),
             view(),
             view(),
             controls(
@@ -67,6 +81,64 @@ fn LaggingNativePosition() -> impl IntoElement {
                 }
             }),
         )
+}
+
+#[test]
+fn touch_seeking_claims_native_presses_without_changing_the_playback_intent() -> Result<(), String>
+{
+    let mut config = EngineConfig::new(
+        Root::of::<LaggingNativePosition>()
+            .tokens(nsh_base::tokens_of(Some(include_str!("../../../theme.json"))).unwrap()),
+    );
+    config.viewport = nsh_engine::Size::new(px(393.0), px(852.0));
+    config.environment.os = nsh_core::platform::Os::Android;
+    let mut app = Headless::start(config).map_err(|error| error.to_string())?;
+    app.wait_for("role:adjustable[Playback position]")?;
+    let native_boundary = app.screen().press_target("id:player-seek-rail")?;
+    let thumb = app
+        .screen()
+        .press_target("role:adjustable[Playback position]")?;
+    assert!(
+        native_boundary.is_some(),
+        "the rail must consume the native tap after the responder handles it"
+    );
+    assert_ne!(
+        native_boundary, thumb,
+        "the full rail, including space away from the thumb, owns the native tap"
+    );
+    app.press("id:player-seek-rail")?;
+    assert!(app.screen().matches("role:button[Play video]")?);
+    app.drag(
+        "role:adjustable[Playback position]",
+        nsh_core::Point::new(px(64.0), px(0.0)),
+    )?;
+    let forward = requested_position(&app)?;
+    assert!(forward > 20.0 && forward < 169.0);
+    assert!(app.screen().matches("role:button[Play video]")?);
+    app.press("role:button[Play video]")?;
+    app.wait_for("role:button[Pause video]")?;
+    app.press("id:player-seek-rail")?;
+    assert!(app.screen().matches("role:button[Pause video]")?);
+    app.drag(
+        "role:adjustable[Playback position]",
+        nsh_core::Point::new(px(-64.0), px(0.0)),
+    )?;
+    assert!(requested_position(&app)? < forward);
+    assert!(app.screen().matches("role:button[Pause video]")?);
+    Ok(())
+}
+
+fn requested_position(app: &Headless) -> Result<f64, String> {
+    app.screen()
+        .texts()
+        .iter()
+        .find_map(|text| {
+            text.strip_prefix("requested:Some(")
+                .and_then(|value| value.strip_suffix(')'))
+        })
+        .ok_or_else(|| "the slider did not request a seek".to_owned())?
+        .parse()
+        .map_err(|error| format!("invalid requested seek: {error}"))
 }
 
 #[test]

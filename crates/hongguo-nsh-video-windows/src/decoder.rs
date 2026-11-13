@@ -49,7 +49,7 @@ pub struct VideoDecoder {
     source: Source,
     events: Receiver<DecoderEvent>,
     overflow: Arc<AtomicBool>,
-    _manager: IMFDXGIDeviceManager,
+    _manager: Option<IMFDXGIDeviceManager>,
 }
 
 impl VideoDecoder {
@@ -76,7 +76,8 @@ impl VideoDecoder {
         // SAFETY: COM has been initialized by the owning native window. All interfaces
         // remain retained for the decoder lifetime and callbacks never re-enter it.
         let (engine, extended, manager) = unsafe {
-            if device.GetCreationFlags() & D3D11_CREATE_DEVICE_VIDEO_SUPPORT.0 == 0 {
+            let video = source.frame_source.is_none();
+            if video && device.GetCreationFlags() & D3D11_CREATE_DEVICE_VIDEO_SUPPORT.0 == 0 {
                 return Err(VideoError::new(
                     ErrorCode::DecoderUnavailable,
                     "native drawing device lacks D3D11 video support",
@@ -88,12 +89,17 @@ impl VideoDecoder {
                 .cast()
                 .map_err(decoder_error)?;
             let _ = multithread.SetMultithreadProtected(true);
-            let mut token = 0;
-            let mut manager = None;
-            MFCreateDXGIDeviceManager(&mut token, &mut manager).map_err(decoder_error)?;
-            let manager = manager
-                .ok_or_else(|| decoder_error("Media Foundation returned no device manager"))?;
-            manager.ResetDevice(device, token).map_err(decoder_error)?;
+            let manager = if video {
+                let mut token = 0;
+                let mut manager = None;
+                MFCreateDXGIDeviceManager(&mut token, &mut manager).map_err(decoder_error)?;
+                let manager = manager
+                    .ok_or_else(|| decoder_error("Media Foundation returned no device manager"))?;
+                manager.ResetDevice(device, token).map_err(decoder_error)?;
+                Some(manager)
+            } else {
+                None
+            };
             let mut attributes: Option<IMFAttributes> = None;
             MFCreateAttributes(&mut attributes, 3).map_err(decoder_error)?;
             let attributes = attributes
@@ -101,15 +107,17 @@ impl VideoDecoder {
             attributes
                 .SetUnknown(&MF_MEDIA_ENGINE_CALLBACK, &notify)
                 .map_err(decoder_error)?;
-            attributes
-                .SetUnknown(&MF_MEDIA_ENGINE_DXGI_MANAGER, &manager)
-                .map_err(decoder_error)?;
-            attributes
-                .SetUINT32(
-                    &MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT,
-                    DXGI_FORMAT_B8G8R8A8_UNORM.0 as u32,
-                )
-                .map_err(decoder_error)?;
+            if let Some(manager) = &manager {
+                attributes
+                    .SetUnknown(&MF_MEDIA_ENGINE_DXGI_MANAGER, manager)
+                    .map_err(decoder_error)?;
+                attributes
+                    .SetUINT32(
+                        &MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT,
+                        DXGI_FORMAT_B8G8R8A8_UNORM.0 as u32,
+                    )
+                    .map_err(decoder_error)?;
+            }
             let factory: IMFMediaEngineClassFactory =
                 CoCreateInstance(&CLSID_MFMediaEngineClassFactory, None, CLSCTX_INPROC_SERVER)
                     .map_err(decoder_error)?;
@@ -210,6 +218,11 @@ impl VideoDecoder {
     pub fn position_ms(&self) -> Option<u64> {
         // SAFETY: Read-only query on this live MediaEngine.
         milliseconds(unsafe { self.engine.GetCurrentTime() })
+    }
+
+    pub fn seeking(&self) -> bool {
+        // SAFETY: Read-only state of the window-thread-owned audio engine.
+        unsafe { self.engine.IsSeeking().as_bool() }
     }
 
     pub fn duration_ms(&self) -> Option<u64> {

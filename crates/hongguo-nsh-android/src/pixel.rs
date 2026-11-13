@@ -3,7 +3,7 @@ use hongguo_nsh_video_android as video;
 use nsh_android_runtime::jni::{
     JNIEnv,
     objects::{JClass, JObject, JString},
-    sys::{jboolean, jbyteArray, jint, jlong, jstring},
+    sys::{jboolean, jint, jlong, jstring},
 };
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -38,69 +38,66 @@ fn io_boundary<T: Default>(
             T::default()
         }
         Err(_) => {
-            let _ = env.throw_new("java/io/IOException", "Native media reader failed");
+            let _ = env.throw_new("java/io/IOException", "Native media session failed");
             T::default()
         }
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_hongguo_nsh_PixelDataSource_nativeOpen(
+pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeOpen(
     mut env: JNIEnv<'_>,
     _: JClass<'_>,
     handle: jlong,
     generation: jlong,
     url: JString<'_>,
-) -> jboolean {
+) {
     io_boundary(&mut env, |env| {
         let url: String = env
             .get_string(&url)
             .map_err(|error| error.to_string())?
             .into();
-        video::reader_open(handle, generation, &url).map(u8::from)
-    })
+        video::direct_open(handle, generation, &url)
+    });
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_hongguo_nsh_PixelDataSource_nativeRead(
+pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeClock(
     mut env: JNIEnv<'_>,
     _: JClass<'_>,
     handle: jlong,
     generation: jlong,
-    offset: jlong,
-    limit: jint,
-) -> jbyteArray {
-    io_boundary(&mut env, |env| {
-        video::reader_read(handle, generation, offset, limit)?
-            .map(|bytes| {
-                env.byte_array_from_slice(&bytes)
-                    .map(|bytes| bytes.into_raw())
-                    .map_err(|error| error.to_string())
-            })
-            .transpose()
-            .map(|bytes| bytes.unwrap_or(std::ptr::null_mut()))
-    })
+    position: jlong,
+    seeking: jboolean,
+) {
+    io_boundary(&mut env, |_| {
+        video::direct_clock(handle, generation, position, seeking != 0);
+        Ok(())
+    });
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_hongguo_nsh_PixelDataSource_nativeSize(
+pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeSeek(
     mut env: JNIEnv<'_>,
     _: JClass<'_>,
     handle: jlong,
     generation: jlong,
+    position: jlong,
 ) -> jlong {
-    io_boundary(&mut env, |_| video::reader_size(handle, generation))
+    io_boundary(&mut env, |_| {
+        video::direct_seek(handle, generation, position)
+    })
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_hongguo_nsh_PixelDataSource_nativeClose(
+pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeClose(
     mut env: JNIEnv<'_>,
     _: JClass<'_>,
     handle: jlong,
     generation: jlong,
 ) {
     io_boundary(&mut env, |_| {
-        video::reader_close(handle, generation);
+        video::direct_close(handle, generation);
         Ok(())
     });
 }

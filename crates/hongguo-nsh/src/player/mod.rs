@@ -1,9 +1,9 @@
 mod buffering;
 mod chrome;
-mod compat_status;
 mod completion;
 mod download;
 pub(crate) mod enhancement;
+mod error_state;
 mod info;
 mod interaction;
 pub(crate) use info::OverlayMeta;
@@ -22,8 +22,6 @@ mod progress;
 mod relay;
 mod renderer;
 mod season_menu;
-mod seek_confirmation;
-mod seek_ready;
 pub(crate) mod stage;
 mod start;
 mod start_action;
@@ -81,7 +79,6 @@ fn content(
     let selection = signal((id, episode));
     let definition = signal(None::<u32>);
     let reset_definition = signal(false);
-    let compat = signal(false);
     let paused = signal(false);
     let preferences = session.playback_preferences();
     let rate = preferences.rate;
@@ -98,18 +95,11 @@ fn content(
     let failure = signal(SharedString::default());
     let notice = signal(SharedString::default());
     let source = resource(
-        move || {
-            Some((
-                selection.get(),
-                definition.get(),
-                compat.get(),
-                reset_definition.get(),
-            ))
-        },
-        move |((id, episode), definition, compat, reset_definition), _| {
+        move || Some((selection.get(), definition.get(), reset_definition.get())),
+        move |((id, episode), definition, reset_definition), _| {
             let session = session.with(|session| session.clone());
             bridge::request(async move {
-                prepare::prepare(session, id, episode, definition, compat, reset_definition).await
+                prepare::prepare(session, id, episode, definition, reset_definition).await
             })
         },
     );
@@ -124,8 +114,10 @@ fn content(
         }
     });
     let retry = move || {
-        pending_seek.set(Some(position.get_untracked().0));
-        source.refetch();
+        error_state::retry(source.error().as_ref(), || {
+            pending_seek.set(Some(position.get_untracked().0));
+            source.refetch();
+        });
     };
     let visible =
         computed(move || lifecycle() == nsh_core::platform::Lifecycle::Active && routed.get());
@@ -139,8 +131,6 @@ fn content(
         ) && !crate::boss_key::hidden()
             && window_modes.is_none_or(|modes| modes.can_play())
     });
-    let compatibility_status =
-        compat_status::observe(session, selection, definition, move || source.loading());
     let danmaku = interaction::danmaku::observe(
         session,
         move || {
@@ -192,7 +182,6 @@ fn content(
                 selection.set((series.series_id, episode));
                 position.set((0.0, 0.0));
                 pending_seek.set(None);
-                compat.set(false);
                 reset_definition.set(false);
                 paused.set(false);
                 menu_open.set(None);
@@ -213,7 +202,6 @@ fn content(
                 selection.update(|(_, episode)| *episode = next);
                 position.set((0.0, 0.0));
                 pending_seek.set(None);
-                compat.set(false);
                 reset_definition.set(false);
                 paused.set(false);
             });
@@ -290,7 +278,6 @@ fn content(
             selection.update(|(_, selected)| *selected = episode);
             position.set((0.0, 0.0));
             pending_seek.set(None);
-            compat.set(false);
             reset_definition.set(false);
             paused.set(false);
         })
@@ -513,7 +500,6 @@ fn content(
                         selection.set((series.series_id, episode));
                         position.set((0.0, 0.0));
                         pending_seek.set(None);
-                        compat.set(false);
                         reset_definition.set(false);
                         paused.set(false);
                         menu_open.set(None);
@@ -626,30 +612,16 @@ fn content(
             .gap_3()
             .child(when(
                 move || source.loading(),
-                move || {
-                    ui::status(move || {
-                        let status = compatibility_status.get();
-                        if status.is_empty() {
-                            tr("common.loading")
-                        } else {
-                            status
-                        }
-                    })
-                },
+                move || ui::status(move || tr("common.loading")),
             ))
             .child(when(
                 move || source.error().is_some() || !failure.get().is_empty(),
                 move || {
-                    view()
-                        .test_id("player-error")
-                        .child(crate::pages::error_state(
-                            move || {
-                                source
-                                    .error()
-                                    .map_or_else(|| failure.get(), |error| error.text())
-                            },
-                            retry,
-                        ))
+                    view().test_id("player-error").child(error_state::panel(
+                        computed(move || source.error()),
+                        failure,
+                        retry,
+                    ))
                 },
             ))
             .child(when(

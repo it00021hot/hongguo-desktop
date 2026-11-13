@@ -61,6 +61,24 @@ impl CmTime {
         }
     }
 
+    /// `kCMTimeInvalid`。
+    pub const INVALID: Self = Self {
+        value: 0,
+        timescale: 0,
+        flags: 0,
+        epoch: 0,
+    };
+
+    /// 以 `timescale` 为刻度的 `value` 个单位。
+    pub fn ticks(value: i64, timescale: i32) -> Self {
+        Self {
+            value,
+            timescale,
+            flags: 1,
+            epoch: 0,
+        }
+    }
+
     pub fn seconds(self) -> f64 {
         if self.timescale == 0 {
             0.0
@@ -68,6 +86,12 @@ impl CmTime {
             self.value as f64 / self.timescale as f64
         }
     }
+}
+
+/// `AVPlayerItem.timebase`：这一项的播放时钟（跟着暂停、倍速、跳转走）。未就绪时为空。
+pub fn item_timebase(item: &AnyObject) -> *mut crate::cv::OpaqueTimebase {
+    // SAFETY: 只读属性；返回的时间基由 item 持有。
+    unsafe { msg_send![item, timebase] }
 }
 
 fn class(name: &CStr) -> &'static AnyClass {

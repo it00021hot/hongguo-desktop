@@ -1,5 +1,5 @@
-//! 兼容合并：转 H.264/AAC。与兼容播放共用 `transcode_service::pipeline` 同一条流水线，
-//! 区别只是「一集」变「多集」——这里选逐集转再流复制：内存占用恒定，且能复用单集转码的缓存。
+//! 兼容合并：转 H.264/AAC。走 `transcode_service::pipeline` 的单集转码，
+//! 逐集转再流复制：内存占用恒定，且能复用单集转码的缓存。
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -141,9 +141,7 @@ pub fn compat_merge(
                                 source,
                                 &cache::cache_file(series_id, *vid_index),
                                 scale_to,
-                                hongguo_media_platform::RateProfile::Archive,
                                 Some(cb),
-                                pipeline::TranscodeHooks::default(),
                             );
                             // 会话超订的信号：预期硬编却落在软路——收敛并行度，
                             // 后续集不再超订（偶发回落多收敛一次，代价只是保守些）。

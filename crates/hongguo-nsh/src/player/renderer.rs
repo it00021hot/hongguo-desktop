@@ -47,6 +47,7 @@ pub(super) const fn pixel_supported() -> bool {
 
 pub(super) struct State {
     pub url: String,
+    pub frame_source: Option<String>,
     pub control: Control,
     pub rate: Memo<f32>,
     pub interval: Memo<f32>,

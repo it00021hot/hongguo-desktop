@@ -165,8 +165,9 @@ impl MetalFrames {
         };
         Ok(ImportedFrame {
             texture,
-            frame,
-            _image: image,
+            metadata: frame.metadata(),
+            _frame: Some(frame),
+            _image: Some(image),
         })
     }
 }
@@ -175,8 +176,9 @@ impl MetalFrames {
 #[derive(Clone)]
 pub struct ImportedFrame {
     texture: wgpu::Texture,
-    frame: DecodedFrame,
-    _image: CFRetained<CVMetalTexture>,
+    metadata: FrameMetadata,
+    _frame: Option<DecodedFrame>,
+    _image: Option<CFRetained<CVMetalTexture>>,
 }
 
 // SAFETY: The pixel buffer and CVMetalTexture are immutable after import; their retain/release is thread-safe.
@@ -188,7 +190,49 @@ impl ImportedFrame {
     }
 
     pub fn metadata(&self) -> FrameMetadata {
-        self.frame.metadata()
+        self.metadata
+    }
+
+    pub(crate) fn upload(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &hongguo_nsh_video_api::frames::PixelFrame,
+    ) -> Self {
+        let size = wgpu::Extent3d {
+            width: frame.width,
+            height: frame.height,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("softdec-bgra"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            texture.as_image_copy(),
+            &frame.pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(frame.stride),
+                rows_per_image: Some(frame.height),
+            },
+            size,
+        );
+        let mut metadata = FrameMetadata::default();
+        metadata.width = frame.width;
+        metadata.height = frame.height;
+        metadata.pts_ms = frame.pts_ms;
+        Self {
+            texture,
+            metadata,
+            _frame: None,
+            _image: None,
+        }
     }
 
     /// Call after submitting all commands that read this frame; poll the device to release completed frames.

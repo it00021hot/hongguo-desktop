@@ -231,12 +231,21 @@ pub(crate) fn player_landscape_footer(footer: View, active: Memo<bool>) -> View 
 
 pub(crate) fn player_seek_rail(slider: nsh_base::SliderElement, landscape: Memo<bool>) -> View {
     view()
-        .test_id("player-seek-rail")
         .relative()
         .w_full()
         .style_when(move || landscape.get(), |style| style.h_4())
-        .child(slider.style_when(
-            move || landscape.get() && !is_desktop(),
-            |style| style.absolute().left_0().right_0().top(px(-16.0)),
-        ))
+        .child(
+            view()
+                .test_id("player-seek-rail")
+                .w_full()
+                .focusable(false)
+                .accessible(false)
+                // The slider responder handles seeking; consume the same native tap here.
+                .on_press(|| {})
+                .style_when(
+                    move || landscape.get() && !is_desktop(),
+                    |style| style.absolute().left_0().right_0().top(px(-16.0)),
+                )
+                .child(slider),
+        )
 }

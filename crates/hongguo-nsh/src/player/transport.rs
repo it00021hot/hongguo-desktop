@@ -21,37 +21,18 @@ pub(super) fn change_episode(current: u32, requested: u32) -> bool {
     current != requested
 }
 
-pub(super) fn initial_seek(resume_at: f64, growing: bool) -> Option<f64> {
-    (resume_at.is_finite() && resume_at >= 0.0 && (growing || resume_at > 0.0)).then_some(resume_at)
+pub(super) fn initial_seek(resume_at: f64) -> Option<f64> {
+    (resume_at.is_finite() && resume_at > 0.0).then_some(resume_at)
 }
 
 pub(super) fn source_current(loading: bool, failed: bool, same_lease: bool) -> bool {
     !loading && !failed && same_lease
 }
 
-pub(super) fn seek_available(
-    target: f64,
-    native_duration: f64,
-    published: Option<f64>,
-    growing: bool,
-) -> bool {
+pub(super) fn seek_available(target: f64, native_duration: f64) -> bool {
     target.is_finite()
         && target >= 0.0
-        && (target == 0.0
-            || !growing
-            || available_duration(native_duration, published)
-                .is_some_and(|duration| target < duration))
-}
-
-pub(super) fn seek_exceeds_complete(target: f64, native: f64, complete: bool) -> bool {
-    complete && native.is_finite() && native > 0.0 && target >= native
-}
-
-fn available_duration(native: f64, published: Option<f64>) -> Option<f64> {
-    std::iter::once(native)
-        .chain(published)
-        .filter(|duration| duration.is_finite() && *duration > 0.0)
-        .reduce(f64::max)
+        && (!native_duration.is_finite() || native_duration <= 0.0 || target < native_duration)
 }
 
 #[derive(Default)]
@@ -112,14 +93,11 @@ mod tests {
     use nsh_core::prelude::*;
 
     #[test]
-    fn growing_zero_start_requires_a_real_seek_instead_of_the_native_live_edge() {
-        assert_eq!(initial_seek(0.0, true), Some(0.0));
-        assert_eq!(initial_seek(0.0, false), None);
-        for growing in [false, true] {
-            assert_eq!(initial_seek(37.0, growing), Some(37.0));
-            for invalid in [-1.0, f64::NAN, f64::INFINITY] {
-                assert_eq!(initial_seek(invalid, growing), None);
-            }
+    fn resume_requests_only_finite_positive_positions() {
+        assert_eq!(initial_seek(0.0), None);
+        assert_eq!(initial_seek(37.0), Some(37.0));
+        for invalid in [-1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(initial_seek(invalid), None);
         }
     }
 
@@ -208,22 +186,6 @@ mod tests {
     }
 
     #[test]
-    fn a_prefix_does_not_accept_a_seek_beyond_its_native_available_length() {
-        assert!(!seek_available(42.0, 0.2667, None, true));
-        assert!(!seek_available(42.0, -1.0, None, true));
-        assert!(seek_available(42.0, 45.0, None, true));
-        assert!(seek_available(42.0, 168.0, None, false));
-    }
-
-    #[test]
-    fn published_hls_time_allows_resume_while_native_duration_is_indefinite() {
-        assert!(seek_available(42.0, -1.0, Some(45.0), true));
-        assert!(!seek_available(42.0, -1.0, Some(10.0), true));
-        assert!(seek_available(42.0, 45.0, Some(10.0), true));
-        assert!(!seek_available(42.0, -1.0, Some(f64::INFINITY), true));
-    }
-
-    #[test]
     fn pending_seek_dispatches_once_and_waits_for_real_native_confirmation() {
         let mut seek = SeekLatch::default();
         assert!(!seek.confirmed(42.0, 42.0));
@@ -241,9 +203,9 @@ mod tests {
 
     #[test]
     fn a_finished_source_rejects_unreachable_resume_instead_of_waiting_forever() {
-        assert!(!seek_exceeds_complete(42.0, -1.0, false));
-        assert!(!seek_exceeds_complete(42.0, -1.0, true));
-        assert!(!seek_exceeds_complete(42.0, 45.0, true));
-        assert!(seek_exceeds_complete(45.0, 45.0, true));
+        assert!(seek_available(42.0, -1.0));
+        assert!(seek_available(42.0, 45.0));
+        assert!(!seek_available(45.0, 45.0));
+        assert!(!seek_available(f64::NAN, 45.0));
     }
 }

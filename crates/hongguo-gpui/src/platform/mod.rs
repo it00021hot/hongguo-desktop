@@ -76,15 +76,22 @@ pub(crate) fn host_window(window: &gpui_kit::Window) -> Option<hongguo_player::H
 }
 
 /// 系统播放器工厂：按目标分派到 `hongguo-player-macos` / `hongguo-player-windows`。
+/// `direct` = 交给内置软解直播放（画面不经系统视频解码器）；起播链只在
+/// `hongguo_player::direct_playback_available()` 为真时才会传 `true`。
 /// 业务层不写 `#[cfg]`；没有实现的目标恒 `None`（起播链按失败处理）。
 pub(crate) fn open_system_player(
     source: hongguo_player::PlaySource,
+    direct: bool,
     start_secs: f64,
     rate: f64,
     events: tokio::sync::mpsc::Sender<hongguo_player::PlayerEvent>,
     on_stall: Option<hongguo_player::StallHook>,
 ) -> Option<crate::home::player::Player> {
-    hongguo_player::open(source, start_secs, rate, events, on_stall)
+    if direct {
+        hongguo_player::open_direct(source, start_secs, rate, events, on_stall)
+    } else {
+        hongguo_player::open(source, start_secs, rate, events, on_stall)
+    }
 }
 
 /// 系统后端窗口外观：先让 GPUI 开透明通道（视频洞靠内容 alpha=0），再把窗口

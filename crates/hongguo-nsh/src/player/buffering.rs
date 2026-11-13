@@ -1,7 +1,6 @@
 #[derive(Default)]
 pub(super) struct Buffering {
     native: bool,
-    awaiting_more: bool,
 }
 
 impl Buffering {
@@ -14,18 +13,11 @@ impl Buffering {
         if (!confirmed && !advanced) || seeking {
             return None;
         }
-        self.awaiting_more = false;
         Some(self.is_buffering(seeking))
     }
 
-    pub fn defer_end(&mut self) -> bool {
-        let first = !self.awaiting_more;
-        self.awaiting_more = true;
-        first
-    }
-
     pub fn is_buffering(&self, seeking: bool) -> bool {
-        self.native || self.awaiting_more || seeking
+        self.native || seeking
     }
 }
 
@@ -36,7 +28,6 @@ mod tests {
     #[test]
     fn a_paused_backwards_confirmation_clears_waiting_even_if_buffer_false_arrived_first() {
         let mut buffering = Buffering::default();
-        buffering.defer_end();
         assert!(buffering.native_event(false, true));
         assert_eq!(buffering.progress(true, false, false), Some(false));
         assert!(!buffering.is_buffering(false));

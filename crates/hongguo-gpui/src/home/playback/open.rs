@@ -20,6 +20,8 @@ pub(super) struct PlayRequest {
 /// 所以起播链把它带回来。
 pub(super) struct SystemSpec {
     pub(super) source: hongguo_player::PlaySource,
+    /// 交给内置软解直播放（而不是系统播放器）。
+    pub(super) direct: bool,
     pub(super) start_secs: f64,
     pub(super) rate: f64,
     pub(super) events: mpsc::Sender<PlayerEvent>,
@@ -127,13 +129,19 @@ impl super::HomeView {
             .queue()
             .completed_path(&item.series_id, ep.vid_index)
             .filter(|p| !p.trim().is_empty() && std::path::Path::new(p).is_file());
-        let (source, definitions, definition) = match local_path {
+        // 本目标有内置软解直播放时，HEVC / ByteVC1 / ByteVC2 都交给它（不经系统视频解码器、不转码）；
+        // 没有时（Windows）沿用系统播放器；选流排除 ByteVC2，播放不再转码。
+        let direct_available = hongguo_player::direct_playback_available();
+        let (source, definitions, definition, direct) = match local_path {
             Some(path) => {
-                log::info!("[Home] 本地成品命中，走本地播放：{path}");
+                let direct = direct_available
+                    && hongguo_service::play_service::local::plays_direct_file(&path);
+                log::info!("[Home] 本地成品命中，走本地播放（direct={direct}）：{path}");
                 (
                     hongguo_player::PlaySource::Local { path: path.into() },
                     Vec::new(),
                     0u32,
+                    direct,
                 )
             }
             None => {
@@ -152,38 +160,30 @@ impl super::HomeView {
                     &item.series_id,
                     ep.vid_index,
                 );
-                if hongguo_bytevc2::is_bytevc2(&prepared.codec) {
-                    // 系统播放器不解 bvc2：先兼容转成 H.264 再走本地源（对齐 Tauri needsCompat）。
+                let direct = direct_available
+                    && hongguo_service::capability_service::plays_direct(&prepared.codec);
+                if direct {
                     log::info!(
-                        "[Home] {} 第 {} 集 codec={}，走兼容转码",
+                        "[Home] {} 第 {} 集 codec={}，走内置软解直播放",
                         item.series_id,
                         ep.vid_index,
                         prepared.codec
                     );
-                    let compat = hongguo_service::play_service::compat_play::compat_for_playback(
-                        &state,
-                        &item.series_id,
-                        ep.vid_index,
-                        Some(ep.vid.clone()),
-                        Some(prepared.definition),
-                    )
-                    .await?;
-                    let path = hongguo_service::transcode_service::cache::playback_file(
-                        &item.series_id,
-                        ep.vid_index,
-                        Some(prepared.definition),
-                    );
-                    if !path.is_file() {
-                        return Err(hongguo_common::AppError::Media(format!(
-                            "兼容转码完成但缓存未命中（{}）",
-                            compat.url
-                        )));
-                    }
                     (
-                        hongguo_player::PlaySource::Local { path },
+                        hongguo_player::PlaySource::Online {
+                            vid: ep.vid.clone(),
+                            definition: prepared.definition,
+                        },
                         prepared.definitions,
                         prepared.definition,
+                        true,
                     )
+                } else if hongguo_bytevc2::is_bytevc2(&prepared.codec) {
+                    // 没有启用直播放的目标（Windows 默认）：系统播放器不解 bvc2，播放也不再转码。
+                    // 选流在这种模式下本就不收 ByteVC2，走到这里是选流口径漏了，如实报错。
+                    return Err(hongguo_common::AppError::CodecUnsupported(
+                        prepared.codec.clone(),
+                    ));
                 } else {
                     (
                         hongguo_player::PlaySource::Online {
@@ -192,6 +192,7 @@ impl super::HomeView {
                         },
                         prepared.definitions,
                         prepared.definition,
+                        false,
                     )
                 }
             }
@@ -249,6 +250,7 @@ impl super::HomeView {
         Ok((
             SystemSpec {
                 source,
+                direct,
                 start_secs,
                 rate,
                 events,

@@ -56,17 +56,18 @@ struct FrameTexture {
 }
 
 pub struct SystemPlayer {
-    engine: IMFMediaEngine,
+    pub(super) engine: IMFMediaEngine,
     extended: IMFMediaEngineEx,
     /// 视频 quad：帧的落点（渲染器每帧从这里取纹理画进渲染目标）。
-    quad: VideoQuad,
+    pub(super) quad: VideoQuad,
     /// 在线流的字节流（引擎持有引用，这里只是明确保活）；本地文件为 None。
     _stream: Option<IMFByteStream>,
-    paused: AtomicBool,
+    /// 用户是否暂停（内置软解直播放扣住声音时不改它）。
+    pub(super) paused: AtomicBool,
     rate: AtomicU64,
     staged: Mutex<Staged>,
     /// 窗口 DPI 缩放：GPUI 逻辑像素 → 物理像素。
-    scale: Mutex<f32>,
+    pub(super) scale: Mutex<f32>,
     /// 帧纹理（按需建）；None = 还没有可用画面。
     frame: Mutex<Option<FrameTexture>>,
     /// 已探得的原生视频尺寸（打包 w<<32|h；metadata 未就绪为 0）。
@@ -130,6 +131,53 @@ pub fn open(
         rate,
         opened_at,
         engine_at,
+        true,
+    )
+    .map(|player| player as Arc<dyn PlayerLike>)
+}
+
+/// 内置软解直播放的音轨引擎：喂的是遮掉视频轨的字节流（[`stream::open_feed`] + 音轨视图），
+/// 引擎只出声、只当时钟。**不自动起播**——第一帧画面上屏时由直播放放行（[`SystemPlayer::play_engine`]）。
+pub(super) fn open_audio(
+    byte_stream: IMFByteStream,
+    label: &str,
+    start_secs: f64,
+    rate: f64,
+    events: mpsc::Sender<PlayerEvent>,
+) -> Option<Arc<SystemPlayer>> {
+    let opened_at = Instant::now();
+    let quad = view::video()?;
+    let device = quad.device()?;
+    let generation = quad.generation();
+    let notify: IMFMediaEngineNotify =
+        events::Notify::new(Arc::new(events::NotifyShared::audio_only(events))).into();
+    let (engine, extended) = match mf::create_engine(&device, generation, &notify) {
+        Ok(engine) => engine,
+        Err(error) => {
+            log::error!("[WmDirect] 音轨引擎创建失败: {error}");
+            return None;
+        }
+    };
+    let engine_at = Instant::now();
+    // 每集一个 URL：引擎只拿它判断容器类型，同名不会串缓存，但日志里分得清。
+    let url = windows::core::BSTR::from(format!("https://hongguo.local/direct/{label}.mp4"));
+    if let Err(error) = unsafe { extended.SetSourceFromByteStream(&byte_stream, &url) } {
+        unsafe {
+            engine.Shutdown().ok();
+        }
+        log::error!("[WmDirect] 设置音轨字节流失败（{label}）: {error}");
+        return None;
+    }
+    finish_open(
+        engine,
+        extended,
+        quad,
+        Some(byte_stream),
+        start_secs,
+        rate,
+        opened_at,
+        engine_at,
+        false,
     )
 }
 
@@ -174,13 +222,14 @@ fn finish_open(
     rate: f64,
     opened_at: Instant,
     engine_at: Instant,
-) -> Option<Arc<dyn PlayerLike>> {
+    autoplay: bool,
+) -> Option<Arc<SystemPlayer>> {
     unsafe {
         // 续播起点：metadata 就绪后引擎会按这个位置出画。
         if start_secs > SEEK_EPSILON_SECS {
             engine.SetCurrentTime(start_secs).ok();
         }
-        if let Err(error) = engine.Play() {
+        if autoplay && let Err(error) = engine.Play() {
             log::error!("[WmPresenter] Play 失败: {error}");
             engine.Shutdown().ok();
             return None;
@@ -344,9 +393,19 @@ impl SystemPlayer {
         true
     }
 
+    /// 让引擎走起来并把期望倍速补回去（暂停/恢复会重置引擎的实际速率；就绪前由节流补试兜底）。
+    /// 不碰用户的暂停状态——内置软解直播放放行被扣住的声音时用。
+    pub(super) fn play_engine(&self) {
+        if let Err(error) = unsafe { self.engine.Play() } {
+            log::warn!("[WmPresenter] Play 失败: {error}");
+        }
+        self.applied_rate.store(1.0f64.to_bits(), Ordering::SeqCst);
+        self.try_apply_rate();
+    }
+
     /// 把期望倍速补发给引擎（引擎只在 metadata 就绪后才认这个值）；节流到 [`RATE_RETRY_EVERY`]——
     /// `present_frame` 每帧都会调它，而 `IsPlaybackRateSupported` 是一次 COM 往返。
-    fn try_apply_rate(&self) {
+    pub(super) fn try_apply_rate(&self) {
         let desired = self.rate();
         let applied = f64::from_bits(self.applied_rate.load(Ordering::SeqCst));
         if (desired - applied).abs() <= f64::EPSILON {
@@ -395,7 +454,7 @@ impl SystemPlayer {
 /// 舞台几何换算：视频原生尺寸 → 窗口内的视频矩形（物理像素；`contain` 留黑边、`cover` 溢出由 GPUI 裁——视频 quad 在场景之下，黑边就是舞台背景）。
 /// **落点对齐到整物理像素**：分数坐标 + 双线性采样会让画面最外圈半个像素采到纹理之外，叠出一条浅色细线；取整后视频与纹理 1:1 映射、边缘像素完整，
 /// 舞台原点同样取整，窗口拖动/缩放时不会出现 1px 抖动。
-fn geometry(
+pub(super) fn geometry(
     bounds: PresenterBounds,
     fit: PresenterFit,
     scale: f32,
@@ -436,12 +495,7 @@ impl PlayerLike for SystemPlayer {
 
     fn resume(&self) {
         self.paused.store(false, Ordering::SeqCst);
-        if let Err(error) = unsafe { self.engine.Play() } {
-            log::warn!("[WmPresenter] Play 失败: {error}");
-        }
-        // 暂停/恢复会重置引擎的实际速率：把期望值补回去（就绪前由节流补试兜底）。
-        self.applied_rate.store(1.0f64.to_bits(), Ordering::SeqCst);
-        self.try_apply_rate();
+        self.play_engine();
     }
 
     fn is_paused(&self) -> bool {

@@ -16,6 +16,12 @@
 
 键盘路径：Tab 到触发器，Enter/Space 打开；菜单箭头移动、Enter 选择、Escape 关闭。
 选集网格可 Tab/Enter，音量/进度 slider 可用方向键。图标和选中状态不只依赖颜色。
+
+Android 的 slider responder 与原生 press 分别分发：轨道响应 seek 后，原生 View 若不消费 press，
+同一次点击还会穿透到兄弟视频层。进度条现有触摸范围由非焦点消费层接住 press；
+seek 仍由 Slider 负责，横屏偏移跟随该消费层，不增加可见控件或额外 Tab 停点。
+`seek_tests` 对原生 press 边界缺失先红后绿，并检查暂停/播放两种意图下拖动不翻转状态。
+该回归不代替 Android 正式包同轨道位置点击复验，实际设备结果由集成记录保存。
 验证须包含：当前项、自动清晰度、稀疏集号范围、同档/同集无操作、加载禁用、
 menu dismiss 回写、slider/静音回流，以及生产和 fixture 共用视图的明暗开态截图。
 系统屏幕阅读器及真机触控须独立验收，不能由无界面测试代替。

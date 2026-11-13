@@ -2,15 +2,19 @@
 //! 与 macOS 的 `hongguo-player-macos` 一一对应，契约在 `hongguo-player-api`：引擎 MediaEngine / 供数自有 `IMFByteStream`（`stream`）/
 //! 画面每帧 `TransferVideoFrame` → 视频 quad 渲染进同一渲染目标（`view`）/ 事件 `IMFMediaEngineNotify` 回调（`events`），对位 macOS 的 AVPlayer / AVAssetResourceLoader / AVPlayerLayer 插在 GPUIView 之下 / 事件线程轮询。
 //! 平台专属依赖只在本 crate；语法与设计见 `docs/gpui-system-player-windows.md`。
+//! 另有内置软解直播放（`direct`：引擎只放「只剩音轨」视图并充当时钟，`hongguo-softdec` 解出的帧换成 BGRA 写进同一个视频 quad），
+//! **未在 Windows 上运行验证**，默认关闭，`HONGGUO_WIN_DIRECT=1` 才启用。
 
 #![cfg(target_os = "windows")]
 
+mod direct;
 mod events;
 mod mf;
 mod player;
 mod stream;
 mod view;
 
+pub use direct::{enabled as direct_playback_enabled, open as open_direct};
 pub use player::open;
 
 /// 系统后端启动时调用一次：登记宿主窗口（视频 quad 挂在它上面）+ Media Foundation 进程级初始化。

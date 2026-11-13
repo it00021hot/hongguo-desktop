@@ -73,17 +73,18 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
                 &request.series_id,
                 request.vid_index,
             );
-            let needs_compat = hongguo_bytevc2::is_bytevc2(&prepared.codec);
+            let direct = crate::capability_service::plays_direct(&prepared.codec);
             Ok(PlayResponse {
                 url: prepared.url,
                 online: true,
                 resume_at,
                 error: String::new(),
+                error_kind: String::new(),
                 definition: prepared.definition,
                 automatic_definition: prepared.automatic_definition,
                 definitions: prepared.definitions,
                 codec: prepared.codec,
-                needs_compat,
+                direct,
             })
         }
         Err(e) => Ok(PlayResponse {
@@ -91,11 +92,12 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
             online: true,
             resume_at,
             error: e.to_string(),
+            error_kind: e.i18n_key().to_owned(),
             definition: 0,
             automatic_definition: false,
             definitions: Vec::new(),
             codec: String::new(),
-            needs_compat: false,
+            direct: false,
         }),
     }
 }
@@ -112,20 +114,26 @@ fn local_playback_path(state: &AppState, request: &PlayRequest) -> Option<String
         .completed_path(&request.series_id, request.vid_index)
 }
 
-/// 本地成品和显式 filePath 都探测编码，以便选中 ByteVC2 直播放。
+/// 本地成品和显式 filePath 都探测编码，以便选中内置软解直播放。
 fn local_file_response(path: &str, url: String, resume_at: f64) -> PlayResponse {
-    let (codec, needs_compat) = probe_local_codec(path);
+    let (codec, direct) = probe_local_codec(path);
     PlayResponse {
         url,
         online: false,
         resume_at,
         error: String::new(),
+        error_kind: String::new(),
         definition: 0,
         automatic_definition: false,
         definitions: Vec::new(),
         codec,
-        needs_compat,
+        direct,
     }
+}
+
+/// 本地成品文件是否交给壳的直播放（按文件里视频轨的实际编码判断，读不出编码为假）。
+pub fn plays_direct_file(path: &str) -> bool {
+    probe_local_codec(path).1
 }
 
 fn probe_local_codec(path: &str) -> (String, bool) {
@@ -136,8 +144,8 @@ fn probe_local_codec(path: &str) -> (String, bool) {
         return (String::new(), false);
     };
     let codec = track.info.codec.clone();
-    let needs_compat = hongguo_bytevc2::is_bytevc2(&codec);
-    (codec, needs_compat)
+    let direct = crate::capability_service::plays_direct(&codec);
+    (codec, direct)
 }
 
 /// 首集预热只取该集模型。
@@ -294,25 +302,24 @@ mod tests {
     }
 
     #[test]
-    fn local_bytevc2_file_marks_needs_compat() {
-        let plain = std::path::PathBuf::from(
-            "/Users/milo/qa-hongguo-offline-data/inputs/hg-bytevc2-plain.mp4",
-        );
-        if !plain.is_file() {
-            eprintln!("skip: sample missing");
-            return;
-        }
+    fn local_bytevc2_file_reports_codec_and_follows_the_active_playback_route() {
+        use hongguo_video::fixtures::{TrackSpec, mp4};
+        let dir = std::env::temp_dir().join(format!("hg-local-bytevc2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = dir.join("bytevc2.mp4");
+        std::fs::write(&plain, mp4(&[TrackSpec::video(1, b"bvc2", 64, 64)])).unwrap();
         let path = plain.to_string_lossy().to_string();
         let url = hongguo_protocol::local::local_play_url(&path).expect("url");
         let resp = super::local_file_response(&path, url, 0.0);
-        assert!(resp.needs_compat, "bytevc2 本地文件必须 needs_compat");
-        assert!(
-            hongguo_bytevc2::is_bytevc2(&resp.codec),
-            "codec={}",
-            resp.codec
+        assert_eq!(resp.codec, "bvc2", "必须从合成文件真实探测出视频编码");
+        assert_eq!(
+            resp.direct,
+            crate::capability_service::plays_direct("bvc2"),
+            "本地文件应遵循壳声明的播放路线"
         );
         assert!(!resp.online);
         assert!(resp.error.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -322,7 +329,7 @@ mod tests {
             "hongguo-local://x".into(),
             1.5,
         );
-        assert!(!resp.needs_compat);
+        assert!(!resp.direct);
         assert!(resp.codec.is_empty());
         assert_eq!(resp.resume_at, 1.5);
     }

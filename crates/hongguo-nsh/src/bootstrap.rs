@@ -40,6 +40,7 @@ pub(crate) struct Session {
 }
 
 pub(crate) async fn open() -> AppResult<Arc<Session>> {
+    hongguo_service::capability_service::enable_builtin_playback();
     let state = hongguo_service::runtime::spawn_blocking(open_state)
         .await
         .map_err(|error| AppError::Internal(error.to_string()))??;

@@ -108,8 +108,6 @@ pub mod names {
     pub const MERGE_FAILED: &str = "merge-failed";
     /// 在线播放的取流/解密进度
     pub const ONLINE_PROGRESS: &str = "online-play-progress";
-    /// 播放兼容兜底的转码进度
-    pub const COMPAT_PROGRESS: &str = "compat-play-progress";
 }
 
 #[cfg(test)]

@@ -1,15 +1,7 @@
 mod cancellation;
-mod hls;
-mod hls_source;
-#[cfg(any(target_os = "android", test))]
-mod native_read;
-mod platform;
-mod readiness;
+mod direct;
 mod response;
 mod source;
-
-pub(crate) use platform::paused_seek_needs_progress_drive;
-pub(crate) use readiness::MediaReadiness;
 
 use axum::{Router, routing::get};
 use source::Source;
@@ -71,9 +63,6 @@ impl MediaServer {
         };
         let router = Router::new()
             .route("/media/{id}", get(response::serve))
-            .route("/media/{id}/playlist.m3u8", get(hls::playlist))
-            .route("/media/{id}/init.mp4", get(hls::initialization))
-            .route("/media/{id}/segment/{index}", get(hls::segment))
             .with_state(routes.clone());
         let task = hongguo_service::runtime::spawn(async move {
             if let Err(error) = axum::serve(listener, router).await {
@@ -83,43 +72,38 @@ impl MediaServer {
         Ok(Self { routes, task })
     }
 
+    #[cfg(test)]
     pub(crate) fn file(&self, path: &Path) -> Result<MediaLease, String> {
-        self.register(Source::file(path)?)
+        self.register(Source::file(path)?, false)
     }
 
-    pub(crate) async fn playback_file(&self, path: &Path) -> Result<MediaLease, String> {
-        platform::wait_for_playable(path).await?;
-        #[cfg(target_os = "android")]
-        {
-            let source = Source::file(path)?;
-            if source.is_growing() {
-                return self.register_native(source);
-            }
-        }
-        self.file(path)
+    pub(crate) fn playback_file(&self, path: &Path, direct: bool) -> Result<MediaLease, String> {
+        self.register(Source::file(path)?, direct)
     }
 
-    #[cfg(any(target_os = "android", test))]
-    fn register_native(&self, source: Source) -> Result<MediaLease, String> {
-        use hongguo_nsh_video_api::read_source::register_source;
-        let mut lease = self.register(source.clone())?;
-        let registration = register_source(&lease.id, Arc::new(native_read::NativeRead(source)))
-            .map_err(|error| error.to_string())?;
-        lease.url = registration.url().to_owned();
-        lease.native_read = Some(registration);
-        Ok(lease)
+    pub(crate) fn online(
+        &self,
+        vid: String,
+        definition: u32,
+        direct: bool,
+    ) -> Result<MediaLease, String> {
+        self.register(Source::online(vid, definition)?, direct)
     }
 
-    pub(crate) fn online(&self, vid: String, definition: u32) -> Result<MediaLease, String> {
-        self.register(Source::online(vid, definition)?)
-    }
-
-    fn register(&self, source: Source) -> Result<MediaLease, String> {
+    fn register(&self, source: Source, direct: bool) -> Result<MediaLease, String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let suffix = if source.is_growing() {
-            "/playlist.m3u8"
+        let (source, frames) = if direct {
+            let session = Arc::new(
+                hongguo_softdec::DirectSession::open(Arc::new(source.clone()))
+                    .map_err(|error| error.to_string())?,
+            );
+            let frames = hongguo_nsh_video_api::frames::register_frames(
+                &id,
+                Arc::new(direct::Frames::new(session.clone())),
+            )?;
+            (source.audio(session), Some(frames))
         } else {
-            ""
+            (source, None)
         };
         self.routes
             .sources
@@ -127,11 +111,10 @@ impl MediaServer {
             .map_err(|_| "media routes lock poisoned")?
             .insert(id.clone(), source);
         Ok(MediaLease {
-            url: format!("http://{}/media/{id}{suffix}", self.routes.authority),
+            url: format!("http://{}/media/{id}", self.routes.authority),
             id,
             sources: self.routes.sources.clone(),
-            #[cfg(any(target_os = "android", test))]
-            native_read: None,
+            frames,
         })
     }
 }
@@ -152,8 +135,7 @@ pub(crate) struct MediaLease {
     id: String,
     url: String,
     sources: Arc<Mutex<HashMap<String, Source>>>,
-    #[cfg(any(target_os = "android", test))]
-    native_read: Option<hongguo_nsh_video_api::read_source::ReadRegistration>,
+    frames: Option<hongguo_nsh_video_api::frames::FrameRegistration>,
 }
 
 impl MediaLease {
@@ -161,42 +143,14 @@ impl MediaLease {
         &self.url
     }
 
-    pub(crate) fn readiness(&self) -> Result<Option<MediaReadiness>, String> {
-        let source = self
-            .sources
-            .lock()
-            .map_err(|_| "media routes lock poisoned".to_owned())?
-            .get(&self.id)
-            .cloned()
-            .ok_or_else(|| "media lease has been revoked".to_owned())?;
-        Ok(source.is_growing().then(|| MediaReadiness::new(source)))
-    }
-
-    pub(crate) fn is_complete(&self) -> Result<bool, String> {
-        self.sources
-            .lock()
-            .map_err(|_| "media routes lock poisoned".to_owned())?
-            .get(&self.id)
-            .map(Source::is_complete)
-            .transpose()?
-            .ok_or_else(|| "media lease has been revoked".to_owned())
-    }
-
-    pub(crate) fn available_duration(&self) -> Result<Option<f64>, String> {
-        self.sources
-            .lock()
-            .map_err(|_| "media routes lock poisoned".to_owned())?
-            .get(&self.id)
-            .map(Source::available_duration)
-            .transpose()?
-            .ok_or_else(|| "media lease has been revoked".to_owned())
+    pub(crate) fn frame_source(&self) -> Option<&str> {
+        self.frames.as_ref().map(|frames| frames.url())
     }
 }
 
 impl Drop for MediaLease {
     fn drop(&mut self) {
-        #[cfg(any(target_os = "android", test))]
-        drop(self.native_read.take());
+        drop(self.frames.take());
         if let Ok(mut sources) = self.sources.lock()
             && let Some(source) = sources.remove(&self.id)
         {

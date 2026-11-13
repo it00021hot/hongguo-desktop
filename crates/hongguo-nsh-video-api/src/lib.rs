@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub mod read_source;
+pub mod frames;
 
 pub const COMPONENT_NAME: &str = "hongguo.pixel-video";
 pub const EVENT_NAME: &str = "video";
@@ -21,6 +21,8 @@ pub struct FrameMetadata {
 pub struct Source {
     pub id: String,
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_source: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

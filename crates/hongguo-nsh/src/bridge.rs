@@ -9,13 +9,17 @@ use tokio::task::JoinHandle;
 
 pub(crate) struct Request<T>(JoinHandle<AppResult<T>>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Failure {
     key: &'static str,
     message: String,
+    retryable: bool,
 }
 
 impl Failure {
+    pub(crate) fn can_retry(&self) -> bool {
+        self.retryable
+    }
     pub(crate) fn text(&self) -> nsh_core::element::SharedString {
         let translated = crate::i18n::tr(self.key);
         if translated.as_str() == self.key {
@@ -38,6 +42,7 @@ impl From<AppError> for Failure {
         Self {
             key: error.i18n_key(),
             message: error.to_string(),
+            retryable: !matches!(error, AppError::CodecUnsupported(_)),
         }
     }
 }
@@ -72,6 +77,18 @@ impl<T> Drop for Request<T> {
 mod tests {
     use super::*;
     use nsh_core::prelude::*;
+
+    #[test]
+    fn codec_unsupported_is_terminal_while_operational_failures_remain_retryable() {
+        assert!(!Failure::from(AppError::CodecUnsupported("h264".into())).can_retry());
+        for error in [
+            AppError::Network("offline".into()),
+            AppError::Media("decode failed".into()),
+            AppError::Auth("sign in again".into()),
+        ] {
+            assert!(Failure::from(error).can_retry());
+        }
+    }
 
     #[component]
     fn ErrorNotice() -> impl IntoElement {

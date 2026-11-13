@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-player-macos"
-description = "红果桌面版 macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数"
+description = "红果桌面版 macOS 播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数；内置软解直播放经 AVSampleBufferDisplayLayer 上屏"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,6 +17,10 @@ log = "0.4"
 tokio = { version = "1", features = ["sync"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# 内置软解直播放（`direct.rs`）：索引、解码（HEVC / ByteVC1 / ByteVC2）与 NV12 打包。
+# 只进 macOS 表：Windows 的直播放还没接，那边不该为它多编一个解码器。
+hongguo-softdec = { path = "../hongguo-softdec" }
+hongguo-common = { path = "../hongguo-common" }
 # 窗口原语与 AVFoundation/HIToolbox 绑定（与 gpui-pre-macos 的 objc2 同版本，
 # 类型必须同源——两套 objc2 是不同的类型）。
 raw-window-handle = "0.6"

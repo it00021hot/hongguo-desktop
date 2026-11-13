@@ -11,6 +11,39 @@ pub(crate) struct Bridge {
     owner: GlobalRef,
 }
 impl Bridge {
+    pub fn direct_presented(
+        &self,
+        epoch: u64,
+        frame: &hongguo_nsh_video_api::frames::PixelFrame,
+    ) -> Result<(), String> {
+        let mut env = self.vm.attach_current_thread().map_err(error)?;
+        env.call_method(
+            &self.owner,
+            "directPresented",
+            "(JJJJII)V",
+            &[
+                JValue::Long(epoch as i64),
+                JValue::Long(frame.generation as i64),
+                JValue::Long(frame.serial as i64),
+                JValue::Long(frame.pts_ms as i64),
+                JValue::Int(frame.width as i32),
+                JValue::Int(frame.height as i32),
+            ],
+        )
+        .map_err(error)?;
+        Ok(())
+    }
+    pub fn direct_holding(&self, epoch: u64, holding: bool) -> Result<(), String> {
+        let mut env = self.vm.attach_current_thread().map_err(error)?;
+        env.call_method(
+            &self.owner,
+            "directHolding",
+            "(JZ)V",
+            &[JValue::Long(epoch as i64), JValue::Bool(holding.into())],
+        )
+        .map_err(error)?;
+        Ok(())
+    }
     pub fn new(vm: Arc<JavaVM>, owner: GlobalRef) -> Self {
         Self { vm, owner }
     }

@@ -158,6 +158,10 @@ impl Renderer {
     pub fn import(&self, frame: crate::DecodedFrame) -> Result<ImportedFrame, OutputError> {
         self.frames.import(frame)
     }
+
+    pub fn upload(&self, frame: &hongguo_nsh_video_api::frames::PixelFrame) -> ImportedFrame {
+        ImportedFrame::upload(&self.surface.device(), &self.surface.queue(), frame)
+    }
 }
 
 fn gpu_error(error: impl std::fmt::Display) -> OutputError {

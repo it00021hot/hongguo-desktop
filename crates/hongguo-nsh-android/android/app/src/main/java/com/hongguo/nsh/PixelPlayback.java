@@ -22,7 +22,8 @@ final class PixelPlayback {
     final PixelSeeks seeks;
     final PixelAudio audio;
     MediaPlayer player;
-    private PixelDataSource dataSource;
+    PixelDirect direct;
+    boolean directMode;
     long generation;
     String sourceId = "";
     boolean prepared;
@@ -69,6 +70,7 @@ final class PixelPlayback {
             releasePlayer();
             generation = version;
             sourceId = id;
+            directMode = source != null && !source.isNull("frameSource") && !source.optString("frameSource").isEmpty();
             reportedProgress = false;
             reportedFrame = false;
             output.sourceChanged();
@@ -78,17 +80,22 @@ final class PixelPlayback {
         output.resizeMode = next.getString("resizeMode");
         output.fit();
         if (source == null || url.isEmpty()) return;
-        if (player == null && changed) create(url, version);
+        if (player == null && changed) create(url, version, source.optString("frameSource", ""));
         controls();
     }
-    private void create(String url, long version) throws Exception {
+    private void create(String url, long version, String frames) throws Exception {
         final MediaPlayer candidate = new MediaPlayer();
         player = candidate;
         candidate.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build());
-        candidate.setSurface(output.rawSurface);
+        if (directMode) {
+            direct = new PixelDirect(this, version, frames);
+            candidate.setVolume(0f, 0f);
+            output.prepare();
+        } else candidate.setSurface(output.rawSurface);
         candidate.setOnPreparedListener(ready -> {
             if (!current(ready, version)) return;
             prepared = true;
+            if (direct != null) { direct.prepared(); reapplyControls(); return; }
             output.videoWidth = ready.getVideoWidth();
             output.videoHeight = ready.getVideoHeight();
             output.fit();
@@ -98,13 +105,19 @@ final class PixelPlayback {
         });
         candidate.setOnVideoSizeChangedListener((video, width, height) -> {
             if (!current(video, version)) return;
+            if (direct != null) return;
             output.videoWidth = width; output.videoHeight = height; output.fit();
             if (prepared) emit("load", "durationMs", duration(video), "width", width, "height", height);
         });
-        candidate.setOnCompletionListener(video -> { if (current(video, version)) { audio.abandon(); emit("end"); } });
+        candidate.setOnCompletionListener(video -> { if (current(video, version)) { audio.abandon(); if (direct != null) direct.ended(); else emit("end"); } });
         candidate.setOnSeekCompleteListener(video -> { if (current(video, version)) seeks.complete(); });
         candidate.setOnInfoListener((video, what, extra) -> {
             if (!current(video, version)) return true;
+            if (direct != null) {
+                if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) direct.audioBuffering(true);
+                if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) direct.audioBuffering(false);
+                return false;
+            }
             if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START && !reportedFrame) {
                 reportedFrame = true;
                 android.util.Log.i("HongguoVideo", "First native frame generation=" + version);
@@ -118,18 +131,16 @@ final class PixelPlayback {
             return true;
         });
         emit("loadStart");
-        dataSource = owner.openDataSource(version, url);
-        if (dataSource != null) candidate.setDataSource(dataSource);
-        else candidate.setDataSource(activity, Uri.parse(url));
+        candidate.setDataSource(activity, Uri.parse(url));
         candidate.prepareAsync();
     }
     private boolean current(MediaPlayer video, long version) { return !released && video == player && generation == version; }
     private void controls() throws JSONException {
         handler.removeCallbacks(progress);
         if (player == null || !prepared || props == null) return;
-        boolean play = props.getBoolean("active") && !props.getBoolean("paused");
+        boolean play = props.getBoolean("active") && !props.getBoolean("paused") && (direct == null || direct.mayPlay());
         float volume = props.getBoolean("muted") ? 0f : (float) props.getDouble("volume");
-        player.setVolume(volume, volume);
+        player.setVolume(direct != null && !direct.mayPlay() ? 0f : volume, direct != null && !direct.mayPlay() ? 0f : volume);
         if (!play) {
             if (player.isPlaying()) player.pause();
             audio.update(false);
@@ -141,6 +152,7 @@ final class PixelPlayback {
             audio.update(true);
         }
         if (props.getBoolean("active")) handler.postDelayed(progress, interval());
+        if (direct != null) direct.wake();
     }
     private int interval() { return props == null ? 250 : Math.max(16, Math.min(10_000, props.optInt("progressIntervalMs", 250))); }
     void reapplyControls() {
@@ -166,6 +178,8 @@ final class PixelPlayback {
     }
     void emit(String type, Object... fields) { owner.event(PixelJson.event(type, sourceId, fields)); }
     private static Object duration(MediaPlayer video) { int value=video.getDuration(); return value>0 ? value : JSONObject.NULL; }
+    Object duration() { return duration(player); }
+    boolean active() { return props != null && props.optBoolean("active"); }
     void error(String code, String detail) { if (!released) emit("error", "code", code, "detail", detail); }
     private void releasePlayer() {
         handler.removeCallbacks(progress);
@@ -174,8 +188,8 @@ final class PixelPlayback {
         audio.abandon();
         MediaPlayer previous = player;
         player = null;
-        // A platform release can wait for an in-flight readAt. Cancel it first.
-        if (dataSource != null) { dataSource.close(); dataSource = null; }
+        // Retire the frame consumer before releasing its audio clock.
+        if (direct != null) { direct.close(); direct = null; }
         if (previous != null) previous.release();
     }
     void release() {
