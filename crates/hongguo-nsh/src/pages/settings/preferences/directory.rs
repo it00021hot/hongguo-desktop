@@ -2,6 +2,9 @@ use super::model::Draft;
 use crate::{i18n::tr, ui};
 use nsh_core::{file_dialog::OpenDialog, prelude::*};
 
+#[cfg(test)]
+mod tests;
+
 pub(super) fn field(
     label: &'static str,
     draft: Signal<Draft>,
@@ -12,7 +15,15 @@ pub(super) fn field(
     write: fn(&mut Draft, String),
 ) -> View {
     if !is_desktop() {
-        return view().child(text(move || draft.with(read)).text_sm());
+        let hint = if label == "settings.cacheDir" {
+            "nsh.privateCacheDirectoryHint"
+        } else {
+            "nsh.privateDownloadDirectoryHint"
+        };
+        return view()
+            .gap_1()
+            .child(text(move || tr("nsh.privateDirectory")).text_base())
+            .child(ui::form_description(move || tr(hint)));
     }
     view()
         .flex_row()

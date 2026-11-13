@@ -418,7 +418,7 @@ pub(crate) fn player_episode(
         .accessibility_label(move || Some(label.get()))
         .checked(selected)
         .h(px(if is_desktop() { 20.0 } else { 48.0 }))
-        .min_w(px(0.0))
+        .min_w(move || px(if is_desktop() { 0.0 } else { 48.0 }))
         .items_center()
         .justify_center()
         .text_color(move || {

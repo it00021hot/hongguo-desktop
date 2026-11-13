@@ -7,6 +7,8 @@ use nsh_core::prelude::*;
 pub(crate) struct PlayerGeometry {
     pub source: Signal<(f64, f64)>,
     pub viewport: Signal<(f32, f32)>,
+    pub comment_anchor: ElementRef,
+    pub comment_trigger: ElementRef,
 }
 
 pub(crate) fn player_narrow() -> bool {

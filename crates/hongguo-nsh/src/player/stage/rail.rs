@@ -33,8 +33,11 @@ pub(crate) fn rail(
     let model = model.into_reactive();
     let action = stored(Box::new(action) as Box<dyn Fn(RailAction)>);
     let model = computed(move || model.get());
+    let comment_trigger = use_context::<ui::PlayerGeometry>()
+        .map_or_else(element_ref, |geometry| geometry.comment_trigger);
     view()
         .gap_4()
+        .style_when(move || !is_desktop(), |style| style.gap_3())
         .items_center()
         .child(
             ui::player_rail_item(
@@ -52,6 +55,7 @@ pub(crate) fn rail(
                 move || tr("player.interact.comments"),
                 move || count(model.get().comments),
             )
+            .element_ref(&comment_trigger)
             .on_press(move || action.with(|action| action(RailAction::Comments))),
         )
         .child(

@@ -1,10 +1,11 @@
 use super::{
-    ComposerContext,
+    ComposerContext, actions,
     api::{self, Thread},
+    composer::composer,
     model::{Feed, Item},
-    row_view, thread,
+    row_view,
 };
-use crate::{bridge, i18n::tr};
+use crate::{bridge, i18n::tr, ui};
 use nsh_core::prelude::*;
 
 pub(super) fn row(
@@ -17,14 +18,19 @@ pub(super) fn row(
     let ComposerContext {
         session,
         nav,
-        target,
+        target: _,
         logged_in,
         reviews,
         focus,
+        reply_state,
+        threads,
     } = context;
-    let pending = signal(false);
-    let error = signal(SharedString::default());
-    let replies = signal(false);
+    let action = threads.action(item.get_untracked().id());
+    let pending = action.pending;
+    let error = action.error;
+    let own_thread = threads.get(item.get_untracked().id());
+    let replies = own_thread.map_or_else(|| signal(false), |thread| thread.expanded);
+    let editing = own_thread.map_or_else(|| signal(false), |thread| thread.editing);
     let mine = computed(move || {
         session.identity();
         session.with(|session| {
@@ -43,7 +49,7 @@ pub(super) fn row(
             pending,
             error,
             replies,
-            logged_in,
+            editing,
             mine,
             reviews,
             reply_stop,
@@ -51,33 +57,40 @@ pub(super) fn row(
         },
         row_view::Events {
             like: Box::new(move || {
-                if pending.get_untracked() || !logged_in.get_untracked() {
-                    return;
-                }
                 let id = item.get_untracked().id().to_owned();
                 let subject = api::Subject::for_item(reviews, &item.get_untracked());
-                let mut updated = feed.get_untracked();
-                let Some(before) = updated.toggle_like(&id) else {
-                    return;
-                };
-                feed.set(updated);
-                pending.set(true);
-                error.set(SharedString::default());
                 let state = session.with(|session| session.state.clone());
-                spawn(async move {
-                    let result =
-                        bridge::request(api::like(state, id.clone(), !before.0, subject)).await;
-                    pending.set(false);
-                    if let Err(failure) = result {
-                        feed.update(|feed| feed.restore_like(&id, before));
-                        error.set(failure.text());
-                    }
+                threads.run(move || {
+                    actions::like(
+                        feed,
+                        id,
+                        logged_in.get_untracked(),
+                        threads.account,
+                        pending,
+                        error,
+                        move |id, selected| async move {
+                            bridge::request(api::like(state, id, selected, subject))
+                                .await
+                                .map_err(|failure| failure.text())
+                        },
+                    )
                 });
             }),
             reply: Box::new(move || match item.get_untracked() {
-                Item::Comment(_) => replies.update(|open| *open = !*open),
-                Item::Reply(reply) => reply_to.set(Some((reply.reply_id, reply.user_name))),
+                Item::Comment(_) => {
+                    if let Some(thread) = own_thread {
+                        thread.recipient.set(None);
+                    }
+                    editing.update(|open| *open = !*open);
+                }
+                Item::Reply(reply) => {
+                    reply_to.set(Some((reply.reply_id, reply.user_name)));
+                    if let Some(state) = reply_state {
+                        state.editing.set(true);
+                    }
+                }
             }),
+            toggle_replies: Box::new(move || replies.update(|open| *open = !*open)),
             delete: Box::new(move || {
                 if pending.get_untracked() {
                     return;
@@ -127,20 +140,30 @@ pub(super) fn row(
             }),
             replies: Box::new(move || {
                 let parent = item.get_untracked().id().to_owned();
-                (if reviews { view() } else { view().h(px(360.0)) })
-                    .pl_3()
-                    .child(thread(
-                        session,
-                        nav,
-                        target,
-                        logged_in.get_untracked(),
-                        if reviews {
-                            Thread::ReviewReplies(parent)
-                        } else {
-                            Thread::Replies(parent)
-                        },
-                        Some(feed),
-                    ))
+                let Some(thread) = own_thread else {
+                    return view().into_element();
+                };
+                let kind = stored(if reviews {
+                    Thread::ReviewReplies(parent)
+                } else {
+                    Thread::Replies(parent)
+                });
+                view()
+                    .child(when(thread.editing, move || {
+                        view()
+                            .child(composer(
+                                ComposerContext {
+                                    reply_state: Some(thread),
+                                    ..context
+                                },
+                                kind,
+                                thread.feed,
+                                Some(feed),
+                                thread.recipient,
+                                thread.message,
+                            ))
+                            .child(ui::status(thread.message))
+                    }))
                     .into_element()
             }),
         },

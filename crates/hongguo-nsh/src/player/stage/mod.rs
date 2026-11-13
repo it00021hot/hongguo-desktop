@@ -55,6 +55,10 @@ pub(crate) fn surface(
             .bottom(move || px(if compact() { 40.0 } else { 112.0 }))
             .w(percentage(0.62))
             .style_when(
+                move || !is_desktop() && compact(),
+                |style| style.left_4().right_20().w(auto()).bottom_36(),
+            )
+            .style_when(
                 move || {
                     modes.is_some_and(|modes| {
                         modes.state().mode == crate::window_modes::Mode::Mini
@@ -70,6 +74,10 @@ pub(crate) fn surface(
             .absolute()
             .right_2()
             .bottom(px(96.0))
+            .style_when(
+                move || !is_desktop() && compact(),
+                |style| style.right_3().bottom_36(),
+            )
             .style_when(
                 move || {
                     modes.is_some_and(|modes| {
@@ -98,6 +106,18 @@ pub(crate) fn surface(
         .overflow_hidden()
         .test_id("player-stage")
         .child(view().absolute().inset_0().child(video))
+        .child(when(
+            move || is_desktop() && geometry.is_some(),
+            move || {
+                view()
+                    .absolute()
+                    .right_0()
+                    .bottom(px(56.0))
+                    .size(px(0.0))
+                    .pointer_events(PointerEvents::None)
+                    .element_ref(&geometry.expect("player geometry").comment_anchor)
+            },
+        ))
         .child(overlay)
         .child(
             view()
@@ -170,7 +190,16 @@ pub(crate) fn info(model: impl IntoReactive<Info>, open: impl Fn() + 'static) ->
                     move || !model.get().season.is_empty(),
                     move || ui::player_badge(move || model.get().season),
                 ))
-                .child(ui::player_title(move || format!("@{}", model.get().title)).on_press(open)),
+                .child(
+                    ui::player_title(move || {
+                        if is_desktop() {
+                            format!("@{}", model.get().title)
+                        } else {
+                            model.get().title
+                        }
+                    })
+                    .on_press(open),
+                ),
         )
         .child(
             text(move || {
@@ -181,7 +210,8 @@ pub(crate) fn info(model: impl IntoReactive<Info>, open: impl Fn() + 'static) ->
                     tr("player.totalEpisodes").replace("{count}", &info.total.to_string())
                 )
             })
-            .text_xs(),
+            .text_xs()
+            .style_when(move || !is_desktop(), |style| style.text_sm()),
         )
         .child(when(
             move || !model.get().intro.is_empty(),
@@ -191,9 +221,7 @@ pub(crate) fn info(model: impl IntoReactive<Info>, open: impl Fn() + 'static) ->
                     .items_end()
                     .gap_2()
                     .max_w(move || percentage(if compact() { 1.0 } else { 0.36 }))
-                    // The phone binge bar covers this region in the reference.
-                    // Keep the information anchor while excluding occluded text and focus.
-                    .style_when(compact, |style| style.invisible())
+                    .style_when(move || compact() && is_desktop(), |style| style.invisible())
                     .child(
                         ui::player_intro(move || model.get().intro)
                             .flex_1()

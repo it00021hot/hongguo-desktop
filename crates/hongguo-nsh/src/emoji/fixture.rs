@@ -156,6 +156,7 @@ pub(crate) fn fixture() -> impl IntoElement {
             super::SendOptions {
                 allowed: computed(|| true),
                 review: false,
+                reply: false,
                 previous: Box::new(move || previous.focus()),
                 next,
             },

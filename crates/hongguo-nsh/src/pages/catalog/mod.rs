@@ -14,7 +14,9 @@ use nsh_core::prelude::*;
 use std::collections::HashMap;
 
 pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
-    ui::page(nav, move || tr("nav.home.title")).child(content(session, nav))
+    ui::page(nav, move || tr("nav.home.title"))
+        .header_visible(is_desktop())
+        .child(content(session, nav))
 }
 
 fn content(session: SessionHandle, nav: Navigation) -> View {
@@ -216,7 +218,7 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         .min_h(px(0.0))
         .child(when(
             move || !is_desktop(),
-            move || channel_tabs(available, channel, select_channel),
+            move || ui::mobile_catalog_header(channel_tabs(available, channel, select_channel)),
         ))
         .child(
             view()
@@ -310,7 +312,7 @@ fn channel_tabs(
             available,
             |tab: &FeedTabMeta| tab.tab_type.clone(),
             move |tab, _| {
-                ui::header_tab(move || {
+                let label = move || {
                     let tab = tab.get();
                     if !tab.title.is_empty() {
                         return SharedString::from(tab.title);
@@ -319,9 +321,14 @@ fn channel_tabs(
                         .iter()
                         .find(|(id, _)| *id == tab.tab_type)
                         .map_or_else(|| tab.tab_type.into(), |(_, key)| tr(key))
-                })
-                .selected(move || selected.get() == tab.with(|tab| tab.tab_type.clone()))
-                .on_press(move || on_select(tab.get_untracked().tab_type))
+                };
+                let is_selected = move || selected.get() == tab.with(|tab| tab.tab_type.clone());
+                let button = if is_desktop() {
+                    ui::header_tab(label).selected(is_selected)
+                } else {
+                    ui::mobile_channel_tab(label, is_selected)
+                };
+                button.on_press(move || on_select(tab.get_untracked().tab_type))
             },
         ))
 }

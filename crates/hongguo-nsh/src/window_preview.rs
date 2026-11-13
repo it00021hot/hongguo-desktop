@@ -12,6 +12,8 @@ pub(super) fn preview() -> View {
     let driver: PreviewDriver = provide_preview();
     let modes = WindowModes::current().expect("window preview context");
     let geometry = ui::PlayerGeometry {
+        comment_anchor: element_ref(),
+        comment_trigger: element_ref(),
         source: signal((720.0, 1280.0)),
         viewport: signal((0.0, 0.0)),
     };

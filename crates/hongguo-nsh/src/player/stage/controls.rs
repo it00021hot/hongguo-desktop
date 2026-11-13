@@ -440,6 +440,10 @@ pub(crate) fn controls<E: IntoElement>(
                 .right_3()
                 .z_index(10)
                 .bottom(move || px(if compact() { 40.0 } else { 56.0 }))
+                .style_when(
+                    move || !is_desktop() && compact(),
+                    |style| style.left_4().right_4().bottom_20(),
+                )
                 .child(dynamic(move || {
                     let trigger = ui::player_binge(move || {
                         format!(

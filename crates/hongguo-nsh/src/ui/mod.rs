@@ -117,8 +117,8 @@ mod navigation;
 mod player_episode;
 mod player_menu;
 pub(crate) use player_episode::{
-    picker_close, picker_color, picker_downloaded, picker_play, picker_reserve, picker_season,
-    picker_tab,
+    PICKER_DESKTOP_COLUMNS, PICKER_GRID_GAP, picker_close, picker_color, picker_downloaded,
+    picker_mobile_columns, picker_play, picker_reserve, picker_season, picker_tab,
 };
 mod danmaku_settings;
 mod emoji;
@@ -126,7 +126,11 @@ pub(crate) use danmaku_settings::{
     DanmakuField, DanmakuSettingsState, danmaku_settings, danmaku_settings_compact,
 };
 pub(crate) use player_menu::player_danmaku_panel;
+mod comment_actions;
+mod comment_panel;
 mod reviews;
+pub(crate) use comment_actions::{comment_like, comment_link, comment_notice, comment_thread_row};
+pub(crate) use comment_panel::comment_panel;
 pub(crate) use reviews::{
     ReviewFocus, review_card, review_like, review_link, review_rating, review_stars, review_summary,
 };
@@ -156,7 +160,8 @@ pub(crate) use mobile_player_more::{
     MobilePlayerMoreAction, MobilePlayerMoreEvents, MobilePlayerMoreState, mobile_player_more,
 };
 pub(crate) use navigation::{
-    page, provide_account_label, sections, shell, shell_with_theme, stack,
+    mobile_catalog_header, mobile_channel_tab, page, provide_account_label, sections, shell,
+    shell_with_theme, stack,
 };
 pub(crate) use player_menu::{
     player_episode, player_episode_cell, player_episode_group, player_episode_panel,

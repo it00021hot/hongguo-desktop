@@ -2,6 +2,9 @@
   "nsh": {
     "exportFile": "导出文件",
     "exportCompleted": "文件已导出",
+    "privateDirectory": "应用私有目录",
+    "privateDownloadDirectoryHint": "下载文件保存在应用内，可在任务页导出。",
+    "privateCacheDirectoryHint": "缓存由应用管理，可使用下方选项清理。",
     "previewAction": "预览操作：{action}",
     "proxyAddress": "代理地址",
     "cacheLimitHint": "单位 MB，0 表示不限，上限 1048576 MB",

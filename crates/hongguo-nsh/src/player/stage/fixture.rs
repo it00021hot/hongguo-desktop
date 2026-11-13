@@ -33,6 +33,8 @@ fn build(frame: ImageSrc, on_open_details: impl Fn() + Copy + 'static, mode: Fix
         use_context::<crate::ui::PlayerGeometry>().unwrap_or_else(|| crate::ui::PlayerGeometry {
             source: signal((720.0, 1280.0)),
             viewport: signal((0.0, 0.0)),
+            comment_anchor: element_ref(),
+            comment_trigger: element_ref(),
         });
     provide_context(geometry);
     let modes = matches!(mode, FixtureMode::Window)

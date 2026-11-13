@@ -6,7 +6,6 @@ use super::{
 use crate::{
     bridge,
     i18n::tr,
-    navigation::Route,
     ui::{self, ButtonVariant},
 };
 use nsh_core::prelude::*;
@@ -26,6 +25,8 @@ pub(super) fn composer(
         logged_in: _,
         reviews: _,
         focus,
+        reply_state,
+        threads: _,
     } = context;
     let draft = signal(String::new());
     let review = matches!(kind.get(), Thread::Reviews);
@@ -40,9 +41,12 @@ pub(super) fn composer(
     });
     let send = move || {
         if pending.get_untracked()
-            || !logged_in.get_untracked()
             || review && super::review_model::review_score(stars.get_untracked()).is_none()
         {
+            return;
+        }
+        if !logged_in.get_untracked() {
+            message.set(tr("player.interact.loginRequired"));
             return;
         }
         let text = draft.get_untracked();
@@ -79,6 +83,10 @@ pub(super) fn composer(
                     draft.set(String::new());
                     attachment.set(None);
                     reply_to.set(None);
+                    if let Some(state) = reply_state {
+                        state.expanded.set(true);
+                        state.editing.set(false);
+                    }
                     if let (Some(parent), Some(parent_feed)) = (thread.parent(), parent_feed) {
                         parent_feed.update(|feed| feed.add_reply(parent));
                     }
@@ -95,23 +103,13 @@ pub(super) fn composer(
             logged_in,
             super::review_form::Events {
                 send: Box::new(send),
-                login: Box::new(move || nav.push(Route::Account)),
             },
         );
     }
     let next = element_ref();
     let cancel = element_ref();
-    let login = element_ref();
     view()
         .gap_2()
-        .child(when(
-            move || !logged_in.get(),
-            move || {
-                ui::button(move || tr("settings.loginAction"), ButtonVariant::Secondary)
-                    .element_ref(&login)
-                    .on_press(move || nav.push(Route::Account))
-            },
-        ))
         .child(when(
             move || reply_to.get().is_some(),
             move || {
@@ -158,13 +156,12 @@ pub(super) fn composer(
             },
             crate::emoji::SendOptions {
                 allowed: computed(move || !review || stars.get() > 0),
-                review,
+                review: context.reviews,
+                reply: kind.with(|kind| kind.parent().is_some()),
                 next,
                 previous: Box::new(move || {
                     let stop = if reply_to.get_untracked().is_some() {
                         cancel
-                    } else if !logged_in.get_untracked() {
-                        login
                     } else {
                         focus.previous(feed)
                     };

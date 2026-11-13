@@ -10,7 +10,7 @@ pub(crate) use info::OverlayMeta;
 pub(crate) use interaction::SocialMemory;
 pub(crate) use interaction::danmaku::DanmakuPreferences;
 pub(crate) use interaction::detail_social;
-pub(crate) use interaction::{reviews_preview_with_header, reviews_with_header};
+pub(crate) use interaction::{comments_preview, reviews_preview_with_header, reviews_with_header};
 mod keyboard;
 mod lifecycle;
 mod native;
@@ -85,6 +85,8 @@ fn content(
     let position = signal((0.0_f64, 0.0_f64));
     let video_size = signal((0.0_f64, 0.0_f64));
     let geometry = ui::PlayerGeometry {
+        comment_anchor: element_ref(),
+        comment_trigger: element_ref(),
         source: video_size,
         viewport: signal((0.0, 0.0)),
     };

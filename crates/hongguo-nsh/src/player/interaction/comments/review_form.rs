@@ -1,9 +1,8 @@
-use crate::{emoji, i18n::tr, ui};
+use crate::{emoji, ui};
 use nsh_core::prelude::*;
 
 pub(super) struct Events {
     pub send: Box<dyn Fn()>,
-    pub login: Box<dyn Fn()>,
 }
 
 pub(super) fn form(
@@ -18,16 +17,6 @@ pub(super) fn form(
     let next = element_ref();
     ui::review_card()
         .child(ui::review_rating(stars, pending, rating))
-        .child(when(
-            move || !logged_in.get(),
-            move || {
-                ui::button(
-                    move || tr("settings.loginAction"),
-                    ui::ButtonVariant::Secondary,
-                )
-                .on_press(move || events.with(|events| (events.login)()))
-            },
-        ))
         .child(emoji::sendbox(
             editor,
             pending,
@@ -41,6 +30,7 @@ pub(super) fn form(
             emoji::SendOptions {
                 allowed: computed(move || super::review_model::review_score(stars.get()).is_some()),
                 review: true,
+                reply: false,
                 previous: Box::new(move || {
                     rating.0[usize::from(stars.get_untracked().clamp(1, 5)) - 1].focus()
                 }),

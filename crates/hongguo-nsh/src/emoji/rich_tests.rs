@@ -213,7 +213,7 @@ fn LongLine() -> impl IntoElement {
                     placeholder: computed(|| "Long line".into()),
                     disabled: computed(|| false),
                     multiline: false,
-                    skin: FieldSkin::Body,
+                    skin: FieldSkin::Comment,
                     submit: Box::new(|| {}),
                     on_tab: Box::new(|_| {}),
                 })),

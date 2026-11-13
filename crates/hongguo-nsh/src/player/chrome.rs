@@ -60,7 +60,8 @@ impl Chrome {
         let quiet = signal(false);
         let shown = computed(move || {
             state.active.get()
-                && (state.panel_open.get()
+                && ((!is_desktop() && super::stage::compact())
+                    || state.panel_open.get()
                     || (!quiet.get()
                         && (state.paused.get() || visible.get() || hovered.get() || focused.get())))
         });

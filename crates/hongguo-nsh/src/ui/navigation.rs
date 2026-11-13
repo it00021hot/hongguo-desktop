@@ -5,8 +5,12 @@ use crate::{
 };
 use nsh_base::theme;
 use nsh_core::prelude::*;
+mod mobile_catalog;
 mod mobile_menu;
 mod mobile_preferences;
+pub(crate) use mobile_catalog::{mobile_catalog_header, mobile_channel_tab};
+#[cfg(test)]
+mod mobile_layout_tests;
 #[cfg(test)]
 mod status_bar_tests;
 #[cfg(test)]
@@ -162,8 +166,9 @@ pub(crate) fn sections(nav: Navigation) -> View {
         os(),
         nsh_core::platform::Os::Ios | nsh_core::platform::Os::Android
     ) {
-        return view().test_id("main-nav").child(
+        return view().test_id("main-nav").flex_shrink_0().child(
             nsh_core::mobile::tab_bar()
+                .flex_shrink_0()
                 .items(move || {
                     MOBILE_SECTIONS
                         .iter()
@@ -242,13 +247,16 @@ pub(crate) fn shell_with_theme(
             mobile_preferences::Preferences::new(theme_busy, theme_value, on_theme, language);
         return view()
             .flex_1()
+            .pb(move || {
+                if mobile_tabs_visible(nav) {
+                    px(0.0)
+                } else {
+                    safe_area().bottom
+                }
+            })
             .child(content)
             .child(when(
-                move || {
-                    !nav.routes()
-                        .with(|routes| matches!(routes.last(), Some(Route::Player(_, _))))
-                        && !chrome_hidden(nav)
-                },
+                move || mobile_tabs_visible(nav),
                 move || sections(nav),
             ))
             .child(menu.sheet(preferences));
@@ -394,6 +402,12 @@ pub(crate) fn shell_with_theme(
             move || window().width.0 < 768.0 && !chrome_hidden(nav) && !portrait_mode(nav),
             move || desktop_bottom_nav(nav),
         ))
+}
+
+fn mobile_tabs_visible(nav: Navigation) -> bool {
+    !nav.routes()
+        .with(|routes| matches!(routes.last(), Some(Route::Player(_, _))))
+        && !chrome_hidden(nav)
 }
 
 fn desktop_bottom_nav(nav: Navigation) -> View {

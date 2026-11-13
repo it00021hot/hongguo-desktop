@@ -14,6 +14,8 @@ fn LaggingNativePosition() -> impl IntoElement {
         geometry: ui::PlayerGeometry {
             source: signal((720.0, 1280.0)),
             viewport: signal((0.0, 0.0)),
+            comment_anchor: element_ref(),
+            comment_trigger: element_ref(),
         },
         caption: computed(ui::WindowCaption::default),
         paused,

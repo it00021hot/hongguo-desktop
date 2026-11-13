@@ -16,6 +16,10 @@ pub fn LayoutPreview() -> impl IntoElement {
     let motion = signal(false);
     let gestures = signal(false);
     let windows = signal(false);
+    let comments = signal(false);
+    on_key("mod+shift+c", move |_| {
+        comments.set(!comments.get_untracked())
+    });
     on_key("mod+shift+e", move |_| emoji.set(true));
     on_key("mod+shift+d", move |_| motion.set(true));
     on_key("mod+shift+g", move |_| gestures.set(true));
@@ -23,7 +27,7 @@ pub fn LayoutPreview() -> impl IntoElement {
     view()
         .flex_1()
         .child(when(
-            move || !motion.get() && !gestures.get() && !windows.get(),
+            move || !motion.get() && !gestures.get() && !windows.get() && !comments.get(),
             layout_fixture,
         ))
         .child(when(
@@ -43,6 +47,7 @@ pub fn LayoutPreview() -> impl IntoElement {
             crate::player::navigation::preview,
         ))
         .child(when(windows, window::preview))
+        .child(when(comments, crate::player::comments_preview))
         .child(ui::sheet(emoji, "表情离线验证", crate::emoji::fixture))
 }
 

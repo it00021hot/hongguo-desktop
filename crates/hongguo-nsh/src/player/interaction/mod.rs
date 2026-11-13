@@ -1,6 +1,6 @@
 mod api;
 mod comments;
-pub(crate) use comments::{reviews_preview_with_header, reviews_with_header};
+pub(crate) use comments::{comments_preview, reviews_preview_with_header, reviews_with_header};
 pub(super) mod danmaku;
 pub(crate) mod detail_social;
 mod memory;

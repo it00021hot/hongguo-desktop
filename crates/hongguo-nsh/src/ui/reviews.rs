@@ -8,6 +8,7 @@ fn action_surface() -> nsh_base::ButtonElement {
     super::controls::surface(super::ButtonVariant::Quiet)
         .flex_row()
         .min_h_0()
+        .min_w(move || px(if is_desktop() { 0.0 } else { 48.0 }))
         .h(move || px(if is_desktop() { 16.0 } else { 48.0 }))
         .px_0()
         .py_0()

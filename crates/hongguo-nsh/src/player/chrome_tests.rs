@@ -66,6 +66,24 @@ fn playing_idle_hides_after_three_seconds_and_movement_restarts_the_deadline() -
 }
 
 #[test]
+fn phone_controls_remain_available_while_playing_and_hide_when_inactive() -> Result<(), String> {
+    for os in [nsh_core::platform::Os::Ios, nsh_core::platform::Os::Android] {
+        let mut config = EngineConfig::new(Root::of::<Overlay>());
+        config.environment.os = os;
+        config.viewport = nsh_engine::Size::new(px(390.0), px(844.0));
+        config.clock = nsh_core::time::Clock::manual(std::time::SystemTime::UNIX_EPOCH);
+        let mut app = Headless::start(config).map_err(|error| error.to_string())?;
+        app.run_for(HIDE_AFTER + Duration::from_millis(100))?;
+        app.wait_for("text:shown")?;
+        app.press("Quiet")?;
+        app.wait_for("text:shown")?;
+        app.press("Deactivate")?;
+        app.wait_for("text:hidden")?;
+    }
+    Ok(())
+}
+
+#[test]
 fn pause_hover_and_open_panels_keep_the_chrome_visible() -> Result<(), String> {
     for (open, close) in [("Pause", "Play"), ("Hover", "Unhover"), ("Open", "Close")] {
         let mut app = app()?;

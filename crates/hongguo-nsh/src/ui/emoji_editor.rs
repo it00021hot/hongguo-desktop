@@ -19,13 +19,18 @@ mod line;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum EmojiEditorSkin {
-    Body,
+    Comment,
+    Reply,
     Review,
+    ReviewReply,
     Video,
 }
 
 pub(crate) fn emoji_editor_views(skin: EmojiEditorSkin) -> NodeViews {
-    let font = if skin == EmojiEditorSkin::Video {
+    let font = if matches!(
+        skin,
+        EmojiEditorSkin::Video | EmojiEditorSkin::Reply | EmojiEditorSkin::ReviewReply
+    ) {
         12.0
     } else {
         14.0
@@ -89,7 +94,10 @@ pub(crate) fn emoji_editor(
             64.0
         } else if !is_desktop() {
             48.0
-        } else if video {
+        } else if matches!(
+            skin,
+            EmojiEditorSkin::Reply | EmojiEditorSkin::ReviewReply | EmojiEditorSkin::Video
+        ) {
             32.0
         } else {
             36.0
@@ -114,7 +122,15 @@ pub(crate) fn emoji_editor(
         .w_full()
         .h(height)
         .min_h(height)
-        .border(move || px(if video { 0.0 } else { 1.0 }))
+        .border(move || {
+            px(
+                if video || matches!(skin, EmojiEditorSkin::Comment | EmojiEditorSkin::Reply) {
+                    0.0
+                } else {
+                    1.0
+                },
+            )
+        })
         .border_color(move || theme().input)
         .rounded(move || {
             px(if video {
@@ -124,7 +140,9 @@ pub(crate) fn emoji_editor(
             })
         })
         .bg(move || {
-            if skin == EmojiEditorSkin::Review {
+            if matches!(skin, EmojiEditorSkin::Comment | EmojiEditorSkin::Reply) {
+                theme().color("video-picker-cell").expect("comment field")
+            } else if matches!(skin, EmojiEditorSkin::Review | EmojiEditorSkin::ReviewReply) {
                 theme().muted.opacity(0.5)
             } else {
                 theme().background.opacity(0.0)
@@ -147,14 +165,24 @@ fn classes(multiline: bool) -> RichEditorClasses {
 fn styles(skin: EmojiEditorSkin, multiline: bool) -> RichEditorStyles {
     let video = skin == EmojiEditorSkin::Video;
     let color = move || {
-        if video {
+        if video || matches!(skin, EmojiEditorSkin::Comment | EmojiEditorSkin::Reply) {
             theme().color("video-controls").expect("video controls")
         } else {
             theme().foreground
         }
     };
-    let font = if video { 12.0 } else { 14.0 };
-    let line = if video { 16.0 } else { 20.0 };
+    let font = if video || matches!(skin, EmojiEditorSkin::Reply | EmojiEditorSkin::ReviewReply) {
+        12.0
+    } else {
+        14.0
+    };
+    let line = if video {
+        16.0
+    } else if skin == EmojiEditorSkin::Review {
+        24.0
+    } else {
+        20.0
+    };
     let root: Style = StyleRefinement::default()
         .text_size(px(font))
         .line_height(px(line))
@@ -163,7 +191,13 @@ fn styles(skin: EmojiEditorSkin, multiline: bool) -> RichEditorStyles {
         .into();
     let content: Style = StyleRefinement::default()
         .px(px(if video { 0.0 } else { 12.0 }))
-        .py(px(if video || multiline { 8.0 } else { 7.0 }))
+        .py(px(if video || multiline {
+            8.0
+        } else if matches!(skin, EmojiEditorSkin::Reply | EmojiEditorSkin::ReviewReply) {
+            5.0
+        } else {
+            7.0
+        }))
         .min_h(px(line))
         .into();
     let paragraph: Style = StyleRefinement::default()

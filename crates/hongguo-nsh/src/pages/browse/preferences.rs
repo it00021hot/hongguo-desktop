@@ -4,7 +4,11 @@ use nsh_core::{prelude::*, storage::Storage};
 const COLLAPSED_KEY: &str = "hongguo.browseFiltersCollapsed";
 
 pub(super) fn expanded() -> Signal<bool> {
-    signal(Storage::get_item(COLLAPSED_KEY).as_deref() != Some("1"))
+    signal(
+        Storage::get_item(COLLAPSED_KEY)
+            .as_deref()
+            .map_or_else(is_desktop, |value| value != "1"),
+    )
 }
 
 pub(super) fn toggle(expanded: Signal<bool>) {
@@ -46,11 +50,48 @@ mod tests {
     }
 
     fn start(directory: &std::path::Path) -> Result<Headless, String> {
+        start_on(directory, nsh_core::platform::Os::MacOs)
+    }
+
+    fn start_on(
+        directory: &std::path::Path,
+        os: nsh_core::platform::Os,
+    ) -> Result<Headless, String> {
         let mut config = EngineConfig::new(Root::of::<Preference>());
+        config.environment.os = os;
         config.storage = Some(FileStorage::open(directory));
         let mut app = Headless::start(config).map_err(|error| error.to_string())?;
         app.wait_for("Toggle filters")?;
         Ok(app)
+    }
+
+    #[test]
+    fn fresh_mobile_filters_start_collapsed_and_keep_the_users_explicit_choice()
+    -> Result<(), String> {
+        for os in [nsh_core::platform::Os::Ios, nsh_core::platform::Os::Android] {
+            let directory = std::env::temp_dir().join(format!(
+                "hongguo-browse-mobile-preference-{}",
+                uuid::Uuid::new_v4()
+            ));
+            {
+                let mut app = start_on(&directory, os)?;
+                app.wait_for("text:expanded:false")?;
+                app.press("Toggle filters")?;
+                app.wait_for("text:expanded:true")?;
+            }
+            {
+                let mut app = start_on(&directory, os)?;
+                app.wait_for("text:expanded:true")?;
+                app.press("Toggle filters")?;
+                app.wait_for("text:expanded:false")?;
+            }
+            {
+                let mut app = start_on(&directory, os)?;
+                app.wait_for("text:expanded:false")?;
+            }
+            std::fs::remove_dir_all(directory).map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     #[test]
@@ -99,15 +140,25 @@ mod tests {
             }
         }
 
-        let mut config = EngineConfig::new(Root::of::<Preference>());
-        config.storage = Some(Arc::new(Full));
-        let mut app = Headless::start(config).map_err(|error| error.to_string())?;
-        app.wait_for("text:expanded:true")?;
-        app.press("Toggle filters")?;
-        app.wait(Duration::from_millis(32))?;
-        assert!(app.screen().matches("text:expanded:true")?);
-        assert!(!app.screen().matches("text:expanded:false")?);
-        assert_eq!(app.screen().dialogs().len(), 1);
+        for (os, expanded) in [
+            (nsh_core::platform::Os::MacOs, true),
+            (nsh_core::platform::Os::Ios, false),
+            (nsh_core::platform::Os::Android, false),
+        ] {
+            let mut config = EngineConfig::new(Root::of::<Preference>());
+            config.environment.os = os;
+            config.storage = Some(Arc::new(Full));
+            let mut app = Headless::start(config).map_err(|error| error.to_string())?;
+            app.wait_for(&format!("text:expanded:{expanded}"))?;
+            app.press("Toggle filters")?;
+            app.wait(Duration::from_millis(32))?;
+            assert!(app.screen().matches(&format!("text:expanded:{expanded}"))?);
+            assert!(
+                !app.screen()
+                    .matches(&format!("text:expanded:{}", !expanded))?
+            );
+            assert_eq!(app.screen().dialogs().len(), 1);
+        }
         Ok(())
     }
 }

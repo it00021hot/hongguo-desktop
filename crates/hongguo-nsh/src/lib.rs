@@ -76,7 +76,8 @@ pub fn App() -> impl IntoElement {
     let session = resource(|| Some(()), |_, _| bridge::request(bootstrap::open()));
     view()
         .flex_1()
-        .p_safe_area()
+        .pt_safe_area()
+        .px_safe_area()
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
         .child(when(

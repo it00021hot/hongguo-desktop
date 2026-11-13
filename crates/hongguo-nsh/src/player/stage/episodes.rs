@@ -77,11 +77,25 @@ pub(super) fn picker(
 }
 
 fn grid(state: MenuState, busy: Memo<bool>, action: impl Fn(MenuAction) + Copy + 'static) -> View {
+    let width = signal(0.0_f32);
+    let columns = computed(move || {
+        if is_desktop() {
+            ui::PICKER_DESKTOP_COLUMNS
+        } else {
+            ui::picker_mobile_columns(width.get())
+        }
+    });
     effect(move || {
         if state.open.get() != Some(Panel::Episodes) {
             return;
         }
-        for (key, offset) in [("left", -1_isize), ("right", 1), ("up", -8), ("down", 8)] {
+        let stride = columns.get() as isize;
+        for (key, offset) in [
+            ("left", -1_isize),
+            ("right", 1),
+            ("up", -stride),
+            ("down", stride),
+        ] {
             on_key_with(
                 key,
                 KeyOptions {
@@ -117,6 +131,7 @@ fn grid(state: MenuState, busy: Memo<bool>, action: impl Fn(MenuAction) + Copy +
             .with(|episodes| episodes[group_slice(episodes.len(), group.get())].to_vec())
     });
     view()
+        .on_layout(move |bounds: &Bounds<Points>| width.set(bounds.size.width.0))
         .gap_3()
         .child(when(
             move || state.episodes.with(Vec::len) > GROUP_SIZE,
@@ -203,13 +218,13 @@ fn grid(state: MenuState, busy: Memo<bool>, action: impl Fn(MenuAction) + Copy +
             )
             .test_id("player-episode-grid")
             .h(move || {
-                let rows = slice.with(Vec::len).div_ceil(8);
+                let rows = slice.with(Vec::len).div_ceil(columns.get() as usize);
                 px(rows as f32 * if is_desktop() { 36.0 } else { 48.0 }
-                    + rows.saturating_sub(1) as f32 * 8.0)
+                    + rows.saturating_sub(1) as f32 * ui::PICKER_GRID_GAP)
             })
-            .columns(8_u32)
-            .row_gap(px(8.0))
-            .column_gap(px(8.0))
+            .columns(move || columns.get())
+            .row_gap(px(ui::PICKER_GRID_GAP))
+            .column_gap(px(ui::PICKER_GRID_GAP))
             .estimated_item_size(px(if is_desktop() { 36.0 } else { 48.0 }))
             .keys(move || slice.get())
         }))

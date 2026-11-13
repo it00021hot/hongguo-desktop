@@ -18,6 +18,10 @@ pub(crate) enum InlineEmojiPart {
 #[derive(Clone, Copy)]
 pub(crate) enum EmojiTextStyle {
     Body,
+    Comment,
+    Reply,
+    Review,
+    ReviewReply,
     Caption,
     Danmaku(f32),
 }
@@ -34,7 +38,12 @@ pub(crate) fn emoji_trigger(
         .p_1()
         .size(move || px(if is_desktop() { 32.0 } else { 48.0 }))
         .text_color(move || match skin {
-            EmojiTextStyle::Body => theme().foreground,
+            EmojiTextStyle::Body | EmojiTextStyle::Review | EmojiTextStyle::ReviewReply => {
+                theme().foreground
+            }
+            EmojiTextStyle::Comment | EmojiTextStyle::Reply => {
+                theme().color("video-picker-text").expect("picker text")
+            }
             EmojiTextStyle::Caption | EmojiTextStyle::Danmaku(_) => {
                 theme().color("video-controls").expect("controls")
             }
@@ -44,12 +53,19 @@ pub(crate) fn emoji_trigger(
 
 pub(crate) fn emoji_paragraph(parts: Vec<InlineEmojiPart>, style: EmojiTextStyle) -> Text {
     let font_size = match style {
-        EmojiTextStyle::Body => 14.0,
+        EmojiTextStyle::Body | EmojiTextStyle::Comment | EmojiTextStyle::Review => 14.0,
+        EmojiTextStyle::Reply | EmojiTextStyle::ReviewReply => 12.0,
         EmojiTextStyle::Caption => 16.0,
         EmojiTextStyle::Danmaku(size) => size,
     };
     let content = parts.into_iter().map(|part| match part {
-        InlineEmojiPart::Text(value) => text(value).into_element(),
+        InlineEmojiPart::Text(value) => text(value)
+            .font_weight(if matches!(style, EmojiTextStyle::Danmaku(_)) {
+                FontWeight::SEMIBOLD
+            } else {
+                FontWeight::NORMAL
+            })
+            .into_element(),
         InlineEmojiPart::Mention(name) if matches!(style, EmojiTextStyle::Danmaku(_)) => {
             text(format!("@{name}")).into_element()
         }
@@ -86,6 +102,31 @@ pub(crate) fn emoji_paragraph(parts: Vec<InlineEmojiPart>, style: EmojiTextStyle
         EmojiTextStyle::Body => paragraph
             .text_sm()
             .line_height(nsh_core::LineHeight::Multiple(1.375)),
+        EmojiTextStyle::Comment | EmojiTextStyle::Reply => paragraph
+            .text_size(move || px(if is_desktop() { font_size } else { 16.0 }))
+            .font_weight(FontWeight::NORMAL)
+            .line_height(move || {
+                nsh_core::LineHeight::Multiple(if is_desktop() { 1.375 } else { 1.5 })
+            })
+            .text_color(move || {
+                if is_desktop() {
+                    theme().color("video-picker-text").expect("picker text")
+                } else {
+                    theme().foreground
+                }
+            }),
+        EmojiTextStyle::Review | EmojiTextStyle::ReviewReply => paragraph
+            .text_size(move || px(if is_desktop() { font_size } else { 16.0 }))
+            .font_weight(FontWeight::NORMAL)
+            .line_height(move || {
+                nsh_core::LineHeight::Multiple(if !is_desktop() {
+                    1.5
+                } else if matches!(style, EmojiTextStyle::Review) {
+                    1.625
+                } else {
+                    1.375
+                })
+            }),
         EmojiTextStyle::Caption => paragraph
             .text_base()
             .number_of_lines(1)

@@ -55,6 +55,7 @@ pub(crate) fn player_binge(label: impl IntoReactive<SharedString>) -> nsh_base::
         .w_full()
         .h_10()
         .min_h(px(40.0))
+        .style_when(move || !is_desktop(), |style| style.h_12().min_h(px(48.0)))
         .rounded(super::radii::control)
         .bg(move || theme().color("video-binge").expect("video binge token"))
         .hover(|style| {
@@ -75,35 +76,38 @@ pub(crate) fn player_control(label: impl IntoReactive<SharedString>) -> nsh_base
     )
 }
 
-/// The compact phone chrome keeps a 24px visual pill and a larger native touch target.
 pub(crate) fn player_phone_rate(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
     player_surface()
-        .min_h(px(24.0))
-        .h_6()
-        .px_2p5()
-        .py_1()
+        .min_h(move || px(if is_desktop() { 24.0 } else { 48.0 }))
+        .h(move || px(if is_desktop() { 24.0 } else { 48.0 }))
+        .min_w(move || px(if is_desktop() { 0.0 } else { 48.0 }))
+        .p_0()
         .rounded_full()
-        .hit_slop(if is_desktop() { 0.0 } else { 12.0 })
-        .bg(move || {
-            theme()
-                .color("video-surface")
-                .expect("video surface token")
-                .opacity(0.35)
-        })
-        .hover(|style| {
-            style.bg(move || {
-                theme()
-                    .color("video-surface")
-                    .expect("video surface token")
-                    .opacity(0.5)
-            })
-        })
         .child(
-            text(label)
-                .text_xs()
-                .line_height(px(16.0))
-                .font_family("monospace")
-                .font_weight(FontWeight::NORMAL),
+            view()
+                .h(move || px(if is_desktop() { 24.0 } else { 32.0 }))
+                .px_2p5()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .pointer_events(PointerEvents::None)
+                .bg(move || {
+                    theme()
+                        .color("video-surface")
+                        .expect("video surface token")
+                        .opacity(0.35)
+                })
+                .child(
+                    text(label)
+                        .text_xs()
+                        .line_height(px(16.0))
+                        .style_when(
+                            move || !is_desktop(),
+                            |style| style.text_sm().line_height(px(20.0)),
+                        )
+                        .font_family("monospace")
+                        .font_weight(FontWeight::NORMAL),
+                ),
         )
 }
 
@@ -111,6 +115,10 @@ pub(crate) fn player_phone_time(label: impl IntoReactive<SharedString>) -> Text 
     text(label)
         .text_size(px(10.0))
         .line_height(px(15.0))
+        .style_when(
+            move || !is_desktop(),
+            |style| style.text_xs().line_height(px(16.0)),
+        )
         .font_family("monospace")
         .font_weight(FontWeight::NORMAL)
         .text_color(move || {
@@ -123,7 +131,7 @@ pub(crate) fn player_phone_time(label: impl IntoReactive<SharedString>) -> Text 
 
 pub(crate) fn player_title(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
     player_surface()
-        .min_h(px(0.0))
+        .min_h(move || px(if is_desktop() { 0.0 } else { 48.0 }))
         .h(auto())
         .flex_shrink(1.0)
         .min_w_0()
@@ -133,15 +141,20 @@ pub(crate) fn player_title(label: impl IntoReactive<SharedString>) -> nsh_base::
                 .text_sm()
                 .line_height(px(20.0))
                 .min_w_0()
-                .number_of_lines(0_u32)
+                .number_of_lines(move || if is_desktop() { 0_u32 } else { 2_u32 })
+                .style_when(
+                    move || !is_desktop(),
+                    |style| style.text_base().line_height(px(24.0)),
+                )
                 .font_weight(FontWeight::SEMIBOLD),
         )
 }
 
 pub(crate) fn player_inline(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
     player_surface()
-        .min_h(px(0.0))
-        .h_5()
+        .min_h(move || px(if is_desktop() { 0.0 } else { 48.0 }))
+        .h(move || px(if is_desktop() { 20.0 } else { 48.0 }))
+        .min_w(move || px(if is_desktop() { 0.0 } else { 48.0 }))
         .p_0()
         .text_color(move || {
             theme()
@@ -168,6 +181,7 @@ pub(crate) fn player_intro(label: impl IntoReactive<SharedString>) -> Text {
     text(label)
         .text_xs()
         .line_height(px(20.0))
+        .style_when(move || !is_desktop(), |style| style.text_sm())
         .font_weight(FontWeight::NORMAL)
         .text_color(move || {
             theme()
@@ -317,6 +331,31 @@ pub(crate) fn player_chrome(shown: impl IntoReactive<bool>) -> View {
             }
         })
         .ease_out()
+        .child(when(
+            move || !is_desktop() && window().height.0 > window().width.0,
+            || {
+                view()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h_80()
+                    .pointer_events(PointerEvents::None)
+                    .bg_linear_to_t()
+                    .gradient_from(move || {
+                        theme()
+                            .color("video-surface")
+                            .expect("video surface token")
+                            .opacity(0.85)
+                    })
+                    .gradient_to(move || {
+                        theme()
+                            .color("video-surface")
+                            .expect("video surface token")
+                            .opacity(0.0)
+                    })
+            },
+        ))
 }
 
 pub(crate) fn player_icon_button(
@@ -439,7 +478,11 @@ pub(crate) fn player_seek(
                     .opacity(0.6)
             })
         })
-        .thumb_class("opacity-0 hover:opacity-100 focus:opacity-100")
+        .thumb_class(if is_desktop() {
+            "opacity-0 hover:opacity-100 focus:opacity-100"
+        } else {
+            "opacity-100"
+        })
         .thumb_style(|style| {
             style.size(px(12.0)).rounded_full().bg(move || {
                 theme()

@@ -19,17 +19,24 @@ fn LoadingInformation() -> impl IntoElement {
 
 #[test]
 fn loading_information_never_exposes_a_zero_episode_or_an_empty_title() -> Result<(), String> {
-    let mut config = EngineConfig::new(Root::of::<LoadingInformation>().tokens(
-        nsh_base::tokens_of(Some(include_str!("../../../theme.json")))?,
-    ));
-    config.environment.locale =
-        nsh_core::platform::Locale::parse("zh-CN").expect("valid test locale");
-    let mut app = Headless::start(config).map_err(|error| error.to_string())?;
-    app.wait_for("Load")?;
-    assert!(!app.screen().matches("text:@")?);
-    assert!(!app.screen().matches("text:第0集 · 全0集")?);
-    app.press("Load")?;
-    app.wait_for("text:@已加载剧目")?;
-    app.wait_for("text:第1集 · 全80集")?;
+    for (os, title) in [
+        (nsh_core::platform::Os::MacOs, "@已加载剧目"),
+        (nsh_core::platform::Os::Ios, "已加载剧目"),
+        (nsh_core::platform::Os::Android, "已加载剧目"),
+    ] {
+        let mut config = EngineConfig::new(Root::of::<LoadingInformation>().tokens(
+            nsh_base::tokens_of(Some(include_str!("../../../theme.json")))?,
+        ));
+        config.environment.os = os;
+        config.environment.locale =
+            nsh_core::platform::Locale::parse("zh-CN").expect("valid test locale");
+        let mut app = Headless::start(config).map_err(|error| error.to_string())?;
+        app.wait_for("Load")?;
+        assert!(!app.screen().matches("text:@")?);
+        assert!(!app.screen().matches("text:第0集 · 全0集")?);
+        app.press("Load")?;
+        app.wait_for(&format!("text:{title}"))?;
+        app.wait_for("text:第1集 · 全80集")?;
+    }
     Ok(())
 }

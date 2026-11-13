@@ -41,8 +41,8 @@ fn select(app: &mut Headless, key: &str) -> Result<(), String> {
 }
 
 #[test]
-fn choosing_a_series_derives_output_and_mismatch_selects_the_actual_compat_mode()
--> Result<(), String> {
+fn choosing_a_series_derives_output_and_mismatch_selects_the_actual_hevc_mode() -> Result<(), String>
+{
     let mut app = start(Root::of::<Merge>());
     app.wait_for("id:merge-series")?;
     assert!(!app.screen().enabled("role:button[Start merge]")?);
@@ -58,7 +58,7 @@ fn choosing_a_series_derives_output_and_mismatch_selects_the_actual_compat_mode(
         Some("下一段故事")
     );
     assert!(!app.screen().enabled("role:tab[Quick merge]")?);
-    assert!(app.screen().selected("role:tab[Compatible merge]")?);
+    assert!(app.screen().selected("role:tab[HEVC merge]")?);
     assert!(!app.shows("0 B free"));
     select(&mut app, "home")?;
     assert!(app.screen().selected("role:tab[Quick merge]")?);

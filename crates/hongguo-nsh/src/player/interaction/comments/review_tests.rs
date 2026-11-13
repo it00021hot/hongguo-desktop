@@ -4,7 +4,25 @@ use nsh_testing::Headless;
 
 #[component]
 fn Host() -> impl IntoElement {
-    super::reviews_preview_with_header(view().child(text("详情页头")))
+    let visible = signal(None::<super::list_view::VisibleRows>);
+    provide_context(super::list_view::ViewabilityProbe(visible));
+    view()
+        .flex_1()
+        .child(super::reviews_preview_with_header(
+            view().child(text("详情页头")),
+        ))
+        .child(
+            view()
+                .absolute()
+                .top_0()
+                .left_0()
+                .pointer_events(PointerEvents::None)
+                .child(text(move || {
+                    visible.get().map_or_else(String::new, |range| {
+                        format!("viewable:{}:{}:{}", range.first, range.last, range.key)
+                    })
+                })),
+        )
 }
 
 fn start() -> Result<Headless, String> {
@@ -74,16 +92,34 @@ fn review_rows_recycle_to_current_identity_and_keep_nonempty_reply_content() -> 
     app.press("id:comment-review-preview-0 >> role:button[点赞 12]")?;
     app.wait_for("id:comment-review-preview-0 >> role:button[已点赞 13]")?;
     app.scroll("id:reviews-list", px(7000.0))?;
-    let current = app
-        .screen()
-        .texts()
-        .into_iter()
-        .find(|text| text.starts_with("第") && text.ends_with("位观众"))
-        .ok_or("no recycled review row")?;
-    assert_ne!(current, "第1位观众");
+    app.wait_until(
+        "actual viewable range moves beyond the first review",
+        std::time::Duration::from_secs(2),
+        |screen| visible_row(screen).is_some_and(|(first, _)| first > 10),
+    )?;
+    let (first, current) = visible_row(app.screen()).ok_or("no viewable review")?;
+    assert!(first > 10);
+    assert_ne!(current, "review-preview-0");
+    app.press(&format!("id:comment-{current} >> role:button[点赞 12]"))?;
+    app.wait_for(&format!("id:comment-{current} >> role:button[已点赞 13]"))?;
     app.scroll("id:reviews-list", px(-7000.0))?;
+    app.wait_until(
+        "actual viewable range returns to the first review",
+        std::time::Duration::from_secs(2),
+        |screen| visible_row(screen).is_some_and(|(first, _)| first == 0),
+    )?;
     app.wait_for("id:comment-review-preview-0 >> role:button[已点赞 13]")?;
     Ok(())
+}
+
+fn visible_row(screen: &nsh_testing::Screen) -> Option<(usize, String)> {
+    screen.texts().into_iter().find_map(|text| {
+        let mut fields = text.strip_prefix("viewable:")?.splitn(3, ':');
+        let first = fields.next()?.parse().ok()?;
+        let _last = fields.next()?;
+        let id = fields.next()?.strip_prefix("root:")?.to_owned();
+        Some((first, id))
+    })
 }
 
 #[test]

@@ -2,6 +2,16 @@ use super::{Icon, icon, motion::FAST_MS, radii};
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
+pub(crate) const PICKER_GRID_GAP: f32 = 8.0;
+pub(crate) const PICKER_DESKTOP_COLUMNS: u32 = 8;
+const PICKER_TOUCH_SIZE: f32 = 48.0;
+
+pub(crate) fn picker_mobile_columns(available_width: f32) -> u32 {
+    ((available_width + PICKER_GRID_GAP) / (PICKER_TOUCH_SIZE + PICKER_GRID_GAP))
+        .floor()
+        .clamp(1.0, PICKER_DESKTOP_COLUMNS as f32) as u32
+}
+
 pub(crate) fn picker_color(name: &str) -> AdaptiveColor {
     theme().color(name).expect("player picker theme token")
 }
@@ -20,6 +30,8 @@ pub(crate) fn picker_tab(
     nsh_base::button()
         .accessibility_label(move || Some(label.get()))
         .selected(selected)
+        .min_h(move || px(if is_desktop() { 0.0 } else { PICKER_TOUCH_SIZE }))
+        .min_w(move || px(if is_desktop() { 0.0 } else { PICKER_TOUCH_SIZE }))
         .relative()
         .flex_row()
         .items_center()
@@ -196,4 +208,22 @@ pub(crate) fn picker_play(label: impl IntoReactive<SharedString>) -> View {
         .text_color(move || picker_color("video-picker-text"))
         .child(icon(Icon::Play).size_3())
         .child(text(label).text_xs().line_height(px(16.0)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mobile_columns_keep_each_episode_touch_target_at_least_48_points() {
+        assert_eq!(picker_mobile_columns(0.0), 1);
+        assert_eq!(picker_mobile_columns(288.0), 5);
+        assert_eq!(picker_mobile_columns(368.0), 6);
+        assert_eq!(picker_mobile_columns(1_024.0), PICKER_DESKTOP_COLUMNS);
+        for width in [288.0, 328.0, 358.0, 368.0, 480.0] {
+            let columns = picker_mobile_columns(width);
+            let cell_width = (width - (columns - 1) as f32 * PICKER_GRID_GAP) / columns as f32;
+            assert!(cell_width >= PICKER_TOUCH_SIZE);
+        }
+    }
 }

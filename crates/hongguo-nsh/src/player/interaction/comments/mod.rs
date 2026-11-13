@@ -1,10 +1,13 @@
+mod actions;
 mod api;
 mod composer;
 mod focus;
 mod list_view;
 mod model;
 mod preview;
-pub(crate) use preview::reviews_preview_with_header;
+pub(crate) use preview::{comments_preview, reviews_preview_with_header};
+#[cfg(test)]
+mod click_tests;
 mod review_form;
 mod review_model;
 #[cfg(test)]
@@ -13,6 +16,7 @@ mod row;
 mod row_view;
 #[cfg(test)]
 mod tests;
+mod threads;
 
 use super::Target;
 use crate::{
@@ -36,6 +40,8 @@ struct ComposerContext {
     logged_in: Memo<bool>,
     reviews: bool,
     focus: focus::Focus,
+    threads: threads::Threads,
+    reply_state: Option<threads::ReplyThread>,
 }
 
 pub(crate) fn reviews_with_header(
@@ -52,7 +58,7 @@ pub(crate) fn reviews_with_header(
         collections: 0,
         comments: 0,
     });
-    thread_with_header(session, nav, target, Thread::Reviews, None, header)
+    thread_with_header(session, nav, target, Thread::Reviews, header, None)
 }
 
 pub(super) fn panel(
@@ -62,22 +68,12 @@ pub(super) fn panel(
     _logged_in: bool,
     open: Signal<bool>,
 ) -> impl IntoElement {
-    ui::sheet(
-        open,
-        move || tr("player.comments.title"),
-        move || thread(session, nav, target, false, Thread::Comments, None),
-    )
-}
-
-fn thread(
-    session: SessionHandle,
-    nav: Navigation,
-    target: Stored<Target>,
-    _logged_in: bool,
-    kind: Thread,
-    parent_feed: Option<Signal<Feed>>,
-) -> View {
-    thread_with_header(session, nav, target, kind, parent_feed, view())
+    let total = signal(0);
+    let geometry =
+        use_context::<ui::PlayerGeometry>().expect("player geometry owns the comment panel");
+    ui::comment_panel(open, total, geometry, move || {
+        thread_with_header(session, nav, target, Thread::Comments, view(), Some(total))
+    })
 }
 
 fn thread_with_header(
@@ -85,17 +81,16 @@ fn thread_with_header(
     nav: Navigation,
     target: Stored<Target>,
     kind: Thread,
-    parent_feed: Option<Signal<Feed>>,
     header: View,
+    total: Option<Signal<i64>>,
 ) -> View {
     let reviews = kind.is_review();
     let root_review = matches!(kind, Thread::Reviews);
-    let parent = stored(
-        kind.parent()
-            .and_then(|id| parent_feed.map(|feed| (feed, id.to_owned()))),
-    );
     let kind = stored(kind);
     let feed = signal(Feed::default());
+    if let Some(total) = total {
+        effect(move || total.set(feed.with(|feed| feed.total)));
+    }
     let cursor = signal(String::new());
     let reply_to = signal(None::<(String, String)>);
     let message = signal(SharedString::default());
@@ -120,6 +115,16 @@ fn thread_with_header(
         }
     });
     let logged_in = computed(move || account.get().is_some());
+    let threads = threads::Threads::new(feed, account, move |parent, cursor| {
+        let state = session.with(|session| session.state.clone());
+        let target = target.get();
+        let kind = if reviews {
+            Thread::ReviewReplies(parent)
+        } else {
+            Thread::Replies(parent)
+        };
+        bridge::request(api::load(state, target, kind, cursor))
+    });
     let context = ComposerContext {
         session,
         nav,
@@ -127,6 +132,8 @@ fn thread_with_header(
         logged_in,
         reviews,
         focus: focus::Focus::new(),
+        threads,
+        reply_state: None,
     };
     let loaded = resource(
         move || Some((cursor.get(), account.get())),
@@ -149,7 +156,7 @@ fn thread_with_header(
             feed.update(|feed| feed.append(page, &cursor));
         }
     });
-    let form = move || composer(context, kind, feed, parent_feed, reply_to, message).into_element();
+    let form = move || composer(context, kind, feed, None, reply_to, message).into_element();
     let footer = move || {
         view()
             .gap_2()
@@ -185,30 +192,21 @@ fn thread_with_header(
             .child(ui::status(message))
     };
     let empty = move || {
-        ui::status(move || {
-            if loaded.loading() || loaded.error().is_some() {
-                SharedString::default()
-            } else {
-                tr(if root_review {
-                    "detail.commentsEmpty"
+        ui::comment_notice(
+            move || {
+                if loaded.loading() || loaded.error().is_some() {
+                    SharedString::default()
                 } else {
-                    "player.comments.empty"
-                })
-            }
-        })
+                    tr(if root_review {
+                        "detail.commentsEmpty"
+                    } else {
+                        "player.comments.empty"
+                    })
+                }
+            },
+            reviews,
+        )
     };
-    if reviews && !root_review {
-        return view()
-            .gap_2()
-            .child(each(
-                move || feed.get().items,
-                |item: &Item| item.id().to_owned(),
-                move |item, _| row(context, item, feed, reply_to, parent),
-            ))
-            .child(empty())
-            .child(form())
-            .child(footer());
-    }
     let header = if root_review {
         view()
             .child(header)
@@ -253,8 +251,9 @@ fn thread_with_header(
         .focusable(true)
         .flex_1()
         .min_h_0()
-        .child(list_view::list(
+        .child(list_view::thread_list(
             feed,
+            threads,
             header,
             list_footer,
             empty(),
@@ -263,14 +262,111 @@ fn thread_with_header(
             } else {
                 "comments-list"
             },
-            move |item| {
-                let content = row(context, item, feed, reply_to, parent);
+            move |entry| {
+                let content = match entry.get_untracked() {
+                    threads::Entry::Root(_) => view().child(each(
+                        move || match entry.get() {
+                            threads::Entry::Root(item) => vec![item],
+                            _ => Vec::new(),
+                        },
+                        |item: &Item| item.id().to_owned(),
+                        move |item, _| row(context, item, feed, reply_to, stored(None)),
+                    )),
+                    threads::Entry::Reply { parent, .. } => {
+                        let thread = threads
+                            .get(&parent)
+                            .expect("reply entry belongs to its thread");
+                        let parent = stored(Some((feed, parent)));
+                        ui::comment_thread_row(
+                            each(
+                                move || match entry.get() {
+                                    threads::Entry::Reply { item, .. } => vec![item],
+                                    _ => Vec::new(),
+                                },
+                                |item: &Item| item.id().to_owned(),
+                                move |item, _| {
+                                    row(
+                                        ComposerContext {
+                                            reply_state: Some(thread),
+                                            ..context
+                                        },
+                                        item,
+                                        thread.feed,
+                                        thread.recipient,
+                                        parent,
+                                    )
+                                },
+                            ),
+                            reviews,
+                        )
+                    }
+                    threads::Entry::Footer(parent) => {
+                        let footer = reply_footer(
+                            threads.get(&parent).expect("footer belongs to its thread"),
+                        );
+                        if reviews {
+                            footer
+                                .pb_4()
+                                .border_b_1()
+                                .border_color(move || nsh_base::theme().border)
+                        } else {
+                            footer
+                        }
+                    }
+                };
                 if root_review {
                     ui::detail_section().child(content).into_element()
                 } else {
-                    content.into_element()
+                    view().px_4().child(content).into_element()
                 }
             },
         ))
-        .child(when(move || !root_review, form))
+        .child(when(
+            move || !root_review,
+            move || {
+                view()
+                    .p_3()
+                    .border_t_1()
+                    .border_color(move || {
+                        nsh_base::theme()
+                            .color("video-controls")
+                            .expect("controls")
+                            .opacity(0.1)
+                    })
+                    .child(form())
+            },
+        ))
+}
+
+fn reply_footer(thread: threads::ReplyThread) -> View {
+    view()
+        .pl_12()
+        .gap_2()
+        .child(when(
+            move || thread.loaded.loading(),
+            move || ui::status(move || tr("common.loading")),
+        ))
+        .child(when(
+            move || thread.loaded.error().is_some(),
+            move || {
+                crate::pages::error_state(
+                    move || {
+                        thread
+                            .loaded
+                            .error()
+                            .map_or_else(SharedString::default, |error| error.text())
+                    },
+                    move || thread.loaded.refetch(),
+                )
+            },
+        ))
+        .child(when(
+            move || thread.feed.with(|feed| feed.has_more),
+            move || {
+                ui::review_link(move || tr("player.emoticon.loadMore"))
+                    .disabled(move || thread.loaded.loading())
+                    .on_press(move || thread.cursor.set(thread.feed.get_untracked().cursor))
+            },
+        ))
+        .child(ui::status(thread.message))
 }

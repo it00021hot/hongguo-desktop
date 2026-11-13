@@ -2,6 +2,9 @@
   "nsh": {
     "exportFile": "Export file",
     "exportCompleted": "File exported",
+    "privateDirectory": "App private directory",
+    "privateDownloadDirectoryHint": "Downloads stay in the app. Export files from Tasks.",
+    "privateCacheDirectoryHint": "Cache is managed by the app. Use the cleanup controls below.",
     "previewAction": "Preview action: {action}",
     "proxyAddress": "Proxy address",
     "cacheLimitHint": "MB; 0 means unlimited. Maximum 1048576 MB.",

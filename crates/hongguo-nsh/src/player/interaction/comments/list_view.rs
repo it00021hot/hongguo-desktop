@@ -1,40 +1,66 @@
-use super::model::{Feed, Item};
+use super::model::Feed;
 use nsh_core::prelude::*;
 
-/// The sole scrolling owner. Header/footer participate in layout and row recycling.
-pub(super) fn list(
+#[cfg(test)]
+#[derive(Clone, PartialEq)]
+pub(super) struct VisibleRows {
+    pub first: usize,
+    pub last: usize,
+    pub key: String,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(super) struct ViewabilityProbe(pub Signal<Option<VisibleRows>>);
+
+pub(super) fn thread_list(
     feed: Signal<Feed>,
+    threads: super::threads::Threads,
     header: View,
     footer: View,
     empty: impl IntoElement,
     id: &'static str,
-    row: impl Fn(ReadSignal<Item>) -> AnyElement + 'static,
+    row: impl Fn(ReadSignal<super::threads::Entry>) -> AnyElement + 'static,
 ) -> View {
-    let row = stored(Box::new(row) as Box<dyn Fn(ReadSignal<Item>) -> AnyElement>);
-    view().flex_1().min_h_0().child(
-        virtual_list(
-            move || feed.with(|feed| feed.items.len()),
-            move |at| {
-                let item = computed(move || feed.with(|feed| feed.items.get(at.index()).cloned()));
-                view().child(each(
-                    move || item.get().into_iter().collect::<Vec<_>>(),
-                    |item: &Item| item.id().to_owned(),
-                    move |item, _| row.with(|row| row(item)),
-                ))
-            },
-        )
-        .test_id(id)
-        .keys(move || {
-            feed.with(|feed| {
-                feed.items
-                    .iter()
-                    .map(|item| item.id().to_owned())
-                    .collect::<Vec<_>>()
-            })
-        })
-        .header(header)
-        .footer(footer)
-        .empty(empty)
-        .flex_1(),
+    let entries = super::threads::entries(feed, threads);
+    let row = stored(Box::new(row) as Box<dyn Fn(ReadSignal<super::threads::Entry>) -> AnyElement>);
+    let list = virtual_list(
+        move || entries.with(Vec::len),
+        move |at| {
+            let entry = computed(move || entries.with(|rows| rows.get(at.index()).cloned()));
+            view().child(each(
+                move || entry.get().into_iter().collect::<Vec<_>>(),
+                super::threads::Entry::key,
+                move |entry, _| row.with(|row| row(entry)),
+            ))
+        },
     )
+    .test_id(id)
+    .keys(move || {
+        entries.with(|rows| {
+            rows.iter()
+                .map(super::threads::Entry::key)
+                .collect::<Vec<_>>()
+        })
+    })
+    .header(header)
+    .footer(footer)
+    .empty(empty)
+    .flex_1();
+    #[cfg(test)]
+    let list = if let Some(probe) = use_context::<ViewabilityProbe>() {
+        list.on_viewable_items_change(move |items: &nsh_core::element::ViewableItems| {
+            probe.0.set(items.viewable.map(|(first, last)| VisibleRows {
+                first,
+                last,
+                key: entries.with(|rows| {
+                    rows.get(first)
+                        .map_or_else(String::new, super::threads::Entry::key)
+                }),
+            }));
+        })
+    } else {
+        list
+    };
+    view().flex_1().min_h_0().child(list)
 }
