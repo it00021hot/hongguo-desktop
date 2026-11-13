@@ -122,6 +122,11 @@ HONGGUO_NSH_MACOS_PIXEL_TEST=1 node --test scripts/nsh-macos-pixel.test.mjs
 再校验屏幕像素，不能用 GPU 完成回调代替实际出画。Metal 图层须在获取 drawable 前显示，
 在隐藏层上提交后才解除隐藏会出现声音与进度正常但画面黑屏。
 
+Apple 播放设备使用 WGPU downlevel limits，并保留适配器实际纹理尺寸上限。
+iOS 模拟器 Metal 的 shader variables 上限可能只有15，直接使用 WebGPU 默认16会在
+创建设备时失败；也不能整份要求适配器全部 limits，因为部分上限需要额外 feature。
+回归同时检查设备能力匹配、1080P 竖屏放大所需纹理尺寸与未启用的 IMMEDIATES。
+
 本机环境已补齐 JDK 21、Gradle wrapper、Android SDK 37.0、NDK 30.0.16248370、
 平台工具与 API 37 ARM64 模拟器；Xcode 27.2、iOS SDK 与模拟器运行环境已安装。
 环境变量保存在用户目录的 .config/hongguo/mobile-env.zsh，由 .zshenv 引入。

@@ -37,7 +37,10 @@ impl MetalSurface {
             .await
             .map_err(gpu_error)?;
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: device_limits(adapter.limits()),
+                ..Default::default()
+            })
             .await
             .map_err(gpu_error)?;
         let mut config = surface.get_default_config(&adapter, 1, 1).ok_or_else(|| {
@@ -247,6 +250,12 @@ fn gpu_error(error: impl std::fmt::Display) -> OutputError {
     OutputError::new(ErrorCode::GpuFailed, error.to_string())
 }
 
+fn device_limits(supported: wgpu::Limits) -> wgpu::Limits {
+    // iOS Metal can expose fewer shader variables than WebGPU defaults; keep
+    // conservative requirements while retaining portrait texture capacity.
+    wgpu::Limits::downlevel_defaults().using_resolution(supported)
+}
+
 fn fit_transform(
     source_width: u32,
     source_height: u32,
@@ -275,6 +284,25 @@ fn fit_transform(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mobile_device_limits_fit_the_adapter_and_preserve_portrait_upscaling() {
+        let supported =
+            wgpu::Limits::downlevel_defaults().using_resolution(wgpu::Limits::default());
+        let required = device_limits(supported.clone());
+        assert!(
+            required.check_limits(&supported),
+            "device creation must respect the adapter limits"
+        );
+        assert!(
+            required.max_texture_dimension_2d >= 3_840,
+            "1080p portrait upscaling must retain the adapter texture capacity"
+        );
+        assert_eq!(
+            required.max_immediate_size, 0,
+            "the renderer does not request the IMMEDIATES feature"
+        );
+    }
 
     #[test]
     fn contain_leaves_centered_bars_and_cover_crops_the_same_center() {
