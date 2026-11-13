@@ -8,6 +8,8 @@ pub(in crate::player) use preview::layer as preview_layer;
 mod preferences;
 pub(crate) use preferences::DanmakuPreferences;
 #[cfg(test)]
+mod composer_tests;
+#[cfg(test)]
 mod overlay_tests;
 #[cfg(test)]
 mod settings_tests;
@@ -140,17 +142,22 @@ impl Handle {
         let pending = signal(false);
         crate::player::stage::composer(
             editor,
-            move || !logged_in.get() || pending.get(),
+            move || pending.get(),
             crate::player::stage::ComposerEvents {
                 emoji: Some(crate::emoji::system_picker(editor, next).into_element()),
                 previous,
                 next,
                 send: Box::new(move || {
-                    if pending.get_untracked() || !logged_in.get_untracked() {
+                    if pending.get_untracked() {
                         return;
                     }
                     let text = draft.get_untracked();
                     if text.trim().is_empty() {
+                        return;
+                    }
+                    if !logged_in.get_untracked() {
+                        self.error
+                            .set(crate::i18n::tr("player.interact.loginRequired"));
                         return;
                     }
                     let timeline = self.timeline.get_untracked();

@@ -99,6 +99,8 @@ pub(crate) fn controls<E: IntoElement>(
     let action = stored(Box::new(action) as Box<dyn Fn(ControlAction)>);
     let dragging = signal(false);
     let seek = signal(state.position.get_untracked().0);
+    let toolbar_wrapped =
+        computed(move || super::desktop_toolbar_wrapped(state.geometry.viewport.get().0));
     effect(move || {
         let position = state.position.get();
         if state.busy.get() {
@@ -240,6 +242,7 @@ pub(crate) fn controls<E: IntoElement>(
                             .flex_row()
                             .items_center()
                             .gap_1()
+                            .style_when(toolbar_wrapped, |style| style.flex_wrap())
                             .child(
                                 ui::player_toggle_icon(
                                     Icon::Play,
@@ -303,6 +306,9 @@ pub(crate) fn controls<E: IntoElement>(
                                     .flex_row()
                                     .items_center()
                                     .gap_1()
+                                    .style_when(toolbar_wrapped, |style| {
+                                        style.basis(percentage(1.0)).w_full().justify_end()
+                                    })
                                     .child(menus::rate(
                                         state.menus,
                                         state.rate,
@@ -443,7 +449,15 @@ pub(crate) fn controls<E: IntoElement>(
                 .left_3()
                 .right_3()
                 .z_index(10)
-                .bottom(move || px(if compact() { 40.0 } else { 56.0 }))
+                .bottom(move || {
+                    px(if compact() {
+                        40.0
+                    } else if toolbar_wrapped.get() {
+                        56.0 + super::DESKTOP_TOOLBAR_EXTRA_HEIGHT
+                    } else {
+                        56.0
+                    })
+                })
                 .style_when(
                     move || !is_desktop() && compact(),
                     |style| style.left_4().right_4().bottom_20(),
