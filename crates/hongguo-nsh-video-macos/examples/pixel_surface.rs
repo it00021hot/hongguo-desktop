@@ -20,6 +20,8 @@ mod probe {
     const PAUSE_TOLERANCE_MS: u64 = 100;
     const SEEK_MS: u64 = 1_000;
     const RESUMED_MS: u64 = 1_250;
+    const RESIZE_POLL_MS: u64 = 100;
+    const SIDEBAR_ANIMATION_MS: f32 = 120.0;
 
     struct Checker {
         frame: Arc<PixelFrame>,
@@ -92,69 +94,124 @@ mod probe {
         props.active = true;
         props.paused = false;
         let props = signal(props);
+        let resize_control = std::env::args().nth(3);
+        let resizing = resize_control.is_some();
+        let collapsed = signal(false);
+        if let Some(control) = resize_control {
+            set_interval(
+                std::time::Duration::from_millis(RESIZE_POLL_MS),
+                move || {
+                    let value =
+                        std::fs::read_to_string(&control).expect("read owned resize control");
+                    let next = match value.as_str() {
+                        "expanded" => false,
+                        "collapsed" => true,
+                        _ => panic!("invalid resize control state"),
+                    };
+                    if collapsed.get_untracked() != next {
+                        collapsed.set(next);
+                    }
+                },
+            );
+        }
         let phase = signal(0_u8);
         let position = signal(0_u64);
         let reference = element_ref();
-        view().flex_1().child(
-            native(COMPONENT_NAME)
-                .flex_1()
-                .element_ref(&reference)
-                .prop(STATE_PROP, move || {
-                    serde_json::to_value(props.get()).unwrap()
-                })
-                .on_native_event(move |event: &nsh_core::element::NativeEvent| {
-                    match serde_json::from_value::<VideoEvent>(event.data.clone())
-                        .expect("typed native event")
-                    {
-                        VideoEvent::Error { code, detail, .. } => {
-                            panic!("pixel surface regression: {code:?}: {detail}")
-                        }
-                        VideoEvent::Progress { position_ms, .. } => {
-                            position.set(position_ms);
-                            if phase.get_untracked() == 0 && position_ms >= PAUSE_MS {
-                                phase.set(1);
-                                props.update(|props| props.paused = true);
+        let video = view()
+            .flex_1()
+            .on_layout(move |bounds: &Bounds<Points>| {
+                if resizing {
+                    log::info!(
+                        "PIXEL_LAYOUT {}x{}",
+                        bounds.size.width.0,
+                        bounds.size.height.0
+                    );
+                }
+            })
+            .child(
+                native(COMPONENT_NAME)
+                    .flex_1()
+                    .element_ref(&reference)
+                    .prop(STATE_PROP, move || {
+                        serde_json::to_value(props.get()).unwrap()
+                    })
+                    .on_native_event(move |event: &nsh_core::element::NativeEvent| {
+                        match serde_json::from_value::<VideoEvent>(event.data.clone())
+                            .expect("typed native event")
+                        {
+                            VideoEvent::Error { code, detail, .. } => {
+                                panic!("pixel surface regression: {code:?}: {detail}")
+                            }
+                            VideoEvent::Progress { position_ms, .. } => {
+                                position.set(position_ms);
+                                if phase.get_untracked() == 0 && position_ms >= PAUSE_MS {
+                                    phase.set(1);
+                                    props.update(|props| props.paused = true);
+                                    spawn(async move {
+                                        timer(std::time::Duration::from_millis(PAUSE_MS)).await;
+                                        assert!(
+                                            position.get_untracked().abs_diff(position_ms)
+                                                <= PAUSE_TOLERANCE_MS,
+                                            "audio clock advanced while paused"
+                                        );
+                                        let mut request = Seek::default();
+                                        request.source_id = "pixel-surface".into();
+                                        request.request_id = "paused-seek".into();
+                                        request.position_ms = SEEK_MS;
+                                        reference.command(
+                                            SEEK_COMMAND,
+                                            serde_json::to_value(request).unwrap(),
+                                        );
+                                    });
+                                } else if phase.get_untracked() == 2 && position_ms >= RESUMED_MS {
+                                    phase.set(3);
+                                    if resizing {
+                                        props.update(|props| props.paused = true);
+                                    }
+                                    log::info!("PIXEL_SCENARIO_COMPLETE");
+                                }
+                            }
+                            VideoEvent::Seeked {
+                                request_id,
+                                position_ms,
+                                ..
+                            } if request_id == "paused-seek" => {
+                                assert!(
+                                    position_ms.abs_diff(SEEK_MS) <= PAUSE_TOLERANCE_MS,
+                                    "native seek did not reach the requested time"
+                                );
+                                assert!(props.get_untracked().paused);
                                 spawn(async move {
                                     timer(std::time::Duration::from_millis(PAUSE_MS)).await;
-                                    assert!(
-                                        position.get_untracked().abs_diff(position_ms)
-                                            <= PAUSE_TOLERANCE_MS,
-                                        "audio clock advanced while paused"
-                                    );
-                                    let mut request = Seek::default();
-                                    request.source_id = "pixel-surface".into();
-                                    request.request_id = "paused-seek".into();
-                                    request.position_ms = SEEK_MS;
-                                    reference.command(
-                                        SEEK_COMMAND,
-                                        serde_json::to_value(request).unwrap(),
-                                    );
+                                    phase.set(2);
+                                    props.update(|props| props.paused = false);
                                 });
-                            } else if phase.get_untracked() == 2 && position_ms >= RESUMED_MS {
-                                phase.set(3);
-                                log::info!("PIXEL_SCENARIO_COMPLETE");
                             }
+                            _ => {}
                         }
-                        VideoEvent::Seeked {
-                            request_id,
-                            position_ms,
-                            ..
-                        } if request_id == "paused-seek" => {
-                            assert!(
-                                position_ms.abs_diff(SEEK_MS) <= PAUSE_TOLERANCE_MS,
-                                "native seek did not reach the requested time"
-                            );
-                            assert!(props.get_untracked().paused);
-                            spawn(async move {
-                                timer(std::time::Duration::from_millis(PAUSE_MS)).await;
-                                phase.set(2);
-                                props.update(|props| props.paused = false);
-                            });
-                        }
-                        _ => {}
-                    }
-                }),
-        )
+                    }),
+            );
+        if resizing {
+            view()
+                .flex_1()
+                .flex_row()
+                .child(
+                    view()
+                        .flex_shrink_0()
+                        .w(move || px(if collapsed.get() { 56.0 } else { 224.0 }))
+                        .transition_all()
+                        .duration(move || {
+                            if reduce_motion() {
+                                0.0
+                            } else {
+                                SIDEBAR_ANIMATION_MS
+                            }
+                        }),
+                )
+                .child(video)
+        } else {
+            video
+        }
     }
 
     pub fn run() -> impl std::process::Termination {

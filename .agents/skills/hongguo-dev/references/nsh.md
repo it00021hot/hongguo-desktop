@@ -135,6 +135,9 @@ HONGGUO_NSH_MACOS_PIXEL_TEST=1 node --test scripts/nsh-macos-pixel.test.mjs
 默认跳过 GUI；显式运行时仅按测试进程 PID 截图并清理。测试先完成暂停、暂停时 seek、恢复，
 再校验屏幕像素，不能用 GPU 完成回调代替实际出画。Metal 图层须在获取 drawable 前显示，
 在隐藏层上提交后才解除隐藏会出现声音与进度正常但画面黑屏。
+测试还会在暂停的同一帧上连续切换 224/56 点侧栏，以实际屏幕采样检查视频是否填满更新后的区域。
+Apple 渲染线程没有 Cocoa run loop，更新 Metal 图层尺寸后必须 flush 图层事务；
+仅 commit 显式事务可能留下 WGPU 创建的隐式外层事务，导致布局已变而画面保留旧宽度。
 
 Apple 播放设备使用 WGPU downlevel limits，并保留适配器实际纹理尺寸上限。
 iOS 模拟器 Metal 的 shader variables 上限可能只有15，直接使用 WebGPU 默认16会在

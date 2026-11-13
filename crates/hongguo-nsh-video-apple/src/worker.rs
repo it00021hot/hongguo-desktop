@@ -175,6 +175,8 @@ impl Worker {
             self.layers.metal.setFrame(frame);
             self.layers.metal.setContentsScale(viewport.scale_factor);
             CATransaction::commit();
+            // WGPU can leave an implicit outer transaction on this thread without a Cocoa run loop.
+            CATransaction::flush();
         }
         if changed_source {
             self.layers.set_visible(false);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { access, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,7 +16,7 @@ const shutdownTimeout = 5_000;
 const scenarioComplete = 'PIXEL_SCENARIO_COMPLETE';
 
 test(
-  'macOS native window displays checker and decoded HEVC pixels',
+  'macOS native window displays pixels and follows animated sidebar resizing',
   { skip: !enabled, timeout: 150_000 },
   async (context) => {
     const binary = join(root, 'target/debug/examples/pixel_surface');
@@ -41,6 +41,7 @@ test(
     for (const mode of ['checker', 'hevc']) {
       await verifyWindow({ binary, helper, audio, directory, mode });
     }
+    await verifyWindow({ binary, helper, audio, directory, mode: 'checker', resize: true });
   },
 );
 
@@ -51,8 +52,10 @@ function run(command, args) {
   return result.stdout;
 }
 
-async function verifyWindow({ binary, helper, audio, directory, mode }) {
-  const child = spawn(binary, [pathToFileURL(audio).href, mode], {
+async function verifyWindow({ binary, helper, audio, directory, mode, resize = false }) {
+  const control = resize ? join(directory, 'resize-control') : undefined;
+  if (control) await writeFile(control, 'expanded');
+  const child = spawn(binary, [pathToFileURL(audio).href, mode, ...(control ? [control] : [])], {
     cwd: root,
     env: { ...process.env, RUST_LOG: 'info' },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -81,6 +84,10 @@ async function verifyWindow({ binary, helper, audio, directory, mode }) {
       }
       const { windowID } = JSON.parse(run(helper, ['window', String(child.pid)]));
       if (windowID !== null) {
+        if (control) {
+          await verifyResize({ child, helper, windowID, control, directory });
+          return;
+        }
         run('/usr/sbin/screencapture', ['-x', '-o', '-l', String(windowID), screenshot]);
         const result = spawnSync(helper, ['analyze', screenshot, mode], {
           encoding: 'utf8',
@@ -105,7 +112,40 @@ async function verifyWindow({ binary, helper, audio, directory, mode }) {
     assert.fail(`${mode} never displayed expected pixels for PID ${child.pid}: ${last}\n${output}`);
   } finally {
     await stop(child, exited);
-    await writeFile(join(directory, `${mode}.log`), output);
+    await writeFile(join(directory, `${mode}${resize ? '-resize' : ''}.log`), output);
+  }
+}
+
+async function verifyResize({ child, helper, windowID, control, directory }) {
+  for (const [index, state] of ['expanded', 'collapsed', 'expanded', 'collapsed'].entries()) {
+    const next = `${control}.next`;
+    await writeFile(next, state);
+    await rename(next, control);
+    const screenshot = join(directory, `resize-${index}-${state}.png`);
+    const deadline = Date.now() + paintTimeout;
+    let last = 'No resized pixels appeared';
+    while (Date.now() < deadline) {
+      assert.equal(child.exitCode, null, 'Resize probe exited early');
+      assert.equal(child.signalCode, null, 'Resize probe terminated early');
+      run('/usr/sbin/screencapture', ['-x', '-o', '-l', String(windowID), screenshot]);
+      const result = spawnSync(
+        helper,
+        ['analyze-resize', screenshot, state === 'expanded' ? '224' : '56'],
+        {
+          encoding: 'utf8',
+          timeout: commandTimeout,
+        },
+      );
+      assert.ifError(result.error);
+      assert.ok(result.status === 0 || result.status === 1, result.stderr);
+      last = result.stdout.trim();
+      if (result.status === 0) {
+        await writeFile(join(directory, `resize-${index}-${state}.json`), `${last}\n`);
+        break;
+      }
+      await delay(pollInterval);
+    }
+    assert.equal(JSON.parse(last).passed, true, `${state} retained stale video bounds: ${last}`);
   }
 }
 

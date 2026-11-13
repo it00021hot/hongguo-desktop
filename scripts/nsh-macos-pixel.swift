@@ -32,7 +32,7 @@ func window(for pid: Int) throws {
     try emit(["windowID": id])
 }
 
-func analyze(_ path: String, mode: String) throws -> Bool {
+func analyze(_ path: String, mode: String, sidebar: Double? = nil) throws -> Bool {
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw PixelTestError.imageUnavailable }
     let width = image.width
@@ -55,25 +55,31 @@ func analyze(_ path: String, mode: String) throws -> Bool {
     var magenta = 0
     var colored = 0
     var buckets = Set<Int>()
+    let stageLeft = sidebar.map { Int(Double(width) * $0 / 640.0) } ?? 0
+    let stageWidth = width - stageLeft
+    let sampleLeft = sidebar == nil ? width / 5 : stageLeft + stageWidth / 10
+    let sampleRight = sidebar == nil ? width * 4 / 5 : stageLeft + stageWidth * 9 / 10
+    let greenEnd = sidebar == nil ? width * 2 / 5 : stageLeft + stageWidth * 4 / 10
+    let magentaStart = sidebar == nil ? width * 3 / 5 : stageLeft + stageWidth * 6 / 10
     for y in (height * 3 / 10)..<(height * 7 / 10) {
-        for x in (width / 5)..<(width * 4 / 5) {
+        for x in sampleLeft..<sampleRight {
             let offset = (y * width + x) * channels
             let red = Int(pixels[offset])
             let greenChannel = Int(pixels[offset + 1])
             let blue = Int(pixels[offset + 2])
             if max(red, greenChannel, blue) > darkThreshold { colored += 1 }
             buckets.insert((red / 32) * 64 + (greenChannel / 32) * 8 + blue / 32)
-            if x < width * 2 / 5 {
+            if x < greenEnd {
                 leftCount += 1
                 if red < lowChannel && greenChannel > highChannel && blue < lowChannel { green += 1 }
             }
-            if x >= width * 3 / 5 {
+            if x >= magentaStart {
                 rightCount += 1
                 if red > highChannel && greenChannel < lowChannel && blue > highChannel { magenta += 1 }
             }
         }
     }
-    let sampleCount = (height * 7 / 10 - height * 3 / 10) * (width * 4 / 5 - width / 5)
+    let sampleCount = (height * 7 / 10 - height * 3 / 10) * (sampleRight - sampleLeft)
     let greenRatio = Double(green) / Double(max(1, leftCount))
     let magentaRatio = Double(magenta) / Double(max(1, rightCount))
     let coloredRatio = Double(colored) / Double(max(1, sampleCount))
@@ -91,6 +97,9 @@ do {
         try window(for: pid)
     } else if arguments.count == 3, arguments[0] == "analyze", ["checker", "hevc"].contains(arguments[2]) {
         exit(try analyze(arguments[1], mode: arguments[2]) ? 0 : 1)
+    } else if arguments.count == 3, arguments[0] == "analyze-resize",
+              let sidebar = Double(arguments[2]), [56.0, 224.0].contains(sidebar) {
+        exit(try analyze(arguments[1], mode: "checker", sidebar: sidebar) ? 0 : 1)
     } else {
         throw PixelTestError.invalidArguments
     }
