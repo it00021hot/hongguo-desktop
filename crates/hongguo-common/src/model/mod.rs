@@ -4,6 +4,7 @@ pub mod follow;
 pub mod history;
 pub mod merge;
 pub mod playback;
+pub mod season;
 pub mod series;
 pub mod settings;
 pub mod task;
