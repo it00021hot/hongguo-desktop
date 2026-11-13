@@ -1,0 +1,129 @@
+{
+  "profile": {
+    "userId": "offline-creator-main",
+    "userName": "离线创作者",
+    "avatar": "fixture-frame",
+    "description": "认真讲好每一个故事，用作品与观众相遇。"
+  },
+  "works": {
+    "works": [
+      {
+        "seriesId": "7701328280862854168",
+        "title": "装穷提亲，娶到全家嫌弃的她",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 80,
+        "hot": 41050000,
+        "playCnt": 15080000,
+        "tags": ["恋爱", "乡村"]
+      },
+      {
+        "seriesId": "preview-catalog-2",
+        "title": "下一段故事",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 61,
+        "hot": 39880000,
+        "playCnt": 14760000,
+        "tags": ["恋爱", "乡村"]
+      },
+      {
+        "seriesId": "preview-catalog-3",
+        "title": "归途有风",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 62,
+        "hot": 38710000,
+        "playCnt": 14440000,
+        "tags": ["恋爱", "乡村"]
+      },
+      {
+        "seriesId": "preview-catalog-4",
+        "title": "灯火可亲",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 63,
+        "hot": 37540000,
+        "playCnt": 14120000,
+        "tags": ["恋爱", "乡村"]
+      },
+      {
+        "seriesId": "preview-catalog-5",
+        "title": "重逢的那一天",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 64,
+        "hot": 36370000,
+        "playCnt": 13800000,
+        "tags": ["恋爱", "乡村"]
+      },
+      {
+        "seriesId": "preview-catalog-6",
+        "title": "山海之间",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 65,
+        "hot": 35200000,
+        "playCnt": 13480000,
+        "tags": ["恋爱", "乡村"]
+      },
+      {
+        "seriesId": "preview-catalog-7",
+        "title": "最好的时光",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 66,
+        "hot": 34030000,
+        "playCnt": 13160000,
+        "tags": ["恋爱", "乡村"]
+      },
+      {
+        "seriesId": "preview-catalog-8",
+        "title": "春日来信",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 67,
+        "hot": 32860000,
+        "playCnt": 12840000,
+        "tags": ["恋爱", "乡村"]
+      },
+      {
+        "seriesId": "preview-catalog-9",
+        "title": "她的选择",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 68,
+        "hot": 31690000,
+        "playCnt": 12520000,
+        "tags": ["恋爱", "乡村"]
+      },
+      {
+        "seriesId": "preview-catalog-10",
+        "title": "长街烟火",
+        "cover": "fixture-frame",
+        "intro": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "episodeCnt": 69,
+        "hot": 30520000,
+        "playCnt": 12200000,
+        "tags": ["恋爱", "乡村"]
+      }
+    ],
+    "cursor": "",
+    "hasMore": false,
+    "total": 10
+  },
+  "creators": [
+    {
+      "userId": "offline-creator-main",
+      "name": "离线创作者",
+      "avatar": "fixture-frame",
+      "role": "主演"
+    },
+    {
+      "userId": "",
+      "name": "幕后团队",
+      "avatar": "",
+      "role": "出品方"
+    }
+  ]
+}

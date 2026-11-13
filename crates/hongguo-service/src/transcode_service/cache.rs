@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use hongguo_media_platform::RateProfile;
 use hongguo_store::paths::compat_cache_dir;
 
+// Format 3 preserves real per-track fragment tail durations and codec sync flags.
+const COMPLETION_FORMAT: &str = "3";
+
 /// 某集的缓存文件名（归档/合并默认）。
 pub fn cache_file(series_id: &str, vid_index: u32) -> PathBuf {
     cache_file_for(series_id, vid_index, RateProfile::Archive)
@@ -43,7 +46,9 @@ pub fn cached_path_for(series_id: &str, vid_index: u32, rate: RateProfile) -> Op
 }
 
 pub(crate) fn is_complete(path: &std::path::Path) -> bool {
-    !hongguo_protocol::grow::is_incomplete(path) && completion_matches(path)
+    let settled = hongguo_protocol::grow::snapshot(path)
+        .is_none_or(|snapshot| snapshot.state == hongguo_protocol::grow::GrowthState::Done);
+    settled && completion_matches(path)
 }
 
 fn marker_path(path: &std::path::Path) -> PathBuf {
@@ -57,7 +62,11 @@ fn marker_partial(path: &std::path::Path) -> PathBuf {
 /// 把完成标识绑到当前文件字节。写到临时名再改名；改名失败则没有完成标识。
 pub fn seal_complete(path: &std::path::Path) -> std::io::Result<()> {
     let bytes = std::fs::read(path)?;
-    let body = format!("1\n{}\n{}\n", bytes.len(), sha256_hex(&bytes));
+    let body = format!(
+        "{COMPLETION_FORMAT}\n{}\n{}\n",
+        bytes.len(),
+        sha256_hex(&bytes)
+    );
     let partial = marker_partial(path);
     let dest = marker_path(path);
     hongguo_store::paths::qa_write(&partial, body.as_bytes())?;
@@ -84,7 +93,7 @@ pub fn completion_matches(path: &std::path::Path) -> bool {
         return false;
     };
     let mut lines = raw.lines();
-    if lines.next() != Some("1") {
+    if lines.next() != Some(COMPLETION_FORMAT) {
         return false;
     }
     let Ok(len) = lines.next().unwrap_or("").parse::<u64>() else {
@@ -178,6 +187,53 @@ pub fn clear() -> usize {
 mod tests {
     use super::*;
     use hongguo_store::paths::ScopedDataDir;
+
+    #[test]
+    fn a_valid_old_format_marker_does_not_reuse_an_obsolete_apple_movie() {
+        let dir = scratch_dir("old-mux-format");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = ScopedDataDir::new(&dir);
+        let path = playback_file("legacy", 1, Some(720));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = b"old movie with nonzero init mdhd duration";
+        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(
+            marker_path(&path),
+            format!("1\n{}\n{}\n", bytes.len(), sha256_hex(bytes)),
+        )
+        .unwrap();
+        assert!(
+            !completion_matches(&path),
+            "old format must be regenerated even when its hash is valid"
+        );
+        seal_complete(&path).unwrap();
+        assert!(completion_matches(&path));
+        let other = playback_file("legacy", 1, Some(1080));
+        assert_ne!(path, other);
+        assert!(!completion_matches(&other));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn format_two_singleton_timing_is_regenerated_without_deleting_the_file() {
+        let dir = scratch_dir("old-singleton-format");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = ScopedDataDir::new(&dir);
+        let path = playback_file("legacy-singleton", 1, Some(720));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = b"format two fragments with one-tick sample durations";
+        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(
+            marker_path(&path),
+            format!("2\n{}\n{}\n", bytes.len(), sha256_hex(bytes)),
+        )
+        .unwrap();
+        assert!(!completion_matches(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        seal_complete(&path).unwrap();
+        assert!(completion_matches(&path));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn cache_file_is_padded() {

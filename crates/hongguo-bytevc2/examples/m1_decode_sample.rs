@@ -4,10 +4,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 fn main() {
-    let path = env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Users/milo/qa-hongguo-offline-data/inputs/hg-bytevc2-plain.mp4"));
+    let path = env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from("/Users/milo/qa-hongguo-offline-data/inputs/hg-bytevc2-plain.mp4")
+    });
     let limit: Option<usize> = env::var("HONGGUO_M1_FRAME_LIMIT")
         .ok()
         .and_then(|s| s.parse().ok());

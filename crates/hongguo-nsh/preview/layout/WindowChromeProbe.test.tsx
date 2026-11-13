@@ -1,0 +1,20 @@
+import { expect, open, test as registerTest } from 'nsh/test';
+const test: (name: string, body: () => Promise<void>) => void = registerTest;
+test('tauri alignment: native chrome keeps one header and the requested content viewport', async () => {
+  const app = await open('.', { width: 1280, height: 840, colorScheme: 'dark', locale: 'zh-CN' });
+  await app.waitFor('id:app-titlebar');
+  await app.waitFor('text:00:42 / 02:49');
+  await app.hover('id:app-toolbar-rest');
+  expect(app.count('id:app-titlebar')).toBe(1);
+  const png = await app.screenshot('target/nsh-preview/native-chrome-content-1280x840.png');
+  const header = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  expect(header.getUint32(16)).toBe(1280);
+  expect(header.getUint32(20)).toBe(840);
+  await app.press('id:main-nav >> role:button[历史]');
+  await app.waitFor('id:history-records');
+  await app.press('id:app-titlebar >> role:button[后退]');
+  await app.waitFor('id:player-stage');
+  expect(app.enabled('id:app-titlebar >> role:button[前进]')).toBe(true);
+  await app.press('id:app-titlebar >> role:button[前进]');
+  await app.waitFor('id:history-records');
+});

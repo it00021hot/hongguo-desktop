@@ -54,11 +54,12 @@ impl Compressor {
         low_latency: bool,
     ) -> AppResult<Self> {
         unsafe {
-            let spec = make_dict(&[(
-                ffi::kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder
-                    as ffi::CFTypeRef,
-                ffi::kCFBooleanTrue as ffi::CFTypeRef,
-            )]);
+            let hardware = super::hardware::encoder_enabled();
+            let entries: Vec<_> = hardware
+                .into_iter()
+                .map(|key| (key as ffi::CFTypeRef, ffi::kCFBooleanTrue as ffi::CFTypeRef))
+                .collect();
+            let spec = make_dict(&entries);
 
             // 源缓冲属性：NV12 + IOSurface——解码输出是同格式同尺寸的 IOSurface 背板缓冲，Apple Silicon 上编码器直接吃 GPU 表面不过 CPU
             let pixel_format =
@@ -218,13 +219,12 @@ impl Compressor {
     /// 编码器自报是否真走了硬件（`UsingHardwareAcceleratedVideoEncoder`）。
     pub(super) unsafe fn using_hardware(&self) -> AppResult<bool> {
         unsafe {
+            let Some(key) = super::hardware::encoder_using() else {
+                return Ok(false);
+            };
             let mut out: ffi::CFTypeRef = std::ptr::null();
-            let st = ffi::VTSessionCopyProperty(
-                self.session,
-                ffi::kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
-                ffi::kCFAllocatorDefault,
-                &mut out,
-            );
+            let st =
+                ffi::VTSessionCopyProperty(self.session, key, ffi::kCFAllocatorDefault, &mut out);
             if st != ffi::noErr || out.is_null() {
                 return Ok(false);
             }

@@ -16,13 +16,24 @@ members = [
     "crates/hongguo-bytevc2",
     "crates/hongguo-common",
     "crates/hongguo-gpui",
+    "crates/hongguo-nsh",
+    "crates/hongguo-nsh-android",
+    "crates/hongguo-nsh-ios",
+    "crates/hongguo-nsh-video-api",
+    "crates/hongguo-nsh-video-apple",
+    "crates/hongguo-nsh-video-macos",
+    "crates/hongguo-nsh-video-ios",
+    "crates/hongguo-nsh-video-windows",
+    "crates/hongguo-nsh-video-android",
+    "crates/hongguo-enhancement",
     "crates/hongguo-media",
     "crates/hongguo-media-platform",
     "crates/hongguo-media-platform-api",
     "crates/hongguo-media-platform-android",
     "crates/hongguo-media-platform-macos",
-    "crates/hongguo-media-platform-windows",
+    "crates/hongguo-media-platform-ios",
     "crates/hongguo-media-videotoolbox",
+    "crates/hongguo-media-platform-windows",
     "crates/hongguo-video",
     # 回放契约 + 系统播放器（门面 / macOS / Windows 实现）：
     # 平台实现分 crate，壳只依赖门面。
@@ -52,6 +63,16 @@ edition = "2024"
 rust-version = "1.99.1"
 license = "PolyForm-Noncommercial-1.0.0"
 authors = ["hongguo-desktop contributors"]
+
+[workspace.dependencies]
+nsh-core = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3" }
+nsh-base = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-platform-macos = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-platform-windows = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-android-runtime = { package = "nsh-platform-android", git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-platform-ios = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
 
 [patch.crates-io]
 # gpui-pre-windows 0.3.12 的渲染器没有视频画面的落点，而系统播放器

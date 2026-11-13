@@ -54,8 +54,14 @@ fn process_frame(
             Some((w, h)) => (w, h),
             None => (src_w, src_h),
         };
-        let c =
-            unsafe { Compressor::new(out_w, out_h, bitrate_for_profile(out_w, out_h, fps, rate), rate == RateProfile::Playback)? };
+        let c = unsafe {
+            Compressor::new(
+                out_w,
+                out_h,
+                bitrate_for_profile(out_w, out_h, fps, rate),
+                rate == RateProfile::Playback,
+            )?
+        };
         // 编码器自报硬编还是软编——只进日志，产物两边都是能播的 H.264
         let hw = unsafe { c.using_hardware() }.unwrap_or(false);
         log::info!(

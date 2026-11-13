@@ -8,6 +8,7 @@
 mod decode;
 mod encode;
 mod ffi;
+mod hardware;
 mod pipeline;
 mod pixel;
 mod probe;

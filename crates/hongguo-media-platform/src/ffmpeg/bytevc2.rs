@@ -276,9 +276,5 @@ fn growing_args(req: &PlatformRequest<'_>, encoder: &Encoder, out: &Path) -> Vec
 }
 
 fn even(v: u32) -> u32 {
-    if v.is_multiple_of(2) {
-        v
-    } else {
-        v - 1
-    }
+    if v.is_multiple_of(2) { v } else { v - 1 }
 }

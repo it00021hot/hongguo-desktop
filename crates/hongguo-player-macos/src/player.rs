@@ -441,14 +441,8 @@ impl PlayerLike for SystemPlayer {
             avf::clear_resource_loader_delegate(prev.get());
             avf::cancel_loading(prev.get());
         }
-        *self
-            .current_loader
-            .lock()
-            .expect("当前 loader 锁 poisoned") = Some(loader);
-        *self
-            .current_asset
-            .lock()
-            .expect("当前 asset 锁 poisoned") = Some(asset);
+        *self.current_loader.lock().expect("当前 loader 锁 poisoned") = Some(loader);
+        *self.current_asset.lock().expect("当前 asset 锁 poisoned") = Some(asset);
         drop(item);
         log::info!("[AvPresenter] replaceCurrentItem 接力（{vid}）");
         let rate = f64::from_bits(self.rate.load(Ordering::Relaxed));
@@ -520,10 +514,7 @@ impl Drop for SystemPlayer {
             avf::clear_resource_loader_delegate(asset.get());
             avf::cancel_loading(asset.get());
         }
-        *self
-            .current_loader
-            .lock()
-            .expect("当前 loader 锁 poisoned") = None;
+        *self.current_loader.lock().expect("当前 loader 锁 poisoned") = None;
         if let Some(thread) = self
             .event_thread
             .lock()

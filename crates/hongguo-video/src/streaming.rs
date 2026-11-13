@@ -518,7 +518,10 @@ mod tests {
         let moov_start = CHUNK_BYTES as u64;
         let moov_end = 3 * CHUNK_BYTES as u64;
         sparse.forget_data(moov_start, moov_end);
-        assert!(sparse.covers(moov_start, moov_end), "covered 口径不变，填充不回填");
+        assert!(
+            sparse.covers(moov_start, moov_end),
+            "covered 口径不变，填充不回填"
+        );
         assert_eq!(
             sparse.next_gap(0),
             Some((3 * CHUNK_BYTES as u64, 4 * CHUNK_BYTES as u64)),

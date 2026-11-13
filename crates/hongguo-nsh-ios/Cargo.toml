@@ -1,0 +1,14 @@
+[package]
+name = "hongguo-nsh-ios"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[target.'cfg(target_os = "ios")'.dependencies]
+hongguo-nsh = { path = "../hongguo-nsh" }
+nsh-platform-ios.workspace = true
+nsh-base.workspace = true
+objc2-foundation = { version = "0.3", features = ["NSPathUtilities", "NSString"] }
+env_logger = "0.11"

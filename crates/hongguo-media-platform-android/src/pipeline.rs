@@ -111,7 +111,7 @@ fn run(
         return Err(AppError::Media("MediaCodec 没有产出任何帧".into()));
     }
     if !units[0].2 {
-        units[0].2 = true;
+        return Err(AppError::Media("MediaCodec 首帧不是同步样本".into()));
     }
 
     let (out_w, out_h) = out_dims;

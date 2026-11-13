@@ -94,7 +94,7 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
 
 ## Android 构建（Tauri 壳移动端 APK；GPUI 壳无 Android 路线）
 
-- **构建走 GitHub CI（android.yml，仅 `workflow_dispatch` 手动触发）**，本机不装 Android SDK/NDK。`crates/hongguo-tauri-app/gen/android/`（gradle 工程）已提交入库，构建全在 ubuntu runner 的自带 SDK（`/usr/local/lib/android/sdk`，含 NDK）上完成。
+- **常规构建走 GitHub CI（android.yml，仅 `workflow_dispatch` 手动触发）**。用户已授权为 NSH 移动端开发安装本地 Android SDK/NDK；本地验证与 CI 并存。`crates/hongguo-tauri-app/gen/android/`（gradle 工程）已提交入库，CI 使用 ubuntu runner 的自带 SDK（`/usr/local/lib/android/sdk`，含 NDK）。
 - 只出 `--target aarch64` 的 release APK；多 ABI 编译时间翻倍且受众增量近零，确需再扩。
 - **签名三 secrets**：`ANDROID_KEYSTORE_BASE64`（keystore 文件 base64）、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEYSTORE_ALIAS`。生成 keystore（本地一次性）：
   ```bash

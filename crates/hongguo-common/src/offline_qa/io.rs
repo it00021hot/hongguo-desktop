@@ -74,7 +74,8 @@ pub fn qa_read(path: &Path) -> std::io::Result<Vec<u8>> {
 
 pub fn qa_read_to_string(path: &Path) -> std::io::Result<String> {
     let bytes = qa_read(path)?;
-    String::from_utf8(bytes).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+    String::from_utf8(bytes)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
 }
 
 pub fn qa_rename(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -146,10 +147,7 @@ pub fn qa_clear_for_replace(path: &Path) -> std::io::Result<()> {
         Err(err) => Err(err),
         Ok(meta) if meta.file_type().is_symlink() => Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            format!(
-                "离线 QA 拒绝符号链接 {}，不会删除或跟随它",
-                path.display()
-            ),
+            format!("离线 QA 拒绝符号链接 {}，不会删除或跟随它", path.display()),
         )),
         Ok(_) => match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
@@ -170,10 +168,7 @@ fn refuse_leaf_symlink(path: &Path) -> std::io::Result<()> {
         Err(err) => Err(err),
         Ok(meta) if meta.file_type().is_symlink() => Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            format!(
-                "离线 QA 拒绝符号链接 {}，不会删除或跟随它",
-                path.display()
-            ),
+            format!("离线 QA 拒绝符号链接 {}，不会删除或跟随它", path.display()),
         )),
         Ok(_) => Ok(()),
     }

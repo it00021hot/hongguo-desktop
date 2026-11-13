@@ -7,12 +7,22 @@ use hongguo_common::{AppError, AppResult};
 use hongguo_media::mux::{AudioTrack, GrowingH264};
 use hongguo_media_platform_api::PlatformRequest;
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 use crate::platform::{YuvEncoder, imp_thread};
 
 /// 把一集 ByteVC2 明文转成可播的 H.264 MP4。源不是 ByteVC2 时返回错误，不落回 ffmpeg。
 pub fn transcode_bytevc2(req: &PlatformRequest<'_>) -> AppResult<()> {
-    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "android"
+    ))]
     {
         let result = imp_thread(|| drive(req));
         if result.is_err() {
@@ -20,7 +30,12 @@ pub fn transcode_bytevc2(req: &PlatformRequest<'_>) -> AppResult<()> {
         }
         result
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "android"
+    )))]
     {
         let _ = req;
         Err(AppError::Media("当前平台不能把 ByteVC2 编成 H.264".into()))
@@ -29,10 +44,20 @@ pub fn transcode_bytevc2(req: &PlatformRequest<'_>) -> AppResult<()> {
 
 /// 解码线程最多领先编码多少帧。够吸收编码器的瞬时抖动即可；1080p 一帧约 3 MB，
 /// 队列再深只是多占内存。
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 const DECODE_QUEUE_FRAMES: usize = 8;
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 struct LiveFile<'a> {
     writer: Option<GrowingH264>,
     audio: Option<&'a AudioTrack>,
@@ -40,13 +65,19 @@ struct LiveFile<'a> {
     cursor: usize,
     size: Option<(usize, usize)>,
     timeline: f64,
+    video_end_secs: f64,
     announced: bool,
     ready_ns: u128,
     prefix_samples: u32,
     prefix_bytes: u64,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
     let started = Instant::now();
     let demuxed = hongguo_media::demux::demux_file(req.input)?;
@@ -57,7 +88,13 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
         .scale_to
         .map(|(w, h)| ((w & !1) as usize, (h & !1) as usize));
     let audio = hongguo_media::mux::collect(req.input, &demuxed)?;
-    let timeline = timeline_secs(&demuxed, audio.as_ref(), frame_dur);
+    let video_end_secs = hongguo_media::mux::track_end_secs(
+        &demuxed
+            .video_track()
+            .ok_or_else(|| AppError::Media("缺少源视频轨道".into()))?
+            .info,
+    )?;
+    let timeline = video_end_secs.max(audio.as_ref().map_or(0.0, |track| track.end_secs));
     let mut encoder = YuvEncoder::new(scale_to, fps, req.rate);
     let mut live = LiveFile {
         writer: None,
@@ -66,6 +103,7 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
         cursor: 0,
         size: None,
         timeline,
+        video_end_secs,
         announced: false,
         ready_ns: 0,
         prefix_samples: 0,
@@ -159,7 +197,12 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
 ///
 /// - `consume` 出错：停止接收，`produce` 的下一次 `emit` 得到 `Cancelled` 而收手，返回 `consume` 的错误。
 /// - `produce` 出错：先把已入队的帧消费完，再返回它的错误。
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 fn pump<T: Send>(
     depth: usize,
     produce: impl FnOnce(&mut dyn FnMut(T) -> AppResult<()>) -> AppResult<()> + Send,
@@ -191,7 +234,12 @@ fn pump<T: Send>(
     })
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 struct Pass<'a, 'b> {
     encoder: &'a mut YuvEncoder,
     live: &'a mut LiveFile<'b>,
@@ -202,7 +250,12 @@ struct Pass<'a, 'b> {
     started: Instant,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 fn feed_ready(
     pass: &mut Pass<'_, '_>,
     ready: &mut Vec<hongguo_bytevc2::DecodedFrame>,
@@ -229,7 +282,12 @@ fn feed_ready(
     Ok(fed)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 fn feed_sorted(
     pass: &mut Pass<'_, '_>,
     ready: &mut Vec<hongguo_bytevc2::DecodedFrame>,
@@ -243,7 +301,12 @@ fn feed_sorted(
     Ok(pending.len())
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 fn push_frame(
     pass: &mut Pass<'_, '_>,
     frame: &hongguo_bytevc2::DecodedFrame,
@@ -268,10 +331,20 @@ fn push_frame(
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 /// 首段尽快交出：约 0.25–0.5s（30fps 下 8–15 帧）即可独立解码起播。
 const FIRST_PUBLISH_FRAMES: usize = 8;
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 /// 后续片段保持约 1s，降低 MSE append 频率。
 const PUBLISH_FRAMES: usize = 30;
 
@@ -292,15 +365,18 @@ fn drain_gops(pass: &mut Pass<'_, '_>) -> AppResult<()> {
         let Some((gop, next_pts)) = pass.encoder.take_publish_run(need, first) else {
             break;
         };
-        // next_pts 为空只表示「当前缓冲里没有下一帧」，不是整片结束；
-        // 若把 None 传给 write_gop 会把剩余整轨 AAC 塞进本段，MSE 首段会胀到数 MB 且解不出宽高。
-        let audio_end = next_pts.or_else(|| gop.last().map(|(pts, _, _)| *pts + 1.0 / 30.0));
-        write_gop(pass.live, &gop, audio_end, pass.req, pass.started)?;
+        let end = next_pts.ok_or_else(|| AppError::Media("编码片段缺少后继帧时间".into()))?;
+        write_gop(pass.live, &gop, Some(end), pass.req, pass.started)?;
     }
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 fn write_gop(
     live: &mut LiveFile<'_>,
     gop: &[(f64, Vec<u8>, bool)],
@@ -324,11 +400,22 @@ fn write_gop(
         )?);
     }
     let audio = take_audio(live.samples, &mut live.cursor, end_pts).to_vec();
+    let timing = hongguo_media::mux::FragmentTiming {
+        video_end_secs: end_pts.unwrap_or(live.video_end_secs),
+        audio_end_secs: if audio.is_empty() {
+            None
+        } else {
+            live.samples
+                .get(live.cursor)
+                .map(|(pts, _)| *pts)
+                .or_else(|| live.audio.map(|track| track.end_secs))
+        },
+    };
     let bytes = live
         .writer
         .as_mut()
         .expect("片段文件刚打开")
-        .push(gop, &audio)?;
+        .push(gop, &audio, timing)?;
     if let Some(cb) = req.on_committed {
         cb(bytes);
     }
@@ -349,7 +436,12 @@ fn write_gop(
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "android"
+))]
 fn take_audio<'a>(
     samples: &'a [(f64, Vec<u8>)],
     cursor: &mut usize,
@@ -370,28 +462,17 @@ fn take_audio<'a>(
     &samples[start..stop]
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
-fn timeline_secs(
-    demuxed: &hongguo_media::demux::Demuxed,
-    audio: Option<&AudioTrack>,
-    frame_dur: f64,
-) -> f64 {
-    let video_end = demuxed
-        .video_track()
-        .and_then(|track| {
-            track
-                .info
-                .sample_pts()
-                .last()
-                .copied()
-                .map(|pts| pts.max(0.0) + frame_dur)
-        })
-        .unwrap_or(frame_dur);
-    let audio_end = audio
-        .and_then(|track| track.samples.last().map(|(pts, _)| *pts))
-        .unwrap_or(0.0);
-    video_end.max(audio_end).max(frame_dur)
-}
+#[cfg(all(
+    test,
+    any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "android"
+    )
+))]
+#[path = "bytevc2_audio_publish_tests.rs"]
+mod audio_publish_tests;
 
 #[cfg(all(
     test,

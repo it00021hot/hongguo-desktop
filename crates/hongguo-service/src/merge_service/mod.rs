@@ -8,6 +8,9 @@ pub mod progress;
 pub mod quick;
 pub mod start;
 
+#[cfg(test)]
+mod removal_tests;
+
 use std::path::{Path, PathBuf};
 
 use crate::app_state::AppState;
@@ -75,9 +78,20 @@ pub fn candidates(state: &AppState) -> Vec<MergeCandidate> {
     list
 }
 
-/// 删除一条合并任务记录（只删记录，不删已产出的文件）。找不到就报 [`AppError::NotFound`]，
+/// 取消仍在运行的合并后删除其记录（不删已产出的文件）。找不到就报 [`AppError::NotFound`]，
 /// 与 `stop_download` / `retry_task` 同一口径：返回 `Ok` 却什么都没删，调用方会以为删掉了。
 pub fn remove_task(state: &AppState, id: &str) -> AppResult<()> {
+    let task = state
+        .store
+        .merge_tasks()?
+        .into_iter()
+        .find(|task| task.id == id)
+        .ok_or_else(|| AppError::NotFound(format!("合并任务 {id}")))?;
+    if task.status == hongguo_common::model::MergeStatus::Running
+        && guard::cancel(&task.output_name)
+    {
+        log::info!("[Merge] 已请求取消 {}", task.output_name);
+    }
     if state.store.delete_merge_task(id)? == 0 {
         return Err(AppError::NotFound(format!("合并任务 {id}")));
     }

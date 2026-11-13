@@ -4,6 +4,8 @@
 
 use hongguo_video::r#box::build_box;
 
+pub mod fragment_index;
+
 /// 正常播放速率（16.16 定点）。
 pub const EDIT_RATE_ONE: i32 = 0x0001_0000;
 

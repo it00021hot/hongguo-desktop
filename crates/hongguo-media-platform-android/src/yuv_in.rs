@@ -53,9 +53,7 @@ impl YuvEncoder {
         self.out_dims
     }
 
-    pub fn take_completed_gop(
-        &mut self,
-    ) -> Option<(Vec<hongguo_media::mux::AnnexbFrame>, f64)> {
+    pub fn take_completed_gop(&mut self) -> Option<(Vec<hongguo_media::mux::AnnexbFrame>, f64)> {
         hongguo_media::mux::split_completed_gop(&mut self.units)
     }
 
@@ -78,9 +76,6 @@ impl YuvEncoder {
             .ok_or_else(|| AppError::Media("ByteVC2 编码没有分辨率".into()))?;
         if self.units.is_empty() {
             return Err(AppError::Media("平台编码器没有产出 H.264".into()));
-        }
-        if !self.units[0].2 {
-            self.units[0].2 = true;
         }
         Ok(EncodedVideo {
             width: w,

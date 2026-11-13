@@ -1,9 +1,13 @@
 # 红果桌面版 —— 构建任务
 # 用法：make help / make dev / make test
 
-.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-app gpui-preview
+.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-app gpui-preview nsh nsh-check nsh-test nsh-preview nsh-package
 
 help:
+	@echo "nsh        启动 NSH 壳（Windows / macOS）"
+	@echo "nsh-check / nsh-test NSH 检查与测试"
+	@echo "nsh-preview NSH 离线页面预览（固定本地数据，不启动业务）"
+	@echo "nsh-package TARGET=macos|windows|android|ios|ios-simulator 本地打包"
 	@echo "dev        真实权限/真实数据开发（普通终端；受限沙箱内会失败）"
 	@echo "dev-sandbox 沙箱模式开发：数据/临时目录隔离到 target/（agent/受限终端可用）"
 	@echo "build      构建前端产物"
@@ -34,6 +38,21 @@ dev-sandbox:
 # 数据根与 Tauri 壳平级分离（set_shell_data_root，见 paths.rs），双壳可并存不撞库锁。
 gpui:
 	cargo run -p hongguo-gpui
+
+nsh:
+	node scripts/nsh.mjs run
+
+nsh-check:
+	node scripts/nsh.mjs check
+
+nsh-test:
+	node scripts/nsh.mjs test
+
+nsh-preview:
+	node scripts/nsh.mjs preview
+
+nsh-package:
+	node scripts/nsh.mjs package $(TARGET)
 
 # 系统/Dock/通知身份都挂在 bundle 上，裸二进制跑不起来；ad-hoc 签名本地够用。
 gpui-app:

@@ -109,7 +109,6 @@ pub async fn prepare(
     let automatic_definition = selection.automatic;
     let play = selection.play;
     let want = play.definition;
-    remember_codec(vid, want, &play.codec);
     // 记真实自动结果供队列查询；它不再跳过下一次的动态决策。
     if definition.is_none() {
         c.remember_auto(vid, want);
@@ -130,6 +129,8 @@ pub async fn prepare(
         return Ok(result);
     }
     c.set_definitions(vid, want, &play.definitions);
+    remember_codec(vid, want, &play.codec);
+    super::cached::remember(vid, &play);
     let url = hongguo_protocol::stream_url(vid, want);
     // play 整份 move 进后台填充任务，这里先把要回给调用方的字段取出来
     let result = Prepared {
@@ -217,6 +218,8 @@ pub async fn prefetch_stream(
         return Ok(());
     }
     c.set_definitions(vid, want, &play.definitions);
+    remember_codec(vid, want, &play.codec);
+    super::cached::remember(vid, &play);
     // 显式标记预取：keep_only 只豁免这一条，别让在途填充占住串行队列
     c.mark_prefetch(vid, want);
     log::info!("[Online] 预取 {vid} 档位 {want}，后台渐进填充开始");

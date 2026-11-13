@@ -14,6 +14,7 @@ pub static HONGGUO_ANDROID_MC_MARK: [u8; 24] = *b"HONGGUO_ANDROID_MC_V1\0\0\0";
 
 mod decode;
 mod encode;
+mod encoded_output;
 mod pipeline;
 mod probe;
 mod yuv;

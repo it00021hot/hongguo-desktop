@@ -20,8 +20,7 @@ pub struct H264Encoder {
     codec: MediaCodec,
     width: usize,
     height: usize,
-    pending_config: Vec<u8>,
-    pending_units: Vec<(f64, Vec<u8>, bool)>,
+    output: super::encoded_output::EncodedOutput,
     ended: bool,
 }
 
@@ -59,8 +58,7 @@ impl H264Encoder {
             codec,
             width,
             height,
-            pending_config: Vec::new(),
-            pending_units: Vec::new(),
+            output: super::encoded_output::EncodedOutput::default(),
             ended: false,
         })
     }
@@ -110,7 +108,7 @@ impl H264Encoder {
     /// 收割 `(pts_secs, annexb, keyframe)`。
     pub fn pull(&mut self) -> AppResult<Vec<(f64, Vec<u8>, bool)>> {
         self.drain_output()?;
-        Ok(std::mem::take(&mut self.pending_units))
+        Ok(self.output.take())
     }
 
     fn drain_output(&mut self) -> AppResult<()> {
@@ -135,19 +133,10 @@ impl H264Encoder {
                         if end <= view.len() {
                             let chunk = view[start..end].to_vec();
                             if is_cfg {
-                                self.pending_config.extend_from_slice(&chunk);
+                                self.output.configure(&chunk);
                             } else {
-                                let mut annexb = Vec::new();
-                                if is_key || self.pending_units.is_empty() {
-                                    annexb.extend_from_slice(&self.pending_config);
-                                }
-                                annexb.extend_from_slice(&chunk);
                                 let pts = info.presentation_time_us() as f64 / 1_000_000.0;
-                                self.pending_units.push((
-                                    pts,
-                                    annexb,
-                                    is_key || self.pending_units.is_empty(),
-                                ));
+                                self.output.frame(pts, &chunk, is_key);
                             }
                         }
                     }

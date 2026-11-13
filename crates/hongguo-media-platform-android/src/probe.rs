@@ -58,7 +58,7 @@ fn android_sdk_int() -> i32 {
         let key = b"ro.build.version.sdk\0";
         __system_property_get(key.as_ptr().cast(), buf.as_mut_ptr().cast())
     };
-    if ok <= 0 {
+    if ok == 0 {
         return 0;
     }
     let s = std::ffi::CStr::from_bytes_until_nul(&buf)

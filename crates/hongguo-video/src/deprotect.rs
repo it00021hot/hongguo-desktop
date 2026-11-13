@@ -211,11 +211,9 @@ fn plain_entry(entry: &[u8]) -> Vec<u8> {
         return entry.to_vec();
     }
     // 类型取 `sinf/frma` 里记录的原始格式；取不到就用编码名兜底
-    let original = original_format(entry).unwrap_or_else(|| {
-        match &entry[4..8] {
-            b"enca" => *b"mp4a",
-            _ => *b"hvc1",
-        }
+    let original = original_format(entry).unwrap_or_else(|| match &entry[4..8] {
+        b"enca" => *b"mp4a",
+        _ => *b"hvc1",
     });
 
     let mut children: Vec<u8> = Vec::with_capacity(entry.len().saturating_sub(children_at));
@@ -335,7 +333,11 @@ mod tests {
     }
 
     /// 造一个最小的加密 MP4：`moov(vide trak(stbl(stsd(encv+sinf), stco), ...)) + mdat`
-    fn encrypted_mp4_with_frma(sample: &[u8], frma_fourcc: &[u8; 4], cfg_fourcc: &[u8; 4]) -> Vec<u8> {
+    fn encrypted_mp4_with_frma(
+        sample: &[u8],
+        frma_fourcc: &[u8; 4],
+        cfg_fourcc: &[u8; 4],
+    ) -> Vec<u8> {
         let frma = build_box(b"frma", frma_fourcc);
         let schm = build_box(b"schm", &cat(&[&[0u8; 4], b"cenc", &[0u8; 4]]));
         let schi = build_box(b"schi", &build_box(b"tenc", &[0u8; 4]));

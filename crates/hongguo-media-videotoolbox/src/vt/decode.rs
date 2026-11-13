@@ -15,10 +15,13 @@ use super::pixel::{Pb, iosurface_attrs, make_dict, make_int, os};
 /// 排障必需：软解在 1080p HEVC 上是 46.8ms/帧（实时线 33ms），表现是「画面越播越落后音频」，日志里光看「首帧正常」根本看不出来。
 unsafe fn log_hardware(session: ffi::VTDecompressionSessionRef, label: &str) {
     unsafe {
+        let Some(key) = super::hardware::decoder_using() else {
+            return;
+        };
         let mut value: ffi::CFTypeRef = std::ptr::null();
         let status = ffi::VTSessionCopyProperty(
             session as ffi::VTSessionRef,
-            ffi::kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+            key,
             ffi::kCFAllocatorDefault,
             &mut value,
         );
@@ -148,11 +151,12 @@ impl Decompressor {
             };
             // 显式点名硬件解码：不传规格时 VT 可能落软解，1080p HEVC 软解 46.8ms/帧，转码吞吐直接掉一个量级。
             // 只「建议」不「要求」：个别码流硬解不收时还得让 VT 回软解，能解总比报错强（建的会话是什么，下面查出来记日志）。
-            let spec = make_dict(&[(
-                ffi::kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder
-                    as ffi::CFTypeRef,
-                ffi::kCFBooleanTrue as ffi::CFTypeRef,
-            )]);
+            let hardware = super::hardware::decoder_enabled();
+            let entries: Vec<_> = hardware
+                .into_iter()
+                .map(|key| (key as ffi::CFTypeRef, ffi::kCFBooleanTrue as ffi::CFTypeRef))
+                .collect();
+            let spec = make_dict(&entries);
             let mut session: ffi::VTDecompressionSessionRef = std::ptr::null_mut();
             let status = ffi::VTDecompressionSessionCreate(
                 ffi::kCFAllocatorDefault,

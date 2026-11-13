@@ -144,13 +144,8 @@ impl super::HomeView {
                     ep.vid_index,
                 )
                 .await;
-                let prepared = prepare(
-                    &state,
-                    &ep.vid,
-                    &progress_key,
-                    preferred_definition,
-                )
-                .await?;
+                let prepared =
+                    prepare(&state, &ep.vid, &progress_key, preferred_definition).await?;
                 // 在线起播后按两壳共用的动态策略预取后续集。
                 hongguo_service::play_service::schedule_following_episodes(
                     &state,

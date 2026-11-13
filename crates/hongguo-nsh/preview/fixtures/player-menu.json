@@ -1,0 +1,46 @@
+{
+  "definitions": [1080, 720, 540, 480, 360],
+  "downloaded": [1, 2, 31],
+  "seasons": [
+    {
+      "id": "7701328280862854168",
+      "title": "装穷提亲，娶到全家嫌弃的她",
+      "cover": "",
+      "tag": "",
+      "episodes": 80,
+      "playCount": 0,
+      "current": true,
+      "reserved": false
+    },
+    {
+      "id": "offline-season-2",
+      "title": "装穷提亲，娶到全家嫌弃的她 第二季",
+      "cover": "",
+      "tag": "第2季",
+      "episodes": 60,
+      "playCount": 12000000,
+      "current": false,
+      "reserved": false
+    },
+    {
+      "id": "offline-season-3",
+      "title": "装穷提亲，娶到全家嫌弃的她 第三季",
+      "cover": "",
+      "tag": "第3季",
+      "episodes": 0,
+      "playCount": 0,
+      "current": false,
+      "reserved": false
+    },
+    {
+      "id": "offline-season-4",
+      "title": "装穷提亲，娶到全家嫌弃的她 第四季",
+      "cover": "",
+      "tag": "第4季",
+      "episodes": 0,
+      "playCount": 0,
+      "current": false,
+      "reserved": true
+    }
+  ]
+}

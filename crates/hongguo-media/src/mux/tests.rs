@@ -51,6 +51,9 @@ fn audio_track(samples: Vec<(f64, Vec<u8>)>) -> AudioTrack {
         sample_rate: 44100,
         channels: 2,
         esds: Some(esds),
+        end_secs: samples
+            .last()
+            .map_or(0.0, |(pts, _)| pts + 1024.0 / 44_100.0),
         samples,
     }
 }

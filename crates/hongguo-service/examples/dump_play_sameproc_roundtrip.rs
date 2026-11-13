@@ -24,12 +24,17 @@ async fn main() {
     let state = Arc::new(AppStateInner::with_device(store, anon));
     let reg = register_and_swap(&state, "sameproc-roundtrip").await;
     println!("register ok={} iid={}", reg.ok, reg.iid);
-    if !reg.ok { std::process::exit(2); }
+    if !reg.ok {
+        std::process::exit(2);
+    }
     let env1 = state.api_env();
     register_content_type(&vid, 1004);
     match fetch_play_url(&vid, None, DecoderCapability::full(), &env1).await {
         Ok(i) => println!("SAMEPROC_DIRECT PLAY_OK def={}", i.definition),
-        Err(e) => { println!("SAMEPROC_DIRECT ERR {e}"); std::process::exit(3); }
+        Err(e) => {
+            println!("SAMEPROC_DIRECT ERR {e}");
+            std::process::exit(3);
+        }
     }
     let json = serde_json::to_string(&state.device()).unwrap();
     let reloaded: DeviceProfile = serde_json::from_str(&json).unwrap();

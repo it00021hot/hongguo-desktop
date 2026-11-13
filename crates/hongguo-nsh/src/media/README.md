@@ -1,0 +1,15 @@
+# Native media transport
+
+`MediaServer::playback_file` is the platform boundary. Apple plays growing H.264 output as standard EVENT HLS; Android/Windows wait cancellably for successful completion and use the existing MP4 Range route. Their native HLS support is not assumed. Fixed files and known-length online sources retain their original URL and Range behavior.
+
+Growing leases expose only a random lease ID and integer segment IDs. Playlist, initialization and segment requests all enforce the same Host/Origin checks. Cancellation, producer failure and lease revocation are errors; only producer Done publishes ENDLIST and reports `is_complete=true`.
+
+The shared MP4 index scans committed headers and bounded initialization/moof metadata, skips mdat payloads, and retains its scan offset. The mux publisher retains the first eight-frame prefix, then closes each run before the next sync sample, so later IDRs remain visible at fragment boundaries. Several non-sync publish runs are grouped from one sync sample to the next; the final group waits for Done. The fixed HLS target duration is six seconds. Oversized GOPs are rejected rather than changing an already published playlist contract. Apple playback uses a 30-frame GOP; Android's encoder requests two seconds, while Windows' longer GOP remains on the completed-file path.
+
+`MediaLease::available_duration` reads the cached published segment durations without disk I/O. It excludes the pending group and does not predict the final duration. The player can use this actual available range while native EVENT HLS duration is indefinite. Ordinary file and online leases return `None`; cancelled, failed and revoked leases return an error.
+
+For paused seeks beyond that range, `MediaLease::readiness` returns a clonable growing-source handle without owning the lease. Its async `wait_for_available` uses the service blocking runtime and growth condition variable, scanning newly committed metadata until the target is strictly inside the published duration. It does not depend on native progress events or HTTP requests. Dropping the future cancels only its worker; producer failure/cancellation, lease revocation and a completed out-of-range target end explicitly. Fixed files and online sources need no readiness handle.
+
+HLS initialization is a same-length cached copy with zero mvhd/tkhd durations (RFC8216 §3.3). The canonical finished MP4 keeps its complete timeline and its duration regression. Segment byte spans retain their original offsets and are served without whole-video buffering.
+
+Verification includes HTTP security/Range/terminal-state tests, non-sync grouping, short-prefix IDR boundaries, audio/video sample continuity and final flush, partial-box boundaries, mdat-read exclusion, and initialization-copy tests. Independent macOS and iOS AVFoundation probes verified early playback, accurate final duration and buffered/final seek using the production server and synthetic H.264 input. These are transport probes, not full client or ByteVC2 pipeline acceptance. Diagnostic sources and synthetic samples live under ignored `target/nsh-media-probe`; no film samples are committed.

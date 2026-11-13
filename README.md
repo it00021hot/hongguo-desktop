@@ -179,6 +179,16 @@ Windows 双击 `*_x64-setup.exe`；macOS 按芯片选 `*_aarch64.dmg`（Apple Si
 
 ## 💻 开发
 
+NSH 第三壳正在开发，首版目标为 Windows、macOS、Android、iOS（纯 Rust，直接复用本地业务内核）。
+桌面启动 `make nsh`，检查与测试用 `make nsh-check`、`make nsh-test`；
+移动端工具链与当前验证范围见 [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md)。
+Linux 与 Web 留待后续迭代。当前 NSH 实现尚未完成全部功能和四端验收。
+
+The NSH shell is in development for Windows, macOS, Android and iOS. It uses Rust throughout
+and shares the existing local business core. Run `make nsh`, `make nsh-check` and `make nsh-test`
+from the repository root. Full feature parity and validation on all four platforms are still in progress.
+Linux and web support are deferred.
+
 ### 环境要求
 
 - Rust 1.99+（edition 2024）

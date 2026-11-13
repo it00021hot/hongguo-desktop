@@ -49,3 +49,7 @@ skills-lock.json
 
 
 src-tauri
+**/.nsh/
+crates/hongguo-nsh-android/android/.gradle/
+crates/hongguo-nsh-android/android/**/build/
+crates/hongguo-nsh-android/android/local.properties

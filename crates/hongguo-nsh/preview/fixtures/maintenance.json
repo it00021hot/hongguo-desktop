@@ -1,0 +1,103 @@
+{
+  "candidates": [
+    {
+      "seriesId": "7701328280862854168",
+      "seriesTitle": "装穷提亲，娶到全家嫌弃的她",
+      "episodeCount": 8,
+      "totalSize": 402653184
+    },
+    {
+      "seriesId": "offline-maintenance-second",
+      "seriesTitle": "下一段故事",
+      "episodeCount": 4,
+      "totalSize": 201326592
+    }
+  ],
+  "preflights": {
+    "7701328280862854168": {
+      "ok": true,
+      "episodeCount": 8,
+      "estimatedSize": 402653184,
+      "freeSpace": 34359738368,
+      "codecConsistent": true,
+      "codecMismatchEpisode": null,
+      "warnings": []
+    },
+    "offline-maintenance-second": {
+      "ok": true,
+      "episodeCount": 4,
+      "estimatedSize": 201326592,
+      "freeSpace": null,
+      "codecConsistent": false,
+      "codecMismatchEpisode": 3,
+      "warnings": ["merge.codecMismatch"]
+    }
+  },
+  "tasks": [
+    {
+      "id": "offline-merge-running",
+      "seriesId": "7701328280862854168",
+      "seriesTitle": "装穷提亲，娶到全家嫌弃的她",
+      "outputName": "装穷提亲 · 兼容版",
+      "mode": "compat",
+      "status": "running",
+      "episodeCount": 8,
+      "outputPath": "",
+      "outputSize": 0,
+      "percent": 42,
+      "error": "",
+      "createdAt": 1794384000000
+    },
+    {
+      "id": "offline-merge-completed",
+      "seriesId": "7701328280862854168",
+      "seriesTitle": "装穷提亲，娶到全家嫌弃的她",
+      "outputName": "装穷提亲 · 快速版",
+      "mode": "quick",
+      "status": "completed",
+      "episodeCount": 8,
+      "outputPath": "/offline/装穷提亲 合集.mp4",
+      "outputSize": 402653184,
+      "percent": 100,
+      "error": "",
+      "createdAt": 1794384000000
+    },
+    {
+      "id": "offline-merge-failed",
+      "seriesId": "offline-maintenance-second",
+      "seriesTitle": "下一段故事",
+      "outputName": "下一段故事 · 合集",
+      "mode": "compat",
+      "status": "failed",
+      "episodeCount": 4,
+      "outputPath": "",
+      "outputSize": 0,
+      "percent": 12,
+      "error": "error.io",
+      "createdAt": 1794384000000
+    }
+  ],
+  "storage": {
+    "usage": { "bytes": 805306368, "files": 16 },
+    "series": [
+      {
+        "seriesId": "7701328280862854168",
+        "title": "装穷提亲，娶到全家嫌弃的她",
+        "bytes": 402653184,
+        "files": 8
+      },
+      {
+        "seriesId": "offline-maintenance-second",
+        "title": "下一段故事",
+        "bytes": 201326592,
+        "files": 4
+      },
+      {
+        "seriesId": "offline-maintenance-third",
+        "title": "归途有风",
+        "bytes": 201326592,
+        "files": 4
+      }
+    ]
+  }
+}

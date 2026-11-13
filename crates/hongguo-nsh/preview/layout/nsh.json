@@ -1,0 +1,7 @@
+{
+  "name": "Hongguo Layout Preview",
+  "id": "com.hongguo.nsh.layout-preview",
+  "rust": "../..",
+  "root": "LayoutPreview",
+  "theme": "../../theme.json"
+}

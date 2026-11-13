@@ -39,6 +39,49 @@ fn notices_empty_then_mark_and_clear() {
     clear_notices(&state).unwrap();
 }
 
+#[test]
+fn reading_one_notice_preserves_the_other_unread_notice_until_clear() {
+    let state = AppState::default();
+    let first = state
+        .store
+        .follow_notice_insert(NOTICE_KIND_FOLLOW, "first", "First", "New episode", 1)
+        .unwrap();
+    let second = state
+        .store
+        .follow_notice_insert(NOTICE_KIND_FOLLOW, "second", "Second", "New episode", 2)
+        .unwrap();
+    assert_eq!(mark_notices_read(&state, &[first]).unwrap(), 1);
+    let items = notices(&state).unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.id == first)
+            .map(|item| item.read),
+        Some(true)
+    );
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.id == second)
+            .map(|item| item.read),
+        Some(false)
+    );
+    clear_notices(&state).unwrap();
+    assert!(notices(&state).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn aborting_the_owned_notice_task_releases_its_session_state() {
+    let state = AppState::default();
+    let weak = std::sync::Arc::downgrade(&state);
+    let task = start_notice_task(state.clone());
+    drop(state);
+    assert!(weak.upgrade().is_some());
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(weak.upgrade().is_none());
+}
+
 #[tokio::test]
 async fn check_updates_skips_when_logged_out() {
     let state = AppState::default();

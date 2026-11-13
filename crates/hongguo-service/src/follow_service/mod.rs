@@ -151,6 +151,11 @@ async fn refresh_baseline(state: &AppState, series_id: &str) -> AppResult<()> {
 /// 启动通知检查定时器：先立即查一轮，之后每 `CHECK_INTERVAL` 一轮。
 /// 壳装配期调用一次（两壳共用）；任务常驻到进程结束。
 pub fn start_notice_loop(state: crate::app_state::AppState) {
+    drop(start_notice_task(state));
+}
+
+/// The owner must abort this task when its application session ends.
+pub fn start_notice_task(state: AppState) -> tokio::task::JoinHandle<()> {
     crate::runtime::spawn(async move {
         loop {
             if let Err(e) = check_updates(&state).await {
@@ -158,7 +163,7 @@ pub fn start_notice_loop(state: crate::app_state::AppState) {
             }
             tokio::time::sleep(CHECK_INTERVAL).await;
         }
-    });
+    })
 }
 
 #[cfg(test)]

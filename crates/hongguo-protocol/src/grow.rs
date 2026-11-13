@@ -15,6 +15,55 @@ use crate::local::{content_type, local_play_url};
 const GROW_HEADER: &str = "x-hongguo-grow";
 const GROW_CHUNK: u64 = 4 * 1024 * 1024;
 const WAIT_SLICE: Duration = Duration::from_secs(3600);
+const CANCELLABLE_WAIT_SLICE: Duration = Duration::from_millis(100);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrowthState {
+    Open,
+    Done,
+    Failed(String),
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrowthSnapshot {
+    pub committed_bytes: u64,
+    pub state: GrowthState,
+}
+
+pub fn snapshot(path: &Path) -> Option<GrowthSnapshot> {
+    let slot = lookup(path)?;
+    let state = lock_state(&slot);
+    Some(public_snapshot(
+        state.committed,
+        state.phase,
+        state.message.clone(),
+    ))
+}
+
+/// Blocks until committed bytes advance or the producer terminates; cancellation
+/// is checked at the same bounded interval as cancellable media reads.
+pub fn wait_for_change(
+    path: &Path,
+    committed_bytes: u64,
+    cancelled: impl Fn() -> bool,
+) -> Result<GrowthSnapshot, String> {
+    let (committed, phase, message) =
+        wait_until_with(path, committed_bytes, &cancelled, CANCELLABLE_WAIT_SLICE)?;
+    Ok(public_snapshot(committed, phase, message))
+}
+
+fn public_snapshot(committed_bytes: u64, phase: Phase, message: String) -> GrowthSnapshot {
+    GrowthSnapshot {
+        committed_bytes,
+        state: match phase {
+            Phase::Open => GrowthState::Open,
+            Phase::Done => GrowthState::Done,
+            Phase::Failed => GrowthState::Failed(message),
+            Phase::Cancelled => GrowthState::Cancelled,
+        },
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -110,6 +159,39 @@ pub fn is_incomplete(path: &Path) -> bool {
     lookup(path).is_some_and(|slot| lock_state(&slot).phase == Phase::Open)
 }
 
+/// The final length is unknown until the writer finishes successfully.
+pub fn completed_len(path: &Path) -> Option<u64> {
+    let slot = lookup(path)?;
+    let state = lock_state(&slot);
+    (state.phase == Phase::Done).then_some(state.committed)
+}
+
+/// Read committed bytes, waiting cancellably for the writer; an empty result means EOF.
+pub fn read_cancellable(
+    path: &Path,
+    start: u64,
+    count: u64,
+    cancelled: impl Fn() -> bool,
+) -> Result<Vec<u8>, String> {
+    if cancelled() {
+        return Err("读取已取消".into());
+    }
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let (committed, phase, message) =
+        wait_until_with(path, start, &cancelled, CANCELLABLE_WAIT_SLICE)?;
+    if start < committed {
+        return read_file(path, start, count.min(committed - start).min(GROW_CHUNK));
+    }
+    match phase {
+        Phase::Done if start == committed => Ok(Vec::new()),
+        Phase::Done => Err("读取位置超过最终视频长度".into()),
+        Phase::Failed | Phase::Cancelled => Err(message),
+        Phase::Open => unreachable!("wait returns only when bytes or a terminal state are ready"),
+    }
+}
+
 pub(crate) fn serve_if_registered(
     path: &Path,
     range_header: Option<&str>,
@@ -167,18 +249,12 @@ fn classify_range(header: Option<&str>) -> Want {
 
 fn serve_live(path: &Path, range_header: Option<&str>) -> Result<ProtocolResponse, String> {
     match classify_range(range_header) {
-        Want::Malformed => Ok(unsatisfiable(known_total(path))),
+        Want::Malformed => Ok(unsatisfiable(completed_len(path))),
         Want::Suffix(len) => serve_suffix(path, len),
         Want::Full => serve_from(path, 0, None),
         Want::From(start) => serve_from(path, start, None),
         Want::Closed { start, end } => serve_from(path, start, Some(end)),
     }
-}
-
-fn known_total(path: &Path) -> Option<u64> {
-    let slot = lookup(path)?;
-    let state = lock_state(&slot);
-    (state.phase == Phase::Done).then_some(state.committed)
 }
 
 fn serve_suffix(path: &Path, len: u64) -> Result<ProtocolResponse, String> {
@@ -272,17 +348,29 @@ fn unsatisfiable(total: Option<u64>) -> ProtocolResponse {
 }
 
 fn wait_until(path: &Path, start: u64) -> Result<(u64, Phase, String), String> {
+    wait_until_with(path, start, &|| false, WAIT_SLICE)
+}
+
+fn wait_until_with(
+    path: &Path,
+    start: u64,
+    cancelled: &dyn Fn() -> bool,
+    interval: Duration,
+) -> Result<(u64, Phase, String), String> {
     let Some(slot) = lookup(path) else {
         return Err("增长中的成片已结束".into());
     };
     let mut state = lock_state(&slot);
     loop {
+        if cancelled() {
+            return Err("读取已取消".into());
+        }
         if start < state.committed || state.phase != Phase::Open {
             return Ok((state.committed, state.phase, state.message.clone()));
         }
         let (next, timeout) = slot
             .cv
-            .wait_timeout(state, WAIT_SLICE)
+            .wait_timeout(state, interval)
             .unwrap_or_else(|p| p.into_inner());
         state = next;
         if timeout.timed_out() && state.phase == Phase::Open && start >= state.committed {
@@ -542,3 +630,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(growing.parent().unwrap());
     }
 }
+
+#[cfg(test)]
+#[path = "grow_reader_tests.rs"]
+mod reader_tests;
