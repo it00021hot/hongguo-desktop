@@ -1,134 +1,91 @@
 use super::model::HistoryItem;
-use hongguo_api::history::{self, WatchHistoryItem};
 use hongguo_common::{AppError, AppResult};
-use hongguo_service::AppState;
-use std::{collections::HashSet, future::Future};
+use hongguo_service::{
+    AppState,
+    history_service::{self, HistoryAccount},
+};
 
 pub(super) async fn load(state: AppState) -> AppResult<Vec<HistoryItem>> {
-    if state.settings().account.is_none() {
-        return hongguo_service::runtime::spawn_blocking(move || {
-            state
-                .store
-                .local_history_list()
-                .map(|items| items.into_iter().map(HistoryItem::from).collect())
-        })
+    let expected_account = history_service::account(&state);
+    history_service::list(&state, expected_account)
         .await
-        .map_err(|error| AppError::Internal(error.to_string()))?;
-    }
-    let env = state.api_env();
-    collect_pages(|offset| history::fetch_watch_history(offset, &env))
-        .await
-        .map(|items| items.into_iter().map(HistoryItem::from).collect())
+        .map(|page| page.items.into_iter().map(HistoryItem::from).collect())
 }
 
-async fn collect_pages<F, Fut>(mut fetch: F) -> AppResult<Vec<WatchHistoryItem>>
-where
-    F: FnMut(i64) -> Fut,
-    Fut: Future<Output = AppResult<history::WatchHistoryPage>>,
-{
-    let mut offset = 0;
-    let mut items = Vec::new();
-    let mut seen = HashSet::new();
-    loop {
-        let page = fetch(offset).await?;
-        items.extend(
-            page.items
-                .into_iter()
-                .filter(|item| seen.insert(item.series_id.clone())),
-        );
-        if !page.has_more {
-            return Ok(items);
-        }
-        if page.next_offset <= offset {
-            return Err(AppError::Internal(
-                "watch history cursor did not advance".into(),
-            ));
-        }
-        offset = page.next_offset;
-    }
+pub(super) fn identity(state: &AppState) -> Option<HistoryAccount> {
+    history_service::account(state)
 }
 
 pub(super) async fn remove(
     state: AppState,
     entries: Vec<HistoryItem>,
-    expected_user: Option<String>,
+    expected_user: Option<HistoryAccount>,
 ) -> AppResult<()> {
-    if state
-        .settings()
-        .account
-        .as_ref()
-        .map(|account| account.user_id.clone())
-        != expected_user
-    {
+    if identity(&state) != expected_user {
         return Err(AppError::Auth("history identity changed".into()));
-    }
-    if expected_user.is_none() {
-        return hongguo_service::runtime::spawn_blocking(move || {
-            state
-                .store
-                .delete_local_history(&entries.into_iter().map(|item| item.id).collect::<Vec<_>>())
-        })
-        .await
-        .map_err(|error| AppError::Internal(error.to_string()))?;
     }
     let refs = entries
         .into_iter()
         .map(|item| (item.id, item.vid, i64::from(item.episode)))
         .collect::<Vec<_>>();
-    history::delete_watch_history(&refs, &state.api_env()).await
+    history_service::delete(&state, &refs, expected_user).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hongguo_api::history::WatchHistoryPage;
-
     #[tokio::test]
-    async fn all_pages_preserve_ids_deduplicate_and_accept_empty_intermediate_pages() {
-        let calls = std::cell::RefCell::new(Vec::new());
-        let rows = collect_pages(|offset| {
-            calls.borrow_mut().push(offset);
-            std::future::ready(Ok(WatchHistoryPage {
-                items: if offset == 1 {
-                    Vec::new()
-                } else {
-                    vec![WatchHistoryItem {
-                        series_id: "9007199254740993".into(),
-                        ..Default::default()
-                    }]
-                },
-                has_more: offset < 2,
-                next_offset: offset + 1,
-                total: 1,
-            }))
-        })
-        .await
-        .unwrap();
-        assert_eq!(*calls.borrow(), [0, 1, 2]);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].series_id, "9007199254740993");
+    async fn anonymous_history_load_and_delete_use_the_shared_local_source() {
+        let state = AppState::default();
+        state
+            .store
+            .upsert_local_history(&hongguo_common::model::LocalHistoryItem {
+                series_id: "series".into(),
+                title: "series".into(),
+                cover: String::new(),
+                vid: "last".into(),
+                vid_index: 505,
+                episode_cnt: 504,
+                position_ms: 113_986,
+                duration_ms: 113_986,
+                updated_at_ms: 1000,
+            })
+            .unwrap();
+        let rows = load(state.clone()).await.unwrap();
+        assert_eq!(rows[0].episode, 504);
+
+        remove(state.clone(), rows, None).await.unwrap();
+
+        assert!(state.store.local_history_list().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn stalled_cursor_and_page_errors_do_not_report_partial_success() {
-        assert!(
-            collect_pages(|_| std::future::ready(Ok(WatchHistoryPage {
-                has_more: true,
-                ..Default::default()
-            })))
-            .await
-            .is_err()
-        );
-        assert!(
-            collect_pages(|_| std::future::ready(Err(AppError::Io("offline".into()))))
-                .await
-                .is_err()
-        );
-        assert!(
-            collect_pages(|_| std::future::ready(Ok(WatchHistoryPage::default())))
-                .await
-                .unwrap()
-                .is_empty()
-        );
+    async fn relogin_of_the_same_user_rejects_an_old_delete_request() {
+        let state = AppState::default();
+        let mut settings = state.settings();
+        settings.account = Some(hongguo_common::model::AccountState {
+            mobile: String::new(),
+            cookies: String::new(),
+            user_name: String::new(),
+            avatar_url: String::new(),
+            user_id: "same-user".into(),
+            login_at: 2,
+            token: String::new(),
+            raw_login: String::new(),
+            raw_profile: String::new(),
+        });
+        state.replace_settings(settings);
+
+        let result = remove(
+            state,
+            Vec::new(),
+            Some(HistoryAccount {
+                user_id: "same-user".into(),
+                login_at: 1,
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::Auth(_))));
     }
 }

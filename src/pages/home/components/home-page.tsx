@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/common/error-state';
 import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
@@ -7,11 +8,9 @@ import { PlayerView } from '@/features/player/components/player-page';
 import { play } from '@/service/commands';
 import {
   keys,
-  useAccount,
   useBookshelf,
   useFeed,
   useFeedTabs,
-  useLocalHistory,
   usePrefetchSeriesEpisodes,
   useSeriesEpisodes,
   useSeriesProgress,
@@ -19,7 +18,7 @@ import {
 } from '@/service/queries';
 import { enhancedCover, isRenderableCover } from '@/utils/cover';
 import { withPinnedPlaying } from '@/utils/pinned-playing';
-import { resolveResumeEntry } from '@/utils/resume-entry';
+import { resolveResumeTarget } from '@/features/player/resume-target';
 import { usePlayerStore } from '@/stores/player';
 import { t } from '@/locales';
 /** 推荐流的「换一批」过期阈值（毫秒）：恢复游标后流数据比这更旧就整体
@@ -101,15 +100,9 @@ export function HomePage() {
   /** 回首页恢复是否已尝试（一次性；见下方渲染期恢复块）。 */
   const [restored, setRestored] = useState(false);
 
-  // 登录后的「你的内容」种子：观看历史 + 书架（追更）排在推荐流最前（首页即书架/续看驱动）
-  const { data: account } = useAccount();
-  // 历史源双模式：登录读云端（跨端续播），匿名读本地记录——云端匿名回的设备级
-  // 历史行是匿名期快速测试留下的垃圾（vi=0/pos=0），拿它当续播依据就是「每次都回第 1 集」的根源
-  const loggedIn = !!account;
-  const cloudHistory = useWatchHistory(loggedIn);
-  const localHistory = useLocalHistory(!loggedIn);
-  const historyItems = loggedIn ? cloudHistory.data?.items : localHistory.data;
-  const historyPending = loggedIn ? cloudHistory.isPending : localHistory.isPending;
+  const history = useWatchHistory();
+  const historyItems = history.data?.items;
+  const historyPending = history.isPending;
   // 顶栏 tab 列表（服务端下发；拉取前/失败回落三件套，见 buildTabList）
   const { data: serverTabs } = useFeedTabs();
   const homeTabs = useMemo(() => buildTabList(serverTabs), [serverTabs]);
@@ -175,6 +168,7 @@ export function HomePage() {
   // 回首页换一批（>5 分钟过期）但在播剧不动：重开会话取新一批（reset 语义），游标归零；
   // 在播剧由置顶钉住继续播
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   useEffect(() => {
     if (!restored || !playingId) return;
     if (feed.isRefreshing || feed.isLoading) return;
@@ -253,6 +247,22 @@ export function HomePage() {
   // 两路进度源：本地播放档案（5 秒一写真值）+ 云端观看历史（跨客户端），种子区已在用同一查询
   const progressQuery = useSeriesProgress(currentId ?? '');
   const localProgress = progressQuery.data;
+  const resumeTarget = useMemo(
+    () =>
+      currentSeries
+        ? resolveResumeTarget(
+            currentSeries,
+            localProgress,
+            historyItems?.find((item) => item.seriesId === currentSeries.seriesId),
+          )
+        : undefined,
+    [currentSeries, localProgress, historyItems],
+  );
+  const hasValidTarget =
+    playingId === currentId &&
+    currentSeries?.episodes.some(
+      (episode) => episode.vidIndex === storeVidIndex && episode.vid !== '',
+    );
 
   // 回首页恢复（切菜单回来不换视频）：store 目标剧还在流里 → 游标对回那部剧
   // （游标是组件 state，重挂载会归零，不恢复则起点决策把目标换成第一部、正在看的视频被顶掉）。
@@ -296,7 +306,7 @@ export function HomePage() {
       cursorMoved: cursorMovedRef.current,
       playingId,
       cursorSeriesId: currentSeries.seriesId,
-      storeVidIndex: storeVidIndex ?? 0,
+      storeVidIndex: hasValidTarget ? (storeVidIndex ?? 0) : 0,
       index,
       items,
     });
@@ -313,10 +323,7 @@ export function HomePage() {
 
     // >3 秒都续播（不看片尾）：本地档案 vs 云端历史取新者（共享决策，
     // 与详情页「继续看」/后端 resolve_entry 同口径）
-    const entry = resolveResumeEntry(
-      localProgress,
-      historyItems?.find((i) => i.seriesId === decision.seriesId),
-    );
+    if (!resumeTarget) return;
 
     // 主动切剧即结束「在播保护」——但只在游标剧在未钉住的列表里时关闸（decision.releasePin）：
     // 外部点名的目标只以钉住占位存在，关闸它就从列表消失、起点决策把播放目标抢走（「搜索点开播错剧」的根源）
@@ -326,14 +333,10 @@ export function HomePage() {
     if (anchorIndex !== null) {
       setIndexes((prev) => ({ ...prev, [source]: anchorIndex }));
     }
-    setTarget(decision.seriesId, entry?.index ?? 1);
-    if (entry && entry.positionMs > 0) {
-      setResumeHint({
-        seriesId: decision.seriesId,
-        vidIndex: entry.index,
-        positionMs: entry.positionMs,
-      });
-    }
+    setTarget(decision.seriesId, resumeTarget.vidIndex);
+    setResumeHint(
+      resumeTarget.positionMs > 0 ? { seriesId: decision.seriesId, ...resumeTarget } : null,
+    );
   }, [
     currentSeries,
     index,
@@ -343,6 +346,8 @@ export function HomePage() {
     source,
     storeVidIndex,
     localProgress,
+    resumeTarget,
+    hasValidTarget,
     progressQuery.isPending,
     progressQuery.isFetching,
     historyItems,
@@ -476,6 +481,23 @@ export function HomePage() {
         detail={String(seriesQuery.error)}
         onRetry={() => void seriesQuery.refetch()}
       />
+    );
+  }
+  if (currentSeries && resumeTarget === null && !hasValidTarget) {
+    return (
+      <div className="relative h-full min-h-0 overflow-hidden">
+        <TopBarTabs tabs={homeTabs} source={source} onPick={pickTab} />
+        <ErrorState message={t('history.contentUnavailable')}>
+          <Button
+            variant="outline"
+            onClick={() =>
+              void navigate({ to: '/detail', search: { seriesId: currentSeries.seriesId } })
+            }
+          >
+            {t('player.episodes')}
+          </Button>
+        </ErrorState>
+      </div>
     );
   }
   if (loadError && items.length === 0) {

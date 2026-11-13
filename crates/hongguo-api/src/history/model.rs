@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use hongguo_common::model::LocalHistoryItem;
+
 /// 一条云端观看记录。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +29,22 @@ pub struct WatchHistoryItem {
     pub episode_cnt: i64,
     /// 最近观看时间（unix 毫秒）
     pub updated_at_ms: i64,
+}
+
+impl From<LocalHistoryItem> for WatchHistoryItem {
+    fn from(item: LocalHistoryItem) -> Self {
+        Self {
+            series_id: item.series_id,
+            title: item.title,
+            cover: item.cover,
+            vid_index: i64::from(item.vid_index),
+            vid: item.vid,
+            position_ms: item.position_ms,
+            duration_ms: item.duration_ms,
+            episode_cnt: i64::from(item.episode_cnt),
+            updated_at_ms: item.updated_at_ms,
+        }
+    }
 }
 
 impl WatchHistoryItem {

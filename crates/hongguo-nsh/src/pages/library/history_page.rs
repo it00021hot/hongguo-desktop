@@ -51,13 +51,7 @@ fn content(
     let feedback = signal(SharedString::default());
     let user = computed(move || {
         session.identity();
-        session.with(|session| {
-            session
-                .state
-                .settings()
-                .account
-                .map(|account| account.user_id)
-        })
+        session.with(|session| history_data::identity(&session.state))
     });
     let resolving = signal(false);
     effect(move || {

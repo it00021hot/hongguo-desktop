@@ -93,6 +93,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 # 红绿灯 origin 对齐（NSPoint / NSRect）；与 hongguo-gpui 同版本。
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSGeometry",
+    "NSNotification",
+    "NSString",
 ] }
 
 [dev-dependencies]

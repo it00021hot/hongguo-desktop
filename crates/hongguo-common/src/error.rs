@@ -3,7 +3,7 @@
 //! 每个变体带 i18n key 供前端查双语资源，Rust 侧不硬编码面向用户的文案；错误该暴露就暴露，这里只负责补上下文。
 
 /// 应用错误。
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum AppError {
     #[error("网络请求失败: {0}")]
     Network(String),

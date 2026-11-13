@@ -58,7 +58,7 @@ export function useSaveSettings() {
 - **事件驱动失效**：后端事件到了就 invalidate 对应 key。范例在 `components/layout/app-shell.tsx`：`useEvent(EVENTS.followNotices, …)` 里 `refreshFollow(payload.notices)`（追更通知缓存）；`useEvent(EVENTS.deviceRegistered, …)` 里对 `keys.feedTabs` / `keys.feedRoot` / `keys.rankRoot` 做 `invalidateQueries`（设备换档后重拉身份敏感数据）。
 - **staleTime 有意识地决定**：`useSeriesProgress` 故意不给 staleTime（详情页每次挂载必须现读本地真值），别无脑抄别人的配置。
 - 无限滚动统一走 `useInfiniteStream` 封装（items/hasMore/loadMore 形状，翻页失败不炸整页）。
-- 长任务挂起兜底：invoke 加 `Promise.race` 30s 超时（Rust 热重载会丢在途 invoke 的应答，promise 永不 settle）。
+- `call()` 当前直接等待 invoke，不提供通用 30 秒超时。播放启动只等待注册首轮结果，后续注册恢复归后台协调任务；切集按目标 key 丢弃旧回调，尚无请求级 IPC 取消。
 - 服务端数据不进 zustand、不进组件 state——那是两套缓存打架的根源。
 
 ## Zustand（跨组件 UI/会话状态）

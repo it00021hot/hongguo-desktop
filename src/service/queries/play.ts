@@ -9,6 +9,7 @@ import { keys } from './common';
  */
 export function usePlay() {
   return useMutation({
+    meta: { silentOnError: true },
     mutationFn: ({
       seriesId,
       vidIndex,

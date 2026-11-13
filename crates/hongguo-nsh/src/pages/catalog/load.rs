@@ -1,8 +1,7 @@
 use super::model::{DEFAULT_CHANNEL, Query};
 pub(super) use crate::player::resolve_start as target;
 use hongguo_api::discover::{FeedItem, FeedPage};
-use hongguo_common::{AppError, AppResult};
-use hongguo_service::runtime;
+use hongguo_common::AppResult;
 use std::{collections::HashSet, sync::Arc};
 
 pub(super) async fn feed(
@@ -19,40 +18,22 @@ pub(super) async fn feed(
     )
     .await?;
     if query.channel == DEFAULT_CHANNEL && query.seen.is_empty() {
-        let mut seeds = if state.settings().account.is_some() {
-            let personal = session.personal.read(state).await?;
-            let mut seeds = personal
-                .history
-                .iter()
-                .map(|item| FeedItem {
-                    series_id: item.series_id.clone(),
-                    title: item.title.clone(),
-                    cover: item.cover.clone(),
-                    episode_cnt: u32::try_from(item.episode_cnt).unwrap_or(0),
-                    ..Default::default()
-                })
-                .collect::<Vec<_>>();
-            seeds.extend(personal.bookshelf.iter().map(|item| FeedItem {
+        let personal = session.personal.read(state).await?;
+        let mut seeds = personal
+            .history
+            .iter()
+            .map(|item| FeedItem {
                 series_id: item.series_id.clone(),
+                title: item.title.clone(),
+                cover: item.cover.clone(),
+                episode_cnt: u32::try_from(item.episode_cnt).unwrap_or(0),
                 ..Default::default()
-            }));
-            seeds
-        } else {
-            let store = state.store.clone();
-            let history = runtime::spawn_blocking(move || store.local_history_list())
-                .await
-                .map_err(|error| AppError::Internal(error.to_string()))??;
-            history
-                .into_iter()
-                .map(|item| FeedItem {
-                    series_id: item.series_id,
-                    title: item.title,
-                    cover: item.cover,
-                    episode_cnt: item.episode_cnt,
-                    ..Default::default()
-                })
-                .collect::<Vec<_>>()
-        };
+            })
+            .collect::<Vec<_>>();
+        seeds.extend(personal.bookshelf.iter().map(|item| FeedItem {
+            series_id: item.series_id.clone(),
+            ..Default::default()
+        }));
         let mut ids = HashSet::new();
         seeds.retain(|item| !item.series_id.is_empty() && ids.insert(item.series_id.clone()));
         seeds.extend(

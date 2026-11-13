@@ -1,8 +1,12 @@
 import { useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import { useUiStore } from '@/stores/ui';
-import { applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
 import { app as appApi } from '@/service/commands';
+import {
+  enterPortraitScreen,
+  exitPortraitScreen as restorePortraitScreen,
+  setPortraitFull,
+} from '@/hooks/window-presentation';
 
 /**
  * 竖屏播放（几何算法在后端 window_cmd）：窗口收窄成竖条，比例带手机形地板
@@ -29,23 +33,9 @@ export function portraitAspectOf(video: HTMLVideoElement | null): number {
   return ar > 0 && ar < PORTRAIT_ASPECT_MAX ? Math.min(ar, PHONE_LIKE_ASPECT) : PHONE_LIKE_ASPECT;
 }
 
-/** 进竖屏先退全屏：全屏窗口尺寸归系统管，收窄会被吞掉（进小屏同款守卫）。 */
-async function enterPortrait(aspect: number): Promise<void> {
-  if (useUiStore.getState().windowFullscreen) {
-    void applyWindowFullscreen(false).catch(() => undefined);
-  }
-  useUiStore.getState().setPortrait(true);
-  await appApi.enterPortraitScreen(aspect).catch((e: Error) => {
-    useUiStore.getState().setPortrait(false);
-    throw e;
-  });
-}
-
 /** 退出竖屏并清镜像态。进小屏也走这里——竖屏几何快照是单份的，进小屏前必须先还原。 */
 export function exitPortraitScreen(): void {
-  if (!useUiStore.getState().portrait) return;
-  useUiStore.getState().setPortrait(false);
-  void appApi.exitPortraitScreen().catch(() => undefined);
+  void restorePortraitScreen().catch((e: Error) => toast.error(e.message));
 }
 
 /**
@@ -62,7 +52,7 @@ export function usePortraitWindow(params: { videoRef: React.RefObject<HTMLVideoE
     if (useUiStore.getState().portrait) {
       exitPortraitScreen();
     } else {
-      void enterPortrait(portraitAspectOf(videoRef.current)).catch((e: Error) =>
+      void enterPortraitScreen(portraitAspectOf(videoRef.current)).catch((e: Error) =>
         toast.error(e.message),
       );
     }
@@ -73,10 +63,9 @@ export function usePortraitWindow(params: { videoRef: React.RefObject<HTMLVideoE
     const st = useUiStore.getState();
     if (!st.portrait) return;
     const next = !st.portraitFull;
-    st.setPortraitFull(next);
-    void appApi
-      .setPortraitFull(portraitAspectOf(videoRef.current), next)
-      .catch((e: Error) => toast.error(e.message));
+    void setPortraitFull(portraitAspectOf(videoRef.current), next).catch((e: Error) =>
+      toast.error(e.message),
+    );
   }, [videoRef]);
 
   // 切集/换清晰度 → 视频尺寸变化 → 自动重适配（>1% 才动；铺满与否跟随当前档）。

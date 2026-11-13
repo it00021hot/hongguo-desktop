@@ -18,3 +18,5 @@ export * from './interact';
 export * from './emoticon';
 export * from './rank';
 export * from './search';
+export * from './device';
+export * from './window';

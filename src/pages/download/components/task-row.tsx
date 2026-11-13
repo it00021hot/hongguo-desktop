@@ -40,6 +40,12 @@ export function TaskRow({
   onDelete,
 }: RowProps) {
   const percent = task.total > 0 ? (task.downloaded / task.total) * 100 : 0;
+  const errorMessage =
+    task.error === 'error.auth'
+      ? t('player.authRejected')
+      : task.error
+        ? t(task.error as MessageKey)
+        : null;
 
   return (
     <TableRow data-state={checked ? 'selected' : undefined}>
@@ -50,15 +56,9 @@ export function TaskRow({
         <span className="block truncate" title={task.seriesTitle}>
           {task.seriesTitle}
         </span>
-        {task.error && (
-          // task.error 存的是 i18n key。老数据里存的是历史错误原文——持久化
-          // 读出的存量无法静态枚举，这里 cast 换类型检查；t() 查不到会回落
-          // 显示原串，正好当降级用，不做数据迁移
-          <span
-            className="text-destructive block truncate text-xs"
-            title={t(task.error as MessageKey)}
-          >
-            {t(task.error as MessageKey)}
+        {errorMessage && (
+          <span className="text-destructive block truncate text-xs" title={errorMessage}>
+            {errorMessage}
           </span>
         )}
       </TableCell>

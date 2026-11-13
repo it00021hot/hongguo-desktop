@@ -8,6 +8,7 @@ pub mod season;
 pub mod series;
 pub mod settings;
 pub mod task;
+pub mod window;
 
 pub use follow::{FollowNotice, NOTICE_KIND_FOLLOW, NOTICE_KIND_ONLINE};
 pub use history::LocalHistoryItem;

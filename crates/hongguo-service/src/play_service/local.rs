@@ -21,6 +21,8 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         )));
     }
 
+    crate::cold_start::wait(state).await?;
+
     // 兜底走在线流。vid 取自**剧集档案的分集表**（解析剧集时写入）——任务表只记下载进度，
     // 没下过的集在那里查不到 vid。档案里查不到就当场解析一次：播放页会同时发「拉分集」
     // 和「起播」两个请求，起播先到是常态，不补一次解析第一下点开必然报「缺少 vid」。
@@ -190,7 +192,10 @@ pub(super) async fn prefetch_episode_models(
         .map(|ep| ep.vid)
         .collect();
     let map = std::collections::BTreeMap::from([(series.content_type.to_string(), vids)]);
-    crate::cold_start::wait().await;
+    if let Err(error) = crate::cold_start::wait(state).await {
+        log::warn!("[Play] 模型预取等待设备身份失败: {error}");
+        return;
+    }
     let env = state.api_env();
     if let Err(error) =
         hongguo_api::play_url::fetch_play_scene(&map, scene, crate::device::stream_cap(), &env)

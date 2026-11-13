@@ -11,6 +11,8 @@ mod events;
 mod protocol;
 #[cfg(test)]
 mod testing;
+#[cfg(target_os = "macos")]
+mod window_fullscreen;
 mod window_state;
 
 use hongguo_common::{AppError, AppResult};
@@ -113,6 +115,8 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             if let Some(window) = app.get_webview_window("main") {
                 // 窗口还藏着（mark_window_ready 才亮出）就先恢复上次几何，再挂防抖落盘
                 window_state::restore(&window);
+                #[cfg(target_os = "macos")]
+                window_fullscreen::init(app.handle())?;
                 // 红绿灯按 Cursor 公式钉进 44px 顶栏（tao 配置位不够，见 window_cmd）
                 #[cfg(target_os = "macos")]
                 commands::window_cmd::align_traffic_lights(app.handle());
@@ -200,6 +204,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::app_cmd::exit_app,
             commands::boss_key_cmd::set_boss_key,
             commands::window_cmd::enter_mini_screen,
+            commands::window_cmd::get_window_presentation,
             commands::window_cmd::exit_mini_screen,
             commands::window_cmd::set_always_on_top,
             commands::window_cmd::enter_portrait_screen,

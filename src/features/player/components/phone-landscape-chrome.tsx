@@ -18,6 +18,7 @@ const RATES = [0.75, 1, 1.25, 1.5, 2, 3] as const;
 
 export function PhoneLandscapeChrome({
   videoRef,
+  mediaAvailable,
   visible,
   title,
   vidIndex,
@@ -36,6 +37,7 @@ export function PhoneLandscapeChrome({
   onControlsLeave,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
+  mediaAvailable: boolean;
   visible: boolean;
   title?: string;
   vidIndex: number;
@@ -185,6 +187,7 @@ export function PhoneLandscapeChrome({
           <span>{formatDuration(duration)}</span>
         </div>
         <ScrubBar
+          disabled={!mediaAvailable}
           current={Math.min(current, duration || 0)}
           duration={duration}
           onSeek={seekTo}

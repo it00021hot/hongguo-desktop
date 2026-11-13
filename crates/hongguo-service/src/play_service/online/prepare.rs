@@ -43,7 +43,7 @@ async fn fetch_with_registry(
     definition: Option<u32>,
     cap: hongguo_api::stream_pick::DecoderCapability,
 ) -> AppResult<hongguo_api::play_url::PlayInfo> {
-    crate::cold_start::wait().await;
+    crate::cold_start::wait(state).await?;
     let env = state.api_env();
     match hongguo_api::play_url::fetch_play_url(vid, definition, cap, &env).await {
         Ok(p) => Ok(p),
@@ -86,7 +86,7 @@ pub async fn prepare(
     if vid.is_empty() {
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
-    crate::cold_start::wait().await;
+    crate::cold_start::wait(state).await?;
     let c = cache();
     // 记下当前集：逐出策略保它、预填礼让它、切走后旧填充据此自杀。
     // 一次只看一集的**语义下有界保留**：全清的话，信息流切剧目标一弹，
@@ -187,7 +187,7 @@ pub async fn prefetch_stream(
     if vid.is_empty() || bytes == 0 {
         return Ok(());
     }
-    crate::cold_start::wait().await;
+    crate::cold_start::wait(state).await?;
     let c = cache();
     // 预取与起播共用内置解码约束，缓存中不放入无法播放的流。
     match fetch_with_registry(state, vid, progress_key, None, crate::device::stream_cap()).await {

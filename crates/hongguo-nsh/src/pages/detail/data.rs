@@ -23,19 +23,26 @@ pub(super) fn load(
                         .last()
                         .is_some_and(|route| route.detail_id() == Some(position_id.as_str()))
                 })
-                .then(|| (position_id.clone(), session.identity()))
+                .then(|| (position_id.clone(), session.identity(), session.library()))
         },
-        move |(id, _), _| {
-            let state = session.with(|session| session.state.clone());
+        move |(id, _, _), _| {
+            let state = session.with(|session| session.clone());
             bridge::request(async move {
-                hongguo_service::runtime::spawn_blocking(move || {
-                    state
-                        .store
-                        .series_last_position(&id)
-                        .map(|position| position.map(|(episode, _)| episode))
-                })
-                .await
-                .map_err(|error| hongguo_common::AppError::Internal(error.to_string()))?
+                let sources = state.personal.read(&state.state).await?;
+                let Some(item) = sources.history.iter().find(|item| item.series_id == id) else {
+                    return Ok(None);
+                };
+                let episode = u32::try_from(item.vid_index).map_err(|_| {
+                    hongguo_common::AppError::InvalidArgs("历史集号超出有效范围".into())
+                })?;
+                state.personal.remember(
+                    &state.state,
+                    &sources,
+                    id,
+                    episode,
+                    item.position_ms as f64 / 1000.0,
+                )?;
+                Ok(Some(episode))
             })
         },
     );

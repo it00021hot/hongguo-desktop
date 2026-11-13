@@ -25,6 +25,7 @@ export function fuzzyStaleTime(key: readonly unknown[]): number {
 
 export const keys = {
   settings: ['settings'] as const,
+  deviceStatus: ['device-status'] as const,
   /** 缓存目录留空时的默认位置（进程内不变，设置页只在空态展示） */
   defaultCacheDir: ['default-cache-dir'] as const,
   feed: (tab: string) => ['feed', tab] as const,
@@ -39,7 +40,8 @@ export const keys = {
   seriesSnapshot: (id: string) => ['series-snapshot', id] as const,
   seriesProgress: (id: string) => ['series-progress', id] as const,
   watchHistory: ['watch-history'] as const,
-  localHistory: ['local-history'] as const,
+  watchHistoryFor: (userId: string | null, loginAt: number | null) =>
+    ['watch-history', userId, loginAt] as const,
   tasks: ['download-tasks'] as const,
   queueStatus: ['queue-status'] as const,
   mergeTasks: ['merge-tasks'] as const,

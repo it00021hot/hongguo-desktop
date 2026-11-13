@@ -18,6 +18,7 @@ type ModelCache = HashMap<String, (Instant, Arc<Value>)>;
 static BATCH_CACHE: OnceLock<Mutex<ModelCache>> = OnceLock::new();
 /// 批量结果有效期：响应自带 expire_time（小时级），取保守 10 分钟。
 const BATCH_TTL: Duration = Duration::from_secs(600);
+const USER_NOT_LOGIN_CODE: i64 = 101_108;
 
 fn batch_cache() -> &'static Mutex<ModelCache> {
     BATCH_CACHE.get_or_init(Mutex::default)
@@ -223,6 +224,15 @@ fn parse_model_response(bytes: &[u8]) -> AppResult<Option<Value>> {
     }
     let value: Value = serde_json::from_slice(bytes)
         .map_err(|e| AppError::Media(format!("解析取流响应失败: {e}")))?;
+    if value.get("code").and_then(Value::as_i64) == Some(USER_NOT_LOGIN_CODE) {
+        let message = value
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("USER_NOT_LOGIN");
+        return Err(AppError::Auth(format!(
+            "取流接口返回 {USER_NOT_LOGIN_CODE}: {message}"
+        )));
+    }
     check_code(&value)?;
     check_model_code(&value)?;
     Ok(Some(value))

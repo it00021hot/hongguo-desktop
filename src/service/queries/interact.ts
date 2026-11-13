@@ -34,6 +34,7 @@ export function useAuthRefresh() {
     void qc.invalidateQueries({ queryKey: keys.account });
     void qc.invalidateQueries({ queryKey: keys.interactState });
     void qc.invalidateQueries({ queryKey: keys.bookshelf });
+    void qc.invalidateQueries({ queryKey: keys.watchHistory });
     void qc.invalidateQueries({ queryKey: keys.reservationsRoot });
   }, [qc]);
 }

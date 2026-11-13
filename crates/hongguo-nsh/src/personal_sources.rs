@@ -1,6 +1,9 @@
 use hongguo_api::{history::WatchHistoryItem, interact::BookshelfEntry};
 use hongguo_common::{AppError, AppResult};
-use hongguo_service::AppState;
+use hongguo_service::{
+    AppState,
+    history_service::{self, HistoryAccount},
+};
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -8,32 +11,20 @@ use std::{
 
 const CACHE_LIFETIME: Duration = Duration::from_secs(30);
 
-#[derive(Clone, PartialEq, Eq)]
-struct AccountKey {
-    id: String,
-    login_at: i64,
-}
-
-fn account_key(state: &AppState) -> Option<AccountKey> {
-    state.settings().account.map(|account| AccountKey {
-        id: account.user_id,
-        login_at: account.login_at,
-    })
-}
-
 #[derive(Default)]
 pub(crate) struct Sources {
-    account: Option<AccountKey>,
+    account: Option<HistoryAccount>,
     pub(crate) history: Vec<WatchHistoryItem>,
     pub(crate) bookshelf: Vec<BookshelfEntry>,
 }
 
 struct Snapshot {
     loaded: Instant,
-    value: Arc<Sources>,
+    account: HistoryAccount,
+    bookshelf: Vec<BookshelfEntry>,
 }
 struct ResumeHint {
-    account: AccountKey,
+    account: HistoryAccount,
     id: String,
     episode: u32,
     at: f64,
@@ -43,53 +34,63 @@ struct ResumeHint {
 pub(crate) struct PersonalSources {
     snapshot: Mutex<Option<Snapshot>>,
     hint: Mutex<Option<ResumeHint>>,
+    #[cfg(test)]
+    fixture: Option<Arc<Sources>>,
 }
 
 impl PersonalSources {
     #[cfg(test)]
     pub(crate) fn with_test_history(state: &AppState, history: Vec<WatchHistoryItem>) -> Self {
         Self {
-            snapshot: Mutex::new(Some(Snapshot {
-                loaded: Instant::now(),
-                value: Arc::new(Sources {
-                    account: account_key(state),
-                    history,
-                    bookshelf: Vec::new(),
-                }),
+            fixture: Some(Arc::new(Sources {
+                account: history_service::account(state),
+                history,
+                bookshelf: Vec::new(),
             })),
-            hint: Mutex::new(None),
+            ..Self::default()
         }
     }
 
     pub(crate) async fn read(&self, state: &AppState) -> AppResult<Arc<Sources>> {
-        let key = account_key(state);
-        let Some(account) = key.as_ref() else {
+        let key = history_service::account(state);
+        #[cfg(test)]
+        if let Some(fixture) = self
+            .fixture
+            .as_ref()
+            .filter(|fixture| fixture.account == key)
+        {
+            return Ok(fixture.clone());
+        }
+        if key.is_none() {
             *self.snapshot.lock().map_err(cache_error)? = None;
             *self.hint.lock().map_err(cache_error)? = None;
-            return Ok(Arc::new(Sources::default()));
-        };
+        }
         let cached = self
             .snapshot
             .lock()
             .map_err(cache_error)?
             .as_ref()
             .filter(|snapshot| {
-                snapshot.value.account == key && snapshot.loaded.elapsed() < CACHE_LIFETIME
+                Some(&snapshot.account) == key.as_ref()
+                    && snapshot.loaded.elapsed() < CACHE_LIFETIME
             })
-            .map(|snapshot| snapshot.value.clone());
-        if let Some(cached) = cached {
-            return Ok(cached);
-        }
+            .map(|snapshot| snapshot.bookshelf.clone());
+        let refresh_bookshelf = cached.is_none();
         let env = state.api_env();
-        let (history, bookshelf) = tokio::join!(
-            hongguo_api::history::fetch_watch_history(0, &env),
-            hongguo_api::interact::fetch_bookshelf(&account.id, &env),
-        );
-        let complete = history.is_ok() && bookshelf.is_ok();
+        let (history, bookshelf) = tokio::join!(history_service::list(state, key.clone()), async {
+            match (key.as_ref(), cached) {
+                (_, Some(bookshelf)) => Ok(bookshelf),
+                (Some(account), None) => {
+                    hongguo_api::interact::fetch_bookshelf(&account.user_id, &env).await
+                }
+                (None, None) => Ok(Vec::new()),
+            }
+        },);
+        let cache_bookshelf = refresh_bookshelf && bookshelf.is_ok();
         let history = match history {
             Ok(page) => page.items,
             Err(error) => {
-                log::warn!("[NSH personal sources] optional cloud history unavailable: {error}");
+                log::warn!("[NSH personal sources] optional history unavailable: {error}");
                 Vec::new()
             }
         };
@@ -100,7 +101,7 @@ impl PersonalSources {
                 Vec::new()
             }
         };
-        if account_key(state) != key {
+        if history_service::account(state) != key {
             return Err(AppError::Auth("personal source identity changed".into()));
         }
         let value = Arc::new(Sources {
@@ -108,10 +109,11 @@ impl PersonalSources {
             history,
             bookshelf,
         });
-        if complete {
+        if cache_bookshelf && let Some(account) = value.account.clone() {
             *self.snapshot.lock().map_err(cache_error)? = Some(Snapshot {
                 loaded: Instant::now(),
-                value: value.clone(),
+                account,
+                bookshelf: value.bookshelf.clone(),
             });
         }
         Ok(value)
@@ -125,7 +127,7 @@ impl PersonalSources {
         episode: u32,
         at: f64,
     ) -> AppResult<()> {
-        let key = account_key(state);
+        let key = history_service::account(state);
         if key != sources.account {
             return Err(AppError::Auth("playback entry identity changed".into()));
         }
@@ -150,20 +152,21 @@ impl PersonalSources {
         } else {
             0.0
         };
-        *self.hint.lock().map_err(cache_error)? = account_key(state).map(|account| ResumeHint {
-            account,
-            id,
-            episode,
-            at,
-        });
+        *self.hint.lock().map_err(cache_error)? =
+            history_service::account(state).map(|account| ResumeHint {
+                account,
+                id,
+                episode,
+                at,
+            });
         Ok(())
     }
 
     pub(crate) fn take_position(&self, state: &AppState, id: &str, episode: u32) -> AppResult<f64> {
-        self.take_for(account_key(state).as_ref(), id, episode)
+        self.take_for(history_service::account(state).as_ref(), id, episode)
     }
 
-    fn take_for(&self, account: Option<&AccountKey>, id: &str, episode: u32) -> AppResult<f64> {
+    fn take_for(&self, account: Option<&HistoryAccount>, id: &str, episode: u32) -> AppResult<f64> {
         let mut hint = self.hint.lock().map_err(cache_error)?;
         if hint
             .as_ref()
@@ -188,11 +191,74 @@ fn cache_error<T>(_: std::sync::PoisonError<T>) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn anonymous_reads_use_fresh_shared_history_and_shared_episode_cap() {
+        let state = AppState::default();
+        let sources = PersonalSources::default();
+        let mut item = hongguo_common::model::LocalHistoryItem {
+            series_id: "series".into(),
+            title: "series".into(),
+            cover: String::new(),
+            vid_index: 2,
+            vid: "second".into(),
+            episode_cnt: 504,
+            position_ms: 5000,
+            duration_ms: 113_986,
+            updated_at_ms: 1000,
+        };
+        state.store.upsert_local_history(&item).unwrap();
+        let before = sources.read(&state).await.unwrap();
+        assert_eq!(before.history[0].vid_index, 2);
+
+        item.vid_index = 505;
+        item.vid = "last".into();
+        item.position_ms = 113_986;
+        item.updated_at_ms = 2000;
+        state.store.upsert_local_history(&item).unwrap();
+        let after = sources.read(&state).await.unwrap();
+
+        assert_eq!(after.history[0].vid_index, 504);
+        assert_eq!(after.history[0].vid, "last");
+        assert_eq!(after.history[0].position_ms, 113_986);
+        assert_eq!(after.history[0].updated_at_ms, 2000);
+        assert!(after.bookshelf.is_empty());
+        assert_eq!(state.store.local_history_list().unwrap()[0].vid_index, 505);
+    }
+
+    #[tokio::test]
+    async fn logging_out_clears_previous_bookshelf_and_one_shot_hint() {
+        let state = AppState::default();
+        let sources = PersonalSources::default();
+        let account = HistoryAccount {
+            user_id: "previous".into(),
+            login_at: 1,
+        };
+        *sources.snapshot.lock().unwrap() = Some(Snapshot {
+            loaded: Instant::now(),
+            account: account.clone(),
+            bookshelf: Vec::new(),
+        });
+        *sources.hint.lock().unwrap() = Some(ResumeHint {
+            account,
+            id: "series".into(),
+            episode: 9,
+            at: 31.0,
+        });
+
+        let result = sources.read(&state).await.unwrap();
+
+        assert!(result.history.is_empty());
+        assert!(result.bookshelf.is_empty());
+        assert!(sources.snapshot.lock().unwrap().is_none());
+        assert!(sources.hint.lock().unwrap().is_none());
+    }
+
     #[test]
     fn resume_hints_are_one_shot_and_scoped_to_account_login_series_and_episode() {
         let sources = PersonalSources::default();
-        let key = AccountKey {
-            id: "one".into(),
+        let key = HistoryAccount {
+            user_id: "one".into(),
             login_at: 1,
         };
         let set = || {
@@ -212,7 +278,7 @@ mod tests {
         assert_eq!(
             sources
                 .take_for(
-                    Some(&AccountKey {
+                    Some(&HistoryAccount {
                         login_at: 2,
                         ..key.clone()
                     }),

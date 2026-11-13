@@ -44,6 +44,21 @@ fn model_success_envelope_without_code_passes() {
     check_model_code(&serde_json::json!({ "Code": 0, "data": {} })).unwrap();
 }
 
+#[test]
+fn model_authentication_rejection_is_not_a_media_error() {
+    let error = parse_model_response(br#"{"code":101108,"message":"USER_NOT_LOGIN"}"#).unwrap_err();
+    assert!(matches!(error, AppError::Auth(_)));
+    assert!(error.to_string().contains("101108"));
+    assert!(error.to_string().contains("USER_NOT_LOGIN"));
+}
+
+#[test]
+fn unknown_model_business_code_keeps_its_existing_classification() {
+    let error = parse_model_response(br#"{"code":100001,"message":"unconfirmed"}"#).unwrap_err();
+    assert!(matches!(error, AppError::Media(_)));
+    assert!(error.to_string().contains("100001"));
+}
+
 fn model(codec: &str) -> String {
     json!({"video_list": [{
         "main_url": "https://cdn.example/video.mp4",

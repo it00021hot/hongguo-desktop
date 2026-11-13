@@ -1,5 +1,4 @@
 use crate::i18n::tr;
-use hongguo_common::model::LocalHistoryItem;
 use nsh_core::element::{ImageSrc, SharedString};
 
 #[derive(Clone, PartialEq)]
@@ -13,22 +12,6 @@ pub(super) struct HistoryItem {
     pub position_ms: i64,
     pub duration_ms: i64,
     pub updated_at_ms: i64,
-}
-
-impl From<LocalHistoryItem> for HistoryItem {
-    fn from(item: LocalHistoryItem) -> Self {
-        Self {
-            id: item.series_id,
-            vid: item.vid,
-            title: item.title,
-            cover: ImageSrc::from(item.cover),
-            episode: item.vid_index.max(1),
-            episodes: item.episode_cnt,
-            position_ms: item.position_ms,
-            duration_ms: item.duration_ms,
-            updated_at_ms: item.updated_at_ms,
-        }
-    }
 }
 
 impl From<hongguo_api::history::WatchHistoryItem> for HistoryItem {

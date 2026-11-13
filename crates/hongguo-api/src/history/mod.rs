@@ -132,7 +132,7 @@ fn num_to_string(v: &Value) -> String {
     }
 }
 
-/// 历史删除沿用 0 基索引。
+/// 登录历史更新与删除使用 0 基索引。
 fn wire_vid_index(domain: i64) -> i64 {
     (domain - 1).max(0)
 }
@@ -198,7 +198,7 @@ pub async fn delete_watch_history(items: &[(String, String, i64)], env: &ApiEnv)
     Ok(())
 }
 
-/// 历史更新发送 1 基集号，进度上传通过 `item_id` 识别集。
+/// 登录历史发送 0 基集号，进度上传通过 `item_id` 识别集。
 pub async fn report_watch_progress(
     series_id: &str,
     vid: &str,
@@ -294,7 +294,7 @@ fn watch_progress_bodies(
     let update_body = history_update_body(
         series_id,
         vid,
-        vid_index,
+        wire_vid_index(vid_index),
         position_ms,
         position_ms,
         now,
@@ -411,21 +411,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn progress_report_uses_the_episode_index_only_in_history_update() {
+    fn logged_in_progress_report_roundtrips_zero_based_history_indices() {
         let series_id = "7697459724635098174";
-        for (episode, vid) in [(1, 7697465535398677529_u64), (13, 7697465038512065561)] {
+        for (episode, wire_index, vid) in [
+            (1, 0, 7697465535398677529_u64),
+            (13, 12, 7697465038512065561),
+            (786, 785, 7697469881821711385),
+        ] {
             let (update, upload) =
                 watch_progress_bodies(series_id, &vid.to_string(), episode, 5000, 1);
-            assert_eq!(update["update_datas"][0]["vid_index"], episode);
+            assert_eq!(update["update_datas"][0]["vid_index"], wire_index);
             assert_eq!(update["update_datas"][0]["vid"], vid);
             assert_eq!(upload["books"][0]["vid_index"], 0);
             assert_eq!(upload["books"][0]["item_id"], vid.to_string());
+            let response = serde_json::json!({
+                "data_list": [{
+                    "book_id_str": series_id,
+                    "vid_str": vid.to_string(),
+                    "vid_index": update["update_datas"][0]["vid_index"],
+                    "current_play_position": 5000,
+                }],
+            });
+            let page = parse_history(Some(&response)).unwrap();
+            assert_eq!(page.items[0].vid_index, episode);
+            assert_eq!(page.items[0].vid, vid.to_string());
+            assert_eq!(page.items[0].position_ms, 5000);
         }
     }
 
     #[test]
     fn guest_reports_keep_cumulative_playback_separate_from_episode_position() {
         let update = history_update_body("100", "113", 13, 0, 15_559, 1000, 0);
+        assert_eq!(update["update_datas"][0]["vid_index"], 13);
         assert_eq!(update["update_datas"][0]["current_play_position"], 0);
         assert_eq!(
             update["update_datas"][0]["player_accumulate_total_time"],

@@ -72,7 +72,7 @@ pub async fn prefetch_feed(
         }
     }
     if !models.is_empty() {
-        crate::cold_start::wait().await;
+        crate::cold_start::wait(state).await?;
         let env = state.api_env();
         if let Err(error) = play_url::fetch_play_scene(
             &models,

@@ -4,12 +4,16 @@ import { Button } from '@/components/ui/button';
 import { t, tf } from '@/locales';
 import { formatBytes } from '@/utils/format';
 import type { OnlineProgress } from '@/service/schema';
+import type { DeviceStatus } from '@/service/schema/device';
 
 export function LoadingPanel({
   error,
   autoRetry,
   buffering,
   retryOnline,
+  registrationStatus,
+  retryRegistration,
+  registrationPending,
 }: {
   error: string | null;
   /** 自动重试进行中（null = 未在自动重试）：显示「已重试 N 次」，
@@ -17,7 +21,27 @@ export function LoadingPanel({
   autoRetry: { attempt: number } | null;
   buffering: OnlineProgress | null;
   retryOnline: () => void;
+  registrationStatus: DeviceStatus | undefined;
+  retryRegistration: () => void;
+  registrationPending: boolean;
 }) {
+  const registration = registrationStatus?.isPlaybackReady
+    ? undefined
+    : registrationStatus?.registration;
+  const waitingForRegistration = registration?.phase === 'registering' || registrationPending;
+  const registrationMessage = waitingForRegistration
+    ? t('player.registering')
+    : registration?.phase === 'retryScheduled'
+      ? tf('player.registrationRetryScheduled', { attempt: registration.attempt })
+      : registration?.phase === 'blocked'
+        ? registration.blockUntil
+          ? tf('player.registrationBlockedUntil', {
+              time: new Date(registration.blockUntil).toLocaleString(),
+            })
+          : t('player.registrationBlocked')
+        : registration?.phase === 'failed'
+          ? t('player.registrationFailed')
+          : null;
   return (
     <div className="absolute inset-0 z-10 grid place-items-center p-6">
       {/* 缓冲时给的是「在动到哪了」，不是一个没头没尾的转圈；
@@ -25,8 +49,11 @@ export function LoadingPanel({
         手动重试入口——用户不该只能眼看黑屏干着急。 */}
       <div className="flex flex-col items-center gap-3">
         <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
-          {!error && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-          {error ??
+          {(!error || waitingForRegistration) && (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          )}
+          {registrationMessage ??
+            error ??
             (buffering && buffering.phase !== 'ready'
               ? tf('player.buffering', {
                   percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
@@ -43,14 +70,24 @@ export function LoadingPanel({
             {tf('player.autoRetrying', { attempt: autoRetry.attempt })}
           </span>
         )}
-        {error && (
+        {registrationMessage && error && !waitingForRegistration && (
+          <span className="max-w-sm text-center text-xs text-white/70" role="status">
+            {error}
+          </span>
+        )}
+        {registration?.errorKind === 'error.network' && !waitingForRegistration && (
+          <span className="max-w-sm text-center text-xs text-white/70">{t('error.network')}</span>
+        )}
+        {(error || registrationMessage) && (
           <Button
             size="sm"
             variant="outline"
             data-wheel-block
+            disabled={waitingForRegistration || registration?.isManualBlock}
             onClick={(e) => {
               e.stopPropagation();
-              retryOnline();
+              if (registration) retryRegistration();
+              else retryOnline();
             }}
           >
             {t('player.retry')}

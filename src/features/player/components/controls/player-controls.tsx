@@ -47,6 +47,7 @@ import { DisplaySlider } from './sliders';
 import { VolumePopup } from './volume-popup';
 import { IconButton } from './icon-button';
 import { markPickerClosed } from '../../playback-signals';
+import { resolveEpisodeStep } from '../../episode-step';
 
 /** 倍速档位与主流播放器一致，用户不用猜。 */
 const RATES = [0.75, 1, 1.25, 1.5, 2, 3];
@@ -59,6 +60,7 @@ const CHROME_BUTTON = 'h-8 gap-1.5 bg-transparent text-white hover:bg-white/20 h
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  mediaAvailable: boolean;
   /** 弹幕开关（状态在播放页，控件只做展示与回调） */
   danmakuOn: boolean;
   onToggleDanmaku: () => void;
@@ -119,6 +121,7 @@ interface Props {
  */
 export function PlayerControls({
   videoRef,
+  mediaAvailable,
   danmakuOn,
   onToggleDanmaku,
   danmakuDisplay,
@@ -258,10 +261,8 @@ export function PlayerControls({
     else video.pause();
   }, [videoRef]);
 
-  // 步进边界：第 1 集没有上一集；下一集要看分集表里是否真有下一号
-  // （表还没加载出来时不置灰，保持与 `↑` `↓` 一致的行为——点了由后端兜底）
-  const hasPrev = currentIndex > 1;
-  const hasNext = episodes.length === 0 || episodes.some((e) => e.vidIndex === currentIndex + 1);
+  const hasPrev = resolveEpisodeStep(episodes, currentIndex, -1).kind === 'episode';
+  const hasNext = resolveEpisodeStep(episodes, currentIndex, 1).kind === 'episode';
 
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
@@ -338,6 +339,7 @@ export function PlayerControls({
     >
       <div className={cn(visible && 'pointer-events-auto')}>
         <ScrubBar
+          disabled={!mediaAvailable}
           current={current}
           duration={duration}
           onScrubStart={() => {
@@ -351,7 +353,7 @@ export function PlayerControls({
       </div>
 
       <div className={cn('flex items-center gap-1', visible && 'pointer-events-auto')}>
-        <IconButton label={t('player.play')} onClick={togglePlay}>
+        <IconButton label={t('player.play')} onClick={togglePlay} disabled={!mediaAvailable}>
           {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
         </IconButton>
         <IconButton
@@ -380,7 +382,12 @@ export function PlayerControls({
           {/* modal={false}：modal 菜单会把 body 设成 pointer-events:none，控件重挂载撞上就是大片区域点不动 */}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className={cn(CHROME_BUTTON, 'font-mono')}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn(CHROME_BUTTON, 'font-mono')}
+                disabled={!mediaAvailable}
+              >
                 <Gauge className="size-4" />
                 {rate}x
               </Button>
@@ -638,6 +645,7 @@ export function PlayerControls({
 
           {/* 音量：hover 弹出竖条浮层（绝对定位不占布局，旧的横向展开会把弹幕按钮挤走） */}
           <VolumePopup
+            disabled={!mediaAvailable}
             volume={volume}
             muted={muted}
             onToggleMute={toggleMute}

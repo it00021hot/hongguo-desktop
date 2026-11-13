@@ -3,10 +3,13 @@
 use serde::Serialize;
 
 use hongguo_service::app_state::AppState;
-use hongguo_service::device::{BootstrapMeta, read_meta};
+use hongguo_service::device::{BootstrapMeta, RegistrationStatus, read_meta};
+
+pub const REGISTRATION_STATE_CHANGED: &str = "device-registration-state";
 
 /// 设备状态（前端/诊断可见）。
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceStatus {
     pub iid: String,
     pub device_id: String,
@@ -16,15 +19,21 @@ pub struct DeviceStatus {
     pub backup_iid: Option<String>,
     pub last_register_attempt_ms: Option<i64>,
     pub last_register_error: Option<String>,
+    pub registration: RegistrationStatus,
+    pub is_playback_ready: bool,
 }
 
 /// 启动装配入口：后台补齐缺失的注册身份。
 pub fn init(app: &tauri::AppHandle) -> tauri::Result<()> {
-    use tauri::Manager;
+    use tauri::{Emitter, Manager};
     let state = app.state::<AppState>().inner().clone();
-    hongguo_service::device::arm_cold_start();
+    let mut changes = hongguo_service::device::subscribe_registration(&state);
+    hongguo_service::device::start_startup_registration(&state);
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        hongguo_service::device::ensure_registered(&state).await;
+        while changes.changed().await.is_ok() {
+            let _ = app.emit(REGISTRATION_STATE_CHANGED, ());
+        }
     });
     Ok(())
 }
@@ -55,6 +64,8 @@ fn status_inner(state: &AppState, meta: &BootstrapMeta) -> DeviceStatus {
         backup_iid,
         last_register_attempt_ms: meta.last_register_attempt_ms,
         last_register_error: meta.last_register_error.clone(),
+        registration: hongguo_service::device::registration_status(state),
+        is_playback_ready: hongguo_api::register::has_registered_ids(&device),
     }
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -107,6 +107,11 @@ export function PlayerView({
   const vidIndex = usePlayerStore((s) => s.vidIndex);
   const setTarget = usePlayerStore((s) => s.setTarget);
   const episodeKey = seriesId && vidIndex ? `${seriesId}:${vidIndex}` : '';
+  const controlsMounted = Boolean(seriesId && vidIndex);
+  useLayoutEffect(() => {
+    useUiStore.getState().setPlayerControlsMounted(controlsMounted);
+    return () => useUiStore.getState().setPlayerControlsMounted(false);
+  }, [controlsMounted]);
 
   const { data: settings } = useSettings();
   const { deleteEpisode } = useStorageActions();
@@ -135,6 +140,9 @@ export function PlayerView({
     handleLoadedMetadata,
     handleRateChange,
     handleVolumeChange,
+    registrationStatus,
+    retryRegistration,
+    registrationPending,
   } = usePlaybackSource({ videoRef, seriesId, vidIndex, episodeKey });
 
   /** 下载面板是否打开。开着时不让连播把这一集换掉。 */
@@ -186,6 +194,7 @@ export function PlayerView({
   const handleDirectError = (reason: unknown) => {
     const detail = reason instanceof Error ? reason.message : String(reason);
     setError(`${t('player.directFailed')}（${detail}）`);
+    setSrc(null);
   };
   const isDirectBuffering = useDirectVideo({
     source: sourceReady && !error ? directSource : null,
@@ -216,7 +225,7 @@ export function PlayerView({
   });
 
   // 剧终三级接力与连播锁定抽在 use-binge-relay
-  const { inBinge, setBinge, advanceAfterSeriesEnd, stepEpisode } = useBingeRelay({
+  const { inBinge, setBinge, stepEpisode } = useBingeRelay({
     seriesId,
     vidIndex,
     setTarget,
@@ -350,7 +359,7 @@ export function PlayerView({
     setAndroidLandscape(false);
     setPhoneDanmakuSendOpen(false);
     void applyWindowFullscreen(false).catch(() => undefined);
-  }, [setPlayerFrameless]);
+  }, [setPlayerFrameless, setPhoneDanmakuSendOpen]);
 
   const onControlsEnter = useCallback(() => {
     setControlsHovered(true);
@@ -390,12 +399,8 @@ export function PlayerView({
     if (autoNext && !downloading) {
       markAutoAdvance();
       armQuiet();
-      const total = currentSeries?.episodes.length ?? 0;
-      if (total > 0 && vidIndex >= total) advanceAfterSeriesEnd();
-      else {
-        setBinge(seriesId);
-        stepEpisode(1);
-      }
+      setBinge(seriesId);
+      stepEpisode(1);
     }
   };
 
@@ -565,61 +570,6 @@ export function PlayerView({
                     }}
                   />
                 )}
-                <PlayerStageChrome
-                  videoRef={videoRef}
-                  miniScreen={miniScreen}
-                  portrait={portrait}
-                  portraitFull={portraitFull}
-                  narrow={narrow}
-                  landscapeWatch={landscapeWatch}
-                  chromeShown={chromeShown}
-                  phoneDanmakuComposerOpen={phoneDanmakuComposerOpen}
-                  phoneMoreOpen={phoneMoreOpen}
-                  setPhoneMoreOpen={setPhoneMoreOpen}
-                  phoneSeriesOpen={phoneSeriesOpen}
-                  setPhoneSeriesOpen={setPhoneSeriesOpen}
-                  phoneEnhanceOpen={phoneEnhanceOpen}
-                  setPhoneEnhanceOpen={setPhoneEnhanceOpen}
-                  setPhoneDanmakuSendOpen={setPhoneDanmakuSendOpen}
-                  seriesId={seriesId}
-                  vidIndex={vidIndex}
-                  title={currentSeries?.title}
-                  cover={currentSeries?.cover}
-                  intro={meta?.intro}
-                  episodeCount={currentSeries?.episodeCount ?? 0}
-                  episodes={currentSeries?.episodes ?? []}
-                  currentVidKey={currentVidKey}
-                  inBinge={inBinge}
-                  setBinge={setBinge}
-                  setTarget={setTarget}
-                  stepEpisode={stepEpisode}
-                  exitMini={exitMini}
-                  togglePortrait={togglePortrait}
-                  togglePortraitFull={togglePortraitFull}
-                  enterMini={enterMini}
-                  incognitoOn={incognito.on}
-                  toggleIncognito={incognito.toggle}
-                  pinned={pinned}
-                  togglePinned={togglePinned}
-                  activeDefinition={activeDefinition}
-                  automaticDefinition={automaticDefinition}
-                  definitions={definitions}
-                  onDefinitionChange={handleDefinitionChange}
-                  playSrc={playSrc}
-                  danmakuOn={danmakuOn}
-                  toggleDanmaku={toggleDanmaku}
-                  danmakuDisplay={danmakuDisplay}
-                  updateDanmakuDisplay={updateDanmakuDisplay}
-                  enhanceSettings={enhanceSettings}
-                  updateEnhancement={updateEnhancement}
-                  enhanceStatus={enhanceStatus}
-                  enhanceAvailable={videoLive}
-                  downloading={downloading}
-                  setDownloading={setDownloading}
-                  exitLandscapeWatch={exitLandscapeWatch}
-                  onControlsEnter={onControlsEnter}
-                  onControlsLeave={onControlsLeave}
-                />
                 {(switching || !videoLive || videoStalled) && <Loadbar />}
               </>
             ) : (
@@ -632,8 +582,69 @@ export function PlayerView({
                 autoRetry={autoRetry}
                 buffering={buffering}
                 retryOnline={retryOnline}
+                inBinge={inBinge}
+                onExitBinge={() => setBinge(null)}
+                registrationStatus={registrationStatus}
+                retryRegistration={retryRegistration}
+                registrationPending={registrationPending}
               />
             )}
+            <PlayerStageChrome
+              videoRef={videoRef}
+              mediaAvailable={Boolean(playSrc && directSource && !error)}
+              miniScreen={miniScreen}
+              portrait={portrait}
+              portraitFull={portraitFull}
+              narrow={narrow}
+              landscapeWatch={landscapeWatch}
+              chromeShown={chromeShown || !playSrc || Boolean(error)}
+              phoneDanmakuComposerOpen={phoneDanmakuComposerOpen}
+              phoneMoreOpen={phoneMoreOpen}
+              setPhoneMoreOpen={setPhoneMoreOpen}
+              phoneSeriesOpen={phoneSeriesOpen}
+              setPhoneSeriesOpen={setPhoneSeriesOpen}
+              phoneEnhanceOpen={phoneEnhanceOpen}
+              setPhoneEnhanceOpen={setPhoneEnhanceOpen}
+              setPhoneDanmakuSendOpen={setPhoneDanmakuSendOpen}
+              seriesId={seriesId}
+              vidIndex={vidIndex}
+              title={currentSeries?.title}
+              cover={currentSeries?.cover}
+              intro={meta?.intro}
+              episodeCount={currentSeries?.episodeCount ?? 0}
+              episodes={currentSeries?.episodes ?? []}
+              currentVidKey={currentVidKey}
+              inBinge={inBinge}
+              setBinge={setBinge}
+              setTarget={setTarget}
+              stepEpisode={stepEpisode}
+              exitMini={exitMini}
+              togglePortrait={togglePortrait}
+              togglePortraitFull={togglePortraitFull}
+              enterMini={enterMini}
+              incognitoOn={incognito.on}
+              toggleIncognito={incognito.toggle}
+              pinned={pinned}
+              togglePinned={togglePinned}
+              activeDefinition={activeDefinition}
+              automaticDefinition={automaticDefinition}
+              definitions={definitions}
+              onDefinitionChange={handleDefinitionChange}
+              playSrc={playSrc}
+              danmakuOn={danmakuOn}
+              toggleDanmaku={toggleDanmaku}
+              danmakuDisplay={danmakuDisplay}
+              updateDanmakuDisplay={updateDanmakuDisplay}
+              enhanceSettings={enhanceSettings}
+              updateEnhancement={updateEnhancement}
+              enhanceStatus={enhanceStatus}
+              enhanceAvailable={videoLive}
+              downloading={downloading}
+              setDownloading={setDownloading}
+              exitLandscapeWatch={exitLandscapeWatch}
+              onControlsEnter={onControlsEnter}
+              onControlsLeave={onControlsLeave}
+            />
           </div>
           {heldFrame && <FrameHold frame={heldFrame} hidden={!holdVisible} cover={coverFill} />}
           <div

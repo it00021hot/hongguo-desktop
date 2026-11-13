@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useRelatedSeries } from '@/service/queries';
+import { series } from '@/service/commands';
+import { keys, useRelatedSeries } from '@/service/queries';
+import { fuzzyStaleTime } from '@/service/queries/common';
 import { usePlayerStore } from '@/stores/player';
-import { tf } from '@/locales';
+import { t, tf } from '@/locales';
 import type { Series } from '@/service/schema';
-import { pickNextSeason } from '../season';
+import { pickNextSeason, seasonFromTitle, seasonNoFromTag } from '../season';
+import { firstEpisodeIndex, resolveEpisodeStep } from '../episode-step';
 
-/**
- * 剧终接力与连播锁定：末集播完优先自动接下一季第 1 集（plan 相关作品里大于当前季的最小已上线季），
- * 没有下一季跟随宿主刷下一条推荐、无宿主上下文回落「猜你喜欢」。锁定后滚轮/↑↓ 切集不换剧。
- */
+/** 分集和相关季独立到达，前进必须等就绪；过期请求不再提交播放目标。 */
 export function useBingeRelay(params: {
   seriesId: string | null;
   vidIndex: number | null;
@@ -33,81 +34,142 @@ export function useBingeRelay(params: {
   const requestGoto = usePlayerStore((s) => s.requestGoto);
   const inBinge = bingeSeriesId != null && bingeSeriesId === seriesId;
 
-  const { data: related } = useRelatedSeries(seriesId ?? '');
-  /** 接力在途标记：setTarget 生效前后 ended 可能连发，防双跳 */
-  const seriesEndBusy = useRef(false);
-  // 接力完成后 seriesId 变化，重开闸门（信息流里 PlayerView 是复用的，
-  // 不随切剧重挂载，ref 不会自己归零）
+  useRelatedSeries(seriesId ?? '');
+  const queryClient = useQueryClient();
+  const pendingStep = useRef<object | null>(null);
   useEffect(() => {
-    seriesEndBusy.current = false;
-  }, [seriesId]);
+    return () => {
+      pendingStep.current = null;
+    };
+  }, [seriesId, vidIndex]);
 
-  const advanceAfterSeriesEnd = useCallback(() => {
-    if (!seriesId || !vidIndex || seriesEndBusy.current) return;
-    seriesEndBusy.current = true;
-    const works = related?.works ?? [];
-    // 下一季按季数挑（服务端顺序不可信会跳季），判不出才退回「列表下一条」并加未上线护栏
-    const selfIdx = works.findIndex((w) => w.seriesId === seriesId);
-    const legacyNext = selfIdx >= 0 ? works[selfIdx + 1] : undefined;
-    const nextSeason =
-      pickNextSeason(works, seriesId, currentSeries?.title ?? '') ??
-      (legacyNext && legacyNext.episodeCnt > 0 ? legacyNext : undefined);
-    if (nextSeason) {
-      // toast 后直接开播第 1 集；requestGoto 让首页把游标对到下一季，锁连播延续切集语义
-      toast.success(tf('player.playNextSeason', { title: nextSeason.title }));
-      setSlideDir(1);
-      requestGoto(nextSeason.seriesId, 1);
-      setBinge(nextSeason.seriesId);
-      return;
-    }
-    if (onWheelStep) {
-      // 信息流没有下一季：跟随宿主刷下一条推荐；未接管成功，闸门保持开
-      setSlideDir(1);
-      onWheelStep(1);
-      seriesEndBusy.current = false;
-      return;
-    }
-    const guess = related?.guess ?? [];
-    if (guess.length > 0) {
-      toast.info(tf('player.autoPlayRecommend', { title: guess[0]?.title ?? '' }));
-      setSlideDir(1);
-      setTarget(guess[0]!.seriesId, 1);
-      return;
-    }
-    seriesEndBusy.current = false;
-    toast.info(tf('player.lastEpisode', { index: currentSeries?.episodes.length ?? vidIndex }));
-  }, [
-    seriesId,
-    vidIndex,
-    related,
-    setTarget,
-    requestGoto,
-    setBinge,
-    onWheelStep,
-    currentSeries,
-    setSlideDir,
-  ]);
-
-  const stepEpisode = useCallback(
-    (delta: number) => {
-      if (!seriesId || !vidIndex) return;
-      const next = vidIndex + delta;
-      if (next < 1) return;
-      // 连播滚到尾部要有交代：走剧终接力（滚/点过末集也算剧终）；下载面板开着退回提示
-      const total = currentSeries?.episodes.length ?? 0;
-      if (total > 0 && next > total) {
-        if (downloading) {
-          toast.info(tf('player.lastEpisode', { index: total }));
-          return;
-        }
-        advanceAfterSeriesEnd();
-        return;
-      }
-      setSlideDir(delta > 0 ? 1 : -1);
-      setTarget(seriesId, next);
+  const readArchive = useCallback(
+    (id: string) => {
+      if (currentSeries?.seriesId === id) return Promise.resolve(currentSeries);
+      const queryKey = keys.seriesEpisodes(id);
+      return queryClient.fetchQuery({
+        queryKey,
+        queryFn: () => series.episodes(id),
+        staleTime: fuzzyStaleTime(queryKey),
+        retry: false,
+      });
     },
-    [seriesId, vidIndex, currentSeries, downloading, setTarget, advanceAfterSeriesEnd, setSlideDir],
+    [currentSeries, queryClient],
   );
 
-  return { inBinge, setBinge, advanceAfterSeriesEnd, stepEpisode };
+  const advanceAfterSeriesEnd = useCallback(
+    async (archive: Series, isCurrent: () => boolean) => {
+      const queryKey = keys.relatedSeries(archive.seriesId);
+      const related = await queryClient.fetchQuery({
+        queryKey,
+        queryFn: () => series.related(archive.seriesId),
+        staleTime: fuzzyStaleTime(queryKey),
+        retry: false,
+      });
+      if (!isCurrent()) return;
+      const self = related.works.find((work) => work.seriesId === archive.seriesId);
+      const hasSeasons = related.works.some((work) => seasonNoFromTag(work.tag) != null);
+      if (
+        hasSeasons &&
+        self &&
+        seasonNoFromTag(self.tag) == null &&
+        seasonFromTitle(archive.title) == null
+      ) {
+        throw new Error(t('player.seasonUnavailable'));
+      }
+      const nextSeason = pickNextSeason(related.works, archive.seriesId, archive.title);
+      const nextSeries = nextSeason ?? (!onWheelStep ? related.guess[0] : undefined);
+      if (nextSeries) {
+        const nextArchive = await readArchive(nextSeries.seriesId);
+        if (!isCurrent()) return;
+        const firstIndex = firstEpisodeIndex(nextArchive.episodes);
+        if (firstIndex == null) throw new Error(t('player.episodeListUnavailable'));
+        setSlideDir(1);
+        if (nextSeason) {
+          requestGoto(nextSeries.seriesId, firstIndex);
+          setBinge(nextSeries.seriesId);
+        } else {
+          setTarget(nextSeries.seriesId, firstIndex);
+        }
+        toast.info(
+          tf(nextSeason ? 'player.playNextSeason' : 'player.autoPlayRecommend', {
+            title: nextSeries.title,
+          }),
+        );
+        return;
+      }
+      if (onWheelStep) {
+        setSlideDir(1);
+        onWheelStep(1);
+        return;
+      }
+      toast.info(tf('player.lastEpisode', { index: vidIndex ?? 0 }));
+    },
+    [
+      queryClient,
+      readArchive,
+      onWheelStep,
+      setSlideDir,
+      requestGoto,
+      setBinge,
+      setTarget,
+      vidIndex,
+    ],
+  );
+
+  const stepEpisode = useCallback(
+    function stepEpisode(delta: number) {
+      if (!seriesId || !vidIndex || pendingStep.current) return;
+      const target = usePlayerStore.getState();
+      if (target.seriesId !== seriesId || target.vidIndex !== vidIndex) return;
+      const request = {};
+      pendingStep.current = request;
+      const isCurrent = () => {
+        const current = usePlayerStore.getState();
+        return (
+          pendingStep.current === request &&
+          current.seriesId === seriesId &&
+          current.vidIndex === vidIndex
+        );
+      };
+      let stage: 'episodes' | 'season' = 'episodes';
+      const advance = async () => {
+        const archive = await readArchive(seriesId);
+        if (!isCurrent()) return;
+        const next = resolveEpisodeStep(archive.episodes, vidIndex, delta);
+        if (next.kind === 'first') return;
+        if (next.kind === 'unavailable' || next.kind === 'missing') {
+          throw new Error(t('player.episodeListUnavailable'));
+        }
+        if (next.kind === 'last') {
+          if (downloading) {
+            toast.info(tf('player.lastEpisode', { index: vidIndex }));
+            return;
+          }
+          stage = 'season';
+          await advanceAfterSeriesEnd(archive, isCurrent);
+          return;
+        }
+        setSlideDir(delta > 0 ? 1 : -1);
+        setTarget(seriesId, next.vidIndex);
+      };
+      void advance()
+        .catch((error: unknown) => {
+          if (!isCurrent()) return;
+          toast.error(
+            t(stage === 'episodes' ? 'player.episodeListUnavailable' : 'player.seasonUnavailable'),
+            {
+              description: error instanceof Error ? error.message : undefined,
+              action: { label: t('common.retry'), onClick: () => stepEpisode(delta) },
+            },
+          );
+        })
+        .finally(() => {
+          if (pendingStep.current === request) pendingStep.current = null;
+        });
+    },
+    [seriesId, vidIndex, readArchive, downloading, setTarget, advanceAfterSeriesEnd, setSlideDir],
+  );
+
+  return { inBinge, setBinge, stepEpisode };
 }
