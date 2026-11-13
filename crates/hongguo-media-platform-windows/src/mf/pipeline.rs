@@ -8,7 +8,7 @@ use hongguo_common::{AppError, AppResult};
 use hongguo_video::sample_table::TrackInfo;
 
 use hongguo_media_platform_api::PlatformRequest;
-use hongguo_media_platform_api::video::bitrate_for_profile;
+use hongguo_media_platform_api::video::bitrate_for;
 
 use super::decoder::{Decoder, Nv12Frame};
 use super::encoder::{Encoder, EncoderKind};
@@ -74,7 +74,6 @@ fn process_frame(
     frame: Nv12Frame,
     kind: EncoderKind,
     scale_to: Option<(usize, usize)>,
-    rate: hongguo_media_platform_api::video::RateProfile,
     fps: f64,
     frame_dur: f64,
     sorted_pts: &[f64],
@@ -111,7 +110,7 @@ fn process_frame(
             out_h,
             fps_rate(fps),
             1,
-            bitrate_for_profile(out_w, out_h, fps, rate),
+            bitrate_for(out_w, out_h, fps),
             kind,
         )?);
         *out_dims = Some((out_w, out_h));
@@ -195,7 +194,6 @@ fn run(
             f,
             kind,
             scale_to,
-            req.rate,
             fps,
             frame_dur,
             &sorted_pts,

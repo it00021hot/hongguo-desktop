@@ -49,10 +49,6 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
     #[cfg(debug_assertions)]
     let builder = builder.plugin(tauri_plugin_webdriver::init());
 
-    // Tauri 的播放器（桌面与 Android）把 HEVC / ByteVC1 / ByteVC2 都交给进程内软解直接播放，
-    // 选流照此收口：只收内置解码器能解的编码，不经系统视频解码器、不转码。必须早于任何取流。
-    hongguo_service::capability_service::enable_builtin_playback();
-
     // 自定义协议要在 setup 之前注册（Builder 阶段）
     let builder = protocol::register(builder);
 

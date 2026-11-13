@@ -1,7 +1,7 @@
 //! 已解码的 I420 帧 → Media Foundation H.264。ByteVC2 不经过 ffmpeg。
 
 use hongguo_common::{AppError, AppResult};
-use hongguo_media_platform_api::video::{RateProfile, bitrate_for_profile};
+use hongguo_media_platform_api::video::bitrate_for;
 use hongguo_media_platform_api::{EncodedVideo, I420View};
 
 use super::decoder::Nv12Frame;
@@ -15,7 +15,6 @@ use super::scaler::Scaler;
 pub struct YuvEncoder {
     scale_to: Option<(usize, usize)>,
     fps: f64,
-    rate: RateProfile,
     encoder: Option<Encoder>,
     scaler: Option<Scaler>,
     out_dims: Option<(usize, usize)>,
@@ -23,11 +22,10 @@ pub struct YuvEncoder {
 }
 
 impl YuvEncoder {
-    pub fn new(scale_to: Option<(usize, usize)>, fps: f64, rate: RateProfile) -> Self {
+    pub fn new(scale_to: Option<(usize, usize)>, fps: f64) -> Self {
         Self {
             scale_to,
             fps,
-            rate,
             encoder: None,
             scaler: None,
             out_dims: None,
@@ -112,7 +110,7 @@ impl YuvEncoder {
                 "没有可用的 H.264 编码器，ByteVC2 不能改走 ffmpeg 解码".into(),
             ));
         };
-        let bitrate = bitrate_for_profile(out_w, out_h, self.fps, self.rate);
+        let bitrate = bitrate_for(out_w, out_h, self.fps);
         self.encoder = Some(Encoder::new(out_w, out_h, fps_num, 1, bitrate, kind)?);
         self.out_dims = Some((out_w, out_h));
         log::info!("[ByteVC2] Media Foundation H.264 编码会话 {out_w}x{out_h} backend={kind:?}");

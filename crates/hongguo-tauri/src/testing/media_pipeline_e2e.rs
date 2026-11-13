@@ -73,7 +73,6 @@ fn plain_req<'a>(
         input,
         output,
         scale_to: None,
-        rate: hongguo_media_platform::RateProfile::Archive,
         on_progress: None,
     }
 }
@@ -370,11 +369,7 @@ fn platform_pipeline_produces_playable_h264() {
             input: &src,
             output: &out,
             scale_to: None,
-            rate: hongguo_media_platform::RateProfile::Archive,
             on_progress: None,
-            on_playable_prefix: None,
-            on_committed: None,
-            is_cancelled: None,
         },
     ) {
         Some(Ok(())) => {}
@@ -433,11 +428,7 @@ fn platform_transcode_produces_playable_h264() {
             input: &src,
             output: &out,
             scale_to: None,
-            rate: hongguo_media_platform::RateProfile::Archive,
             on_progress: None,
-            on_playable_prefix: None,
-            on_committed: None,
-            is_cancelled: None,
         },
     ) {
         Some(Ok(())) => {}
@@ -577,7 +568,6 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
             input: src,
             output: &t,
             scale_to: Some((w, h)),
-            rate: hongguo_media_platform::RateProfile::Archive,
             on_progress: None,
         };
         transcode_with_ffmpeg(&req, &encoder).unwrap();

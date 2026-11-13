@@ -96,12 +96,11 @@ fn sanitize(id: &str) -> String {
         .collect()
 }
 
-/// 最多保留的集数：攒多了就是吃磁盘（兼容播放还在时实测能滚到 14GB+）。合并转码的瞬时多集
-/// 不经这里约束——中途逐出会让拼接拿到断路径，消费完就地删除（见 `merge_service::compat`）。
+/// 合并中的文件不经这里逐出，消费完由合并任务删除。
 const KEEP_EPISODES: usize = 3;
 
 /// 按 atime 淘汰：只保留最近 [`KEEP_EPISODES`] 个文件，返回删除数。
-/// 被占用的文件（正在被播放器读）删不掉就跳过，宁可暂时多留一个。
+/// 被占用而无法删除的文件留待下次处理。
 pub fn trim() -> usize {
     let dir = compat_cache_dir();
     let Ok(entries) = hongguo_store::paths::qa_read_dir(&dir) else {

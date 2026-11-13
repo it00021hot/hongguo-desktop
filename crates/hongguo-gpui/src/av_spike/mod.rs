@@ -358,10 +358,7 @@ async fn probe_candidate(
     env: &hongguo_api::client::ApiEnv,
     vid: &str,
 ) -> Result<(u32, u64), String> {
-    let capability = hongguo_api::stream_pick::DecoderCapability::from_probes(
-        hongguo_media_platform::capability::playback::hevc_playable(),
-        hongguo_media_platform::capability::bytevc2_decode_available(),
-    );
+    let capability = hongguo_api::stream_pick::DecoderCapability::builtin();
     let play = hongguo_api::play_url::fetch_play_url(vid, None, capability, env)
         .await
         .map_err(|error| format!("取流表失败: {error}"))?;

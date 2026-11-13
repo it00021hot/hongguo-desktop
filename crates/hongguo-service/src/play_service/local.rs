@@ -13,7 +13,7 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
     if let Some(path) = local_playback_path(state, request) {
         let url = hongguo_protocol::local::local_play_url(&path)
             .ok_or_else(|| AppError::InvalidArgs("文件路径无效".into()))?;
-        return Ok(local_file_response(&path, url, resume_at));
+        return local_file_response(&path, url, resume_at);
     }
 
     if !request.prefer_online {
@@ -115,9 +115,9 @@ fn local_playback_path(state: &AppState, request: &PlayRequest) -> Option<String
 }
 
 /// 本地成品和显式 filePath 都探测编码，以便选中内置软解直播放。
-fn local_file_response(path: &str, url: String, resume_at: f64) -> PlayResponse {
-    let (codec, direct) = probe_local_codec(path);
-    PlayResponse {
+fn local_file_response(path: &str, url: String, resume_at: f64) -> AppResult<PlayResponse> {
+    let (codec, direct) = probe_local_codec(path)?;
+    Ok(PlayResponse {
         url,
         online: false,
         resume_at,
@@ -128,24 +128,24 @@ fn local_file_response(path: &str, url: String, resume_at: f64) -> PlayResponse 
         definitions: Vec::new(),
         codec,
         direct,
-    }
+    })
 }
 
-/// 本地成品文件是否交给壳的直播放（按文件里视频轨的实际编码判断，读不出编码为假）。
-pub fn plays_direct_file(path: &str) -> bool {
-    probe_local_codec(path).1
+pub fn plays_direct_file(path: &str) -> AppResult<bool> {
+    probe_local_codec(path).map(|(_, direct)| direct)
 }
 
-fn probe_local_codec(path: &str) -> (String, bool) {
-    let Ok(demuxed) = hongguo_media::demux::demux_file(std::path::Path::new(path)) else {
-        return (String::new(), false);
-    };
-    let Some(track) = demuxed.video_track() else {
-        return (String::new(), false);
-    };
+fn probe_local_codec(path: &str) -> AppResult<(String, bool)> {
+    let demuxed = hongguo_media::demux::demux_file(std::path::Path::new(path))?;
+    let track = demuxed
+        .video_track()
+        .ok_or_else(|| AppError::Media("本地文件没有视频轨道".into()))?;
     let codec = track.info.codec.clone();
     let direct = crate::capability_service::plays_direct(&codec);
-    (codec, direct)
+    if !direct && !matches!(codec.as_str(), "avc1" | "avc3" | "h264") {
+        return Err(AppError::CodecUnsupported(codec));
+    }
+    Ok((codec, direct))
 }
 
 /// 首集预热只取该集模型。
@@ -302,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn local_bytevc2_file_reports_codec_and_follows_the_active_playback_route() {
+    fn local_bytevc2_file_always_uses_builtin_playback() {
         use hongguo_video::fixtures::{TrackSpec, mp4};
         let dir = std::env::temp_dir().join(format!("hg-local-bytevc2-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -310,27 +310,51 @@ mod tests {
         std::fs::write(&plain, mp4(&[TrackSpec::video(1, b"bvc2", 64, 64)])).unwrap();
         let path = plain.to_string_lossy().to_string();
         let url = hongguo_protocol::local::local_play_url(&path).expect("url");
-        let resp = super::local_file_response(&path, url, 0.0);
+        let resp = super::local_file_response(&path, url, 0.0).unwrap();
         assert_eq!(resp.codec, "bvc2", "必须从合成文件真实探测出视频编码");
-        assert_eq!(
-            resp.direct,
-            crate::capability_service::plays_direct("bvc2"),
-            "本地文件应遵循壳声明的播放路线"
-        );
+        assert!(resp.direct);
         assert!(!resp.online);
         assert!(resp.error.is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn local_missing_file_does_not_force_compat() {
+    fn a_missing_local_file_is_an_error_instead_of_native_fallback() {
         let resp = super::local_file_response(
             "/tmp/hongguo-definitely-missing-local-play.mp4",
             "hongguo-local://x".into(),
             1.5,
         );
-        assert!(!resp.direct);
-        assert!(resp.codec.is_empty());
-        assert_eq!(resp.resume_at, 1.5);
+        assert!(resp.is_err());
+    }
+
+    #[test]
+    fn local_codec_routing_allows_native_only_for_known_h264() {
+        use hongguo_video::fixtures::{TrackSpec, mp4};
+        let dir = std::env::temp_dir().join(format!("hg-local-routing-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (codec, direct) in [
+            (b"avc1", false),
+            (b"avc3", false),
+            (b"hvc1", true),
+            (b"hev1", true),
+            (b"bvc2", true),
+        ] {
+            let path = dir.join(format!("{}.mp4", String::from_utf8_lossy(codec)));
+            std::fs::write(&path, mp4(&[TrackSpec::video(1, codec, 64, 64)])).unwrap();
+            assert_eq!(
+                super::plays_direct_file(path.to_str().unwrap()).unwrap(),
+                direct
+            );
+        }
+        let path = dir.join("unsupported.mp4");
+        std::fs::write(&path, mp4(&[TrackSpec::video(1, b"vp09", 64, 64)])).unwrap();
+        assert!(matches!(
+            super::plays_direct_file(path.to_str().unwrap()),
+            Err(AppError::CodecUnsupported(_))
+        ));
+        std::fs::write(&path, b"not an MP4").unwrap();
+        assert!(super::plays_direct_file(path.to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -7,5 +7,4 @@ pub mod video;
 pub mod yuv;
 
 pub use transcode::PlatformRequest;
-pub use video::RateProfile;
 pub use yuv::{EncodedVideo, I420View};

@@ -32,9 +32,6 @@ pub use probe::h264_hw_encoder_available;
 /// 转码侧：任意 HEVC 解码器（含软解）可建即真。
 pub use probe::hevc_decoder_present;
 
-/// WebView 直解是否可信（排除 google / c2.android 软解）。
-pub use probe::hevc_webview_decode_available;
-
 /// 丢弃探测缓存。
 pub use probe::clear_probe_cache;
 

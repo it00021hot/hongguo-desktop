@@ -1,6 +1,6 @@
 //! 清晰度择优：从 `video_list` 里挑出最该下的那一条。
 //! ⚠️ 流元数据全在 `video_meta` 子对象、`definition` 带 `p` 后缀——照旧 schema 读会全取到 0；
-//! 无 HEVC 机器走 [`DecoderCapability::no_hevc`]（语义对齐官方 CodecStrategy：宁选能播的 720p h264）。
+//! 播放使用内置解码约束；下载允许按独立的编码能力选择源文件。
 
 #[cfg(test)]
 mod builtin_tests;
@@ -60,7 +60,7 @@ fn codec_of(v: &Value) -> &str {
 
 /// 内置软解器能解的编码：HEVC 系（服务端称 `h265` / `bytevc1`，容器里是 `hvc1` / `hev1`）
 /// 与 ByteVC2。接口的编码名和 MP4 四字码都认——在线选流拿到的是前者，本地文件探到的是后者。
-/// H.264 不在其中：内置解码器不解它，播放也不回落到系统解码器。
+/// H.264 不在其中：在线播放不回落到系统解码器。
 pub fn builtin_decodable(codec: &str) -> bool {
     hongguo_bytevc2::is_bytevc2(codec)
         || matches!(
@@ -69,7 +69,7 @@ pub fn builtin_decodable(codec: &str) -> bool {
         )
 }
 
-/// 这条流本机最终能否播：标准编码可直喂；`bytevc2` 需内置 Rust 解码器再转码；
+/// 这条流是否满足当前解码能力；`bytevc2` 需内置解码器支持。
 /// 没报编码器按能播处理（明确不可播才排除）。
 /// [`DecoderCapability::builtin_only`] 下口径反过来——只有认得出、内置解码器能解的才算，
 /// 没报编码的不赌。

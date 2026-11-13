@@ -436,11 +436,6 @@ fn build_app_state() -> Arc<AppStateInner> {
             std::process::exit(1);
         }
     };
-    // 本目标的播放器有启用的内置软解直播放（macOS 恒开；Windows 未经真机验证，`HONGGUO_WIN_DIRECT=1` 才开）：选流只收内置解码器能解的编码，
-    // HEVC / ByteVC1 / ByteVC2 都不经系统视频解码器、也不转码。必须早于任何取流。
-    if hongguo_player::direct_playback_available() {
-        hongguo_service::capability_service::enable_builtin_playback();
-    }
     let (device, device_source) = hongguo_service::device::adopt_sync(&db);
     log::info!(
         "[Device] 现役档案 iid={}（{device_source}）",

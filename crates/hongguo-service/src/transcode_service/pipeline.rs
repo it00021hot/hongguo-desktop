@@ -1,6 +1,6 @@
 //! 转码流水线编排。分流策略（媒体层的关键决策）：平台原生硬编可用 → 用平台；
 //! 仅当显式打开 `HONGGUO_ALLOW_FFMPEG=1` 时才用 ffmpeg（有硬件编码器时接近实时）；
-//! 都没有 → 直接报错。默认播放不拉起外部 ffmpeg 进程。
+//! 都没有 → 直接报错。本模块只负责合并归档。
 //! 两条路都产出 H.264 MP4，上游失败自动落回下一条；实际走了哪条由
 //! [`hongguo_media::Backend`] 报告，谁都不许再拿字符串猜。
 
@@ -9,9 +9,6 @@ use std::path::Path;
 use crate::transcode_service::cache;
 use hongguo_common::AppResult;
 use hongguo_media::transcode::TranscodeResult;
-use hongguo_media_platform::RateProfile;
-
-const RATE: RateProfile = RateProfile::Archive;
 
 /// 转码一个文件（兼容格式合并的分集输入）。
 ///
@@ -46,11 +43,7 @@ pub fn transcode(
             input: source,
             output: target,
             scale_to,
-            rate: RATE,
             on_progress,
-            on_playable_prefix: None,
-            on_committed: None,
-            is_cancelled: None,
         };
         log::info!("[Transcode] ByteVC2 内置解码: {}", target.display());
         let builtin = hongguo_media_platform::transcode_bytevc2(&platform_req);
@@ -113,11 +106,7 @@ pub fn transcode(
             input: source,
             output: target,
             scale_to,
-            rate: RATE,
             on_progress,
-            on_playable_prefix: None,
-            on_committed: None,
-            is_cancelled: None,
         },
     ) {
         match done {
@@ -145,7 +134,6 @@ pub fn transcode(
             input: source,
             output: target,
             scale_to,
-            rate: RATE,
             on_progress,
         };
         match hongguo_media_platform::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {

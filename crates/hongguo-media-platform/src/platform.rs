@@ -19,8 +19,6 @@ use hongguo_common::AppResult;
 
 /// 平台硬编的一次转码请求（与 ffmpeg 侧的 [`crate::ffmpeg::TranscodeRequest`] 同构）。
 pub use hongguo_media_platform_api::PlatformRequest;
-/// 码率档（与 [`PlatformRequest::rate`] 同源）。
-pub use hongguo_media_platform_api::RateProfile;
 
 /// 平台编码层可用时执行 HEVC→H.264 转码。
 /// 返回 `None` 表示本机平台层不接这个源（HEVC 以外、被 `HONGGUO_NO_PLATFORM` 关闭、无可用编解码会话），`Some(Err)` 表示试过但失败——两者都落回分流链的下一条路。
@@ -98,23 +96,6 @@ pub fn encoder_available() -> bool {
     )))]
     {
         false
-    }
-}
-
-/// HEVC 解码是否在位：回答「在线播放能否把 HEVC 系流直接喂给 WebView」，与转码侧探测是两个问题。
-/// 不吃 `HONGGUO_NO_PLATFORM`。Windows 探 MF；Android 探非软解 MediaCodec（软解只服务转码）；其余（含 macOS）恒真。
-pub fn hevc_decode_available() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        imp::hevc_decoder_present()
-    }
-    #[cfg(target_os = "android")]
-    {
-        imp::hevc_webview_decode_available()
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "android")))]
-    {
-        true
     }
 }
 

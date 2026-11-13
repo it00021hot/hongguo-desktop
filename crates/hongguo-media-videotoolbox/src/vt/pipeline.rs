@@ -7,7 +7,7 @@ use hongguo_common::{AppError, AppResult};
 use hongguo_video::sample_table::TrackInfo;
 
 use hongguo_media_platform_api::PlatformRequest;
-use hongguo_media_platform_api::video::{RateProfile, VideoCodec, bitrate_for_profile};
+use hongguo_media_platform_api::video::{VideoCodec, bitrate_for};
 
 use super::decode::Decompressor;
 use super::encode::Compressor;
@@ -34,7 +34,6 @@ fn process_frame(
     pb: Pb,
     pts: f64,
     scale_to: Option<(usize, usize)>,
-    rate: RateProfile,
     fps: f64,
     frame_dur: f64,
     transfer: &mut Option<Transfer>,
@@ -54,14 +53,7 @@ fn process_frame(
             Some((w, h)) => (w, h),
             None => (src_w, src_h),
         };
-        let c = unsafe {
-            Compressor::new(
-                out_w,
-                out_h,
-                bitrate_for_profile(out_w, out_h, fps, rate),
-                rate == RateProfile::Playback,
-            )?
-        };
+        let c = unsafe { Compressor::new(out_w, out_h, bitrate_for(out_w, out_h, fps))? };
         // 编码器自报硬编还是软编——只进日志，产物两边都是能播的 H.264
         let hw = unsafe { c.using_hardware() }.unwrap_or(false);
         log::info!(
@@ -177,7 +169,6 @@ fn run(
                 pb,
                 pts,
                 scale_to,
-                req.rate,
                 fps,
                 frame_dur,
                 transfer,
@@ -226,7 +217,6 @@ fn run(
             pb,
             pts,
             scale_to,
-            req.rate,
             fps,
             frame_dur,
             &mut transfer,

@@ -66,7 +66,7 @@ iOS 需要完整 Xcode 与对应 SDK，最低 iOS 16.0。设备签名需要 NSH_
 异步业务经共用 service runtime 调度，NSH 资源销毁时取消未完成的桥接请求。
 service 事件在 NSH 执行环境更新状态；订阅溢出后重新读取快照。
 
-NSH 在启动请求前调用 `capability_service::enable_builtin_playback()`，
+共用播放服务固定使用内置解码能力，NSH 无需启动声明或兼容模式开关。
 按 `PlayResponse.direct` 接入内置解码：HEVC/ByteVC1/ByteVC2；本地 H.264 保持系统播放。
 `hongguo-softdec::DirectSession` 负责索引、有界 BGRA 队列、取消和 seek 代次；
 帧注册由媒体租约持有，平台仅上传纹理与呈现。系统媒体读取遮罩视频轨的原 MP4，

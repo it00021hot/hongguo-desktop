@@ -76,8 +76,7 @@ pub(crate) fn host_window(window: &gpui_kit::Window) -> Option<hongguo_player::H
 }
 
 /// 系统播放器工厂：按目标分派到 `hongguo-player-macos` / `hongguo-player-windows`。
-/// `direct` = 交给内置软解直播放（画面不经系统视频解码器）；起播链只在
-/// `hongguo_player::direct_playback_available()` 为真时才会传 `true`。
+/// `direct` 表示内置视频解码；仅本地 H.264 使用原生视频后端。
 /// 业务层不写 `#[cfg]`；没有实现的目标恒 `None`（起播链按失败处理）。
 pub(crate) fn open_system_player(
     source: hongguo_player::PlaySource,

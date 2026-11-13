@@ -28,7 +28,6 @@ mod yuv_encode;
 pub use pipeline::transcode_h264;
 #[cfg(any(test, feature = "test-support"))]
 pub use pipeline::transcode_h264_for_tests;
-pub use probe::hevc_decoder_present;
 pub use probe::{clear_probe_cache, h264_hw_encoder_available, h264_sw_encoder_available};
 pub use yuv_encode::{YuvEncoder, with_encoder_thread};
 
@@ -65,11 +64,7 @@ mod tests {
                 input: &src,
                 output: out,
                 scale_to: None,
-                rate: hongguo_media_platform_api::RateProfile::Archive,
                 on_progress: None,
-                on_playable_prefix: None,
-                on_committed: None,
-                is_cancelled: None,
             })
             .expect("应可转码")
             .expect("应成功");
@@ -85,11 +80,7 @@ mod tests {
             input: &src,
             output: &out3,
             scale_to: None,
-            rate: hongguo_media_platform_api::RateProfile::Archive,
             on_progress: None,
-            on_playable_prefix: None,
-            on_committed: None,
-            is_cancelled: None,
         })
         .expect("硬编应可用")
         .expect("应成功");

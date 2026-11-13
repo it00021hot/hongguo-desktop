@@ -61,32 +61,6 @@ fn probe_h264_sw_encoder() -> bool {
     }
 }
 
-/// HEVC 解码 MFT 是否在位（廉价探测：只枚举不试编，缓存由调用方管）。
-///
-/// 这是「WebView2 能否解 HEVC」的判据：Chromium/WebView2 的 HEVC 解码走
-/// Media Foundation，解码 MFT 来自系统「HEVC 视频扩展」，不在位则一律黑屏。
-/// 复用平台会话线程（进程级 COM/MF 初始化），枚举本身毫秒级。
-pub fn hevc_decoder_present() -> bool {
-    match run_on_mf_thread(|| {
-        enum_activates(
-            MFT_CATEGORY_VIDEO_DECODER,
-            MFT_ENUM_FLAG_SYNCMFT
-                | MFT_ENUM_FLAG_ASYNCMFT
-                | MFT_ENUM_FLAG_HARDWARE
-                | MFT_ENUM_FLAG_SORTANDFILTER,
-            Some(&type_info(MFMediaType_Video, MFVideoFormat_HEVC)),
-            Some(&type_info(MFMediaType_Video, MFVideoFormat_NV12)),
-        )
-        .map(|decoders| !decoders.is_empty())
-    }) {
-        Ok(present) => present,
-        Err(e) => {
-            log::warn!("[Platform/mf] HEVC 解码 MFT 枚举失败，按不可用处理: {e}");
-            false
-        }
-    }
-}
-
 /// 探测：① HEVC 解码 MFT 在位（缺它平台转码没有意义）；② 指定档编码 MFT
 /// 不止枚举得到，还要真实建会话实编一帧并**产出输出样本**。
 fn probe_encoder_kind(kind: EncoderKind) -> AppResult<bool> {

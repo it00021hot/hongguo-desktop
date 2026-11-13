@@ -378,12 +378,6 @@ impl HomeView {
         }
         let comment_panel =
             (!in_mini && self.comments_panel_open).then(|| self.render_comment_panel(cx));
-        // HEVC 安装引导：本机解不了 HEVC 且本会话没点过「暂不安装」才出现
-        // ——选流已提前降档 H.264，这是「提画质」的主动提示，不是失败补救。
-        // 走内置软解直播放时播放不经过系统 HEVC 解码器，`hevc_playback_ready` 恒真，引导不出现。
-        let hevc_prompt = (!hongguo_service::capability_service::hevc_playback_ready()
-            && !self.hevc_prompt_dismissed)
-            .then(|| self.render_hevc_prompt(cx));
         let rects = Rc::clone(&self.stage_rects);
         let stage_bounds = Rc::clone(&self.stage_bounds);
         v_flex()
@@ -483,7 +477,6 @@ impl HomeView {
             .children(danmaku_layer)
             .children(overlay)
             .children(rail)
-            .children(hevc_prompt)
             // 「下载到本地」浮层在壳层整窗渲染（见 `downloads.rs` 头注释）。
             .children(buffering_badge)
             // 连播锁定指示 + 返回（左上「< 第N集」，点它解除锁定，显隐跟随

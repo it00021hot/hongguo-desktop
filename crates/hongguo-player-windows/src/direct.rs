@@ -10,8 +10,7 @@
 //!   纹理——与系统播放器 `TransferVideoFrame` 的落点是同一套。
 //! - **扣住声音**：起播与跳转后先不让引擎走，新会话的第一帧上屏后再放行，避免画面一出来就落后。
 //!
-//! **状态：未在 Windows 上运行验证过**（开发机是 macOS，只做了交叉类型检查）。所以默认关闭，
-//! 设 `HONGGUO_WIN_DIRECT=1` 才启用（[`enabled`]），关闭时壳仍走系统播放器。
+//! Windows 默认使用本路径解码 HEVC / ByteVC1 / ByteVC2；运行验收仍需 Windows 实机。
 //!
 //! 线程：构造与 [`PlayerLike`] 调用在 GPUI 主线程（引擎是 STA 上建的）；建索引在 `softdec-open`
 //! 线程；解码在 `softdec-direct` 线程。解码线程不碰引擎与 D3D 对象，只读渲染泵发布的时钟。
@@ -19,7 +18,7 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use hongguo_common::{AppError, AppResult};
@@ -44,12 +43,6 @@ const DUE_AHEAD_SECS: f64 = 0.008;
 
 /// 每集一个音轨 URL，日志里分得清。
 static NEXT_ASSET: AtomicU64 = AtomicU64::new(1);
-
-/// 是否启用 Windows 内置软解直播放（`HONGGUO_WIN_DIRECT=1`；进程级只读一次）。
-pub fn enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("HONGGUO_WIN_DIRECT").is_ok_and(|value| value == "1"))
-}
 
 /// 一帧待上屏的画面。
 struct Picture {

@@ -790,8 +790,7 @@ pub async fn ensure_registered(state: &AppState) {
     log::info!("[Device] 启动复用已注册档案");
 }
 
-/// 与在线播放同一份选流口径（见 `play_service::online::prepare`）：壳声明了内置软解直播放
-/// 就只收内置解码器能解的编码，否则按系统 HEVC + ByteVC2 探测结论。裁决在 `capability_service`。
+/// 预取与在线播放共用内置解码约束。
 pub(crate) fn stream_cap() -> hongguo_api::stream_pick::DecoderCapability {
     crate::capability_service::playback_cap()
 }

@@ -62,7 +62,6 @@ fn forward(app: &tauri::AppHandle, event: ServiceEvent) {
         ServiceEvent::OnlineProgress(ev) => {
             let _ = app.emit(names::ONLINE_PROGRESS, ev);
         }
-        // NSH 原生壳仍消费内部兼容转码进度；Tauri 直播放不暴露这条旧前端事件。
         ServiceEvent::LoginMfa(ev) => {
             let _ = app.emit(hongguo_service::login_service::events::LOGIN_MFA_STATE, ev);
         }

@@ -44,7 +44,7 @@ NSH 与 PR #23 统一使用内置视频解码，不保留兼容播放路径。
 将本地文件和在线明文流适配给共享会话，并注册帧来源。
 音轨 URL 继续由有 token/Host/Origin/Range 边界的现有本机供数器提供，对每个区间调用 `mask_video_tracks`。
 帧色彩通过共享 `FrameColor/copy_to_bgra` 转换，避免各平台重新猜矩阵和范围。
-启动声明改为内置播放；播放器消费 `PlayResponse.direct` 和 `error_kind`。
+共用播放服务固定为内置播放，无需壳声明或运行时选择；播放器消费 `PlayResponse.direct` 和 `error_kind`。
 
 ## 各平台
 

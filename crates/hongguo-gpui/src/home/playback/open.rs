@@ -129,13 +129,9 @@ impl super::HomeView {
             .queue()
             .completed_path(&item.series_id, ep.vid_index)
             .filter(|p| !p.trim().is_empty() && std::path::Path::new(p).is_file());
-        // 本目标有内置软解直播放时，HEVC / ByteVC1 / ByteVC2 都交给它（不经系统视频解码器、不转码）；
-        // 没有时（Windows）沿用系统播放器；选流排除 ByteVC2，播放不再转码。
-        let direct_available = hongguo_player::direct_playback_available();
         let (source, definitions, definition, direct) = match local_path {
             Some(path) => {
-                let direct = direct_available
-                    && hongguo_service::play_service::local::plays_direct_file(&path);
+                let direct = hongguo_service::play_service::local::plays_direct_file(&path)?;
                 log::info!("[Home] 本地成品命中，走本地播放（direct={direct}）：{path}");
                 (
                     hongguo_player::PlaySource::Local { path: path.into() },
@@ -160,41 +156,26 @@ impl super::HomeView {
                     &item.series_id,
                     ep.vid_index,
                 );
-                let direct = direct_available
-                    && hongguo_service::capability_service::plays_direct(&prepared.codec);
-                if direct {
-                    log::info!(
-                        "[Home] {} 第 {} 集 codec={}，走内置软解直播放",
-                        item.series_id,
-                        ep.vid_index,
-                        prepared.codec
-                    );
-                    (
-                        hongguo_player::PlaySource::Online {
-                            vid: ep.vid.clone(),
-                            definition: prepared.definition,
-                        },
-                        prepared.definitions,
-                        prepared.definition,
-                        true,
-                    )
-                } else if hongguo_bytevc2::is_bytevc2(&prepared.codec) {
-                    // 没有启用直播放的目标（Windows 默认）：系统播放器不解 bvc2，播放也不再转码。
-                    // 选流在这种模式下本就不收 ByteVC2，走到这里是选流口径漏了，如实报错。
+                if !hongguo_service::capability_service::plays_direct(&prepared.codec) {
                     return Err(hongguo_common::AppError::CodecUnsupported(
                         prepared.codec.clone(),
                     ));
-                } else {
-                    (
-                        hongguo_player::PlaySource::Online {
-                            vid: ep.vid.clone(),
-                            definition: prepared.definition,
-                        },
-                        prepared.definitions,
-                        prepared.definition,
-                        false,
-                    )
                 }
+                log::info!(
+                    "[Home] {} 第 {} 集 codec={}，走内置软解直播放",
+                    item.series_id,
+                    ep.vid_index,
+                    prepared.codec
+                );
+                (
+                    hongguo_player::PlaySource::Online {
+                        vid: ep.vid.clone(),
+                        definition: prepared.definition,
+                    },
+                    prepared.definitions,
+                    prepared.definition,
+                    true,
+                )
             }
         };
         let on_stall: Option<Arc<dyn Fn() + Send + Sync>> = {

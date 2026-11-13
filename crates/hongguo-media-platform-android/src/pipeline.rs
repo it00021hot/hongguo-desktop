@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_media_platform_api::PlatformRequest;
-use hongguo_media_platform_api::video::bitrate_for_profile;
+use hongguo_media_platform_api::video::bitrate_for;
 use hongguo_video::sample_table::TrackInfo;
 
 use super::decode::{HevcDecoder, Nv12Frame};
@@ -73,7 +73,6 @@ fn run(
             &mut out_dims,
             &mut out_last,
             scale_to,
-            req.rate,
             fps,
             frame_dur,
             req.on_progress,
@@ -88,7 +87,6 @@ fn run(
         &mut out_dims,
         &mut out_last,
         scale_to,
-        req.rate,
         fps,
         frame_dur,
         req.on_progress,
@@ -135,7 +133,6 @@ fn feed_frames(
     out_dims: &mut (usize, usize),
     out_last: &mut Option<f64>,
     scale_to: Option<(usize, usize)>,
-    rate: hongguo_media_platform_api::video::RateProfile,
     fps: f64,
     frame_dur: f64,
     on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
@@ -150,7 +147,7 @@ fn feed_frames(
             _ => (frame.data, fw, fh),
         };
         if encoder.is_none() {
-            let bitrate = bitrate_for_profile(w, h, fps, rate);
+            let bitrate = bitrate_for(w, h, fps);
             *encoder = Some(H264Encoder::new(w, h, fps, bitrate)?);
             *out_dims = (w, h);
         }

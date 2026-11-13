@@ -66,10 +66,6 @@ struct LiveFile<'a> {
     size: Option<(usize, usize)>,
     timeline: f64,
     video_end_secs: f64,
-    announced: bool,
-    ready_ns: u128,
-    prefix_samples: u32,
-    prefix_bytes: u64,
 }
 
 #[cfg(any(
@@ -95,7 +91,7 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
             .info,
     )?;
     let timeline = video_end_secs.max(audio.as_ref().map_or(0.0, |track| track.end_secs));
-    let mut encoder = YuvEncoder::new(scale_to, fps, req.rate);
+    let mut encoder = YuvEncoder::new(scale_to, fps);
     let mut live = LiveFile {
         writer: None,
         audio: audio.as_ref(),
@@ -104,10 +100,6 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
         size: None,
         timeline,
         video_end_secs,
-        announced: false,
-        ready_ns: 0,
-        prefix_samples: 0,
-        prefix_bytes: 0,
     };
     let mut frames = 0usize;
     let mut slot = 0usize;
@@ -129,7 +121,6 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
             push_ns: &mut push_ns,
             frame_dur,
             req,
-            started,
         };
         // 解码与编码各占一个线程：解码线程只管出帧，本线程（平台编码器要求的线程）送编码并封装。
         // 原来两者在同一个回调里串行，编码器吃帧时解码核的线程池是空转的。
@@ -158,11 +149,11 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
     }
     let mux_started = Instant::now();
     if !encoded.units.is_empty() {
-        write_gop(&mut live, &encoded.units, None, req, started)?;
+        write_gop(&mut live, &encoded.units, None, req)?;
     }
     let mux_ns = mux_started.elapsed().as_nanos();
-    if !live.announced {
-        return Err(AppError::Media("ByteVC2 没有写出可播片段".into()));
+    if live.writer.is_none() {
+        return Err(AppError::Media("ByteVC2 没有写出归档片段".into()));
     }
     let width = encoded.width;
     let height = encoded.height;
@@ -180,8 +171,7 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
         // 不再等于纯解码耗时；字段名保留以兼容既有的阶段日志读取方。
         let decode_ns = loop_ns.saturating_sub(push_ns);
         let body = format!(
-            "{{\"frames\":{frames},\"width\":{width},\"height\":{height},\"fps\":{fps},\"decoder\":\"{decoder}\",\"media_secs\":{media_secs:.6},\"realtime_x\":{realtime_x:.4},\"loop_ns\":{loop_ns},\"decode_ns\":{decode_ns},\"encode_push_ns\":{push_ns},\"encode_flush_ns\":{flush_ns},\"mux_ns\":{mux_ns},\"prefix_ready_ns\":{},\"prefix_video_samples\":{},\"prefix_bytes\":{},\"wall_ns\":{wall_ns}}}\n",
-            live.ready_ns, live.prefix_samples, live.prefix_bytes,
+            "{{\"frames\":{frames},\"width\":{width},\"height\":{height},\"fps\":{fps},\"decoder\":\"{decoder}\",\"media_secs\":{media_secs:.6},\"realtime_x\":{realtime_x:.4},\"loop_ns\":{loop_ns},\"decode_ns\":{decode_ns},\"encode_push_ns\":{push_ns},\"encode_flush_ns\":{flush_ns},\"mux_ns\":{mux_ns},\"wall_ns\":{wall_ns}}}\n",
         );
         hongguo_common::offline_qa::qa_write(std::path::Path::new(&path), body.as_bytes())
             .map_err(|e| AppError::Io(format!("阶段日志写入失败: {e}")))?;
@@ -247,7 +237,6 @@ struct Pass<'a, 'b> {
     push_ns: &'a mut u128,
     frame_dur: f64,
     req: &'a PlatformRequest<'b>,
-    started: Instant,
 }
 
 #[cfg(any(
@@ -337,7 +326,7 @@ fn push_frame(
     target_os = "windows",
     target_os = "android"
 ))]
-/// 首段尽快交出：约 0.25–0.5s（30fps 下 8–15 帧）即可独立解码起播。
+/// 保持归档首片段的既有批次。
 const FIRST_PUBLISH_FRAMES: usize = 8;
 #[cfg(any(
     target_os = "macos",
@@ -345,13 +334,10 @@ const FIRST_PUBLISH_FRAMES: usize = 8;
     target_os = "windows",
     target_os = "android"
 ))]
-/// 后续片段保持约 1s，降低 MSE append 频率。
+/// 后续归档片段的既有批次。
 const PUBLISH_FRAMES: usize = 30;
 
 fn drain_gops(pass: &mut Pass<'_, '_>) -> AppResult<()> {
-    if pass.req.is_cancelled.is_some_and(|cancelled| cancelled()) {
-        return Err(AppError::Cancelled);
-    }
     if pass.live.size.is_none() {
         pass.live.size = pass.encoder.coded_size();
     }
@@ -366,7 +352,7 @@ fn drain_gops(pass: &mut Pass<'_, '_>) -> AppResult<()> {
             break;
         };
         let end = next_pts.ok_or_else(|| AppError::Media("编码片段缺少后继帧时间".into()))?;
-        write_gop(pass.live, &gop, Some(end), pass.req, pass.started)?;
+        write_gop(pass.live, &gop, Some(end), pass.req)?;
     }
     Ok(())
 }
@@ -382,7 +368,6 @@ fn write_gop(
     gop: &[(f64, Vec<u8>, bool)],
     end_pts: Option<f64>,
     req: &PlatformRequest<'_>,
-    started: Instant,
 ) -> AppResult<()> {
     if gop.is_empty() || (live.writer.is_none() && !gop[0].2) {
         return Err(AppError::Media("H.264 片段缺少同步样本".into()));
@@ -411,28 +396,10 @@ fn write_gop(
                 .or_else(|| live.audio.map(|track| track.end_secs))
         },
     };
-    let bytes = live
-        .writer
+    live.writer
         .as_mut()
         .expect("片段文件刚打开")
         .push(gop, &audio, timing)?;
-    if let Some(cb) = req.on_committed {
-        cb(bytes);
-    }
-    if live.announced {
-        return Ok(());
-    }
-    live.announced = true;
-    live.ready_ns = started.elapsed().as_nanos();
-    live.prefix_samples = gop.len() as u32;
-    live.prefix_bytes = bytes;
-    log::info!(
-        "[ByteVC2] 首段可播：{} 帧，{bytes} 字节（audio_end-bounded）",
-        live.prefix_samples
-    );
-    if let Some(cb) = req.on_playable_prefix {
-        cb(req.output);
-    }
     Ok(())
 }
 

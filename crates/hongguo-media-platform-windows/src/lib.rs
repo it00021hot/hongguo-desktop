@@ -14,10 +14,6 @@ pub use mf::transcode_h264;
 /// 平台**硬编**编码器当前是否可用（含探测缓存）。
 pub use mf::h264_hw_encoder_available;
 
-/// HEVC 解码 MFT 是否在位（WebView2 能否解 HEVC 的判据；与转码探测同源，
-/// 但不吃 `HONGGUO_NO_PLATFORM`——那个开关关的是转码平台层）。
-pub use mf::hevc_decoder_present;
-
 /// 仅测试构建 / 门面 test-support：强制软件编码器跑完整平台链路。
 #[cfg(any(test, feature = "test-support"))]
 pub use mf::transcode_h264_for_tests;

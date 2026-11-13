@@ -32,17 +32,17 @@ Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service
 ## 📖 简介
 
 红果播放器（Hongguo）是面向**红果短剧**的 Windows / macOS 桌面客户端。
-它有两套壳、同一套业务内核：[Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生自绘壳。
-两壳共用 `hongguo-service`、`hongguo-api`、`hongguo-store`。
+它有同一套业务内核：[Tauri 2](https://tauri.app) + React 19 WebView 壳、GPUI 原生自绘壳，
+以及开发中的纯 Rust NSH 壳，共用 `hongguo-service`、`hongguo-api`、`hongguo-store`。
 
 它内置字节系短剧 App 的完整协议栈——设备注册、五头请求签名、取流、弹幕、互动、
 观看历史、短信登录——并配有一套 **CENC-AES-CTR 原生流式解密引擎**。解密、解复用、
-封装由纯 Rust 完成；HEVC → H.264 转码先走平台硬编（VideoToolbox / Media Foundation），
-再回落 ffmpeg。**安装包不捆绑 FFmpeg 或任何外部二进制**。
+封装由纯 Rust 完成；HEVC/ByteVC1/ByteVC2 播放使用内置解码，不转码。
+归档合并所需的 HEVC → H.264 转码走平台编码器或 ffmpeg。**安装包不捆绑 FFmpeg 可执行文件**。
 
 - **在线播放不落盘**：自定义协议渐进供数、边下边解，首帧不必等整集
 - **下载直接产出标准 MP4**：流式解密 + 原子落盘，断网断电不留残缺文件
-- **兼容模式全自动**：HEVC 解不动时自动转 H.264——平台硬编 → ffmpeg；两者都失败则报错，没有纯 Rust 视频转码兜底
+- **内置视频解码**：三个壳统一使用内置 HEVC/ByteVC1/ByteVC2 解码，失败明确报错；没有兼容转码播放接口。本地 H.264 保留系统播放
 - **数据落 Turso 内嵌数据库**：纯 Rust、无 C 工具链依赖，带 schema 迁移链与坏档自动恢复
 
 ---
@@ -122,13 +122,13 @@ Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service
 
 ### 内核（Rust）
 
-| 层     | 选型                                                                                                                                                   |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 桌面壳 | [Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生壳；共用 `hongguo-service` / `hongguo-api` / `hongguo-store`                         |
-| 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                                                                            |
-| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v7，`SCHEMA_VERSION = 7`）                                                       |
-| 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                                                                                 |
-| 编解码 | 视频 remux / MP4 封装为纯 Rust；`rusty_h265` 只做 HEIF 封面软解，不是主视频路径；HEVC→H.264 为平台硬编（VideoToolbox / Media Foundation）再回落 ffmpeg |
+| 层     | 选型                                                                                                                           |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 桌面壳 | [Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生壳；共用 `hongguo-service` / `hongguo-api` / `hongguo-store` |
+| 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                                                    |
+| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v7，`SCHEMA_VERSION = 7`）                               |
+| 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                                                         |
+| 编解码 | HEVC/ByteVC1 用 `rusty_h265`，ByteVC2 用 VVdeC；remux / MP4 封装为纯 Rust；归档转码使用平台编码器或 ffmpeg                     |
 
 ### 前端（仅 Tauri WebView 壳）
 
@@ -269,10 +269,9 @@ hongguo-desktop/
 
 ### 播放页黑屏但有声音
 
-视频是 HEVC 编码。应用内「兼容模式」会转成 H.264 再播放——平台硬编（Apple 芯片
-VideoToolbox / Windows Media Foundation）→ ffmpeg（NVENC/QSV/AMF 硬编，或 libx264 软编）。
-两者都不可用时兼容模式失败。Windows 上缺 HEVC 视频扩展，或 Tauri 壳缺 WebView2 运行时，
-安装步骤见 [docs/faq.md](./docs/faq.md)。
+HEVC/ByteVC1/ByteVC2 使用内置解码，播放不依赖系统 HEVC 视频扩展，也不会自动转成 H.264。
+检查播放器错误和日志中的解码、GPU 呈现信息；NSH 在窗口不可见时会暂停获取画面。
+Tauri 的 WebView2 运行时问题及排查边界见 [docs/faq.md](./docs/faq.md)。
 
 ### 签名魔数能改吗
 

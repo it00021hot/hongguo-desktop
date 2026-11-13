@@ -54,7 +54,7 @@ interface PlayerState {
 
 /**
  * 播放器状态：只放跨组件共享的播放上下文，易失数据归 TanStack Query；
- * 兼容模式/连播等持久化设置归 data.json（useSettings），不在 store 抄一份（抄了两边对不上会「改了没反应」）。
+ * 连播等持久化设置归 data.json（useSettings），不在 store 重复保存。
  */
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   seriesId: null,

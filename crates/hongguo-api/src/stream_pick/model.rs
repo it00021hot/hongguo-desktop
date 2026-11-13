@@ -6,9 +6,9 @@ use std::cmp::Ordering;
 /// 能力决定「谁参赛、怎么排」，不把解不了的流硬喂给解码器）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecoderCapability {
-    /// 系统 HEVC 可解（WebView / 系统播放器可直喂 `h265`/`bytevc1`）。
+    /// 当前选流场景接受 HEVC（内置播放或归档下载）。
     pub hevc: bool,
-    /// 内置 Rust ByteVC2 解码器可用：`bytevc2` 可经转码播放。
+    /// 内置 ByteVC2 解码器可用。
     pub bytevc2: bool,
     /// 只让内置软解器能解的编码参赛（HEVC 系与 ByteVC2）。开着时 H.264、没标编码、
     /// 认不出的编码一律不选——播放不靠系统解码器，也不转码，选了就是播不出来。
@@ -43,7 +43,7 @@ impl DecoderCapability {
         }
     }
 
-    /// 仅按 HEVC 探测构造（bytevc2 默认关；生产请用 [`Self::from_probes`]）。
+    /// 仅按 HEVC 能力构造（bytevc2 默认关）。
     pub fn from_hevc(playable: bool) -> Self {
         Self {
             hevc: playable,

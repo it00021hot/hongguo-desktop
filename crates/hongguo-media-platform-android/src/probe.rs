@@ -1,5 +1,4 @@
 //! 探测与进程级缓存：HEVC 解码 / H.264 编码 MediaCodec 是否可建。
-//! WebView 直解与转码侧探测分开：软解（google / c2.android）能转码，Chromium 仍解不了。
 
 use parking_lot::RwLock;
 
@@ -9,7 +8,6 @@ use ndk::media::media_format::MediaFormat;
 use super::encode::COLOR_YUV420_SEMIPLANAR;
 
 static HEVC_DEC: RwLock<Option<bool>> = RwLock::new(None);
-static HEVC_WEBVIEW: RwLock<Option<bool>> = RwLock::new(None);
 static ENC: RwLock<Option<bool>> = RwLock::new(None);
 static HW_ENC: RwLock<Option<bool>> = RwLock::new(None);
 
@@ -20,56 +18,6 @@ pub fn hevc_decoder_present() -> bool {
         *slot = Some(MediaCodec::from_decoder_type("video/hevc").is_some());
     }
     slot.unwrap_or(false)
-}
-
-/// WebView `<video>` 直解是否可信：首选解码器若是系统软解则按不可播（MuMu 等）。
-pub fn hevc_webview_decode_available() -> bool {
-    let mut slot = HEVC_WEBVIEW.write();
-    if slot.is_none() {
-        *slot = Some(probe_hevc_webview());
-    }
-    slot.unwrap_or(false)
-}
-
-fn probe_hevc_webview() -> bool {
-    let Some(codec) = MediaCodec::from_decoder_type("video/hevc") else {
-        log::info!("[Platform/android] HEVC WebView 探测：无解码器");
-        return false;
-    };
-    // getName 需 API 28；更旧的 WebView HEVC 也不稳，直接按不可直解走兼容。
-    if android_sdk_int() < 28 {
-        log::info!("[Platform/android] HEVC WebView 探测：API<28，按不可直解");
-        return false;
-    }
-    let name = codec.name().unwrap_or_default();
-    let soft = is_android_soft_codec_name(&name);
-    log::info!("[Platform/android] HEVC WebView 探测 name={name} soft={soft}");
-    !soft
-}
-
-fn is_android_soft_codec_name(name: &str) -> bool {
-    let n = name.to_ascii_lowercase();
-    n.contains("google") || n.starts_with("c2.android.")
-}
-
-fn android_sdk_int() -> i32 {
-    let mut buf = [0u8; 92];
-    let ok = unsafe {
-        let key = b"ro.build.version.sdk\0";
-        __system_property_get(key.as_ptr().cast(), buf.as_mut_ptr().cast())
-    };
-    if ok == 0 {
-        return 0;
-    }
-    let s = std::ffi::CStr::from_bytes_until_nul(&buf)
-        .ok()
-        .and_then(|c| c.to_str().ok())
-        .unwrap_or("");
-    s.parse().unwrap_or(0)
-}
-
-unsafe extern "C" {
-    fn __system_property_get(name: *const std::ffi::c_char, value: *mut std::ffi::c_char) -> u32;
 }
 
 /// H.264 编码会话是否可建（软硬皆可）。
@@ -92,7 +40,6 @@ pub fn h264_hw_encoder_available() -> bool {
 
 pub fn clear_probe_cache() {
     *HEVC_DEC.write() = None;
-    *HEVC_WEBVIEW.write() = None;
     *ENC.write() = None;
     *HW_ENC.write() = None;
 }

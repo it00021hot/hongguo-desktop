@@ -1,7 +1,7 @@
 //! 已解码的 I420 帧 → VideoToolbox H.264。ByteVC2 不经过 ffmpeg。
 
 use hongguo_common::{AppError, AppResult};
-use hongguo_media_platform_api::video::{RateProfile, bitrate_for_profile};
+use hongguo_media_platform_api::video::bitrate_for;
 use hongguo_media_platform_api::{EncodedVideo, I420View};
 
 use super::encode::Compressor;
@@ -11,7 +11,6 @@ use super::pixel::{Nv12Pool, Pb, Transfer};
 pub struct YuvEncoder {
     scale_to: Option<(usize, usize)>,
     fps: f64,
-    rate: RateProfile,
     compressor: Option<Compressor>,
     transfer: Option<Transfer>,
     /// 源分辨率的 NV12 缓冲池（首帧建）。
@@ -23,11 +22,10 @@ pub struct YuvEncoder {
 }
 
 impl YuvEncoder {
-    pub fn new(scale_to: Option<(usize, usize)>, fps: f64, rate: RateProfile) -> Self {
+    pub fn new(scale_to: Option<(usize, usize)>, fps: f64) -> Self {
         Self {
             scale_to,
             fps,
-            rate,
             compressor: None,
             transfer: None,
             pool: None,
@@ -105,15 +103,14 @@ impl YuvEncoder {
             Some((w, h)) => (w, h),
             None => (width, height),
         };
-        let bitrate = bitrate_for_profile(out_w, out_h, self.fps, self.rate);
-        let low_latency = self.rate == RateProfile::Playback;
-        self.compressor = Some(unsafe { Compressor::new(out_w, out_h, bitrate, low_latency)? });
+        let bitrate = bitrate_for(out_w, out_h, self.fps);
+        self.compressor = Some(unsafe { Compressor::new(out_w, out_h, bitrate)? });
         self.out_dims = Some((out_w, out_h));
         match unsafe { Nv12Pool::new(width, height) } {
             Ok(pool) => self.pool = Some(pool),
             Err(e) => log::warn!("[ByteVC2] NV12 缓冲池建不出来，逐帧新建缓冲: {e}"),
         }
-        log::info!("[ByteVC2] VideoToolbox 编码会话 {out_w}x{out_h} low_latency={low_latency}");
+        log::info!("[ByteVC2] VideoToolbox 编码会话 {out_w}x{out_h}");
         Ok(())
     }
 
@@ -140,11 +137,10 @@ pub fn with_encoder_thread<T: Send>(f: impl FnOnce() -> AppResult<T> + Send) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hongguo_media_platform_api::RateProfile;
 
     #[test]
     fn one_grey_frame_becomes_h264_annexb() {
-        let mut encoder = YuvEncoder::new(None, 25.0, RateProfile::Playback);
+        let mut encoder = YuvEncoder::new(None, 25.0);
         let y = vec![128u8; 256 * 256];
         let chroma = vec![128u8; 128 * 128];
         encoder

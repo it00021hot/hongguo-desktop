@@ -41,7 +41,7 @@ futures-util = "0.3"
 # 共用任务运行时（runtime 模块）需要 rt-multi-thread；sync/time 为既有用法。
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 chrono = "0.4"
-# HEVC 扩展安装包的完整性校验（capability_service 算文件 SHA-256）。
+# 在线磁盘缓存及归档转码完成标记的完整性校验。
 sha2 = "0.11"
 hex = "0.4"
 # 在线播放的 CDN 分片拉取（play_service 侧的渐进填充）。

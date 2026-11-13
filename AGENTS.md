@@ -9,8 +9,8 @@ NSH 第三壳正在开发（NSH 0.4.0，纯 Rust）：`crates/hongguo-nsh` 是�
 Android、iOS，Linux/Web 后续迭代。开发前另读 `nsh` 与 `nsh-design-guides`，
 项目接入与验证说明见 `.agents/skills/hongguo-dev/references/nsh.md`。
 
-NSH 与 Tauri/已启用直播放的 GPUI 使用内置软解；启动请求前声明
-`enable_builtin_playback()`。`PlayResponse.direct` 表示内置视频解码，
+Tauri、GPUI、NSH 的播放服务固定使用内置解码能力，无壳选择开关或系统 HEVC 探测分支。
+`PlayResponse.direct` 表示内置视频解码，
 系统媒体只读取原 MP4 的音轨视图并提供时钟；本地 H.264 沿用系统播放。
 禁止恢复兼容播放转码、`.play.mp4`、grow/HLS 播放链路。
 
@@ -53,7 +53,7 @@ NSH 与 Tauri/已启用直播放的 GPUI 使用内置软解；启动请求前声
 - `crates/hongguo-tauri/` Tauri 装配层：`commands`（IPC 薄层）、`bootstrap`（启动装配）、`diagnostics`（panic 取证）、`protocol.rs`（协议注册胶水）、`events.rs`（service 事件 → 前端事件的原名原载荷转发）、`testing`（跨层 e2e 与守卫元测试）——`prepare()` 产出装好的 Builder，`build(generate_context!)` 留在 crates/hongguo-tauri-app
 - `crates/hongguo-player-api/` 回放契约（无 UI、无平台实现依赖）：`PlayerEvent` / `PlaySource` / `PlayerLike`（统一控制面）/ `PresenterBounds` / `HostWindow`。系统播放器两端实现都吃这一份
 - `crates/hongguo-player-macos/` macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数；另有内置软解直播放（`direct.rs` / `cv.rs`：AVPlayer 只播「只剩音轨」视图并充当时钟，`hongguo-softdec` 解出的帧经 `AVSampleBufferDisplayLayer` 上屏，门面入口 `hongguo_player::open_direct`）；`#![cfg(target_os = "macos")]`，objc2/AppKit 依赖全在本 crate 的 target 表
-- `crates/hongguo-player-windows/` Windows 系统播放器：Media Foundation Media Engine（frame-server 模式：每帧 `TransferVideoFrame` 写进渲染器纹理）+ 自定义 `IMFByteStream` 供数 + 视频 quad 同画布（vendored `gpui-pre-windows` 补丁）；另有内置软解直播放（`direct.rs`：MediaEngine 只放「只剩音轨」视图并充当时钟，`hongguo-softdec` 解出的帧换成 BGRA 写进同一个视频 quad），**未经 Windows 真机验证、默认关闭**，`HONGGUO_WIN_DIRECT=1` 才启用；`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
+- `crates/hongguo-player-windows/` Windows 播放器：HEVC/ByteVC1/ByteVC2 固定由 `hongguo-softdec` 解码，BGRA 帧写入同画布视频 quad；MediaEngine 只放音轨视图并提供时钟。本地 H.264 保留 frame-server 系统播放。内置路径不设环境开关；Windows 真机运行仍待验。`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
 - `crates/hongguo-player/` 系统播放器门面：按编译目标分派到上面两个实现 crate，并把契约原样转出——壳只依赖它
 - `crates/hongguo-gpui/` 完整 GPUI 壳：直接构造 `AppStateInner` 并调用 service/api，**操作与 Tauri 客户端一致**（不复制业务；`make gpui` 运行）。播放经 `hongguo-player` 系统播放器（macOS AVPlayer / Windows MediaEngine frame-server，视频 quad 与 GPUI 同画布）；service 的 async 族由壳内常驻 tokio 运行时经 oneshot 桥接，业务事件经 `events.rs` 事件泵（broadcast→mpsc）接进视图
 - Rust 侧已 workspace 化：根 `Cargo.toml`（members / `resolver` / `[patch]` / `[profile]` 都在根），`Cargo.lock`、`target/`、`vendor/` 也都在仓库根；cargo 一律在**仓库根**跑（`--workspace`）。`vendor/` 被 `[workspace] exclude` 排除，不参与 lint/test/format

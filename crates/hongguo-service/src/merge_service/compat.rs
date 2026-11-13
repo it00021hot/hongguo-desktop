@@ -213,8 +213,7 @@ pub fn compat_merge(
         .filter(|t| t.info.is_video)
         .map(|t| t.info.samples.len())
         .sum();
-    // 拼接已消费全部转码产物：兼容缓存是播放侧的 3 集滚动窗口，合并的瞬时多集
-    // 文件就地删除，不等下一轮 trim（校验失败的分支不删——重试还能命中缓存）。
+    // 校验成功后删除已消费的归档中间文件；失败时保留以供重试。
     let mut cleaned = 0usize;
     for p in &transcoded {
         if hongguo_store::paths::qa_remove_file(p).is_ok() {
