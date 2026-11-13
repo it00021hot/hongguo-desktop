@@ -152,6 +152,10 @@ function sharpenAmountOf(strength: number): number {
   return (clamped / 100) * 0.7;
 }
 
+export function sharpenUniforms(amount: number, width: number, height: number): Float32Array {
+  return new Float32Array([amount, 0, 1 / width, 1 / height]);
+}
+
 /**
  * 建 Anime4K CNNx2M 2× 渲染器：device 独占（源切换时全部库纹理随之销毁），输入 rgba16float（CNN 中间值精度），输出 2× 尺寸；
  * 建管线包在 validation error scope 里——不支持的显卡在这里显式失败而不是画出黑帧。
@@ -232,11 +236,7 @@ export async function createAnime4KRenderer(
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const writeSharpen = (amount: number) => {
-      device.queue.writeBuffer(
-        uniform,
-        0,
-        new Float32Array([amount, 1 / output.width, 1 / output.height]),
-      );
+      device.queue.writeBuffer(uniform, 0, sharpenUniforms(amount, output.width, output.height));
     };
     writeSharpen(sharpenAmountOf(sharpen));
     const bindings = device.createBindGroup({

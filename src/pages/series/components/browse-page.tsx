@@ -105,7 +105,7 @@ export function BrowsePage() {
   const suggest = useSearchSuggest(debounced);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestIndex, setSuggestIndex] = useState(0);
-  const suggestions = suggest.data ?? [];
+  const suggestions = (suggest.data ?? []).slice(0, 8);
   const showSuggest =
     suggestOpen &&
     !searching &&
@@ -328,9 +328,9 @@ export function BrowsePage() {
                 sideOffset={6}
                 // 焦点留在输入框：方向键导航与继续输入都不许浮层抢焦
                 onOpenAutoFocus={(e) => e.preventDefault()}
-                className="max-h-80 w-[var(--radix-popover-anchor-width)] scrollbar-thin overflow-y-auto rounded-xl p-1.5"
+                className="max-h-80 w-[var(--radix-popover-trigger-width)] scrollbar-thin overflow-y-auto rounded-xl p-1.5"
               >
-                {suggestions.slice(0, 8).map((item, i) => (
+                {suggestions.map((item, i) => (
                   <SuggestRow
                     key={`${item.word}:${i}`}
                     item={item}

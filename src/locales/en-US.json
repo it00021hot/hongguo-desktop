@@ -1,4 +1,18 @@
 {
+  "nsh": {
+    "exportFile": "Export file",
+    "exportCompleted": "File exported",
+    "previewAction": "Preview action: {action}",
+    "proxyAddress": "Proxy address",
+    "cacheLimitHint": "MB; 0 means unlimited. Maximum 1048576 MB.",
+    "cacheTtlHint": "Days; 0 turns cleanup off. Range: 0–365 days.",
+    "compatibility": "Compatibility playback",
+    "shortcutLoadFailed": "Could not read saved shortcuts. Defaults have been restored; please configure them again.",
+    "shortcutSaveFailed": "Could not save shortcuts: {error}",
+    "bossKeyRollbackFailed": "Could not restore the previous global shortcut: {error}",
+    "windowModeUnavailable": "This window mode is unavailable on this platform",
+    "playbackFailed": "Video playback failed. Please try again."
+  },
   "app": {
     "name": "Hongguo"
   },
@@ -32,6 +46,7 @@
     },
     "collapse": "Collapse",
     "expand": "Expand",
+    "mainMenu": "Main menu",
     "back": "Back",
     "forward": "Forward",
     "backHint": "Go back",
@@ -158,6 +173,10 @@
   },
   "player": {
     "autoDeleteDone": "Episode {index} finished, local file deleted",
+    "seekUnavailable": "The seek position exceeds the available video",
+    "seekConfirmationFailed": "The seek position could not be confirmed. Please retry.",
+    "playVideo": "Play video",
+    "pauseVideo": "Pause video",
     "seriesSearch": "Filter by name",
     "buffering": "Buffering {percent}% ({size})…",
     "bufferingShort": "Buffering",
@@ -194,6 +213,7 @@
     "nextEpisode": "Next episode",
     "volume": "Volume",
     "mute": "Mute",
+    "unmute": "Unmute",
     "playbackRate": "Playback speed",
     "definition": "Quality",
     "definitionAuto": "Auto",
@@ -316,6 +336,7 @@
       "deleteDesc": "Delete this content? This cannot be undone."
     },
     "emoticon": {
+      "tooLong": "Keep the message within {n} characters",
       "system": "Emoji",
       "thirdParty": "Third-party stickers",
       "custom": "My stickers",
@@ -333,6 +354,7 @@
       "addToMine": "Add to my stickers",
       "removeFromMine": "Remove sticker",
       "addDone": "Added to your stickers",
+      "collectMissing": "The server returned no sticker. It may already be in your collection.",
       "removeDone": "Sticker removed",
       "removeConfirmTitle": "Remove this sticker?",
       "removeConfirmDesc": "This cannot be undone."
@@ -434,7 +456,9 @@
     "downloadedNote": "Update downloaded. Click \"Update now\" to install and restart — your settings and login state are kept.",
     "downloadFailed": "Download failed: {error}",
     "installFailed": "Install failed: {error}",
-    "noChangelog": "No release notes."
+    "noChangelog": "No release notes.",
+    "releaseOpenFailed": "Could not open the release page",
+    "nshReleaseNote": "View the release page for available Native Shell packages."
   },
   "settings": {
     "downloadDir": "Download folder",
@@ -462,7 +486,7 @@
     "bossKeyOff": "Off",
     "bossKeyCapturing": "Press key combo…",
     "bossKeyCardTitle": "Global shortcut",
-    "bossKeyDesc": "Instantly hide/restore the whole window; playback auto-pauses while hidden. Takes effect on save; saving fails if the combo is taken by another app — pick another. Must include Ctrl/Cmd or Alt modifier.",
+    "bossKeyDesc": "Instantly hide/restore the whole window; playback auto-pauses while hidden. Takes effect on save; saving fails if the combo is taken by another app — pick another. Must include Ctrl/Cmd or Alt. Press Backspace without modifiers while recording to disable.",
     "bossKeyGlobalHint": "Global shortcuts fire even when the app is not focused, independently from player shortcuts which only work inside the app.",
     "bossKeyConflict": "Conflicts with player shortcut \"{actions}\": pressing this combo inside the app would also trigger that player action",
     "bossKeyConflictBlock": "Boss key conflicts with a player shortcut — adjust the boss key or the player shortcut before saving",
@@ -610,7 +634,8 @@
     "failed": "Failed",
     "failedWith": "Failed: {message}",
     "sending": "Sending…",
-    "retry": "Retry"
+    "retry": "Retry",
+    "refresh": "Refresh"
   },
   "window": {
     "minimize": "Minimize",
@@ -762,6 +787,7 @@
     "batchUndoTitle": "Undo selected likes?"
   },
   "creator": {
+    "title": "Creator profile",
     "works": "Works · {count}",
     "empty": "No published works yet",
     "loadFailed": "Failed to load homepage"
@@ -792,6 +818,8 @@
     "noticesEmpty": "No alerts",
     "noticesEmptyHint": "When a followed series updates or a reserved one goes live, alerts show up here (checked every 20 minutes)",
     "popupOn": "Popup alerts",
+    "notificationDenied": "Notifications are disabled. Allow notifications in system settings.",
+    "notificationFailed": "Could not enable notifications: {message}",
     "checkUpdate": "Check now",
     "checking": "Checking…",
     "checkResult": "{count} new alerts",
@@ -799,6 +827,8 @@
     "clearAll": "Clear",
     "cleared": "Cleared",
     "kindFollow": "Update",
+    "read": "Read",
+    "unread": "Unread",
     "kindOnline": "Now live"
   },
   "detail": {

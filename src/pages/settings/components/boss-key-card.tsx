@@ -4,26 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
-import { bossKeyConflicts, type BossKeyConflict } from '@/utils/boss-key';
+import { bossKeyConflicts, bossKeyFromEvent, type BossKeyConflict } from '@/utils/boss-key';
 import { shortcutKeyLabel, type ShortcutAction } from '@/stores/shortcuts';
-
-/** KeyboardEvent → tauri accelerator（如 "CommandOrControl+Alt+H"）。
- *  全局快捷键必须带 Ctrl/Cmd 或 Alt 修饰（防劫持打字），不满足返回空。 */
-function acceleratorFromEvent(e: KeyboardEvent): string {
-  if (!e.ctrlKey && !e.metaKey && !e.altKey) return '';
-  const parts: string[] = [];
-  if (e.ctrlKey || e.metaKey) parts.push('CommandOrControl');
-  if (e.altKey) parts.push('Alt');
-  if (e.shiftKey) parts.push('Shift');
-  let key = e.code;
-  if (key.startsWith('Key')) key = key.slice(3);
-  else if (key.startsWith('Digit')) key = key.slice(5);
-  else if (key.startsWith('Arrow')) key = key.slice(5);
-  else if (key.startsWith('Numpad')) key = 'Num' + key.slice(6);
-  if (!key) return '';
-  parts.push(key);
-  return parts.join('+');
-}
 
 /** 老板键 vs 播放器快捷键冲突检测：accelerator 末段裸键 vs 播放器
  *  `e.key`（全局组合在应用内按下会同时触发播放器动作）。 */
@@ -80,9 +62,8 @@ export function BossKeyCard({
         setCapturing(false);
         return;
       }
-      if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
-      const accel = acceleratorFromEvent(e);
-      if (!accel) return;
+      const accel = bossKeyFromEvent(e);
+      if (accel === null) return;
       onChange(accel);
       setCapturing(false);
     };

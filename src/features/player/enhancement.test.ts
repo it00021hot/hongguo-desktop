@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sharpenKernel } from './enhancement';
+import { sharpenKernel, sharpenUniforms } from './enhancement';
 
 describe('sharpenKernel', () => {
   it('强度 0 时是恒等核：不改变画面', () => {
@@ -19,5 +19,17 @@ describe('sharpenKernel', () => {
   it('核行列对称（卷积核不对称会产生方向性伪影）', () => {
     const k = sharpenKernel(60);
     expect(k).toEqual([k[8], k[7], k[6], k[5], k[4], k[3], k[2], k[1], k[0]]);
+  });
+});
+
+describe('sharpen uniform buffer', () => {
+  it('aligns vec2f texel at byte 8 and writes both axes of a non-square frame', () => {
+    const uniforms = sharpenUniforms(0.35, 640, 360);
+    expect(uniforms.byteLength).toBe(16);
+    const bytes = new DataView(uniforms.buffer, uniforms.byteOffset, uniforms.byteLength);
+    expect(bytes.getFloat32(0, true)).toBeCloseTo(0.35);
+    expect(bytes.getUint32(4, true)).toBe(0);
+    expect(bytes.getFloat32(8, true) * 640).toBeCloseTo(1);
+    expect(bytes.getFloat32(12, true) * 360).toBeCloseTo(1);
   });
 });

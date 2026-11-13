@@ -28,3 +28,24 @@ export function bossKeyConflicts(
     .filter((a) => a.key.trim().toLowerCase() === core)
     .map(({ action, label }) => ({ action, label }));
 }
+
+export function bossKeyFromEvent(
+  event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'code' | 'key'>,
+): string | null {
+  const unmodified = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+  if (event.key === 'Backspace' && unmodified) return '';
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(event.key)) return null;
+  if (!event.ctrlKey && !event.metaKey && !event.altKey) return null;
+  const parts: string[] = [];
+  if (event.ctrlKey || event.metaKey) parts.push('CommandOrControl');
+  if (event.altKey) parts.push('Alt');
+  if (event.shiftKey) parts.push('Shift');
+  let key = event.code;
+  if (key.startsWith('Key')) key = key.slice(3);
+  else if (key.startsWith('Digit')) key = key.slice(5);
+  else if (key.startsWith('Arrow')) key = key.slice(5);
+  else if (key.startsWith('Numpad')) key = 'Num' + key.slice(6);
+  if (!key) return null;
+  parts.push(key);
+  return parts.join('+');
+}

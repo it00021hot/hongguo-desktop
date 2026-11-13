@@ -1,4 +1,18 @@
 {
+  "nsh": {
+    "exportFile": "导出文件",
+    "exportCompleted": "文件已导出",
+    "previewAction": "预览操作：{action}",
+    "proxyAddress": "代理地址",
+    "cacheLimitHint": "单位 MB，0 表示不限，上限 1048576 MB",
+    "cacheTtlHint": "单位天，0 表示关闭，范围 0–365 天",
+    "compatibility": "兼容播放",
+    "shortcutLoadFailed": "无法读取已保存的快捷键，已恢复默认。请重新设置。",
+    "shortcutSaveFailed": "快捷键保存失败：{error}",
+    "bossKeyRollbackFailed": "原全局快捷键恢复失败：{error}",
+    "windowModeUnavailable": "此窗口模式不适用于当前平台",
+    "playbackFailed": "视频播放失败，请重试"
+  },
   "app": {
     "name": "红果播放器"
   },
@@ -32,6 +46,7 @@
     },
     "collapse": "收起",
     "expand": "展开",
+    "mainMenu": "主菜单",
     "back": "后退",
     "forward": "前进",
     "backHint": "返回上一页",
@@ -158,6 +173,10 @@
   },
   "player": {
     "autoDeleteDone": "第{index}集已看完，已删除本地文件",
+    "seekUnavailable": "跳转位置超出可播放范围",
+    "seekConfirmationFailed": "未能确认跳转位置，请重试",
+    "playVideo": "播放视频",
+    "pauseVideo": "暂停视频",
     "seriesSearch": "搜索剧名",
     "buffering": "正在缓存 {percent}%（{size}）…",
     "bufferingShort": "缓冲中",
@@ -194,6 +213,7 @@
     "nextEpisode": "下一集",
     "volume": "音量",
     "mute": "静音",
+    "unmute": "取消静音",
     "playbackRate": "倍速",
     "definition": "清晰度",
     "definitionAuto": "自动",
@@ -316,6 +336,7 @@
       "deleteDesc": "确定删除这条内容吗？删除后不可恢复。"
     },
     "emoticon": {
+      "tooLong": "内容不能超过 {n} 个字符",
       "system": "表情",
       "thirdParty": "第三方表情",
       "custom": "自定义表情",
@@ -333,6 +354,7 @@
       "addToMine": "添加到表情",
       "removeFromMine": "删除表情",
       "addDone": "已添加到我的表情",
+      "collectMissing": "服务端未返回表情对象，该表情可能已在我的表情中",
       "removeDone": "已删除表情",
       "removeConfirmTitle": "确定删除这个表情吗？",
       "removeConfirmDesc": "删除后不能恢复。"
@@ -434,7 +456,9 @@
     "downloadedNote": "更新包已下载完成，点「立即更新」才会安装并重启，设置和登录状态都会保留。",
     "downloadFailed": "下载失败：{error}",
     "installFailed": "安装失败：{error}",
-    "noChangelog": "暂无更新说明"
+    "noChangelog": "暂无更新说明",
+    "releaseOpenFailed": "无法打开版本发布页",
+    "nshReleaseNote": "请到版本发布页查看可用的 Native Shell 安装包。"
   },
   "settings": {
     "downloadDir": "下载目录",
@@ -462,7 +486,7 @@
     "bossKeyOff": "关闭",
     "bossKeyCapturing": "按下组合键…",
     "bossKeyCardTitle": "全局快捷键",
-    "bossKeyDesc": "一键隐藏/恢复整个窗口，隐藏时自动暂停播放。保存后生效；快捷键被其他程序占用时保存会失败，换一个即可。需带 Ctrl/Cmd 或 Alt 修饰。",
+    "bossKeyDesc": "一键隐藏/恢复整个窗口，隐藏时自动暂停播放。保存后生效；快捷键被其他程序占用时保存会失败，换一个即可。需带 Ctrl/Cmd 或 Alt 修饰；录制时单按 Backspace 可关闭。",
     "bossKeyGlobalHint": "全局快捷键在应用不在前台时也能触发，与仅应用内生效的播放快捷键相互独立。",
     "bossKeyConflict": "与播放器快捷键「{actions}」冲突：该组合在应用内按下会同时触发播放器操作",
     "bossKeyConflictBlock": "老板键与播放器快捷键冲突，请先调整老板键或播放器快捷键再保存",
@@ -610,7 +634,8 @@
     "failed": "失败",
     "failedWith": "失败：{message}",
     "sending": "发送中…",
-    "retry": "重试"
+    "retry": "重试",
+    "refresh": "刷新"
   },
   "window": {
     "minimize": "最小化",
@@ -762,6 +787,7 @@
     "batchUndoTitle": "批量取消点赞？"
   },
   "creator": {
+    "title": "创作者主页",
     "works": "作品 · {count}",
     "empty": "TA 还没有发布作品",
     "loadFailed": "主页加载失败"
@@ -792,6 +818,8 @@
     "noticesEmpty": "暂无提醒",
     "noticesEmptyHint": "追的剧更新、预约的剧上线后，会在这里提醒你（每 20 分钟自动检查）",
     "popupOn": "弹出提醒",
+    "notificationDenied": "系统通知未开启，请在系统设置中允许通知",
+    "notificationFailed": "无法启用系统通知：{message}",
     "checkUpdate": "检查更新",
     "checking": "检查中…",
     "checkResult": "有 {count} 条新提醒",
@@ -799,6 +827,8 @@
     "clearAll": "清空",
     "cleared": "已清空",
     "kindFollow": "追更更新",
+    "read": "已读",
+    "unread": "未读",
     "kindOnline": "预约上线"
   },
   "detail": {
