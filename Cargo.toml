@@ -22,6 +22,7 @@ members = [
     "crates/hongguo-media-platform-android",
     "crates/hongguo-media-platform-macos",
     "crates/hongguo-media-platform-windows",
+    "crates/hongguo-media-videotoolbox",
     "crates/hongguo-video",
     # 回放契约 + 系统播放器（门面 / macOS / Windows 实现）：
     # 平台实现分 crate，壳只依赖门面。

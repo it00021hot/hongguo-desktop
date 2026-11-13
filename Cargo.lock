@@ -4459,11 +4459,8 @@ name = "hongguo-media-platform-macos"
 version = "0.6.6"
 dependencies = [
  "hongguo-common",
- "hongguo-media",
  "hongguo-media-platform-api",
- "hongguo-video",
- "log",
- "parking_lot 0.13.0",
+ "hongguo-media-videotoolbox",
 ]
 
 [[package]]
@@ -4478,6 +4475,18 @@ dependencies = [
  "log",
  "parking_lot 0.13.0",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "hongguo-media-videotoolbox"
+version = "0.6.6"
+dependencies = [
+ "hongguo-common",
+ "hongguo-media",
+ "hongguo-media-platform-api",
+ "hongguo-video",
+ "log",
+ "parking_lot 0.13.0",
 ]
 
 [[package]]

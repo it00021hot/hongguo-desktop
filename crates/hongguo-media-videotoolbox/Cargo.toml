@@ -1,0 +1,15 @@
+[package]
+name = "hongguo-media-videotoolbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+hongguo-common = { path = "../hongguo-common" }
+hongguo-media = { path = "../hongguo-media" }
+hongguo-video = { path = "../hongguo-video" }
+hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
+parking_lot = "0.13"
+log = "0.4"

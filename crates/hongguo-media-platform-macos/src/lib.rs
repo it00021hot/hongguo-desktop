@@ -3,7 +3,7 @@
 //! CVPixelBuffer 全程 NV12、编解码之间零拷贝，服务转码链路（HEVC→H.264）。
 //! 接口语义由 `hongguo-media-platform-api` 定义，门面 `hongguo-media-platform` 按编译目标选择本 crate（反向即 Cargo 依赖环）；其余目标上空壳编译（`#![cfg]` 剥掉全部内容）。
 
-mod vt;
+use hongguo_media_videotoolbox as vt;
 
 /// 平台编码层可用时执行 HEVC→H.264 转码（硬编优先，软编回落）。
 pub use vt::transcode_h264;
