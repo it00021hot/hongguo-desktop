@@ -111,6 +111,17 @@ nsh test crates/hongguo-nsh/preview --target macos
 这只能证明共享控件在 macOS 上的效果，不是完整页面或移动端视觉验收。
 NSH 生成的开发宿主链接时有 __eh_frame 大小警告，需在发布构建时继续核实。
 
+macOS 原生软解画面回归使用独立窗口、合成 HEVC 样本和固定 BGRA 帧，不读取账号或数据库：
+
+```sh
+cargo build -p hongguo-nsh-video-macos --example pixel_surface
+HONGGUO_NSH_MACOS_PIXEL_TEST=1 node --test scripts/nsh-macos-pixel.test.mjs
+```
+
+默认跳过 GUI；显式运行时仅按测试进程 PID 截图并清理。测试先完成暂停、暂停时 seek、恢复，
+再校验屏幕像素，不能用 GPU 完成回调代替实际出画。Metal 图层须在获取 drawable 前显示，
+在隐藏层上提交后才解除隐藏会出现声音与进度正常但画面黑屏。
+
 本机环境已补齐 JDK 21、Gradle wrapper、Android SDK 37.0、NDK 30.0.16248370、
 平台工具与 API 37 ARM64 模拟器；Xcode 27.2、iOS SDK 与模拟器运行环境已安装。
 环境变量保存在用户目录的 .config/hongguo/mobile-env.zsh，由 .zshenv 引入。

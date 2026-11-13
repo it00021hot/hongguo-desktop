@@ -296,7 +296,6 @@ impl Worker {
         };
         match renderer.poll() {
             Ok(Some(completed)) if completed.epoch == self.revision => {
-                self.layers.set_visible(self.props.active);
                 self.present_direct();
                 if self.video.is_none() {
                     return;
@@ -381,6 +380,9 @@ impl Worker {
     }
 
     fn draw(&mut self) {
+        // Hidden Metal layers can finish GPU work without displaying the drawable.
+        // Reveal before acquisition; the audio gate still waits for GPU completion.
+        self.layers.set_visible(self.props.active);
         let frame = self.frame.as_ref().expect("caller checked current frame");
         let shared = self.shared.clone();
         let revision = self.revision;

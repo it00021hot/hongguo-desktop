@@ -4771,9 +4771,13 @@ dependencies = [
 name = "hongguo-nsh-video-macos"
 version = "0.6.6"
 dependencies = [
+ "env_logger",
+ "hongguo-common",
  "hongguo-nsh-video-api",
  "hongguo-nsh-video-apple",
+ "hongguo-softdec",
  "log",
+ "nsh-core",
  "nsh-platform-macos",
  "objc2 0.6.5",
  "objc2-quartz-core 0.3.2",
