@@ -1,0 +1,155 @@
+{
+  "collectionRows": [
+    {
+      "seriesId": "7701328280862854168",
+      "collectTimeMs": 1794384000000,
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-2",
+      "collectTimeMs": 1794384000000,
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-3",
+      "collectTimeMs": 1794384000000,
+      "contentType": 1004
+    }
+  ],
+  "followRows": [
+    {
+      "seriesId": "7701328280862854168",
+      "title": "装穷提亲，娶到全家嫌弃的她",
+      "cover": "/player-frame.png",
+      "episodeCnt": 80,
+      "latestWatchedVidIndex": 1,
+      "finished": false,
+      "hasWatchedLatestEpisode": false,
+      "followUpdateAt": 1794384000
+    },
+    {
+      "seriesId": "preview-catalog-2",
+      "title": "下一段故事",
+      "cover": "/player-frame.png",
+      "episodeCnt": 61,
+      "latestWatchedVidIndex": 2,
+      "finished": false,
+      "hasWatchedLatestEpisode": false,
+      "followUpdateAt": 1794384000
+    },
+    {
+      "seriesId": "preview-catalog-3",
+      "title": "归途有风",
+      "cover": "/player-frame.png",
+      "episodeCnt": 62,
+      "latestWatchedVidIndex": 62,
+      "finished": true,
+      "hasWatchedLatestEpisode": true,
+      "followUpdateAt": 1794384000
+    }
+  ],
+  "likedRows": [
+    {
+      "seriesId": "7701328280862854168",
+      "seriesTitle": "装穷提亲，娶到全家嫌弃的她",
+      "vid": "offline-liked-1",
+      "userDigg": true,
+      "diggedCount": 339792,
+      "followed": true,
+      "followedCnt": 1701000
+    },
+    {
+      "seriesId": "preview-catalog-2",
+      "seriesTitle": "下一段故事",
+      "vid": "offline-liked-2",
+      "userDigg": true,
+      "diggedCount": 329792,
+      "followed": true,
+      "followedCnt": 1701000
+    },
+    {
+      "seriesId": "preview-catalog-3",
+      "seriesTitle": "归途有风",
+      "vid": "offline-liked-3",
+      "userDigg": true,
+      "diggedCount": 319792,
+      "followed": true,
+      "followedCnt": 1701000
+    }
+  ],
+  "personalAccount": {
+    "mobile": "",
+    "cookies": "",
+    "token": "",
+    "rawLogin": "",
+    "rawProfile": "",
+    "userName": "离线测试账号",
+    "avatarUrl": "",
+    "userId": "offline-preview-account",
+    "loginAt": 0
+  },
+  "personalSeries": [
+    {
+      "seriesId": "7701328280862854168",
+      "title": "装穷提亲，娶到全家嫌弃的她",
+      "episodeCount": 80
+    },
+    {
+      "seriesId": "preview-catalog-2",
+      "title": "下一段故事",
+      "episodeCount": 61
+    },
+    {
+      "seriesId": "preview-catalog-3",
+      "title": "归途有风",
+      "episodeCount": 62
+    }
+  ],
+  "reservationRows": [
+    {
+      "seriesId": "7701328280862854168",
+      "title": "装穷提亲，娶到全家嫌弃的她",
+      "cover": "/player-frame.png",
+      "vid": "offline-reserved-1",
+      "score": 9.2,
+      "playCnt": 15080000,
+      "episodeCnt": 80,
+      "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+      "category": "恋爱",
+      "recTags": ["恋爱", "乡村"],
+      "publishTime": 1794384000000,
+      "isOnline": true,
+      "hasSubscribed": true
+    },
+    {
+      "seriesId": "preview-catalog-2",
+      "title": "下一段故事",
+      "cover": "/player-frame.png",
+      "vid": "offline-reserved-2",
+      "score": 9.2,
+      "playCnt": 15080000,
+      "episodeCnt": 61,
+      "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+      "category": "恋爱",
+      "recTags": ["恋爱", "乡村"],
+      "publishTime": 1794384000000,
+      "isOnline": false,
+      "hasSubscribed": true
+    },
+    {
+      "seriesId": "preview-catalog-3",
+      "title": "归途有风",
+      "cover": "/player-frame.png",
+      "vid": "offline-reserved-3",
+      "score": 9.2,
+      "playCnt": 15080000,
+      "episodeCnt": 62,
+      "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+      "category": "恋爱",
+      "recTags": ["恋爱", "乡村"],
+      "publishTime": 1794384000000,
+      "isOnline": true,
+      "hasSubscribed": true
+    }
+  ]
+}

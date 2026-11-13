@@ -17,20 +17,17 @@ use windows::Win32::Media::MediaFoundation::{
 use windows::core::{Result, implement};
 
 /// 一集的事件通道（引擎持有；通道关闭 = 宿主已弃，发送静默失败即可）。
-/// 每集新引擎（见 `player.rs`），通道随 [`NotifyShared::new`] 一次绑定。
+/// 每集新引擎，通道随音轨会话一次绑定。
 pub(super) struct NotifyShared {
     events: Mutex<Option<mpsc::Sender<PlayerEvent>>>,
-    /// 首次出画只报一次（`FIRSTFRAMEREADY` 与随后的 `PLAYING` 都可能到）。
-    started: AtomicBool,
     /// 缓冲状态机去重：连续同类事件只发一次。
     buffering: AtomicBool,
 }
 
 impl NotifyShared {
-    pub(super) fn new(events: mpsc::Sender<PlayerEvent>) -> Self {
+    pub(super) fn audio_only(events: mpsc::Sender<PlayerEvent>) -> Self {
         Self {
             events: Mutex::new(Some(events)),
-            started: AtomicBool::new(false),
             buffering: AtomicBool::new(false),
         }
     }
@@ -40,18 +37,6 @@ impl NotifyShared {
         let guard = self.events.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(events) = guard.as_ref() {
             let _ = events.blocking_send(event);
-        }
-    }
-
-    fn first_frame(&self) {
-        if !self.started.swap(true, Ordering::SeqCst) {
-            // MediaEngine 的事件不带尺寸；壳侧 system 分支只用它置「画面已就绪」，
-            // 真实尺寸在 `PlayerLike::dims` 里另外查引擎。
-            self.send(PlayerEvent::FirstFrame {
-                width: 0,
-                height: 0,
-            });
-            self.send(PlayerEvent::Ready);
         }
     }
 
@@ -86,7 +71,6 @@ impl IMFMediaEngineNotify_Impl for Notify_Impl {
                 if value == MF_MEDIA_ENGINE_EVENT_FIRSTFRAMEREADY.0 as u32
                     || value == MF_MEDIA_ENGINE_EVENT_PLAYING.0 as u32 =>
             {
-                shared.first_frame();
                 shared.buffering(false);
             }
             value

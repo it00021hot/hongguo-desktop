@@ -57,14 +57,15 @@ pub fn build_client(config: &hongguo_common::model::ProxyConfig) -> AppResult<re
 fn build_client_uncached(
     config: &hongguo_common::model::ProxyConfig,
 ) -> AppResult<reqwest::Client> {
-    let mut builder = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .user_agent(hongguo_signer::video_ua())
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10));
     // Android：platform-verifier 需要 JNI 初始化，缺失时 TLS 全挂，喂 webpki 根
     #[cfg(target_os = "android")]
-    let mut builder =
-        builder.use_preconfigured_tls(hongguo_common::utils::tls::webpki_tls_config()?);
+    let builder = builder.use_preconfigured_tls(hongguo_common::utils::tls::webpki_tls_config()?);
+
+    let mut builder = builder;
 
     if hongguo_common::offline_qa::enabled() {
         // 配置里的代理和默认重定向都能把 loopback 请求带到外部主机。开关打开时这两条都不走。

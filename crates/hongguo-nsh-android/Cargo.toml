@@ -1,0 +1,17 @@
+[package]
+name = "hongguo-nsh-android"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "nsh"
+crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+hongguo-nsh = { path = "../hongguo-nsh" }
+hongguo-nsh-video-android = { path = "../hongguo-nsh-video-android" }
+nsh-android-runtime.workspace = true
+nsh-base.workspace = true

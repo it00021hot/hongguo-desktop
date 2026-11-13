@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import {
-  compatProgressSchema,
   downloadProgressSchema,
   downloadTaskSchema,
   followNoticesEventSchema,
@@ -28,17 +27,18 @@ const EVENT_PAYLOADS = {
   'merge-completed': mergeTaskSchema,
   'merge-failed': mergeTaskSchema,
   'online-play-progress': onlineProgressSchema,
-  'compat-play-progress': compatProgressSchema,
   'login-mfa-state': loginMfaStateSchema,
   'follow-notices': followNoticesEventSchema,
   /** 设备注册换档完成：载荷 = 新 install_id（身份敏感数据应重拉） */
   'device-registered': z.string(),
+  'device-registration-state': z.null(),
   'boss-key-hidden': z.object({ hidden: z.boolean() }),
   /** lib.rs CloseRequested 拦截发出，Rust 侧 `()` 序列化为 null */
   'close-requested': z.null(),
   'incognito-visibility': z.object({ visible: z.boolean() }),
   /** lib.rs Resized+is_minimized 状态翻转发出：true=最小化 */
   'window-minimize': z.boolean(),
+  'window-fullscreen-exited': z.null(),
 } as const satisfies Record<EventName, z.ZodType>;
 
 export type EventPayload<C extends EventName> = z.infer<(typeof EVENT_PAYLOADS)[C]>;

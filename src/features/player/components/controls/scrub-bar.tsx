@@ -12,12 +12,14 @@ export function ScrubBar({
   onSeek,
   onScrubStart,
   onScrubEnd,
+  disabled = false,
 }: {
   current: number;
   duration: number;
   onSeek: (ratio: number) => void;
   onScrubStart: () => void;
   onScrubEnd: () => void;
+  disabled?: boolean;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const ratio = duration > 0 ? Math.min(current / duration, 1) : 0;
@@ -35,22 +37,24 @@ export function ScrubBar({
       ref={trackRef}
       role="slider"
       aria-label={t('common.progress')}
+      aria-disabled={disabled}
       aria-valuemin={0}
       aria-valuemax={Math.floor(duration)}
       aria-valuenow={Math.floor(current)}
-      tabIndex={0}
+      tabIndex={disabled ? -1 : 0}
       className="group/bar relative h-4 w-full cursor-pointer"
       onPointerDown={(e) => {
-        if (duration <= 0) return;
+        if (disabled || duration <= 0) return;
         e.currentTarget.setPointerCapture(e.pointerId);
         onScrubStart();
         onSeek(ratioAt(e.clientX));
       }}
       onPointerMove={(e) => {
-        if (e.buttons === 1 && duration > 0) onSeek(ratioAt(e.clientX));
+        if (!disabled && e.buttons === 1 && duration > 0) onSeek(ratioAt(e.clientX));
       }}
       onPointerUp={() => onScrubEnd()}
       onKeyDown={(e) => {
+        if (disabled || duration <= 0) return;
         if (e.key === 'ArrowLeft') onSeek(Math.max(ratio - 5 / (duration || 1), 0));
         if (e.key === 'ArrowRight') onSeek(Math.min(ratio + 5 / (duration || 1), 1));
       }}

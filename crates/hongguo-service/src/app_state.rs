@@ -24,6 +24,7 @@ pub struct AppStateInner {
     /// 设备代次：每次 `replace_device` 递增。壳的视图用它感知「注册换档已发生」，
     /// 触发身份敏感的数据（顶栏 tab 等）重拉。
     device_generation: AtomicU64,
+    pub(crate) registration: crate::cold_start::RegistrationCoordinator,
     pub(crate) prefetch_policy: crate::play_service::PrefetchCache,
     pub(crate) playback_resolution: crate::play_service::resolution::ResolutionState,
     /// 登录流程的 csrf 凭据（send_code 下发，sms_login 消费后清除）。
@@ -66,6 +67,7 @@ impl AppStateInner {
             settings: RwLock::new(Settings::default()),
             device: RwLock::new(device),
             device_generation: AtomicU64::new(0),
+            registration: Default::default(),
             prefetch_policy: Default::default(),
             playback_resolution: Default::default(),
             login_csrf: RwLock::new(None),

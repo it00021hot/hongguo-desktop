@@ -1,14 +1,8 @@
 //! 双壳共用的设备档案装载与注册。已有身份本地对齐当前版本，缺失身份才注册。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Instant;
 
-use hongguo_api::client::ApiEnv;
-use hongguo_api::register::{
-    RegisterAttemptError, RegisterBlock, RegisterMaterial, RegisterResult, load_reuse_profile,
-    register_retrying, reuse_json_path,
-};
-use hongguo_common::utils::time::now_ms;
+use hongguo_api::register::{RegisterBlock, RegisterResult, load_reuse_profile, reuse_json_path};
 use hongguo_signer::device::{DeviceProfile, align_app_version, anonymous_profile, fresh_cdid};
 use hongguo_store::Store;
 
@@ -21,6 +15,23 @@ pub const DEVICE_REGISTERED: &str = "device-registered";
 
 /// 启动注册完成前挡住在线取流。壳在拉起 [`ensure_registered`] 之前调用。
 pub use crate::cold_start::arm as arm_cold_start;
+pub use crate::cold_start::{RegistrationPhase, RegistrationStatus};
+
+mod registration;
+
+pub fn registration_status(state: &AppState) -> RegistrationStatus {
+    state.registration.status()
+}
+
+pub fn subscribe_registration(
+    state: &AppState,
+) -> tokio::sync::watch::Receiver<RegistrationStatus> {
+    state.registration.subscribe()
+}
+
+pub fn start_startup_registration(state: &AppState) {
+    registration::start_startup(state);
+}
 
 /// 轮换元数据（`device_profile` 元数据行，JSON 文档）。
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -500,61 +511,7 @@ async fn register_and_swap_at(
     origin: &str,
     pause: std::time::Duration,
 ) -> Registration {
-    if hongguo_common::offline_qa::enabled() {
-        return refused(state, "离线 QA 不发起注册");
-    }
-    if let Some(refusal) = reuse_refusal(state) {
-        return refusal;
-    }
-    let mut meta = read_meta(&state.store);
-    if registration_blocked(&meta, now_ms()) {
-        return refused(state, "无可信持久状态或限制仍有效，不自动注册");
-    }
-    meta.last_register_attempt_ms = Some(now_ms());
-    if let Err(e) = write_meta_strict(&state.store, &meta) {
-        return refused(state, &e.to_string());
-    }
-    let reg_env = ApiEnv {
-        proxy: state.settings().proxy,
-        device: anonymous_profile(&fresh_cdid()),
-        cookie: None,
-        x_tt_token: None,
-    };
-    let material = RegisterMaterial::mint();
-    let started = Instant::now();
-    match register_retrying(&reg_env, &material, origin, REGISTER_RETRY_MAX, pause).await {
-        Ok(r) => {
-            log::info!(
-                "[Device] 服务端返回了注册响应（{reason}） elapsedMs={}",
-                started.elapsed().as_millis()
-            );
-            activate_registration(state, &mut meta, &r, reason)
-        }
-        Err(RegisterAttemptError::Blocked(block)) => {
-            if let Err(e) = persist_block(state, &mut meta, block) {
-                REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
-                return refused(state, &format!("注册限制没有落盘，停止自动注册: {e}"));
-            }
-            refused(state, "注册被拒绝或限流")
-        }
-        Err(RegisterAttemptError::ReuseOnly) => {
-            reuse_refusal(state).unwrap_or_else(|| refused(state, "只复用模式禁止注册"))
-        }
-        Err(err) => {
-            let app_err = hongguo_common::AppError::from(err);
-            let network = matches!(app_err, hongguo_common::AppError::Network(_));
-            meta.last_register_error = Some(app_err.to_string());
-            let _ = write_meta_strict(&state.store, &meta);
-            Registration {
-                ok: false,
-                iid: state.device().get("iid").to_string(),
-                device_id: String::new(),
-                kind: "error",
-                error: Some(app_err.to_string()),
-                network,
-            }
-        }
-    }
+    registration::request(state, reason, origin, pause).await
 }
 
 /// 本地激活：事务提交并替换内存之后才记成功、才发事件。
@@ -763,45 +720,22 @@ fn swap_profile(
 
 /// 补齐缺失的设备身份，已有注册档案直接复用。
 pub async fn ensure_registered(state: &AppState) {
-    let _release_playback = crate::cold_start::ReleaseOnDrop;
-    if reuse_json_path().is_some() {
-        let _ = reuse_refusal(state);
-        return;
-    }
-    let meta = read_meta(&state.store);
-    if registration_blocked(&meta, now_ms()) {
-        // G1：离线 QA 下 registration_blocked 早退也要打出清单可检索句，
-        // 不改变不注册语义，仅补日志对齐 ZERO-EXTERNAL-CHECKLIST。
-        if hongguo_common::offline_qa::enabled() {
-            log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
-        }
-        log::warn!("[Device] 无可信持久状态或限制仍有效，启动不自动注册");
-        return;
-    }
-    if hongguo_common::offline_qa::enabled() {
-        log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
-        return;
-    }
-    if !hongguo_api::register::has_registered_ids(&state.device()) {
-        log::info!("[Device] 缺少有效注册身份，启动自动注册");
-        register_and_swap(state, "启动自动注册").await;
-        return;
-    }
-    log::info!("[Device] 启动复用已注册档案");
+    registration::ensure(state).await;
 }
 
-/// 与在线播放同一份选流口径：HEVC + ByteVC2 探测结论一并传入，
-/// 否则选流与真实可播能力翻转（见 `play_service::online::prepare`）。
+/// 预取与在线播放共用内置解码约束。
 pub(crate) fn stream_cap() -> hongguo_api::stream_pick::DecoderCapability {
-    hongguo_api::stream_pick::DecoderCapability::from_probes(
-        hongguo_media_platform::capability::playback::hevc_playable(),
-        hongguo_media_platform::capability::bytevc2_decode_available(),
-    )
+    crate::capability_service::playback_cap()
 }
+
+#[cfg(test)]
+#[path = "device/registration_tests.rs"]
+mod registration_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hongguo_common::utils::time::now_ms;
     use hongguo_store::Store;
 
     fn store() -> Store {

@@ -1,0 +1,15 @@
+[package]
+name = "hongguo-media-platform-ios"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[target.'cfg(target_os = "ios")'.dependencies]
+hongguo-common = { path = "../hongguo-common" }
+hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
+hongguo-media-videotoolbox = { path = "../hongguo-media-videotoolbox" }
+
+[features]
+test-support = []

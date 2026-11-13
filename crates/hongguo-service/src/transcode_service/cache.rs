@@ -1,49 +1,25 @@
-//! 兼容转码缓存：滚动窗口，最多保留 [`KEEP_EPISODES`] 集，按 atime 淘汰。
-//! 播放档与合并归档分文件名（`.play.mp4` / `.mp4`），避免播放压分辨率后污染合并输入。
+//! 兼容格式合并的分集转码缓存；播放不转码。
 
 use std::path::PathBuf;
 
-use hongguo_media_platform::RateProfile;
 use hongguo_store::paths::compat_cache_dir;
+
+// Format 4 contains HEVC archives; earlier AVC artifacts must be regenerated.
+const COMPLETION_FORMAT: &str = "4";
 
 /// 某集的缓存文件名（归档/合并默认）。
 pub fn cache_file(series_id: &str, vid_index: u32) -> PathBuf {
-    cache_file_for(series_id, vid_index, RateProfile::Archive)
+    compat_cache_dir().join(format!("{}_{:03}.mp4", sanitize(series_id), vid_index))
 }
 
-/// 按码率档选缓存路径：播放档带 `.play` 后缀，与归档互不覆盖。
-pub fn cache_file_for(series_id: &str, vid_index: u32, rate: RateProfile) -> PathBuf {
-    let stem = format!("{}_{:03}", sanitize(series_id), vid_index);
-    let name = match rate {
-        RateProfile::Archive => format!("{stem}.mp4"),
-        RateProfile::Playback => format!("{stem}.play.mp4"),
-    };
-    compat_cache_dir().join(name)
-}
-
-pub fn playback_file(series_id: &str, vid_index: u32, definition: Option<u32>) -> PathBuf {
-    match definition {
-        Some(definition) => compat_cache_dir().join(format!(
-            "{}_{vid_index:03}.{definition}.play.mp4",
-            sanitize(series_id)
-        )),
-        None => cache_file_for(series_id, vid_index, RateProfile::Playback),
-    }
-}
-
-/// 命中的缓存路径；没有则 `None`。存在的文件必须够大才算命中，避免把上次的半成品当结果。
+/// 命中的缓存路径；没有则 `None`。只有完成标识和当前文件一致才算命中，避免把上次的半成品当结果。
 pub fn cached_path(series_id: &str, vid_index: u32) -> Option<PathBuf> {
-    cached_path_for(series_id, vid_index, RateProfile::Archive)
-}
-
-/// 按码率档查缓存。只有完成标识和当前文件一致才算命中。
-pub fn cached_path_for(series_id: &str, vid_index: u32, rate: RateProfile) -> Option<PathBuf> {
-    let path = cache_file_for(series_id, vid_index, rate);
+    let path = cache_file(series_id, vid_index);
     is_complete(&path).then_some(path)
 }
 
 pub(crate) fn is_complete(path: &std::path::Path) -> bool {
-    !hongguo_protocol::grow::is_incomplete(path) && completion_matches(path)
+    completion_matches(path)
 }
 
 fn marker_path(path: &std::path::Path) -> PathBuf {
@@ -57,7 +33,11 @@ fn marker_partial(path: &std::path::Path) -> PathBuf {
 /// 把完成标识绑到当前文件字节。写到临时名再改名；改名失败则没有完成标识。
 pub fn seal_complete(path: &std::path::Path) -> std::io::Result<()> {
     let bytes = std::fs::read(path)?;
-    let body = format!("1\n{}\n{}\n", bytes.len(), sha256_hex(&bytes));
+    let body = format!(
+        "{COMPLETION_FORMAT}\n{}\n{}\n",
+        bytes.len(),
+        sha256_hex(&bytes)
+    );
     let partial = marker_partial(path);
     let dest = marker_path(path);
     hongguo_store::paths::qa_write(&partial, body.as_bytes())?;
@@ -84,7 +64,7 @@ pub fn completion_matches(path: &std::path::Path) -> bool {
         return false;
     };
     let mut lines = raw.lines();
-    if lines.next() != Some("1") {
+    if lines.next() != Some(COMPLETION_FORMAT) {
         return false;
     }
     let Ok(len) = lines.next().unwrap_or("").parse::<u64>() else {
@@ -116,13 +96,11 @@ fn sanitize(id: &str) -> String {
         .collect()
 }
 
-/// 最多保留的集数：兼容播放是「当前集 + 预转下一集」的滚动窗口，三份有余；
-/// 攒多了就是吃磁盘（实测能滚到 14GB+）。合并转码的瞬时多集不经这里约束——
-/// 中途逐出会让拼接拿到断路径，消费完就地删除（见 `merge_service::compat`）。
+/// 合并中的文件不经这里逐出，消费完由合并任务删除。
 const KEEP_EPISODES: usize = 3;
 
 /// 按 atime 淘汰：只保留最近 [`KEEP_EPISODES`] 个文件，返回删除数。
-/// 被占用的文件（正在被播放器读）删不掉就跳过，宁可暂时多留一个。
+/// 被占用而无法删除的文件留待下次处理。
 pub fn trim() -> usize {
     let dir = compat_cache_dir();
     let Ok(entries) = hongguo_store::paths::qa_read_dir(&dir) else {
@@ -132,9 +110,6 @@ pub fn trim() -> usize {
     for e in entries.flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("mp4") {
-            continue;
-        }
-        if hongguo_protocol::grow::is_incomplete(&p) {
             continue;
         }
         let Ok(m) = e.metadata() else { continue };
@@ -180,21 +155,73 @@ mod tests {
     use hongguo_store::paths::ScopedDataDir;
 
     #[test]
+    fn format_three_avc_archive_is_not_reused() {
+        let dir = scratch_dir("old-avc-format");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = ScopedDataDir::new(&dir);
+        let path = cache_file("old-avc", 1);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = include_bytes!("../../../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4");
+        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(
+            marker_path(&path),
+            format!("3\n{}\n{}\n", bytes.len(), sha256_hex(bytes)),
+        )
+        .unwrap();
+        assert!(!completion_matches(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_valid_old_format_marker_does_not_reuse_an_obsolete_apple_movie() {
+        let dir = scratch_dir("old-mux-format");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = ScopedDataDir::new(&dir);
+        let path = cache_file("legacy", 1);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = b"old movie with nonzero init mdhd duration";
+        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(
+            marker_path(&path),
+            format!("1\n{}\n{}\n", bytes.len(), sha256_hex(bytes)),
+        )
+        .unwrap();
+        assert!(
+            !completion_matches(&path),
+            "old format must be regenerated even when its hash is valid"
+        );
+        seal_complete(&path).unwrap();
+        assert!(completion_matches(&path));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn format_two_singleton_timing_is_regenerated_without_deleting_the_file() {
+        let dir = scratch_dir("old-singleton-format");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = ScopedDataDir::new(&dir);
+        let path = cache_file("legacy-singleton", 1);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = b"format two fragments with one-tick sample durations";
+        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(
+            marker_path(&path),
+            format!("2\n{}\n{}\n", bytes.len(), sha256_hex(bytes)),
+        )
+        .unwrap();
+        assert!(!completion_matches(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        seal_complete(&path).unwrap();
+        assert!(completion_matches(&path));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn cache_file_is_padded() {
         let p = cache_file("123", 7);
         let name = p.file_name().unwrap().to_string_lossy().to_string();
         assert!(name.ends_with("007.mp4"), "实际: {name}");
-    }
-
-    #[test]
-    fn playback_cache_uses_a_distinct_suffix() {
-        let p = cache_file_for("s", 1, RateProfile::Playback);
-        let name = p.file_name().unwrap().to_string_lossy().to_string();
-        assert!(name.ends_with("001.play.mp4"), "实际: {name}");
-        assert_ne!(
-            cache_file_for("s", 1, RateProfile::Archive),
-            cache_file_for("s", 1, RateProfile::Playback)
-        );
     }
 
     #[test]
@@ -257,27 +284,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let _scope = ScopedDataDir::new(&dir);
-        let path = cache_file_for("seal", 1, RateProfile::Playback);
+        let path = cache_file("seal", 1);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let payload = b"complete-payload-ok".to_vec();
         std::fs::write(&path, &payload).unwrap();
-        assert!(cached_path_for("seal", 1, RateProfile::Playback).is_none());
+        assert!(cached_path("seal", 1).is_none());
         std::fs::write(marker_partial(&path), b"1\n1\nabc\n").unwrap();
-        assert!(cached_path_for("seal", 1, RateProfile::Playback).is_none());
+        assert!(cached_path("seal", 1).is_none());
         seal_complete(&path).unwrap();
-        let hit = cached_path_for("seal", 1, RateProfile::Playback).unwrap();
+        let hit = cached_path("seal", 1).unwrap();
         assert_eq!(std::fs::read(hit).unwrap(), payload);
 
-        hongguo_protocol::grow::open(&path).unwrap();
-        hongguo_protocol::grow::cancel(&path);
         discard_completion(&path);
-        assert!(!hongguo_protocol::grow::is_incomplete(&path));
-        assert!(cached_path_for("seal", 1, RateProfile::Playback).is_none());
+        assert!(cached_path("seal", 1).is_none());
         assert_eq!(std::fs::read(&path).unwrap(), payload);
 
         std::fs::create_dir(marker_path(&path)).unwrap();
         assert!(seal_complete(&path).is_err());
-        assert!(cached_path_for("seal", 1, RateProfile::Playback).is_none());
+        assert!(cached_path("seal", 1).is_none());
         assert_eq!(std::fs::read(&path).unwrap(), payload);
         let _ = std::fs::remove_dir_all(&dir);
     }

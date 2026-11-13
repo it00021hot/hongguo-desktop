@@ -16,11 +16,13 @@ export function VolumePopup({
   muted,
   onToggleMute,
   onSetVolume,
+  disabled = false,
 }: {
   volume: number;
   muted: boolean;
   onToggleMute: () => void;
   onSetVolume: (v: number) => void;
+  disabled?: boolean;
 }) {
   const volumeOpen = usePlayerStore((s) => s.volumeOpen);
   const setVolumeOpen = usePlayerStore((s) => s.setVolumeOpen);
@@ -47,16 +49,18 @@ export function VolumePopup({
     <div
       ref={wrapRef}
       className="relative flex items-center"
-      onMouseEnter={() => setVolumeOpen(true)}
+      onMouseEnter={() => {
+        if (!disabled) setVolumeOpen(true);
+      }}
       onMouseLeave={() => {
         if (holdRef.current) return;
         setVolumeOpen(false);
       }}
     >
-      <IconButton label={t('player.mute')} onClick={onToggleMute}>
+      <IconButton label={t('player.mute')} onClick={onToggleMute} disabled={disabled}>
         {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
       </IconButton>
-      {volumeOpen && (
+      {volumeOpen && !disabled && (
         // 浮层必须与按钮**几何贴合**（无 margin 间隙）：鼠标从按钮移向
         // 浮层的路径一旦离开 wrapper 的后代区域，mouseleave 就会把
         // 浮层整个卸载——间隙就是「想移过去却直接隐藏」的元凶。

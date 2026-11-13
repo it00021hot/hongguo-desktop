@@ -85,6 +85,7 @@ function Segmented<T extends string | number>({
 
 export function PhonePlayerChrome({
   videoRef,
+  mediaAvailable,
   visible,
   /** 横屏全屏壳接管画面控件时只挂倍速/增强 Sheet，避免拆两份面板 */
   sheetsOnly = false,
@@ -113,6 +114,7 @@ export function PhonePlayerChrome({
   onEnterLandscape,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
+  mediaAvailable: boolean;
   visible: boolean;
   sheetsOnly?: boolean;
   moreOpen: boolean;
@@ -292,6 +294,7 @@ export function PhonePlayerChrome({
               <span>{formatDuration(duration)}</span>
             </div>
             <ScrubBar
+              disabled={!mediaAvailable}
               current={Math.min(current, duration || 0)}
               duration={duration}
               onSeek={seekTo}

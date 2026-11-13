@@ -3,6 +3,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { t, type MessageKey } from '@/locales';
 import type { BrowseFilters } from '@/service/schema';
+import { filterKey } from './filter-key';
 
 /** 面板行 type → 行头标签（未知类型回落服务端行名去掉「全部」前缀）。 */
 const FILTER_LABEL_KEYS: Record<string, MessageKey> = {
@@ -43,29 +44,6 @@ export function FilterPanel({
   }
   if (failed || rows.length === 0) return null;
 
-  const rowValue = (key: string): string => {
-    switch (key) {
-      case 'genre':
-        return filters.genre;
-      case 'category_dim_theme':
-        return filters.theme;
-      case 'category_dim_role':
-        return filters.role;
-      case 'category_dim_epoch':
-        return filters.epoch;
-      case 'sort':
-        return filters.sort;
-      case 'gender':
-        return filters.gender;
-      case 'online_time':
-        return filters.onlineTime;
-      case 'duration':
-        return filters.duration;
-      default:
-        return '';
-    }
-  };
-
   /** 行内单选胶囊（ToggleGroupItem；空值「全部」走哨兵 value，提交时还原空串） */
   const pillCls =
     'text-muted-foreground h-auto cursor-pointer rounded-full border border-border bg-transparent px-3 py-0.5 text-xs transition-colors hover:bg-accent hover:text-foreground data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:font-medium data-[state=on]:text-primary';
@@ -96,8 +74,9 @@ export function FilterPanel({
   return (
     <div className="grid gap-1.5">
       {rows.map((row) => {
-        const key = row.rowType as keyof BrowseFilters;
-        const current = rowValue(row.rowType);
+        const key = filterKey(row.rowType);
+        if (key === undefined) return null;
+        const current = filters[key];
         // 已知行类型走 i18n key；未知类型回落服务端行名（纯展示串，
         // 查不到词条 t() 会回落原串）——服务端数据无法静态枚举才 cast
         const fallbackLabel =

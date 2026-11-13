@@ -33,15 +33,19 @@ hongguo-media-platform-macos = { path = "../hongguo-media-platform-macos" }
 [target.'cfg(target_os = "android")'.dependencies]
 hongguo-media-platform-android = { path = "../hongguo-media-platform-android" }
 
+[target.'cfg(target_os = "ios")'.dependencies]
+hongguo-media-platform-ios = { path = "../hongguo-media-platform-ios" }
+
 [features]
 # 壳的跨层 e2e（src/testing/media_pipeline_e2e.rs）要调门面的测试通道
-# `platform::transcode_h264_for_tests`——实现已分居平台 crate，本 feature
+# `platform::transcode_hevc_for_tests`——实现已分居平台 crate，本 feature
 # 转发到对应实现（对齐 hongguo-video 的 fixtures / hongguo-store 的
 # ScopedDataDir 先例）。生产构建不带，函数不编译。
 test-support = [
     "hongguo-media-platform-macos/test-support",
     "hongguo-media-platform-windows/test-support",
     "hongguo-media-platform-android/test-support",
+    "hongguo-media-platform-ios/test-support",
 ]
 
 [dev-dependencies]

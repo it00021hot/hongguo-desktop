@@ -291,27 +291,33 @@ fn load_valid(win: &tauri::WebviewWindow, mode: Mode, min: (f64, f64)) -> Option
 
 /// 把几何落回窗口（物理坐标）。先 size 后 position：macOS `setContentSize`
 /// 保 AppKit 左下原点，先改尺寸会暂时拽走 top-left，必须再 set_position 钉回。
-fn apply(win: &tauri::WebviewWindow, g: Geometry) {
-    let _ = win.set_size(tauri::PhysicalSize::new(g.width, g.height));
-    let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
+fn apply(win: &tauri::WebviewWindow, g: Geometry) -> tauri::Result<()> {
+    win.set_size(tauri::PhysicalSize::new(g.width, g.height))?;
+    win.set_position(tauri::PhysicalPosition::new(g.x, g.y))
 }
 
 /// 读指定窗态的记忆，校验通过就落回窗口；返回是否命中（未命中时调用方
 /// 回该形态的默认落位）。几何类型不出本模块。
-pub(crate) fn apply_saved(win: &tauri::WebviewWindow, mode: Mode, min: (f64, f64)) -> bool {
+pub(crate) fn apply_saved(
+    win: &tauri::WebviewWindow,
+    mode: Mode,
+    min: (f64, f64),
+) -> tauri::Result<bool> {
     match load_valid(win, mode, min) {
         Some(g) => {
-            apply(win, g);
-            true
+            apply(win, g)?;
+            Ok(true)
         }
-        None => false,
+        None => Ok(false),
     }
 }
 
 /// 启动恢复常态几何：窗口永远以常态开（形态是会话态），小屏/竖屏槽位
 /// 在各自进形态时取用（window_cmd 的 enter_*）。
 pub fn restore(win: &tauri::WebviewWindow) {
-    apply_saved(win, Mode::Normal, (MIN_W, MIN_H));
+    if let Err(error) = apply_saved(win, Mode::Normal, (MIN_W, MIN_H)) {
+        log::warn!("[Window] 窗口几何恢复失败: {error}");
+    }
 }
 
 /// 移动/缩放的防抖落盘：事件闭包只递增 epoch，saver 线程轮询到变化才

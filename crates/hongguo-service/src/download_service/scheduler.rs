@@ -214,7 +214,7 @@ async fn run_one(
 
     // 下载固定取最高档：清晰度切换是播放时的交互，下载侧没有这个概念；
     // 选流模式保持 Full（下载件不做解码能力翻转），下载件的播放走既有 compat 兜底。
-    crate::cold_start::wait().await;
+    crate::cold_start::wait(state).await?;
     let play = hongguo_api::play_url::fetch_play_url(
         &task.vid,
         None,

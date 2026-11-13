@@ -1,19 +1,19 @@
-//! MediaCodec 转码编排：HEVC→H.264，音轨经 [`hongguo_media::mux::with_audio`] 直通。
+//! MediaCodec HEVC 转码，音轨直通。
 
 use std::time::Instant;
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_media_platform_api::PlatformRequest;
-use hongguo_media_platform_api::video::bitrate_for_profile;
+use hongguo_media_platform_api::video::bitrate_for;
 use hongguo_video::sample_table::TrackInfo;
 
 use super::decode::{HevcDecoder, Nv12Frame};
-use super::encode::H264Encoder;
+use super::encode::HevcEncoder;
 use super::probe;
 use super::yuv::scale_nv12;
 
 /// 平台编码层执行转码；HEVC 以外或编码器不可用返回 `None`。
-pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
+pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     if !probe::encoder_available() || !probe::hevc_decoder_present() {
         return None;
     }
@@ -50,7 +50,7 @@ fn run(
         .map(|(w, h)| ((w & !1) as usize, (h & !1) as usize));
 
     let mut decoder = HevcDecoder::new(video.width as usize, video.height as usize, &csd)?;
-    let mut encoder: Option<H264Encoder> = None;
+    let mut encoder: Option<HevcEncoder> = None;
     let mut units: Vec<(f64, Vec<u8>, bool)> = Vec::new();
     let mut out_dims = (video.width as usize, video.height as usize);
     let mut out_last: Option<f64> = None;
@@ -73,7 +73,6 @@ fn run(
             &mut out_dims,
             &mut out_last,
             scale_to,
-            req.rate,
             fps,
             frame_dur,
             req.on_progress,
@@ -88,7 +87,6 @@ fn run(
         &mut out_dims,
         &mut out_last,
         scale_to,
-        req.rate,
         fps,
         frame_dur,
         req.on_progress,
@@ -111,13 +109,13 @@ fn run(
         return Err(AppError::Media("MediaCodec 没有产出任何帧".into()));
     }
     if !units[0].2 {
-        units[0].2 = true;
+        return Err(AppError::Media("MediaCodec 首帧不是同步样本".into()));
     }
 
     let (out_w, out_h) = out_dims;
     hongguo_media::mux::with_audio(req.input, demuxed, req.output, &units, out_w, out_h)?;
     log::info!(
-        "[Platform/android] HEVC→H.264 完成：{} 帧（{out_w}x{out_h}），耗时 {:?}",
+        "[Platform/android] HEVC 编码完成：{} 帧（{out_w}x{out_h}），耗时 {:?}",
         units.len(),
         started.elapsed()
     );
@@ -130,12 +128,11 @@ fn run(
 )]
 fn feed_frames(
     frames: &mut Vec<Nv12Frame>,
-    encoder: &mut Option<H264Encoder>,
+    encoder: &mut Option<HevcEncoder>,
     units: &mut Vec<(f64, Vec<u8>, bool)>,
     out_dims: &mut (usize, usize),
     out_last: &mut Option<f64>,
     scale_to: Option<(usize, usize)>,
-    rate: hongguo_media_platform_api::video::RateProfile,
     fps: f64,
     frame_dur: f64,
     on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
@@ -150,8 +147,8 @@ fn feed_frames(
             _ => (frame.data, fw, fh),
         };
         if encoder.is_none() {
-            let bitrate = bitrate_for_profile(w, h, fps, rate);
-            *encoder = Some(H264Encoder::new(w, h, fps, bitrate)?);
+            let bitrate = bitrate_for(w, h, fps);
+            *encoder = Some(HevcEncoder::new(w, h, fps, bitrate)?);
             *out_dims = (w, h);
         }
         let enc = encoder.as_mut().expect("刚建好");

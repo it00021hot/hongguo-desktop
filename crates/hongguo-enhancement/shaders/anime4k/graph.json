@@ -1,0 +1,297 @@
+{
+  "package": "anime4k-webgpu",
+  "version": "1.0.0",
+  "sourceSha256": "f8bece19047394e06969e1795470d1c3a6a0523194536393f53e26c620948bb6",
+  "textures": [
+    {
+      "scale": [1, 1]
+    },
+    {
+      "scale": [1, 1]
+    },
+    {
+      "scale": [1, 1]
+    },
+    {
+      "scale": [1, 1]
+    },
+    {
+      "scale": [1, 1]
+    },
+    {
+      "scale": [1, 1]
+    },
+    {
+      "scale": [1, 1]
+    },
+    {
+      "scale": [1, 1]
+    },
+    {
+      "scale": [1, 1]
+    },
+    {
+      "scale": [2, 2]
+    },
+    {
+      "scale": [2, 2]
+    }
+  ],
+  "passes": [
+    {
+      "kind": "compute",
+      "shader": 0,
+      "entry": "computeMain",
+      "bindings": [
+        {
+          "binding": 0,
+          "texture": 0
+        },
+        {
+          "binding": 1,
+          "texture": 1
+        }
+      ],
+      "workgroup": [8, 8],
+      "output": 1
+    },
+    {
+      "kind": "compute",
+      "shader": 1,
+      "entry": "computeMain",
+      "bindings": [
+        {
+          "binding": 0,
+          "texture": 1
+        },
+        {
+          "binding": 1,
+          "texture": 2
+        }
+      ],
+      "workgroup": [8, 8],
+      "output": 2
+    },
+    {
+      "kind": "compute",
+      "shader": 2,
+      "entry": "computeMain",
+      "bindings": [
+        {
+          "binding": 0,
+          "texture": 2
+        },
+        {
+          "binding": 1,
+          "texture": 3
+        }
+      ],
+      "workgroup": [8, 8],
+      "output": 3
+    },
+    {
+      "kind": "compute",
+      "shader": 3,
+      "entry": "computeMain",
+      "bindings": [
+        {
+          "binding": 0,
+          "texture": 3
+        },
+        {
+          "binding": 1,
+          "texture": 4
+        }
+      ],
+      "workgroup": [8, 8],
+      "output": 4
+    },
+    {
+      "kind": "compute",
+      "shader": 4,
+      "entry": "computeMain",
+      "bindings": [
+        {
+          "binding": 0,
+          "texture": 4
+        },
+        {
+          "binding": 1,
+          "texture": 5
+        }
+      ],
+      "workgroup": [8, 8],
+      "output": 5
+    },
+    {
+      "kind": "compute",
+      "shader": 5,
+      "entry": "computeMain",
+      "bindings": [
+        {
+          "binding": 0,
+          "texture": 5
+        },
+        {
+          "binding": 1,
+          "texture": 6
+        }
+      ],
+      "workgroup": [8, 8],
+      "output": 6
+    },
+    {
+      "kind": "compute",
+      "shader": 6,
+      "entry": "computeMain",
+      "bindings": [
+        {
+          "binding": 0,
+          "texture": 6
+        },
+        {
+          "binding": 1,
+          "texture": 7
+        }
+      ],
+      "workgroup": [8, 8],
+      "output": 7
+    },
+    {
+      "kind": "compute",
+      "shader": 7,
+      "entry": "computeMain",
+      "bindings": [
+        {
+          "binding": 0,
+          "texture": 1
+        },
+        {
+          "binding": 1,
+          "texture": 2
+        },
+        {
+          "binding": 2,
+          "texture": 3
+        },
+        {
+          "binding": 3,
+          "texture": 4
+        },
+        {
+          "binding": 4,
+          "texture": 5
+        },
+        {
+          "binding": 5,
+          "texture": 6
+        },
+        {
+          "binding": 6,
+          "texture": 7
+        },
+        {
+          "binding": 7,
+          "texture": 8
+        }
+      ],
+      "workgroup": [8, 8],
+      "output": 8
+    },
+    {
+      "kind": "compute",
+      "shader": 8,
+      "entry": "computeMain",
+      "bindings": [
+        {
+          "binding": 0,
+          "texture": 8
+        },
+        {
+          "binding": 1,
+          "texture": 8
+        },
+        {
+          "binding": 2,
+          "texture": 8
+        },
+        {
+          "binding": 3,
+          "texture": 9
+        }
+      ],
+      "workgroup": [4, 4],
+      "output": 9
+    },
+    {
+      "kind": "render",
+      "vertex": 9,
+      "vertexEntry": "vert_main",
+      "fragment": 10,
+      "fragmentEntry": "main",
+      "bindings": [
+        {
+          "binding": 0,
+          "sampler": true
+        },
+        {
+          "binding": 1,
+          "texture": 0
+        },
+        {
+          "binding": 2,
+          "texture": 9
+        }
+      ],
+      "vertices": 6,
+      "output": 10
+    }
+  ],
+  "output": 10,
+  "shaders": [
+    {
+      "file": "00.wgsl",
+      "sha256": "82910d6b518173939eb6aded41e55f7fe6098bc54dc4269389aedddb8a08b402"
+    },
+    {
+      "file": "01.wgsl",
+      "sha256": "12b6123ab732199d88e10b76d60f32a5dc96974c7d2ea10790e8723116f7ff32"
+    },
+    {
+      "file": "02.wgsl",
+      "sha256": "6afef3930173db037c86c177c58ca9342c36e12137321d780f393395a5400cae"
+    },
+    {
+      "file": "03.wgsl",
+      "sha256": "649e3a723634312535a6d9a3db5a6148b546cb386172c91d02560da4f841be48"
+    },
+    {
+      "file": "04.wgsl",
+      "sha256": "3ce5e9ae563200e21f3d86c8aef603176f144082e004588e26823353c8b09c91"
+    },
+    {
+      "file": "05.wgsl",
+      "sha256": "380e37d874f6005acdf0821b343f79f16b1c4c3923b746b7144372b0695e99f6"
+    },
+    {
+      "file": "06.wgsl",
+      "sha256": "c7b60a6ef8d8bda5470b7a8b18024f1d5f37183c7cd2b697ba8163304b57780b"
+    },
+    {
+      "file": "07.wgsl",
+      "sha256": "8ad64bf47e7a9135d20e27a409923cbcc79c6c88503dab917a6ef6282d96c9c9"
+    },
+    {
+      "file": "08.wgsl",
+      "sha256": "a70796f53a03cac0b519beed1edffc2d892327d335d0afd5da111706e92732f7"
+    },
+    {
+      "file": "09.wgsl",
+      "sha256": "e47d3bb099451fe573ac8696f9a794c45a54c7470841022e7a05faa4dd1288bb"
+    },
+    {
+      "file": "10.wgsl",
+      "sha256": "98734e22cd1d0980c616b7e3e006f59922bb5864de4e2aafb265cde4c4bb25c0"
+    }
+  ]
+}

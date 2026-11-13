@@ -8,6 +8,7 @@ import { PlayerControls } from './controls/player-controls';
 import type { DanmakuDisplaySettings, EnhancementSettings } from '@/utils/playback-prefs';
 import type { EnhancementStatus } from '../hooks/use-enhancement';
 import type { Episode, VideoDefinition } from '@/service/schema';
+import { resolveEpisodeStep } from '../episode-step';
 
 /**
  * 舞台控制栏接线：小屏 / 竖屏 / 窄屏（竖屏信息流 + 横屏播映壳）/ 宽屏全量栏，
@@ -15,6 +16,7 @@ import type { Episode, VideoDefinition } from '@/service/schema';
  */
 export function PlayerStageChrome({
   videoRef,
+  mediaAvailable,
   miniScreen,
   portrait,
   portraitFull,
@@ -69,6 +71,7 @@ export function PlayerStageChrome({
   onControlsLeave,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  mediaAvailable: boolean;
   miniScreen: boolean;
   portrait: boolean;
   portraitFull: boolean;
@@ -123,16 +126,19 @@ export function PlayerStageChrome({
   onControlsLeave: () => void;
 }) {
   const total = episodes.length;
-  const hasNext = episodes.some((e) => e.vidIndex === vidIndex + 1);
+  const hasPrev = resolveEpisodeStep(episodes, vidIndex, -1).kind === 'episode';
+  const hasNext = resolveEpisodeStep(episodes, vidIndex, 1).kind === 'episode';
 
   if (miniScreen) {
     return (
       <MiniScreenControls
         videoRef={videoRef}
+        mediaAvailable={mediaAvailable}
         title={title}
         intro={intro}
         vidIndex={vidIndex}
         total={total}
+        hasPrev={hasPrev}
         hasNext={hasNext}
         onStepEpisode={(d) => stepEpisode(d)}
         onExpand={exitMini}
@@ -152,7 +158,9 @@ export function PlayerStageChrome({
       <MiniScreenControls
         variant="portrait"
         videoRef={videoRef}
+        mediaAvailable={mediaAvailable}
         total={total}
+        hasPrev={hasPrev}
         hasNext={hasNext}
         onStepEpisode={(d) => stepEpisode(d)}
         onExpand={togglePortrait}
@@ -173,6 +181,7 @@ export function PlayerStageChrome({
         {landscapeWatch ? (
           <PhoneLandscapeChrome
             videoRef={videoRef}
+            mediaAvailable={mediaAvailable}
             visible={chromeShown}
             title={title}
             vidIndex={vidIndex}
@@ -196,6 +205,7 @@ export function PlayerStageChrome({
         ) : (
           <PhonePlayerChrome
             videoRef={videoRef}
+            mediaAvailable={mediaAvailable}
             visible={chromeShown && !phoneDanmakuComposerOpen}
             moreOpen={phoneMoreOpen}
             onMoreOpenChange={setPhoneMoreOpen}
@@ -229,6 +239,7 @@ export function PlayerStageChrome({
           <PhonePlayerChrome
             sheetsOnly
             videoRef={videoRef}
+            mediaAvailable={mediaAvailable}
             visible={false}
             moreOpen={phoneMoreOpen}
             onMoreOpenChange={setPhoneMoreOpen}
@@ -291,6 +302,7 @@ export function PlayerStageChrome({
   return (
     <PlayerControls
       videoRef={videoRef}
+      mediaAvailable={mediaAvailable}
       onControlsEnter={onControlsEnter}
       onControlsLeave={onControlsLeave}
       seriesId={seriesId}

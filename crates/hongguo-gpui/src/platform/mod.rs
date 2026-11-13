@@ -84,7 +84,7 @@ pub(crate) fn open_system_player(
     events: tokio::sync::mpsc::Sender<hongguo_player::PlayerEvent>,
     on_stall: Option<hongguo_player::StallHook>,
 ) -> Option<crate::home::player::Player> {
-    hongguo_player::open(source, start_secs, rate, events, on_stall)
+    hongguo_player::open_direct(source, start_secs, rate, events, on_stall)
 }
 
 /// 系统后端窗口外观：先让 GPUI 开透明通道（视频洞靠内容 alpha=0），再把窗口

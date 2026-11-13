@@ -16,6 +16,7 @@ import {
   creatorWorksPageSchema,
   danmakuSchema,
   decodeCapabilitySchema,
+  deviceStatusSchema,
   downloadTaskSchema,
   emoticonPageSchema,
   emoticonSchema,
@@ -24,7 +25,6 @@ import {
   feedTabSchema,
   followNoticeSchema,
   followUpdatePageSchema,
-  hevcInstallResultSchema,
   interactionStateSchema,
   mentionUserSchema,
   loginResultSchema,
@@ -34,12 +34,12 @@ import {
   passportUserSchema,
   pictureUploadSchema,
   pickedImageSchema,
-  playbackCapabilitySchema,
   playResponseSchema,
   proxyConfigSchema,
   proxyTestResultSchema,
   queueStatusSchema,
   guestPlaybackReportSchema,
+  historyAccountSchema,
   localHistoryItemSchema,
   rankPageSchema,
   relatedSeriesSchema,
@@ -56,8 +56,8 @@ import {
   storageSeriesUsageSchema,
   storageUsageSchema,
   suggestItemSchema,
-  transcodePlaybackSchema,
   watchHistoryPageSchema,
+  windowPresentationSchema,
 } from '../schema';
 
 /** Rust 命令返回 `()` 序列化成 null；归一成 undefined 让调用侧当 void 用。 */
@@ -67,22 +67,28 @@ const noArgs = z.undefined();
 
 /** 键名 = Rust `#[tauri::command]` 函数名（snake_case），两端同步改。 */
 export const COMMANDS = {
+  device_status: { args: noArgs, response: deviceStatusSchema },
+  device_retry_register: { args: noArgs, response: deviceStatusSchema },
   // 应用 / 窗口
   select_folder: { args: noArgs, response: z.string().nullable() },
   open_folder: { args: z.object({ seriesId: z.string() }), response: voidResp },
   open_external_page: { args: z.object({ page: z.string() }), response: voidResp },
-  enter_mini_screen: { args: noArgs, response: voidResp },
-  exit_mini_screen: { args: noArgs, response: voidResp },
+  get_window_presentation: { args: noArgs, response: windowPresentationSchema },
+  enter_mini_screen: { args: noArgs, response: windowPresentationSchema },
+  exit_mini_screen: { args: noArgs, response: windowPresentationSchema },
   set_always_on_top: { args: z.object({ enabled: z.boolean() }), response: voidResp },
-  enter_portrait_screen: { args: z.object({ aspect: z.number() }), response: voidResp },
-  exit_portrait_screen: { args: noArgs, response: voidResp },
+  enter_portrait_screen: {
+    args: z.object({ aspect: z.number() }),
+    response: windowPresentationSchema,
+  },
+  exit_portrait_screen: { args: noArgs, response: windowPresentationSchema },
   fit_portrait_screen: {
     args: z.object({ aspect: z.number(), full: z.boolean() }),
     response: voidResp,
   },
   set_portrait_full: {
     args: z.object({ aspect: z.number(), full: z.boolean() }),
-    response: voidResp,
+    response: windowPresentationSchema,
   },
   set_traffic_lights_visible: { args: z.object({ visible: z.boolean() }), response: voidResp },
   set_incognito: { args: z.object({ enabled: z.boolean() }), response: voidResp },
@@ -91,32 +97,9 @@ export const COMMANDS = {
   /** 退出确认后的真退出（CloseRequested 被拦后唯一的退出路径） */
   exit_app: { args: noArgs, response: voidResp },
 
-  // 解码能力
-  playback_capability: { args: noArgs, response: playbackCapabilitySchema },
-  install_hevc_extension: { args: noArgs, response: hevcInstallResultSchema },
+  // 转码能力（兼容合并用；播放不转码）
   decode_capability: { args: noArgs, response: decodeCapabilitySchema },
   redetect_capability: { args: noArgs, response: decodeCapabilitySchema },
-  transcode_for_playback: {
-    args: z.object({
-      seriesId: z.string(),
-      vidIndex: z.number(),
-      vid: z.string().optional(),
-      definition: z.number().optional(),
-    }),
-    response: transcodePlaybackSchema,
-  },
-  cancel_compat_playback: {
-    args: z.object({
-      seriesId: z.string(),
-      vidIndex: z.number(),
-      definition: z.number().optional(),
-    }),
-    response: voidResp,
-  },
-  qa_offline_local_play: {
-    args: z.object({ filePath: z.string() }),
-    response: transcodePlaybackSchema,
-  },
 
   // 合并
   get_merge_tasks: { args: noArgs, response: mergeTaskSchema.array() },
@@ -502,9 +485,9 @@ export const COMMANDS = {
   },
   delete_all_downloaded: { args: noArgs, response: z.number() },
 
-  // 云端观看历史
+  // 统一观看历史
   watch_history_list: {
-    args: z.object({ offset: z.number() }),
+    args: z.object({ expectedAccount: historyAccountSchema.nullable() }),
     response: watchHistoryPageSchema,
   },
   // 记录观看历史（本地必记 + 登录态顺路上报云端）。meta 必须与 Rust 命令同形嵌套：
@@ -532,6 +515,7 @@ export const COMMANDS = {
   },
   watch_history_delete: {
     args: z.object({
+      expectedAccount: historyAccountSchema.nullable(),
       items: z.array(z.object({ seriesId: z.string(), vid: z.string(), vidIndex: z.number() })),
     }),
     response: voidResp,

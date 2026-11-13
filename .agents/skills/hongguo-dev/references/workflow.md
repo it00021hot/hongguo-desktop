@@ -94,7 +94,7 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
 
 ## Android 构建（Tauri 壳移动端 APK；GPUI 壳无 Android 路线）
 
-- **构建走 GitHub CI（android.yml，仅 `workflow_dispatch` 手动触发）**，本机不装 Android SDK/NDK。`crates/hongguo-tauri-app/gen/android/`（gradle 工程）已提交入库，构建全在 ubuntu runner 的自带 SDK（`/usr/local/lib/android/sdk`，含 NDK）上完成。
+- **常规构建走 GitHub CI（android.yml，仅 `workflow_dispatch` 手动触发）**；本地有 SDK/NDK 时也能直接 `pnpm tauri android build`（环境见下面 VVdeC 一条）。用户已授权为 NSH 移动端开发安装本地 Android SDK/NDK，本地验证与 CI 并存。`crates/hongguo-tauri-app/gen/android/`（gradle 工程）已提交入库，CI 使用 ubuntu runner 的自带 SDK（`/usr/local/lib/android/sdk`，含 NDK）。
 - 只出 `--target aarch64` 的 release APK；多 ABI 编译时间翻倍且受众增量近零，确需再扩。
 - **签名三 secrets**：`ANDROID_KEYSTORE_BASE64`（keystore 文件 base64）、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEYSTORE_ALIAS`。生成 keystore（本地一次性）：
   ```bash
@@ -105,6 +105,7 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
 - workflow_dispatch 的手动菜单只在本文件位于 main 后出现；dev 上验证用 `gh workflow run android.yml --ref dev`。
 - 本地想真机出包才需要：cmdline-tools + platform/build-tools + NDK 装齐并设 `ANDROID_HOME`/`NDK_HOME`；`pnpm tauri android init` 对 `cmdline-tools` 布局有版本名目录要求。gen/android 已存在时**不要**重跑 init（会试图重建工程）。sdkmanager 包名注意：新版平台带小版本号（`platforms;android-37.0` 而非 `android-37`），NDK 版本号以 `--list` 实查为准，猜版本号会让整条安装命令静默不装。
 - **Windows 本地 gradle 打包两坑**：① tauri CLI 把 .so 符号链接进 jniLibs 需要系统开发者模式——未开启时 Rust 编译全过后挂在链接步；绕法＝手动复制 `target/aarch64-linux-android/release/libhongguo_lib.so` 到 `gen/android/app/src/main/jniLibs/arm64-v8a/` 再 `./gradlew assembleArm64Release -x rustBuildArm64Release`（前端资产嵌在 so 里，无独立 assets）。② gradle 下载发行版与 AGP 依赖极慢时走代理：`GRADLE_OPTS="-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=<端口> ..."`。
+- **VVdeC（ByteVC2 内置软解）经 NDK 交叉构建要的环境**（`android.yml` 已带；本地 macOS 出包照抄，NDK 路径换成本机的 `darwin-x86_64` prebuilt）：`SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL=always` + `PKG_CONFIG_ALLOW_CROSS_aarch64_linux_android=1`（内建并放行交叉读 .pc）；`ANDROID_NDK_ROOT`（CMake 的 Android 支持认它，不认 `NDK_HOME`）；`CMAKE_TOOLCHAIN_FILE_aarch64_linux_android=scripts/android-ndk.toolchain.cmake`（不给工具链时构建脚本一重跑 CMake 就清缓存、按宿主平台重探，macOS 上表现为给 NDK clang 传 `-arch`）；`BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$NDK/toolchains/llvm/prebuilt/<host>/sysroot`（bindgen 找 `stdio.h`）；`SYSTEM_DEPS_LIBVVDEC_LIB="vvdec c++_static c++abi atomic m dl"`（.pc 里的 `-l:libunwind.a` 会被 rustc 解析成空库名，动态 libc++ 又不在 APK 里）。本地 `CARGO_TARGET_DIR` 必须是无空格路径（vvdec 的 bindgen include 不认空格）。
 - 桌面专属能力已按平台门控（Android 编译通过的前提）：single-instance / global-shortcut 插件注册、老板键（`boss_key_cmd`）、隐身光标轮询（`incognito_cmd`）、本地选图 rfd（`emoticon_cmd`）、目录选择（`app_cmd::select_folder`）、窗口形态恢复里的 maximize/unmaximize 与置顶（`window_cmd`）——移动端命令如实返回 `AppError::Unsupported` 或空操作。rfd 与 mouse_position 依赖整体进 target 门控表（rfd 在移动端 lib 本体就编译不过）。门控谓词统一 `#[cfg(not(any(target_os = "android", target_os = "ios")))]`（hongguo-tauri 无 build.rs，`#[cfg(desktop)]` 这类 tauri 注入 cfg 在该 crate 无效）。
 - 数据根：Android 上 `dirs::data_dir()` 为 None，壳在 setup 最先经 `hongguo_store::paths::set_absolute_data_root` 钉到 app 私有目录（`lib.rs` android 分支），漏掉这步 app 开库即退。
 - **已知名册（后续工程，不阻塞出包）**：Android WebView 经自定义协议 Range 起播未真机验证（上线前第一验证点）；移动端 UI 无响应式适配（桌面形态直接跑）；updater 在移动端是空操作（安装静默无事发生）。

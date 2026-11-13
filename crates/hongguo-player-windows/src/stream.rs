@@ -1,13 +1,17 @@
-//! MediaEngine 供数：把一集的明文按 offset/length 喂给 Media Foundation。数据源固定是 `hongguo-stream` 的 `(vid, 档位)` 渐进流
-//! （与 macOS 的 `av_presenter/loader.rs` 同一段供数语义，只是宿主接口换成 `IMFByteStream`）：按需等待密文区间、惰性解密，`GetLength` 用 `plain_len`。
+//! MediaEngine 供数：把一集的明文按 offset/length 喂给 Media Foundation。系统播放器的数据源是 `hongguo-stream` 的 `(vid, 档位)` 渐进流；
+//! 内置软解直播放另有本地文件来源与「只剩音轨」视图（[`Feed`] / [`AudioMask`]）。渐进流的供数（与 macOS 的 `av_presenter/loader.rs` 同一段供数语义，只是宿主接口换成 `IMFByteStream`）：按需等待密文区间、惰性解密，`GetLength` 用 `plain_len`。
 //! spike 实测的两个硬约束（见 `docs/gpui-system-player-windows.md`）：① MediaEngine 供数**只走异步接口**——`BeginRead` 返回 `E_NOTIMPL` 会让它
 //! 静默停在「取到长度」之后，一个字节都不读、一个事件都不发；② 允许在 `BeginRead` 内同步完成（读到位 → 建 `IMFAsyncResult` → 立刻 `MFInvokeCallback`，
 //! `EndRead` 再取字节数）——读本身阻塞（与 macOS loader 同一套等待/重试），跑在 MF 自己的工作线程上。
 
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use hongguo_softdec::IndexedVideo;
 use hongguo_stream::{StreamReadError, read_range_cancellable, total_len};
 use windows::Win32::Foundation::{E_FAIL, E_NOTIMPL};
 use windows::Win32::Media::MediaFoundation::{
@@ -32,11 +36,74 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// 可恢复读取错误的退避重试次数（头部预算耗尽要靠 `on_stall` 续填）。
 const STALL_RETRIES: u8 = 3;
 
+/// 字节从哪里来：在线流（渐进流的明文 Range）或本地文件。系统播放器只用在线流
+/// （本地文件直接交 URL 给引擎）；内置软解直播放两种都要经本字节流，才能遮掉视频轨。
+#[derive(Clone)]
+pub(super) enum Feed {
+    Online {
+        vid: String,
+        definition: u32,
+        /// 读前/读失败时的业务续填（`resume_fill`）。
+        on_stall: Option<StallHook>,
+    },
+    File(PathBuf),
+}
+
+impl Feed {
+    pub(super) fn label(&self) -> String {
+        match self {
+            Feed::Online {
+                vid, definition, ..
+            } => format!("{vid}@{definition}"),
+            Feed::File(path) => path.display().to_string(),
+        }
+    }
+}
+
+/// 「只剩音轨」视图：索引由起播线程建好后放进来，读到的字节按它遮掉视频轨。
+/// 索引就绪前引擎的读会等着（读本来就会阻塞，跑在 MF 自己的工作线程上）。
+#[derive(Default)]
+pub(super) struct AudioMask {
+    index: OnceLock<Arc<IndexedVideo>>,
+    /// 索引建不起来：在等的读立即失败，引擎走失败路径。
+    failed: AtomicBool,
+}
+
+impl AudioMask {
+    pub(super) fn ready(&self, index: Arc<IndexedVideo>) {
+        let _ = self.index.set(index);
+    }
+
+    pub(super) fn fail(&self) {
+        self.failed.store(true, Ordering::SeqCst);
+    }
+
+    fn wait(&self, closed: &AtomicBool) -> Result<&IndexedVideo> {
+        let deadline = Instant::now() + READ_TIMEOUT;
+        loop {
+            if let Some(index) = self.index.get() {
+                return Ok(index);
+            }
+            if self.failed.load(Ordering::SeqCst) {
+                return Err(failed("音轨视图的索引没建起来"));
+            }
+            if closed.load(Ordering::SeqCst) {
+                return Err(failed("字节流已关闭"));
+            }
+            if Instant::now() >= deadline {
+                return Err(failed("等音轨视图的索引超时"));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 struct Inner {
-    vid: String,
-    definition: u32,
-    /// 读前/读失败时的业务续填（`resume_fill`）。
-    on_stall: Option<StallHook>,
+    feed: Feed,
+    /// 本地文件句柄（首次读时打开；一集上千次读，逐次开文件是纯开销）。
+    file: Mutex<Option<File>>,
+    /// 设了就是「只剩音轨」视图。
+    mask: Arc<AudioMask>,
     position: AtomicU64,
     /// 明文总长；0 = 还没解析出来。
     total: AtomicU64,
@@ -45,13 +112,13 @@ struct Inner {
     pending: Mutex<Vec<(usize, u32)>>,
 }
 
-/// 打开一集的字节流（引擎创建时 `SetSourceFromByteStream` 用）。
-pub(super) fn open(vid: String, definition: u32, on_stall: Option<StallHook>) -> IMFByteStream {
+/// 打开任意来源的字节流；`mask` 给了就是「只剩音轨」视图（内置软解直播放用）。
+pub(super) fn open_feed(feed: Feed, mask: Arc<AudioMask>) -> IMFByteStream {
     ByteStream {
         inner: Arc::new(Inner {
-            vid,
-            definition,
-            on_stall,
+            feed,
+            file: Mutex::new(None),
+            mask,
             position: AtomicU64::new(0),
             total: AtomicU64::new(0),
             closed: AtomicBool::new(false),
@@ -82,9 +149,21 @@ impl Inner {
         if cached != 0 {
             return Ok(cached);
         }
+        let (vid, definition) = match &self.feed {
+            Feed::Online {
+                vid, definition, ..
+            } => (vid, *definition),
+            Feed::File(path) => {
+                let total = std::fs::metadata(path)
+                    .map_err(|error| failed(&format!("读不到本地文件长度: {error}")))?
+                    .len();
+                self.total.store(total, Ordering::SeqCst);
+                return Ok(total);
+            }
+        };
         let deadline = Instant::now() + TOTAL_LEN_TIMEOUT;
         loop {
-            if let Some(total) = total_len(&self.vid, self.definition) {
+            if let Some(total) = total_len(vid, definition) {
                 self.total.store(total, Ordering::SeqCst);
                 return Ok(total);
             }
@@ -103,39 +182,153 @@ impl Inner {
         if target.is_empty() {
             return Ok(0);
         }
+        let index = self.mask.wait(&self.closed)?;
         let position = self.position.load(Ordering::SeqCst);
-        let deadline = Instant::now() + READ_TIMEOUT;
-        let mut served = 0usize;
-        while served < target.len() {
-            if self.closed.load(Ordering::SeqCst) {
-                return Err(failed("字节流已关闭"));
-            }
-            if Instant::now() >= deadline {
-                return Err(failed("读取超时"));
-            }
-            let want = (target.len() - served).min(READ_CHUNK_BYTES) as u64;
-            match read_with_stall(
-                &self.vid,
-                self.definition,
-                position + served as u64,
-                want,
+        let served = match &self.feed {
+            Feed::Online {
+                vid,
+                definition,
+                on_stall,
+            } => read_online(
+                vid,
+                *definition,
+                position,
+                target,
                 &self.closed,
-                self.on_stall.as_ref(),
-            ) {
-                Ok(chunk) if !chunk.bytes.is_empty() => {
-                    let take = chunk.bytes.len().min(target.len() - served);
-                    target[served..served + take].copy_from_slice(&chunk.bytes[..take]);
-                    served += take;
+                on_stall.as_ref(),
+            )?,
+            Feed::File(path) => {
+                let mut file = self.file.lock().expect("本地文件锁 poisoned");
+                if file.is_none() {
+                    *file = Some(
+                        File::open(path)
+                            .map_err(|error| failed(&format!("打不开本地文件: {error}")))?,
+                    );
                 }
-                // 空段 = 已到明文末尾（或填充尚未推进）：按已服务的字节返回。
-                Ok(_) => break,
-                Err(StreamReadError::Cancelled) => return Err(failed("读取被取消")),
-                Err(error) => return Err(failed(&error.to_string())),
+                let file = file.as_mut().expect("刚打开");
+                read_file(file, position, target).map_err(|error| failed(&error.to_string()))?
             }
-        }
+        };
+        index.mask_video_tracks(position, &mut target[..served]);
         self.position
             .store(position + served as u64, Ordering::SeqCst);
         Ok(served as u32)
+    }
+}
+
+/// 从本地文件 `position` 起读满 `target`（或到文件尾），返回实际字节数。
+fn read_file(file: &mut File, position: u64, target: &mut [u8]) -> std::io::Result<usize> {
+    file.seek(SeekFrom::Start(position))?;
+    let mut served = 0;
+    while served < target.len() {
+        match file.read(&mut target[served..])? {
+            0 => break,
+            read => served += read,
+        }
+    }
+    Ok(served)
+}
+
+/// 从在线流 `position` 起读满 `target`（或到明文末尾），返回实际字节数。
+fn read_online(
+    vid: &str,
+    definition: u32,
+    position: u64,
+    target: &mut [u8],
+    closed: &AtomicBool,
+    on_stall: Option<&StallHook>,
+) -> Result<usize> {
+    let deadline = Instant::now() + READ_TIMEOUT;
+    let mut served = 0usize;
+    while served < target.len() {
+        if closed.load(Ordering::SeqCst) {
+            return Err(failed("字节流已关闭"));
+        }
+        if Instant::now() >= deadline {
+            return Err(failed("读取超时"));
+        }
+        let want = (target.len() - served).min(READ_CHUNK_BYTES) as u64;
+        match read_with_stall(
+            vid,
+            definition,
+            position + served as u64,
+            want,
+            closed,
+            on_stall,
+        ) {
+            Ok(chunk) if !chunk.bytes.is_empty() => {
+                let take = chunk.bytes.len().min(target.len() - served);
+                target[served..served + take].copy_from_slice(&chunk.bytes[..take]);
+                served += take;
+            }
+            // 空段 = 已到明文末尾（或填充尚未推进）：按已服务的字节返回。
+            Ok(_) => break,
+            Err(StreamReadError::Cancelled) => return Err(failed("读取被取消")),
+            Err(error) => return Err(failed(&error.to_string())),
+        }
+    }
+    Ok(served)
+}
+
+/// 解码线程按 (offset, length) 读原始字节（不遮视频轨）：读不满就是错误。
+/// 本地文件句柄由调用方持有（一个解码会话开一次）。
+pub(super) fn read_exact(
+    feed: &Feed,
+    file: &mut Option<File>,
+    offset: u64,
+    length: u64,
+    cancelled: &AtomicBool,
+    bytes: &mut Vec<u8>,
+) -> std::result::Result<(), String> {
+    let length = usize::try_from(length).map_err(|_| "读取范围过大".to_string())?;
+    bytes.resize(length, 0);
+    let served = match feed {
+        Feed::Online {
+            vid,
+            definition,
+            on_stall,
+        } => read_online(
+            vid,
+            *definition,
+            offset,
+            bytes,
+            cancelled,
+            on_stall.as_ref(),
+        )
+        .map_err(|error| error.to_string())?,
+        Feed::File(path) => {
+            if file.is_none() {
+                *file = Some(File::open(path).map_err(|error| error.to_string())?);
+            }
+            read_file(file.as_mut().expect("刚打开"), offset, bytes)
+                .map_err(|error| error.to_string())?
+        }
+    };
+    if served == length {
+        Ok(())
+    } else {
+        Err(format!("{offset} 起只读到 {served}/{length} 字节"))
+    }
+}
+
+/// 这一集的总字节数（解码侧建索引用）；拿不到返回 `None`。
+pub(super) fn total_bytes(feed: &Feed) -> Option<u64> {
+    match feed {
+        Feed::File(path) => std::fs::metadata(path).ok().map(|meta| meta.len()),
+        Feed::Online {
+            vid, definition, ..
+        } => {
+            let deadline = Instant::now() + TOTAL_LEN_TIMEOUT;
+            loop {
+                if let Some(total) = total_len(vid, *definition) {
+                    return Some(total);
+                }
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
     }
 }
 

@@ -19,6 +19,7 @@ pub struct AudioTrack {
     pub esds: Option<Vec<u8>>,
     /// 逐帧 `(时间戳秒, 裸 AAC 帧)`
     pub samples: Vec<(f64, Vec<u8>)>,
+    pub end_secs: f64,
 }
 
 /// 收集源音轨：AAC 帧 + 封装参数。没有音轨（或音轨没有样本）时返回 `None`，产物就是纯视频——与 ffmpeg `-an` 的行为一致。
@@ -60,6 +61,7 @@ pub fn collect(input: &Path, demuxed: &crate::demux::Demuxed) -> AppResult<Optio
         channels,
         esds,
         samples,
+        end_secs: super::timing::track_end_secs(&track.info)?,
     }))
 }
 

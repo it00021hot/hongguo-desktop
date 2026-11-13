@@ -11,7 +11,6 @@ describe('overlayVisibility', () => {
     hasFrame: true,
     hasPlaySrc: true,
     error: false,
-    compat: false,
   };
 
   it('同剧切集的取流窗口（veil 未拉时）：旧画面还在播，封面与定格帧都不出', () => {
@@ -64,8 +63,8 @@ describe('overlayVisibility', () => {
     expect(v.coverVisible).toBe(false);
   });
 
-  it('错误/兜底转码在途时定格帧让位（错误面板与封面照旧接管）', () => {
-    for (const patch of [{ error: true }, { compat: true }, { hasPlaySrc: false }] as const) {
+  it('出错或没有流时定格帧让位（错误面板与封面照旧接管）', () => {
+    for (const patch of [{ error: true }, { hasPlaySrc: false }] as const) {
       const v = overlayVisibility({ ...base, videoLive: false, ...patch });
       expect(v.holdVisible).toBe(false);
       expect(v.coverVisible).toBe(true);

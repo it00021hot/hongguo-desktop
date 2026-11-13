@@ -1,0 +1,22 @@
+[package]
+name = "hongguo-nsh-video-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nsh-platform-macos.workspace = true
+hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
+hongguo-nsh-video-apple = { path = "../hongguo-nsh-video-apple" }
+objc2 = "0.6"
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CAMetalLayer"] }
+serde_json = "1"
+log = "0.4"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+nsh-core.workspace = true
+env_logger = "0.11"
+hongguo-common = { path = "../hongguo-common" }
+hongguo-softdec = { path = "../hongguo-softdec" }

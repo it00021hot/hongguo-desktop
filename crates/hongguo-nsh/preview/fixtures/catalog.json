@@ -1,0 +1,1123 @@
+{
+  "selectorRows": [
+    {
+      "rowType": "genre",
+      "rowName": "全部体裁",
+      "items": [
+        {
+          "id": "offline-genre-1",
+          "name": "真人剧"
+        },
+        {
+          "id": "offline-genre-2",
+          "name": "漫剧"
+        },
+        {
+          "id": "offline-genre-3",
+          "name": "AI剧"
+        },
+        {
+          "id": "offline-genre-4",
+          "name": "系列剧"
+        }
+      ]
+    },
+    {
+      "rowType": "category_dim_theme",
+      "rowName": "全部主题",
+      "items": [
+        {
+          "id": "offline-category_dim_theme-1",
+          "name": "恋爱"
+        },
+        {
+          "id": "offline-category_dim_theme-2",
+          "name": "逆袭"
+        },
+        {
+          "id": "offline-category_dim_theme-3",
+          "name": "家庭"
+        },
+        {
+          "id": "offline-category_dim_theme-4",
+          "name": "悬疑"
+        }
+      ]
+    },
+    {
+      "rowType": "category_dim_role",
+      "rowName": "全部角色",
+      "items": [
+        {
+          "id": "offline-category_dim_role-1",
+          "name": "总裁"
+        },
+        {
+          "id": "offline-category_dim_role-2",
+          "name": "女强"
+        },
+        {
+          "id": "offline-category_dim_role-3",
+          "name": "萌宝"
+        },
+        {
+          "id": "offline-category_dim_role-4",
+          "name": "神医"
+        }
+      ]
+    },
+    {
+      "rowType": "category_dim_epoch",
+      "rowName": "全部时代",
+      "items": [
+        {
+          "id": "offline-category_dim_epoch-1",
+          "name": "现代"
+        },
+        {
+          "id": "offline-category_dim_epoch-2",
+          "name": "古代"
+        },
+        {
+          "id": "offline-category_dim_epoch-3",
+          "name": "年代"
+        }
+      ]
+    },
+    {
+      "rowType": "sort",
+      "rowName": "全部排序",
+      "items": [
+        {
+          "id": "offline-sort-1",
+          "name": "热门"
+        },
+        {
+          "id": "offline-sort-2",
+          "name": "最新"
+        },
+        {
+          "id": "offline-sort-3",
+          "name": "高分"
+        }
+      ]
+    },
+    {
+      "rowType": "gender",
+      "rowName": "全部频道",
+      "items": [
+        {
+          "id": "offline-gender-1",
+          "name": "男频"
+        },
+        {
+          "id": "offline-gender-2",
+          "name": "女频"
+        }
+      ]
+    },
+    {
+      "rowType": "online_time",
+      "rowName": "全部上线时间",
+      "items": [
+        {
+          "id": "offline-online_time-1",
+          "name": "最近7天"
+        },
+        {
+          "id": "offline-online_time-2",
+          "name": "最近30天"
+        },
+        {
+          "id": "offline-online_time-3",
+          "name": "今年"
+        }
+      ]
+    },
+    {
+      "rowType": "duration",
+      "rowName": "全部长度",
+      "items": [
+        {
+          "id": "offline-duration-1",
+          "name": "60分钟以内"
+        },
+        {
+          "id": "offline-duration-2",
+          "name": "60–120分钟"
+        },
+        {
+          "id": "offline-duration-3",
+          "name": "120分钟以上"
+        }
+      ]
+    }
+  ],
+  "browseItems": [
+    {
+      "seriesId": "7701328280862854168",
+      "title": "装穷提亲，娶到全家嫌弃的她",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-1",
+      "episodeCnt": 80,
+      "playCnt": 15080000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "4105万热度",
+      "badge": "",
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-2",
+      "title": "下一段故事",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-2",
+      "episodeCnt": 61,
+      "playCnt": 14760000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "3988万热度",
+      "badge": "",
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-3",
+      "title": "归途有风",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-3",
+      "episodeCnt": 62,
+      "playCnt": 14440000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "3871万热度",
+      "badge": "",
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-4",
+      "title": "灯火可亲",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-4",
+      "episodeCnt": 63,
+      "playCnt": 14120000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "3754万热度",
+      "badge": "",
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-5",
+      "title": "重逢的那一天",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-5",
+      "episodeCnt": 64,
+      "playCnt": 13800000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "3637万热度",
+      "badge": "",
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-6",
+      "title": "山海之间",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-6",
+      "episodeCnt": 65,
+      "playCnt": 13480000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "3520万热度",
+      "badge": "",
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-7",
+      "title": "最好的时光",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-7",
+      "episodeCnt": 66,
+      "playCnt": 13160000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "3403万热度",
+      "badge": "",
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-8",
+      "title": "春日来信",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-8",
+      "episodeCnt": 67,
+      "playCnt": 12840000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "3286万热度",
+      "badge": "",
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-9",
+      "title": "她的选择",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-9",
+      "episodeCnt": 68,
+      "playCnt": 12520000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "3169万热度",
+      "badge": "",
+      "contentType": 1
+    },
+    {
+      "seriesId": "preview-catalog-10",
+      "title": "长街烟火",
+      "cover": "/player-frame.png",
+      "horizCover": "/player-frame.png",
+      "vid": "offline-catalog-10",
+      "episodeCnt": 69,
+      "playCnt": 12200000,
+      "commentCount": 698,
+      "score": 9.2,
+      "tags": ["恋爱", "乡村"],
+      "seasonTag": "第1季",
+      "heatText": "3052万热度",
+      "badge": "",
+      "contentType": 1
+    }
+  ],
+  "rankPage": {
+    "items": [
+      {
+        "seriesId": "7701328280862854168",
+        "title": "装穷提亲，娶到全家嫌弃的她",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-1",
+        "rank": 1,
+        "subTitle": "恋爱 · 全80集",
+        "score": 9.2,
+        "playCnt": 15080000,
+        "episodeCnt": 80,
+        "recText": "4105万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      },
+      {
+        "seriesId": "preview-catalog-2",
+        "title": "下一段故事",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-2",
+        "rank": 2,
+        "subTitle": "恋爱 · 全61集",
+        "score": 9.2,
+        "playCnt": 14760000,
+        "episodeCnt": 61,
+        "recText": "3988万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      },
+      {
+        "seriesId": "preview-catalog-3",
+        "title": "归途有风",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-3",
+        "rank": 3,
+        "subTitle": "恋爱 · 全62集",
+        "score": 9.2,
+        "playCnt": 14440000,
+        "episodeCnt": 62,
+        "recText": "3871万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      },
+      {
+        "seriesId": "preview-catalog-4",
+        "title": "灯火可亲",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-4",
+        "rank": 4,
+        "subTitle": "恋爱 · 全63集",
+        "score": 9.2,
+        "playCnt": 14120000,
+        "episodeCnt": 63,
+        "recText": "3754万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      },
+      {
+        "seriesId": "preview-catalog-5",
+        "title": "重逢的那一天",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-5",
+        "rank": 5,
+        "subTitle": "恋爱 · 全64集",
+        "score": 9.2,
+        "playCnt": 13800000,
+        "episodeCnt": 64,
+        "recText": "3637万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      },
+      {
+        "seriesId": "preview-catalog-6",
+        "title": "山海之间",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-6",
+        "rank": 6,
+        "subTitle": "恋爱 · 全65集",
+        "score": 9.2,
+        "playCnt": 13480000,
+        "episodeCnt": 65,
+        "recText": "3520万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      },
+      {
+        "seriesId": "preview-catalog-7",
+        "title": "最好的时光",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-7",
+        "rank": 7,
+        "subTitle": "恋爱 · 全66集",
+        "score": 9.2,
+        "playCnt": 13160000,
+        "episodeCnt": 66,
+        "recText": "3403万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      },
+      {
+        "seriesId": "preview-catalog-8",
+        "title": "春日来信",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-8",
+        "rank": 8,
+        "subTitle": "恋爱 · 全67集",
+        "score": 9.2,
+        "playCnt": 12840000,
+        "episodeCnt": 67,
+        "recText": "3286万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      },
+      {
+        "seriesId": "preview-catalog-9",
+        "title": "她的选择",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-9",
+        "rank": 9,
+        "subTitle": "恋爱 · 全68集",
+        "score": 9.2,
+        "playCnt": 12520000,
+        "episodeCnt": 68,
+        "recText": "3169万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      },
+      {
+        "seriesId": "preview-catalog-10",
+        "title": "长街烟火",
+        "cover": "/player-frame.png",
+        "vid": "offline-catalog-10",
+        "rank": 10,
+        "subTitle": "恋爱 · 全69集",
+        "score": 9.2,
+        "playCnt": 12200000,
+        "episodeCnt": 69,
+        "recText": "3052万热度",
+        "secondaryInfos": ["170.1万收藏"],
+        "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。",
+        "tags": ["恋爱", "乡村"],
+        "upcoming": false,
+        "reserved": false,
+        "season": "第1季"
+      }
+    ],
+    "tabs": [
+      {
+        "id": "all",
+        "name": "全部",
+        "subs": [
+          {
+            "id": "ranklist_hot_sc",
+            "name": "热播榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-recommend",
+            "name": "推荐榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-score",
+            "name": "口碑榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "offline-human",
+        "name": "真人剧",
+        "subs": [
+          {
+            "id": "ranklist_hot_sc",
+            "name": "热播榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-recommend",
+            "name": "推荐榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-score",
+            "name": "口碑榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "offline-comic",
+        "name": "漫剧",
+        "subs": [
+          {
+            "id": "ranklist_hot_sc",
+            "name": "热播榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-recommend",
+            "name": "推荐榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-score",
+            "name": "口碑榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "offline-ai",
+        "name": "AI剧",
+        "subs": [
+          {
+            "id": "ranklist_hot_sc",
+            "name": "热播榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-recommend",
+            "name": "推荐榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-score",
+            "name": "口碑榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "offline-series",
+        "name": "系列剧",
+        "subs": [
+          {
+            "id": "ranklist_hot_sc",
+            "name": "热播榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-recommend",
+            "name": "推荐榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "offline-score",
+            "name": "口碑榜",
+            "description": "11月11日已更新 · 离线布局参考",
+            "panel": [
+              {
+                "name": "题材",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "总榜"
+                  },
+                  {
+                    "id": "offline-romance",
+                    "name": "恋爱"
+                  },
+                  {
+                    "id": "offline-family",
+                    "name": "家庭"
+                  }
+                ]
+              }
+            ],
+            "background": [
+              {
+                "name": "月份",
+                "items": [
+                  {
+                    "id": "",
+                    "name": "当前月"
+                  },
+                  {
+                    "id": "offline-202610",
+                    "name": "2026年10月"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "hasMore": false,
+    "nextOffset": 0,
+    "sessionId": "offline-reference",
+    "rankVersion": "offline-reference"
+  }
+}

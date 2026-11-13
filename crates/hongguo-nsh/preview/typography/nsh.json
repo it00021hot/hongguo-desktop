@@ -1,0 +1,7 @@
+{
+  "name": "Hongguo Typography Preview",
+  "id": "com.hongguo.nsh.typography-preview",
+  "rust": "../..",
+  "root": "TypographyPreview",
+  "theme": "../../theme.json"
+}

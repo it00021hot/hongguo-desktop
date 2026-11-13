@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { History, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -16,9 +18,8 @@ import { matchListQuery } from '@/utils/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import {
+  keys,
   useAccount,
-  useLocalHistory,
-  useLocalHistoryDelete,
   useResolveSeries,
   useSeriesMeta,
   useWatchHistory,
@@ -33,9 +34,11 @@ import { formatDuration } from '@/utils/format';
 import { SENTINEL_ROOT_MARGIN_PX } from '@/utils/infinite-scroll';
 import { t, tf, type MessageKey } from '@/locales';
 import type { WatchHistoryItem } from '@/service/schema';
+import { usePlayerStore } from '@/stores/player';
+import { resolveHistoryTarget } from '@/features/player/resume-target';
 
 /**
- * 「历史」——云端观看记录（官方 App「历史」同源 read_history/list，book_type=2 短剧过滤）。
+ * 「历史」——本地最近观看与账号云端记录使用同一查询结果。
  * 点卡片跳播放器续播；「全部/未看完/已看完」筛选与标题搜索对齐官方客户端。
  */
 
@@ -54,15 +57,12 @@ const TABS: { key: HistoryTab; labelKey: MessageKey }[] = [
 
 export function HistoryPage() {
   const playSeries = usePlaySeries();
-  // 双模式：登录 = 云端历史（跨设备），未登录 = 本地观看记录
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const setResumeHint = usePlayerStore((state) => state.setResumeHint);
   const { data: account } = useAccount();
   const loggedIn = !!account;
-  const cloud = useWatchHistory(loggedIn);
-  const local = useLocalHistory(!loggedIn);
-  const data = loggedIn ? cloud.data : local.data ? { items: local.data } : undefined;
-  const isLoading = loggedIn ? cloud.isLoading : local.isLoading;
-  const error = loggedIn ? cloud.error : local.error;
-  const refetch = loggedIn ? cloud.refetch : local.refetch;
+  const { data, isLoading, error, refetch } = useWatchHistory();
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
 
   // tab/搜索词会话级保留（进详情再返回停在离开时的 tab）
@@ -71,7 +71,6 @@ export function HistoryPage() {
   // 批量管理：多选后批量删除云端历史
   const batch = useBatchSelect();
   const deleteMutation = useWatchHistoryDelete();
-  const localDeleteMutation = useLocalHistoryDelete();
 
   const items = data?.items ?? [];
   const shown = items.filter((item) => {
@@ -115,12 +114,20 @@ export function HistoryPage() {
 
   const open = (item: WatchHistoryItem) => {
     resolve(item.seriesId, {
-      onSuccess: () => {
-        // 云端 vid_index 1 起（云端行的 vid 与该集 vid
-        // 一一对应，双魂共生 vid_index=18 即第 18/18 集；历史数据可能混有
-        // 旧客户端写入的 0 基——钳到第 1 集）。播放器
-        // store 同为 1 起（0=无目标）
-        playSeries(item.seriesId, Math.max(1, item.vidIndex));
+      onSuccess: (archive) => {
+        const target = resolveHistoryTarget(item, archive);
+        if (!target) {
+          toast.error(t('history.contentUnavailable'), {
+            action: {
+              label: t('player.episodes'),
+              onClick: () => void navigate({ to: '/detail', search: { seriesId: item.seriesId } }),
+            },
+          });
+          return;
+        }
+        queryClient.setQueryData(keys.seriesEpisodes(item.seriesId), archive);
+        setResumeHint({ seriesId: item.seriesId, ...target });
+        playSeries(item.seriesId, target.vidIndex);
       },
     });
   };
@@ -241,35 +248,20 @@ export function HistoryPage() {
               onToggleAll={() => batch.toggleAll(shown.map((i) => i.seriesId))}
               onDelete={() => {
                 const count = batch.selected.size;
-                if (loggedIn) {
-                  deleteMutation.mutate(
-                    items
-                      .filter((i) => batch.selected.has(i.seriesId))
-                      .map((i) => ({ seriesId: i.seriesId, vid: i.vid, vidIndex: i.vidIndex })),
-                    {
-                      onSuccess: () => {
-                        toast.success(tf('batch.done', { count }));
-                        batch.exit();
-                        void refetch();
-                      },
-                      onError: (e: Error) =>
-                        toast.error(tf('batch.partialFail', { error: e.message })),
+                deleteMutation.mutate(
+                  items
+                    .filter((i) => batch.selected.has(i.seriesId))
+                    .map((i) => ({ seriesId: i.seriesId, vid: i.vid, vidIndex: i.vidIndex })),
+                  {
+                    onSuccess: () => {
+                      toast.success(tf('batch.done', { count }));
+                      batch.exit();
+                      void refetch();
                     },
-                  );
-                } else {
-                  localDeleteMutation.mutate(
-                    items.filter((i) => batch.selected.has(i.seriesId)).map((i) => i.seriesId),
-                    {
-                      onSuccess: () => {
-                        toast.success(tf('batch.done', { count }));
-                        batch.exit();
-                        void refetch();
-                      },
-                      onError: (e: Error) =>
-                        toast.error(tf('batch.partialFail', { error: e.message })),
-                    },
-                  );
-                }
+                    onError: (e: Error) =>
+                      toast.error(tf('batch.partialFail', { error: e.message })),
+                  },
+                );
               }}
             />
           )}

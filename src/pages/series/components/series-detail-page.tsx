@@ -16,7 +16,8 @@ import { FollowButton } from '@/components/common/follow-button';
 import { ResolveButton } from './resolve-button';
 import { ReviewList } from './review-list';
 import { formatCountPrecise, formatDuration } from '@/utils/format';
-import { resolveResumeEntry } from '@/utils/resume-entry';
+import { resolveResumeTarget } from '@/features/player/resume-target';
+import { usePlayerStore } from '@/stores/player';
 import {
   useAccount,
   useBookshelf,
@@ -50,6 +51,7 @@ export function SeriesDetailPage({
   // routeTree.gen 的 as any 污染 useRouter 返回值；这里只用 history.back
   const router = useRouter() as { history: { back: () => void } };
   const playSeries = usePlaySeries();
+  const setResumeHint = usePlayerStore((state) => state.setResumeHint);
   const [introExpanded, setIntroExpanded] = useState(false);
   const [detailTab, setDetailTab] = useState('episodes');
 
@@ -85,19 +87,26 @@ export function SeriesDetailPage({
   const activeSeries = series ?? upcomingSeries;
   const upcoming = upcomingSeries != null;
 
-  /** 「继续看」的集号：本地 playback 表是第一真值（5 秒一写），云端历史只做本地没记录时的兜底；看过 >3 秒才续播。 */
-  const continueIndex = useMemo(() => {
-    // 与首页起点/后端 resolve_entry 同一份决策（utils/resume-entry）
-    const entry = resolveResumeEntry(localProgress, historyItem);
-    if (entry) return entry.index;
-    // 本地有记录但 ≤3 秒：仍视作「看到这一集」，从头播
-    if (localProgress) return localProgress.vidIndex;
-    return 1;
-  }, [localProgress, historyItem]);
+  const continueTarget = useMemo(
+    () => (series ? resolveResumeTarget(series, localProgress, historyItem) : null),
+    [series, localProgress, historyItem],
+  );
+  const continueIndex = continueTarget?.vidIndex ?? 0;
 
   const playEpisode = (idx: number) => {
     if (!seriesId) return;
+    setResumeHint(null);
     playSeries(seriesId, idx);
+  };
+
+  const continuePlayback = () => {
+    if (!continueTarget) {
+      setDetailTab('episodes');
+      toast.error(t('history.contentUnavailable'));
+      return;
+    }
+    setResumeHint({ seriesId, ...continueTarget });
+    playSeries(seriesId, continueTarget.vidIndex);
   };
 
   // ---- 互动（收藏/点赞）：登录后才可用，与播放器互动栏同一套 mutation ----
@@ -366,15 +375,13 @@ export function SeriesDetailPage({
               </>
             ) : (
               <>
-                <Button
-                  size="sm"
-                  className="w-full md:w-auto"
-                  onClick={() => playEpisode(continueIndex)}
-                >
+                <Button size="sm" className="w-full md:w-auto" onClick={continuePlayback}>
                   <Play className="size-4" aria-hidden />
-                  {continueIndex > 1
-                    ? tf('detail.continueEpisode', { index: continueIndex })
-                    : t('detail.playFirst')}
+                  {!continueTarget
+                    ? t('player.episodes')
+                    : continueIndex > 1
+                      ? tf('detail.continueEpisode', { index: continueIndex })
+                      : t('detail.playFirst')}
                 </Button>
                 <Button
                   size="sm"

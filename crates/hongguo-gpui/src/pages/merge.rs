@@ -391,11 +391,6 @@ impl MergeView {
     }
 
     fn remove_task(&mut self, task: &MergeTask, window: &mut Window, cx: &mut Context<Self>) {
-        // running 记录先协作式取消后台线程再删（Tauri delete_merge_task 同款：
-        // 只删记录的话线程照样转码，跑完还会把记录写回来）
-        if task.status == MergeStatus::Running {
-            hongguo_service::merge_service::guard::cancel(&task.output_name);
-        }
         match hongguo_service::merge_service::remove_task(&self.state, &task.id) {
             Ok(()) => {
                 if let Some(tasks) = self.tasks.as_mut() {

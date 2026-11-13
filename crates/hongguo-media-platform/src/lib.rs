@@ -8,6 +8,3 @@ pub mod ffmpeg;
 pub mod platform;
 
 pub use bytevc2_transcode::transcode_bytevc2;
-
-/// 码率档（归档 / 播放）——业务侧经门面引用，不直接依赖 `hongguo-media-platform-api`。
-pub use hongguo_media_platform_api::RateProfile;

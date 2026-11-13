@@ -1,11 +1,15 @@
-//! H.264 → MP4 封装：平台编码器（VideoToolbox / Media Foundation）吐出的 Annex-B 裸码流封成 MP4——音视频交织写进 `mdat`，样本表与参数集写进 `moov`。
+//! HEVC → MP4 封装：平台编码器（VideoToolbox / Media Foundation）吐出的 Annex-B 裸码流封成 MP4——音视频交织写进 `mdat`，样本表与参数集写进 `moov`。
 //! 关键决定：**faststart 恒开**（`moov` 在前，偏移写盘前算定）；**B 帧按解码序存放、`ctts` 记录合成偏移**（解码时间取「第 k 小的显示时间」，合成偏移 = 显示 − 解码，version 1 有符号）；
 //! **每样本一个 chunk**（`stco` 直接给绝对偏移）；**音轨直通**（明文 AAC 原样搬进产物，不解码重编码）。字节组装层在 [`crate::mp4`]，快速合并与重新封装共用。
 
 mod audio;
-mod avcc;
 mod fragment;
+mod hvcc;
+mod timing;
 mod track;
+
+#[cfg(test)]
+mod fixtures;
 
 use std::io::Write;
 use std::path::Path;
@@ -16,10 +20,8 @@ use hongguo_video::r#box::build_box;
 use crate::mp4::{TrackSpec, build_moov, mdat_data_start, mdat_header, needs_wide_offsets};
 
 pub use audio::{AudioTrack, collect};
-pub use fragment::{
-    AnnexbFrame, GrowingH264, prefix_is_independently_decodable, read_fragment_video,
-    split_completed_gop, take_run,
-};
+pub use fragment::{AnnexbFrame, ArchiveHevc, ArchiveTiming, split_completed_gop, take_run};
+pub use timing::track_end_secs;
 use track::{AudioSpec, VideoSpec};
 
 /// 媒体时基：90kHz。视频与音频共用，25/30/60fps 都能整除。
@@ -68,7 +70,7 @@ impl<'a> AudioPlan<'a> {
 }
 
 /// 封装成 MP4（faststart）：`frames` 是编码器输出 `(显示时间秒, Annex-B 数据, 是否关键帧)`，顺序是**解码序**；`audio` 传 `None` 表示没有音轨。
-pub fn mux_h264(
+pub fn mux_hevc(
     output: &Path,
     frames: &[(f64, Vec<u8>, bool)],
     width: usize,
@@ -84,19 +86,22 @@ pub fn mux_h264(
         )));
     }
     // 首帧必须是关键帧：播放器靠它起播，产物没有同步起点就只会黑屏
-    if !frames[0].2 {
+    if !frames[0].2
+        || !hvcc::split(&frames[0].1)
+            .into_iter()
+            .any(crate::hevc::is_random_access_nal)
+    {
         return Err(AppError::Media("第一帧不是关键帧，产物没有同步起点".into()));
     }
-    let avc = avcc::extract(&frames[0].1)
-        .ok_or_else(|| AppError::Media("视频流里没有 SPS/PPS，构造不出 avcC".into()))?;
+    let hevc = hvcc::extract(&frames[0].1)?;
 
-    // 1) 视频样本：Annex-B → AVCC
+    // 1) 视频样本：Annex-B → HEVC 长度前缀样本
     let mut video_data: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
     for (i, (_, data, _)) in frames.iter().enumerate() {
         if data.is_empty() {
             return Err(AppError::Media(format!("第 {i} 帧是空的")));
         }
-        video_data.push(avcc::to_avcc(data));
+        video_data.push(hvcc::to_sample(data)?);
     }
 
     // 2) 视频时间轴
@@ -136,7 +141,7 @@ pub fn mux_h264(
         track_id: 1,
         width: width as u32,
         height: height as u32,
-        avc,
+        hevc,
         sizes: video_data.iter().map(|d| d.len() as u32).collect(),
         duration: total(&video_stts),
         stts: video_stts,
@@ -218,7 +223,7 @@ pub fn with_audio(
     height: usize,
 ) -> AppResult<u64> {
     let audio = audio::collect(input, demuxed)?;
-    mux_h264(output, units, width, height, audio.as_ref())
+    mux_hevc(output, units, width, height, audio.as_ref())
 }
 
 /// `ftyp`：声明容器品牌。

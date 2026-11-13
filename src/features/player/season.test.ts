@@ -90,10 +90,16 @@ describe('pickNextSeason', () => {
 
   it('当前季在 works 里但无角标：标题解析兜底', () => {
     const works = [
+      work('s2', `${NIJIANGJIANG}第二季`, '第2季'),
       work('s3', `${NIJIANGJIANG}第三季`, ''),
       work('s4', `${NIJIANGJIANG}第四季`, '第4季'),
     ];
     expect(pickNextSeason(works, 's3', `${NIJIANGJIANG}第三季`)?.seriesId).toBe('s4');
+  });
+
+  it('当前季没有任何季数依据时不猜其他作品是后续季', () => {
+    const works = [work('self', '当前作品', ''), work('s2', '另一作品第二季', '第2季')];
+    expect(pickNextSeason(works, 'self', '当前作品')).toBeNull();
   });
 
   it('已是最后一季：返回 null（调用方走猜你喜欢回落）', () => {

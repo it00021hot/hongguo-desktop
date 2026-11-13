@@ -1,0 +1,60 @@
+{
+  "dates": [
+    "20261108",
+    "20261109",
+    "20261110",
+    "20261111",
+    "20261112",
+    "20261113",
+    "20261114",
+    "20261115"
+  ],
+  "defaultDate": "20261111",
+  "hasMore": false,
+  "nextOffset": 0,
+  "sessionId": "offline-calendar",
+  "items": [
+    {
+      "seriesId": "7701328280862854168",
+      "title": "装穷提亲，娶到全家嫌弃的她",
+      "cover": "",
+      "score": 9.2,
+      "playCnt": 41050000,
+      "episodeCnt": 80,
+      "description": "一次平凡的相遇，让两个原本毫无交集的人走到一起。他隐藏身份上门提亲，却意外发现了这个家庭不为人知的故事。",
+      "category": "恋爱",
+      "recTags": ["4105万热度"],
+      "publishTime": 1794384000000,
+      "isOnline": true,
+      "hasSubscribed": false
+    },
+    {
+      "seriesId": "offline-calendar-next",
+      "title": "归途有风",
+      "cover": "",
+      "score": 8.8,
+      "playCnt": 1680000,
+      "episodeCnt": 60,
+      "description": "重回故乡之后，她终于找到了属于自己的答案。",
+      "category": "都市",
+      "recTags": ["168万人预约"],
+      "publishTime": 1794391200000,
+      "isOnline": false,
+      "hasSubscribed": false
+    },
+    {
+      "seriesId": "offline-calendar-reserved",
+      "title": "下一段故事",
+      "cover": "",
+      "score": 0,
+      "playCnt": 810000,
+      "episodeCnt": 0,
+      "description": "一段新的旅程，即将开始。",
+      "category": "成长",
+      "recTags": ["81万人预约"],
+      "publishTime": 1794398400000,
+      "isOnline": false,
+      "hasSubscribed": true
+    }
+  ]
+}

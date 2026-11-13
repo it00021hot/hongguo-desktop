@@ -1,11 +1,11 @@
 //! `AVAssetResourceLoader` 供数：把一集的明文按 offset/length 喂给 AVFoundation。
-//! 数据源：[`Source::Stream`] 生产形态（`hongguo-stream` 的 `(vid, 档位)` 渐进流，按需等待密文区间、惰性解密）与 [`Source::Bytes`]（spike 对照样片）。
+//! 源视频经 [`Source::Audio`] 遮掉视频轨，系统播放器只读取音轨。
 //! 关键语义：`AVAssetResourceLoader.delegate` 是 **weak** 必须由调用方强引用；`contentType` 是 UTI（`public.mpeg-4`）且必须落在
 //! `allowedContentTypes` 内否则 `finishLoading` 抛 ObjC 异常（Rust 侧无法 catch，会 abort）；必须声明 `byteRangeAccessSupported=YES` + `contentLength` 否则 seek 失败；
 //! `shouldWait` 必须**立即返回**、回包进有界工作池（同步阻塞会让 AVFoundation 不消费已回字节，实测首帧 2s 超时）；`didCancelLoadingRequest:` 与 `shouldWait` 在不同线程上跑，取消位才送得进来。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -28,10 +28,6 @@ const LOADER_WORKERS: usize = 4;
 /// 队列容量：AVFoundation 一集通常 2–5 个在途请求，32 留足冗余。
 const LOADER_QUEUE: usize = 32;
 
-pub static REQUESTS: AtomicU64 = AtomicU64::new(0);
-pub static BYTES_SERVED: AtomicU64 = AtomicU64::new(0);
-pub static ERRORS: AtomicU64 = AtomicU64::new(0);
-
 #[link(name = "System")]
 unsafe extern "C" {
     fn dispatch_get_global_queue(identifier: isize, flags: usize) -> *mut AnyObject;
@@ -40,14 +36,21 @@ unsafe extern "C" {
 /// 一集的数据来源。
 #[derive(Clone)]
 pub enum Source {
-    /// 整段明文在内存（Phase 0 对照模式 / 本地小样片）。
-    Bytes(Arc<[u8]>),
     /// hongguo-stream 渐进流。`on_stall` 在每次读前/读失败时调用：让业务层
     /// 按需 `resume_fill`（8MB 预取预算用完后必须有人续填）。
     Stream {
         vid: String,
         definition: u32,
         on_stall: Option<StallHook>,
+    },
+    /// 本地文件（已下载的一集）。内置软解直播放的音轨要经过 [`Source::Audio`] 改写，
+    /// 不能直接交 `file://` 给 AVFoundation，所以本地文件也走 loader。
+    File(std::path::PathBuf),
+    /// 同一份数据的「只剩音轨」视图：视频 `trak` 的类型被改写成 `free`，偏移不变。
+    /// 内置软解直播放用它让系统播放器只出声音并充当时钟，画面由解码器另行上屏。
+    Audio {
+        inner: Box<Source>,
+        index: Arc<hongguo_softdec::IndexedVideo>,
     },
 }
 
@@ -57,10 +60,11 @@ pub type StallHook = Arc<dyn Fn() + Send + Sync>;
 impl Source {
     pub fn label(&self) -> String {
         match self {
-            Self::Bytes(bytes) => format!("bytes({}B)", bytes.len()),
             Self::Stream {
                 vid, definition, ..
             } => format!("stream({vid}@{definition})"),
+            Self::File(path) => format!("file({})", path.display()),
+            Self::Audio { inner, .. } => format!("audio({})", inner.label()),
         }
     }
 }
@@ -214,7 +218,6 @@ pub fn attach(asset: &AnyObject, source: Source) -> LoaderHandle {
 }
 
 fn serve(source: Source, request: &AnyObject, cancelled: &AtomicBool) {
-    REQUESTS.fetch_add(1, Ordering::Relaxed);
     let Some(total) = total_bytes(&source, cancelled) else {
         if cancelled.load(Ordering::SeqCst) {
             // 请求已取消：不 finish，也不报错。
@@ -222,7 +225,6 @@ fn serve(source: Source, request: &AnyObject, cancelled: &AtomicBool) {
         }
         log::error!("[AvPlayer] {} 拿不到 contentLength", source.label());
         finish_with_error(request, -1, "stream total length unavailable");
-        ERRORS.fetch_add(1, Ordering::Relaxed);
         return;
     };
 
@@ -260,6 +262,14 @@ fn serve(source: Source, request: &AnyObject, cancelled: &AtomicBool) {
     let _: () = unsafe { msg_send![request, finishLoading] };
 }
 
+/// 一块读不下去的原因。
+enum ReadStop {
+    /// 请求已被 AVFoundation 取消：不 finish，也不报错。
+    Cancelled,
+    /// 真失败：以这条消息 `finishLoadingWithError`。
+    Failed(String),
+}
+
 /// 按数据源回一段；返回 `false` 表示已取消或已 `finishLoadingWithError`。
 fn respond_range(
     source: &Source,
@@ -269,64 +279,83 @@ fn respond_range(
     end: u64,
     cancelled: &AtomicBool,
 ) -> bool {
-    match source {
-        Source::Bytes(bytes) => {
-            let start_index = (start as usize).min(bytes.len());
-            let end_index = (end as usize).min(bytes.len());
-            respond_with_data(data_request, &bytes[start_index..end_index]);
-            true
+    let mut position = start;
+    while position < end {
+        if cancelled.load(Ordering::SeqCst) {
+            return false;
         }
+        let want = (end - position).min(READ_CHUNK_BYTES);
+        match read_part(source, position, want, cancelled) {
+            Ok(bytes) if !bytes.is_empty() => {
+                respond_with_data(data_request, &bytes);
+                position += bytes.len() as u64;
+            }
+            Ok(_) => {
+                log::warn!(
+                    "[AvPlayer] {} 在 {position} 处读到空段（total={end}）",
+                    source.label()
+                );
+                break;
+            }
+            Err(ReadStop::Cancelled) => return false,
+            Err(ReadStop::Failed(message)) => {
+                log::error!(
+                    "[AvPlayer] {} 读取 {position}..{} 失败: {message}",
+                    source.label(),
+                    position + want
+                );
+                finish_with_error(request, -2, &message);
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// 从 `start` 起读至多 `want` 字节；只在到达末尾时短读。
+fn read_part(
+    source: &Source,
+    start: u64,
+    want: u64,
+    cancelled: &AtomicBool,
+) -> Result<Vec<u8>, ReadStop> {
+    match source {
         Source::Stream {
             vid,
             definition,
             on_stall,
-        } => {
-            let mut position = start;
-            while position < end {
-                if cancelled.load(Ordering::SeqCst) {
-                    return false;
-                }
-                let want = (end - position).min(READ_CHUNK_BYTES);
-                let result = read_with_stall(
-                    vid,
-                    *definition,
-                    position,
-                    want,
-                    cancelled,
-                    on_stall.as_ref(),
-                );
-                match result {
-                    Ok(chunk) if !chunk.bytes.is_empty() => {
-                        respond_with_data(data_request, &chunk.bytes);
-                        position += chunk.bytes.len() as u64;
-                    }
-                    Ok(_) => {
-                        log::warn!(
-                            "[AvPlayer] {vid}@{definition} 在 {position} 处读到空段（total={end}）"
-                        );
-                        break;
-                    }
-                    Err(StreamReadError::Cancelled) => return false,
-                    Err(error) => {
-                        log::error!(
-                            "[AvPlayer] {vid}@{definition} 读取 {position}..{} 失败: {error}",
-                            position + want
-                        );
-                        finish_with_error(request, -2, &error.to_string());
-                        ERRORS.fetch_add(1, Ordering::Relaxed);
-                        return false;
-                    }
-                }
-            }
-            true
+        } => match read_with_stall(vid, *definition, start, want, cancelled, on_stall.as_ref()) {
+            Ok(chunk) => Ok(chunk.bytes),
+            Err(StreamReadError::Cancelled) => Err(ReadStop::Cancelled),
+            Err(error) => Err(ReadStop::Failed(error.to_string())),
+        },
+        Source::File(path) => read_file(path, start, want).map_err(ReadStop::Failed),
+        Source::Audio { inner, index } => {
+            let mut bytes = read_part(inner, start, want, cancelled)?;
+            index.mask_video_tracks(start, &mut bytes);
+            Ok(bytes)
         }
     }
+}
+
+/// 读本地文件的一段（到文件尾时短读）。
+pub(crate) fn read_file(path: &std::path::Path, start: u64, want: u64) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(want)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    Ok(bytes)
 }
 
 /// 读一块；读前先唤醒业务续填，可恢复错误退避重试。头部预算耗尽后，
 /// 只有 `resume_fill` 能把填充前沿往前推；loader 不能把这一次超时直接
 /// 变成 AVFoundation 的永久失败。
-fn read_with_stall(
+pub(crate) fn read_with_stall(
     vid: &str,
     definition: u32,
     start: u64,
@@ -373,13 +402,11 @@ fn respond_with_data(request: &AnyObject, bytes: &[u8]) {
     let data = NSData::with_bytes(bytes);
     // SAFETY: data 是本次调用内有效的局部对象。
     let _: () = unsafe { msg_send![request, respondWithData: &*data] };
-    BYTES_SERVED.fetch_add(bytes.len() as u64, Ordering::Relaxed);
 }
 
 /// 等这一档的明文总长。渐进流注册后立即可得；整集模式要等落盘。
-fn total_bytes(source: &Source, cancelled: &AtomicBool) -> Option<u64> {
+pub(crate) fn total_bytes(source: &Source, cancelled: &AtomicBool) -> Option<u64> {
     match source {
-        Source::Bytes(bytes) => Some(bytes.len() as u64),
         Source::Stream {
             vid, definition, ..
         } => {
@@ -397,7 +424,37 @@ fn total_bytes(source: &Source, cancelled: &AtomicBool) -> Option<u64> {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
+        Source::File(path) => std::fs::metadata(path).ok().map(|meta| meta.len()),
+        Source::Audio { inner, .. } => total_bytes(inner, cancelled),
     }
+}
+
+/// 从 `start` 起读满 `length` 字节到 `bytes`（解码线程用：样本必须整块到手）。
+/// 取消返回 `Ok(false)`；数据不够或读失败返回错误消息。
+pub(crate) fn read_exact(
+    source: &Source,
+    start: u64,
+    length: u64,
+    cancelled: &AtomicBool,
+    bytes: &mut Vec<u8>,
+) -> Result<bool, String> {
+    bytes.clear();
+    while (bytes.len() as u64) < length {
+        let position = start + bytes.len() as u64;
+        let want = length - bytes.len() as u64;
+        match read_part(source, position, want, cancelled) {
+            Ok(part) if part.is_empty() => {
+                return Err(format!("{} 在 {position} 处提前结束", source.label()));
+            }
+            Ok(part) => bytes.extend_from_slice(&part),
+            Err(ReadStop::Cancelled) => return Ok(false),
+            Err(ReadStop::Failed(message)) => return Err(message),
+        }
+        if cancelled.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn finish_with_error(request: &AnyObject, code: isize, message: &str) {

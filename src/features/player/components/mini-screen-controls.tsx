@@ -33,10 +33,12 @@ const MINI_RATES = [1, 1.5, 2, 3];
 export function MiniScreenControls({
   variant = 'mini',
   videoRef,
+  mediaAvailable,
   title,
   intro,
   vidIndex,
   total,
+  hasPrev,
   hasNext,
   onStepEpisode,
   onExpand,
@@ -53,10 +55,12 @@ export function MiniScreenControls({
   /** 控件形态：mini = 小窗；portrait = 竖屏窄条 */
   variant?: 'mini' | 'portrait';
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  mediaAvailable: boolean;
   title?: string;
   intro?: string;
   vidIndex?: number | null;
   total: number;
+  hasPrev: boolean;
   hasNext: boolean;
   onStepEpisode: (delta: 1 | -1) => void;
   /** 退出当前紧凑形态回大窗 */
@@ -167,6 +171,7 @@ export function MiniScreenControls({
           accent-red-500，在 WebView2 上是粗红条大红钮，和细化后的大屏
           进度条完全两个观感 */}
       <ScrubBar
+        disabled={!mediaAvailable}
         current={Math.min(current, duration || 0)}
         duration={duration}
         onSeek={(ratio) => {
@@ -181,10 +186,18 @@ export function MiniScreenControls({
       />
       {/* 时长 nowrap——极窄下宁可溢出 1px 也不折行把控制条顶高 */}
       <div className="flex items-center gap-0.5">
-        <MiniButton label={paused ? t('player.play') : t('player.pause')} onClick={togglePlay}>
+        <MiniButton
+          label={paused ? t('player.play') : t('player.pause')}
+          onClick={togglePlay}
+          disabled={!mediaAvailable}
+        >
           {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
         </MiniButton>
-        <MiniButton label={t('player.prevEpisode')} onClick={() => onStepEpisode(-1)}>
+        <MiniButton
+          label={t('player.prevEpisode')}
+          onClick={() => onStepEpisode(-1)}
+          disabled={!hasPrev}
+        >
           <SkipBack className="size-4" />
         </MiniButton>
         <MiniButton
@@ -199,11 +212,16 @@ export function MiniScreenControls({
         </span>
         <div className="ml-auto flex items-center gap-0.5">
           {/* 倍速在右组首位（用户口径）：贴着时长会连成一排数字，容易误读 */}
-          <MiniButton label={t('player.playbackRate')} onClick={cycleRate}>
+          <MiniButton
+            label={t('player.playbackRate')}
+            onClick={cycleRate}
+            disabled={!mediaAvailable}
+          >
             <span className="font-mono text-[10px]">{rate}x</span>
           </MiniButton>
           <MiniButton
             label={t('player.mute')}
+            disabled={!mediaAvailable}
             onClick={() => {
               const video = videoRef.current;
               if (!video) return;
@@ -232,19 +250,27 @@ export function MiniScreenControls({
               {portraitFull ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
             </MiniButton>
           )}
-          <MiniButton
-            label={portrait ? t('player.exitPortrait') : t('player.exitMiniScreen')}
-            onClick={onExpand}
-          >
-            {portrait ? (
-              <RectangleHorizontal className="size-4" />
-            ) : (
-              <Maximize2 className="size-4" />
-            )}
-          </MiniButton>
+          <MiniWindowExpandButton portrait={portrait} onExpand={onExpand} />
         </div>
       </div>
     </ChromeSurface>
+  );
+}
+
+export function MiniWindowExpandButton({
+  portrait = false,
+  onExpand,
+}: {
+  portrait?: boolean;
+  onExpand: () => void;
+}) {
+  return (
+    <MiniButton
+      label={portrait ? t('player.exitPortrait') : t('player.exitMiniScreen')}
+      onClick={onExpand}
+    >
+      {portrait ? <RectangleHorizontal className="size-4" /> : <Maximize2 className="size-4" />}
+    </MiniButton>
   );
 }
 

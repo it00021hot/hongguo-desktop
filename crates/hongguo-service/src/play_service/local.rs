@@ -11,17 +11,17 @@ use hongguo_store::Store;
 pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<PlayResponse> {
     let resume_at = position::load(state, &request.series_id, request.vid_index)?;
     if let Some(path) = local_playback_path(state, request) {
-        let url = hongguo_protocol::local::local_play_url(&path)
-            .ok_or_else(|| AppError::InvalidArgs("文件路径无效".into()))?;
-        return Ok(local_file_response(&path, url, resume_at));
-    }
-
-    if !request.prefer_online {
+        if let Some(response) = prepare_local_response(request, &path, resume_at)? {
+            return Ok(response);
+        }
+    } else if !request.prefer_online {
         return Err(AppError::NotFound(format!(
             "第 {} 集尚未下载",
             request.vid_index
         )));
     }
+
+    crate::cold_start::wait(state).await?;
 
     // 兜底走在线流。vid 取自**剧集档案的分集表**（解析剧集时写入）——任务表只记下载进度，
     // 没下过的集在那里查不到 vid。档案里查不到就当场解析一次：播放页会同时发「拉分集」
@@ -73,17 +73,18 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
                 &request.series_id,
                 request.vid_index,
             );
-            let needs_compat = hongguo_bytevc2::is_bytevc2(&prepared.codec);
+            let direct = crate::capability_service::plays_direct(&prepared.codec);
             Ok(PlayResponse {
                 url: prepared.url,
                 online: true,
                 resume_at,
                 error: String::new(),
+                error_kind: String::new(),
                 definition: prepared.definition,
                 automatic_definition: prepared.automatic_definition,
                 definitions: prepared.definitions,
                 codec: prepared.codec,
-                needs_compat,
+                direct,
             })
         }
         Err(e) => Ok(PlayResponse {
@@ -91,11 +92,12 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
             online: true,
             resume_at,
             error: e.to_string(),
+            error_kind: e.i18n_key().to_owned(),
             definition: 0,
             automatic_definition: false,
             definitions: Vec::new(),
             codec: String::new(),
-            needs_compat: false,
+            direct: false,
         }),
     }
 }
@@ -112,32 +114,52 @@ fn local_playback_path(state: &AppState, request: &PlayRequest) -> Option<String
         .completed_path(&request.series_id, request.vid_index)
 }
 
-/// 本地成品和显式 filePath 都探测编码，以便选中 ByteVC2 直播放。
-fn local_file_response(path: &str, url: String, resume_at: f64) -> PlayResponse {
-    let (codec, needs_compat) = probe_local_codec(path);
-    PlayResponse {
+fn prepare_local_response(
+    request: &PlayRequest,
+    path: &str,
+    resume_at: f64,
+) -> AppResult<Option<PlayResponse>> {
+    let result = hongguo_protocol::local::local_play_url(path)
+        .ok_or_else(|| AppError::InvalidArgs("文件路径无效".into()))
+        .and_then(|url| local_file_response(path, url, resume_at));
+    match result {
+        Ok(response) => Ok(Some(response)),
+        Err(error) if request.file_path.trim().is_empty() => {
+            log::info!("[Play] 本地下载不可播放，重新获取在线原流: {error}");
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// 本地成品和显式 filePath 都探测编码，以便选中内置软解直播放。
+fn local_file_response(path: &str, url: String, resume_at: f64) -> AppResult<PlayResponse> {
+    let codec = local_playback_codec(path)?;
+    Ok(PlayResponse {
         url,
         online: false,
         resume_at,
         error: String::new(),
+        error_kind: String::new(),
         definition: 0,
         automatic_definition: false,
         definitions: Vec::new(),
         codec,
-        needs_compat,
-    }
+        direct: true,
+    })
 }
 
-fn probe_local_codec(path: &str) -> (String, bool) {
-    let Ok(demuxed) = hongguo_media::demux::demux_file(std::path::Path::new(path)) else {
-        return (String::new(), false);
-    };
-    let Some(track) = demuxed.video_track() else {
-        return (String::new(), false);
-    };
+pub fn local_playback_codec(path: &str) -> AppResult<String> {
+    let demuxed = hongguo_media::demux::demux_file(std::path::Path::new(path))?;
+    let track = demuxed
+        .video_track()
+        .ok_or_else(|| AppError::Media("本地文件没有视频轨道".into()))?;
     let codec = track.info.codec.clone();
-    let needs_compat = hongguo_bytevc2::is_bytevc2(&codec);
-    (codec, needs_compat)
+    let direct = crate::capability_service::plays_direct(&codec);
+    if !direct {
+        return Err(AppError::CodecUnsupported(codec));
+    }
+    Ok(codec)
 }
 
 /// 首集预热只取该集模型。
@@ -170,7 +192,10 @@ pub(super) async fn prefetch_episode_models(
         .map(|ep| ep.vid)
         .collect();
     let map = std::collections::BTreeMap::from([(series.content_type.to_string(), vids)]);
-    crate::cold_start::wait().await;
+    if let Err(error) = crate::cold_start::wait(state).await {
+        log::warn!("[Play] 模型预取等待设备身份失败: {error}");
+        return;
+    }
     let env = state.api_env();
     if let Err(error) =
         hongguo_api::play_url::fetch_play_scene(&map, scene, crate::device::stream_cap(), &env)
@@ -294,36 +319,99 @@ mod tests {
     }
 
     #[test]
-    fn local_bytevc2_file_marks_needs_compat() {
-        let plain = std::path::PathBuf::from(
-            "/Users/milo/qa-hongguo-offline-data/inputs/hg-bytevc2-plain.mp4",
-        );
-        if !plain.is_file() {
-            eprintln!("skip: sample missing");
-            return;
-        }
+    fn local_bytevc2_file_always_uses_builtin_playback() {
+        use hongguo_video::fixtures::{TrackSpec, mp4};
+        let dir = std::env::temp_dir().join(format!("hg-local-bytevc2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = dir.join("bytevc2.mp4");
+        std::fs::write(&plain, mp4(&[TrackSpec::video(1, b"bvc2", 64, 64)])).unwrap();
         let path = plain.to_string_lossy().to_string();
         let url = hongguo_protocol::local::local_play_url(&path).expect("url");
-        let resp = super::local_file_response(&path, url, 0.0);
-        assert!(resp.needs_compat, "bytevc2 本地文件必须 needs_compat");
-        assert!(
-            hongguo_bytevc2::is_bytevc2(&resp.codec),
-            "codec={}",
-            resp.codec
-        );
+        let resp = super::local_file_response(&path, url, 0.0).unwrap();
+        assert_eq!(resp.codec, "bvc2", "必须从合成文件真实探测出视频编码");
+        assert!(resp.direct);
         assert!(!resp.online);
         assert!(resp.error.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn local_missing_file_does_not_force_compat() {
+    fn a_missing_local_file_is_an_error_instead_of_native_fallback() {
         let resp = super::local_file_response(
             "/tmp/hongguo-definitely-missing-local-play.mp4",
             "hongguo-local://x".into(),
             1.5,
         );
-        assert!(!resp.needs_compat);
-        assert!(resp.codec.is_empty());
-        assert_eq!(resp.resume_at, 1.5);
+        assert!(resp.is_err());
+    }
+
+    #[test]
+    fn local_codec_routing_requires_builtin_decoding() {
+        use hongguo_video::fixtures::{TrackSpec, mp4};
+        let dir = std::env::temp_dir().join(format!("hg-local-routing-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for codec in [b"hvc1", b"hev1", b"bvc2"] {
+            let path = dir.join(format!("{}.mp4", String::from_utf8_lossy(codec)));
+            std::fs::write(&path, mp4(&[TrackSpec::video(1, codec, 64, 64)])).unwrap();
+            assert_eq!(
+                super::local_playback_codec(path.to_str().unwrap()).unwrap(),
+                String::from_utf8_lossy(codec)
+            );
+        }
+        let path = dir.join("unsupported.mp4");
+        std::fs::write(&path, mp4(&[TrackSpec::video(1, b"vp09", 64, 64)])).unwrap();
+        assert!(matches!(
+            super::local_playback_codec(path.to_str().unwrap()),
+            Err(AppError::CodecUnsupported(_))
+        ));
+        std::fs::write(&path, b"not an MP4").unwrap();
+        assert!(super::local_playback_codec(path.to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn local_h264_is_not_a_native_playback_exception() {
+        use hongguo_video::fixtures::{TrackSpec, mp4};
+        let dir =
+            std::env::temp_dir().join(format!("hg-local-avc-rejected-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old-archive.mp4");
+        std::fs::write(&path, mp4(&[TrackSpec::video(1, b"avc1", 64, 64)])).unwrap();
+        assert!(matches!(
+            super::local_playback_codec(path.to_str().unwrap()),
+            Err(AppError::CodecUnsupported(_))
+        ));
+        let mut request = PlayRequest {
+            series_id: "legacy".into(),
+            vid_index: 1,
+            file_path: String::new(),
+            prefer_online: false,
+            definition: None,
+            reset_definition: false,
+        };
+        assert!(
+            super::prepare_local_response(&request, path.to_str().unwrap(), 12.0)
+                .unwrap()
+                .is_none(),
+            "旧下载必须重新取在线原流"
+        );
+        request.file_path = path.to_string_lossy().into_owned();
+        assert!(matches!(
+            super::prepare_local_response(&request, path.to_str().unwrap(), 12.0),
+            Err(AppError::CodecUnsupported(_))
+        ));
+        request.file_path.clear();
+        std::fs::write(&path, b"invalid old cache").unwrap();
+        assert!(
+            super::prepare_local_response(&request, path.to_str().unwrap(), 12.0)
+                .unwrap()
+                .is_none()
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            super::prepare_local_response(&request, path.to_str().unwrap(), 12.0)
+                .unwrap()
+                .is_none()
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

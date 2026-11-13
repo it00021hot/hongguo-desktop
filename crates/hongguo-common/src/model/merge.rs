@@ -9,7 +9,7 @@ pub enum MergeMode {
     /// 快速合并：流复制，不重编码（无损且极快）
     #[default]
     Quick,
-    /// 兼容合并：转 H.264/AAC，任何播放器都能播
+    /// 统一编码合并：HEVC/AAC。
     Compat,
 }
 

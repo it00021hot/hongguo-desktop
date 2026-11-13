@@ -1,4 +1,4 @@
-//! 真实短剧文件的端到端验证（仅测试用）：用真实码流验证 ① 索引重写在平台封装器产出的文件上同样成立、② 产物被 `ffprobe` 认成一条完整时间轴、③ ffmpeg 路线的 H.264 能播——合成 fixture 证明不了这些。
+//! 真实短剧文件的端到端验证（仅测试用）：用真实码流验证 ① 索引重写在平台封装器产出的文件上同样成立、② 产物被 `ffprobe` 认成一条完整时间轴、③ ffmpeg 路线的 HEVC 能播——合成 fixture 证明不了这些。
 //!
 //! 全部用例由 `HONGGUO_E2E_DIR` 门控：没设就整体跳过，真实文件不进 `make test-rust`。跑法：`HONGGUO_E2E_DIR=<已解密 mp4 所在目录> HONGGUO_DATA_DIR=<临时目录> cargo test --lib testing::media_pipeline_e2e -- --nocapture`。
 
@@ -73,7 +73,6 @@ fn plain_req<'a>(
         input,
         output,
         scale_to: None,
-        rate: hongguo_media_platform::RateProfile::Archive,
         on_progress: None,
     }
 }
@@ -316,9 +315,9 @@ fn real_merge_is_accepted_by_ffprobe() {
 }
 
 #[test]
-fn ffmpeg_transcode_produces_playable_h264() {
-    let Some(encoder) = ffmpeg::h264_encoder() else {
-        eprintln!("[e2e] 没探到可用的 H.264 编码器，跳过");
+fn ffmpeg_transcode_produces_playable_hevc() {
+    let Some(encoder) = ffmpeg::hevc_encoder() else {
+        eprintln!("[e2e] 没探到可用的 HEVC 编码器，跳过");
         return;
     };
     let Some(mut all) = episodes() else { return };
@@ -330,7 +329,7 @@ fn ffmpeg_transcode_produces_playable_h264() {
     transcode_with_ffmpeg(&plain_req(&src, &out), &encoder).unwrap();
     let elapsed = started.elapsed();
 
-    assert_eq!(video_codec(&out), "h264", "产物应是 H.264");
+    assert_eq!(video_codec(&out), "hevc", "产物应是 HEVC");
     assert_eq!(audio_codec(&out), "aac", "音轨应直通保留为 AAC");
 
     let source = media_seconds(&src);
@@ -347,87 +346,8 @@ fn ffmpeg_transcode_produces_playable_h264() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 兼容播放档 vs 归档档：同一集、强制 libx264 软编，对照耗时与体积。
-/// 播放档应明显更小；软编还应更快（720p + ultrafast/crf28 vs 原分辨率 veryfast/crf23）。
 #[test]
-fn playback_soft_encode_is_faster_and_smaller_than_archive() {
-    let Some(mut all) = episodes() else { return };
-    // 跳过合集：单集才是兼容播放的输入形态
-    let src = all
-        .drain(..)
-        .find(|p| {
-            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            !name.contains("合集")
-        })
-        .expect("目录里应有单集 mp4");
-    let soft = hongguo_media_platform::ffmpeg::probe::Encoder {
-        name: "libx264",
-        hardware: false,
-    };
-    let dir = scratch("play-vs-archive");
-    let archive_out = dir.join("archive.mp4");
-    let play_out = dir.join("play.mp4");
-    let scale_to = hongguo_service::transcode_service::pipeline::resolution_of(&src)
-        .and_then(hongguo_service::transcode_service::pipeline::playback_scale);
-
-    let archive_started = Instant::now();
-    if let Err(e) = transcode_with_ffmpeg(
-        &hongguo_media_platform::ffmpeg::TranscodeRequest {
-            input: &src,
-            output: &archive_out,
-            scale_to: None,
-            rate: hongguo_media_platform::RateProfile::Archive,
-            on_progress: None,
-        },
-        &soft,
-    ) {
-        eprintln!("[e2e] libx264 不可用，跳过软编对照: {e}");
-        let _ = std::fs::remove_dir_all(&dir);
-        return;
-    }
-    let archive_elapsed = archive_started.elapsed();
-    let archive_bytes = std::fs::metadata(&archive_out).unwrap().len();
-
-    let play_started = Instant::now();
-    transcode_with_ffmpeg(
-        &hongguo_media_platform::ffmpeg::TranscodeRequest {
-            input: &src,
-            output: &play_out,
-            scale_to,
-            rate: hongguo_media_platform::RateProfile::Playback,
-            on_progress: None,
-        },
-        &soft,
-    )
-    .expect("播放档软编应成功");
-    let play_elapsed = play_started.elapsed();
-    let play_bytes = std::fs::metadata(&play_out).unwrap().len();
-
-    let source = media_seconds(&src);
-    let archive_mb = archive_bytes as f64 / 1048576.0;
-    let play_mb = play_bytes as f64 / 1048576.0;
-    let size_pct = 100.0 * play_bytes as f64 / archive_bytes as f64;
-    let time_pct = 100.0 * play_elapsed.as_secs_f64() / archive_elapsed.as_secs_f64().max(0.001);
-    println!(
-        "[e2e] 软编对照 {source:.1}s 单集 scale={scale_to:?}\n\
-         [e2e]   Archive  {archive_elapsed:.2?}  {archive_mb:.1}MB\n\
-         [e2e]   Playback {play_elapsed:.2?}  {play_mb:.1}MB  （体积比 {size_pct:.0}%，耗时比 {time_pct:.0}%）"
-    );
-
-    assert!(
-        play_bytes < archive_bytes * 7 / 10,
-        "播放档体积应明显低于归档档：play={play_bytes} archive={archive_bytes}"
-    );
-    assert!(
-        play_elapsed < archive_elapsed,
-        "播放档软编应快于归档档：play={play_elapsed:?} archive={archive_elapsed:?}"
-    );
-    assert_eq!(video_codec(&play_out), "h264");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn platform_pipeline_produces_playable_h264() {
+fn platform_pipeline_produces_playable_hevc() {
     let Some(mut all) = episodes() else { return };
     let src = all.swap_remove(0);
     let is_hevc = hongguo_media::demux::demux_file(&src)
@@ -444,16 +364,12 @@ fn platform_pipeline_produces_playable_h264() {
     let dir = scratch("platform-vt-pipeline");
     let out = dir.join("转码.mp4");
 
-    match hongguo_media_platform::platform::transcode_h264_for_tests(
+    match hongguo_media_platform::platform::transcode_hevc_for_tests(
         &hongguo_media_platform::platform::PlatformRequest {
             input: &src,
             output: &out,
             scale_to: None,
-            rate: hongguo_media_platform::RateProfile::Archive,
             on_progress: None,
-            on_playable_prefix: None,
-            on_committed: None,
-            is_cancelled: None,
         },
     ) {
         Some(Ok(())) => {}
@@ -461,7 +377,7 @@ fn platform_pipeline_produces_playable_h264() {
         None => panic!("HEVC 源却返回不可用"),
     }
 
-    assert_eq!(video_codec(&out), "h264", "产物应是 H.264");
+    assert_eq!(video_codec(&out), "hevc", "产物应是 HEVC");
     let src_has_audio = hongguo_media::demux::demux_file(&src)
         .map(|d| d.audio_track().is_some())
         .unwrap_or(false);
@@ -485,8 +401,8 @@ fn platform_pipeline_produces_playable_h264() {
 }
 
 #[test]
-fn platform_transcode_produces_playable_h264() {
-    if !hongguo_media_platform::platform::h264_hw_encoder_available() {
+fn platform_transcode_produces_playable_hevc() {
+    if !hongguo_media_platform::platform::hevc_hw_encoder_available() {
         eprintln!("[e2e] 平台硬编不可用，跳过");
         return;
     }
@@ -507,16 +423,12 @@ fn platform_transcode_produces_playable_h264() {
     let out = dir.join("转码.mp4");
 
     let started = Instant::now();
-    match hongguo_media_platform::platform::transcode_h264(
+    match hongguo_media_platform::platform::transcode_hevc(
         &hongguo_media_platform::platform::PlatformRequest {
             input: &src,
             output: &out,
             scale_to: None,
-            rate: hongguo_media_platform::RateProfile::Archive,
             on_progress: None,
-            on_playable_prefix: None,
-            on_committed: None,
-            is_cancelled: None,
         },
     ) {
         Some(Ok(())) => {}
@@ -525,7 +437,7 @@ fn platform_transcode_produces_playable_h264() {
     }
     let elapsed = started.elapsed();
 
-    assert_eq!(video_codec(&out), "h264", "产物应是 H.264");
+    assert_eq!(video_codec(&out), "hevc", "产物应是 HEVC");
     let src_has_audio = hongguo_media::demux::demux_file(&src)
         .map(|d| d.audio_track().is_some())
         .unwrap_or(false);
@@ -548,8 +460,8 @@ fn platform_transcode_produces_playable_h264() {
 
 #[test]
 fn ffmpeg_output_is_decodable() {
-    let Some(encoder) = ffmpeg::h264_encoder() else {
-        eprintln!("[e2e] 没探到可用的 H.264 编码器，跳过");
+    let Some(encoder) = ffmpeg::hevc_encoder() else {
+        eprintln!("[e2e] 没探到可用的 HEVC 编码器，跳过");
         return;
     };
     let Some(all) = episodes() else { return };
@@ -585,7 +497,7 @@ fn compat_merge_end_to_end_via_ffmpeg() {
     let mut transcoded = Vec::new();
     for (i, src) in inputs.iter().enumerate() {
         let target = dir.join(format!("{:03}.mp4", i + 1));
-        let e2e_enc = ffmpeg::h264_encoder().unwrap();
+        let e2e_enc = ffmpeg::hevc_encoder().unwrap();
         transcode_with_ffmpeg(&plain_req(src, &target), &e2e_enc).unwrap();
         transcoded.push(target);
     }
@@ -600,7 +512,7 @@ fn compat_merge_end_to_end_via_ffmpeg() {
         (got - expected).abs() < expected * 0.02,
         "兼容合并产物时长 {got:.2}s 应对齐各集之和 {expected:.2}s"
     );
-    assert_eq!(video_codec(&out), "h264");
+    assert_eq!(video_codec(&out), "hevc");
     assert_eq!(audio_codec(&out), "aac");
     println!("[e2e] 兼容合并 {count} 集：{got:.2}s（各集之和 {expected:.2}s）");
     let _ = std::fs::remove_dir_all(&dir);
@@ -608,8 +520,8 @@ fn compat_merge_end_to_end_via_ffmpeg() {
 
 #[test]
 fn compat_merge_unifies_mixed_resolutions_by_scaling() {
-    let Some(encoder) = ffmpeg::h264_encoder() else {
-        eprintln!("[e2e] 没探到可用的 H.264 编码器，跳过");
+    let Some(encoder) = ffmpeg::hevc_encoder() else {
+        eprintln!("[e2e] 没探到可用的 HEVC 编码器，跳过");
         return;
     };
     let Some(files) = episodes() else { return };
@@ -656,7 +568,6 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
             input: src,
             output: &t,
             scale_to: Some((w, h)),
-            rate: hongguo_media_platform::RateProfile::Archive,
             on_progress: None,
         };
         transcode_with_ffmpeg(&req, &encoder).unwrap();
@@ -685,9 +596,9 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
 
 #[test]
 fn the_installed_ffmpeg_is_actually_used_by_the_transcode_path() {
-    let Some(encoder) = ffmpeg::h264_encoder() else {
+    let Some(encoder) = ffmpeg::hevc_encoder() else {
         eprintln!(
-            "[e2e] 没探到可用的 H.264 编码器，跳过：{:?}",
+            "[e2e] 没探到可用的 HEVC 编码器，跳过：{:?}",
             ffmpeg::ffmpeg_path()
         );
         return;
@@ -701,77 +612,17 @@ fn the_installed_ffmpeg_is_actually_used_by_the_transcode_path() {
     let cap = hongguo_media_platform::capability::probe::detect();
     if cap.platform_encoder {
         assert!(
-            !cap.has_ffmpeg && !cap.h264_hw_encoder,
+            !cap.has_ffmpeg && !cap.hevc_hw_encoder,
             "平台编码层可用时 ffmpeg 兜底层应整层跳过，实际 has_ffmpeg={} hw={}",
             cap.has_ffmpeg,
-            cap.h264_hw_encoder
+            cap.hevc_hw_encoder
         );
     } else {
         assert_eq!(cap.has_ffmpeg, ffmpeg::ffmpeg_path().is_some());
-        assert_eq!(cap.h264_hw_encoder, encoder.hardware);
+        assert_eq!(cap.hevc_hw_encoder, encoder.hardware);
     }
     println!(
         "[e2e] 后端 = {}（硬件={}），能力 = hasFfmpeg:{} hw:{}",
-        backend.transcode_with, encoder.hardware, cap.has_ffmpeg, cap.h264_hw_encoder
+        backend.transcode_with, encoder.hardware, cap.has_ffmpeg, cap.hevc_hw_encoder
     );
-}
-
-#[tokio::test]
-async fn compat_playback_transcodes_a_real_hevc_episode() {
-    let Some(files) = episodes() else { return };
-    let src = files[0].clone();
-    let dir = std::env::temp_dir().join(format!("hg-e2e-cplay-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let _scope = hongguo_store::paths::ScopedDataDir::new(&dir);
-
-    use hongguo_service::play_service::compat_play as cp;
-    let got = match cp::ensure_compat(
-        "e2e-cp",
-        1,
-        cp::CompatSource::LocalFile(src.clone()),
-        |_| {},
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("[e2e] 兜底转码不可用，跳过: {e}");
-            let _ = std::fs::remove_dir_all(&dir);
-            return;
-        }
-    };
-    assert!(!got.cached, "首次不该命中缓存");
-    assert!(got.url.contains("hongguo-local"), "实际: {}", got.url);
-
-    let path = hongguo_service::transcode_service::cache::cache_file_for(
-        "e2e-cp",
-        1,
-        hongguo_media_platform::RateProfile::Playback,
-    );
-    let tracks = hongguo_media::demux::demux_file(&path).unwrap();
-    let v = tracks.video_track().expect("产物要有视频轨");
-    assert_eq!(v.info.codec, "avc1", "兜底的产物必须是 H.264");
-    assert!(!v.info.samples.is_empty());
-    let long = v.info.width.max(v.info.height);
-    assert!(
-        long <= 1280,
-        "播放档长边应 ≤1280，实际 {}x{}",
-        v.info.width,
-        v.info.height
-    );
-    println!(
-        "[e2e] 兜底转码 {}：{:.1}MB / {}x{}，耗时 {}ms",
-        got.backend,
-        std::fs::metadata(&path).unwrap().len() as f64 / 1048576.0,
-        v.info.width,
-        v.info.height,
-        got.elapsed_ms
-    );
-
-    let again = cp::ensure_compat("e2e-cp", 1, cp::CompatSource::LocalFile(src), |_| {})
-        .await
-        .expect("命中缓存不该失败");
-    assert!(again.cached, "第二次应当命中缓存");
-    assert_eq!(again.elapsed_ms, 0, "命中缓存不耗时");
-    let _ = std::fs::remove_dir_all(&dir);
 }

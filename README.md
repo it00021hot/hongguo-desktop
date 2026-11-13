@@ -32,17 +32,17 @@ Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service
 ## 📖 简介
 
 红果播放器（Hongguo）是面向**红果短剧**的 Windows / macOS 桌面客户端。
-它有两套壳、同一套业务内核：[Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生自绘壳。
-两壳共用 `hongguo-service`、`hongguo-api`、`hongguo-store`。
+它有同一套业务内核：[Tauri 2](https://tauri.app) + React 19 WebView 壳、GPUI 原生自绘壳，
+以及开发中的纯 Rust NSH 壳，共用 `hongguo-service`、`hongguo-api`、`hongguo-store`。
 
 它内置字节系短剧 App 的完整协议栈——设备注册、五头请求签名、取流、弹幕、互动、
 观看历史、短信登录——并配有一套 **CENC-AES-CTR 原生流式解密引擎**。解密、解复用、
-封装由纯 Rust 完成；HEVC → H.264 转码先走平台硬编（VideoToolbox / Media Foundation），
-再回落 ffmpeg。**安装包不捆绑 FFmpeg 或任何外部二进制**。
+封装由纯 Rust 完成；HEVC/ByteVC1/ByteVC2 播放使用内置解码，不转码。
+同规格原流可无损合并；混合素材通过平台编码器或 ffmpeg 统一编码为 HEVC 后合并。**安装包不捆绑 FFmpeg 可执行文件**。
 
 - **在线播放不落盘**：自定义协议渐进供数、边下边解，首帧不必等整集
 - **下载直接产出标准 MP4**：流式解密 + 原子落盘，断网断电不留残缺文件
-- **兼容模式全自动**：HEVC 解不动时自动转 H.264——平台硬编 → ffmpeg；两者都失败则报错，没有纯 Rust 视频转码兜底
+- **内置视频解码**：三个壳统一使用内置 HEVC/ByteVC1/ByteVC2 解码；没有系统视频或兼容转码播放分支。旧下载失效或编码不支持时重新获取在线原流
 - **数据落 Turso 内嵌数据库**：纯 Rust、无 C 工具链依赖，带 schema 迁移链与坏档自动恢复
 
 ---
@@ -83,7 +83,7 @@ Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service
 - **连播与接力**：播完自动下一集；本季完结自动接下一季第 1 集，无下一季则跟随
   推荐流接力播放
 - **断点续播**：本地 5 秒节流落盘 + 重启恢复；同时上报云端进度
-- **兼容模式**：系统解不动的编码自动转 H.264，浮层显示转码进度
+- **原流播放**：内置解码直接上屏，不生成播放转码文件；解码或呈现失败明确报错
 - **快捷键**：`空格` 播放/暂停 · `←` `→` 快退/快进 5 秒 · `↑` `↓` 切集/切剧
 
 ### 👤 账户与互动
@@ -101,10 +101,10 @@ Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service
 - **下载管理**：并发 1–10（默认 3），五态任务表（等待/下载中/已完成/失败/已停止），
   批量重试、批量删除、一键暂停/启动；**扫描磁盘**可把手动拷回的文件补登记回任务列表
 - **防损机制**：先写 `.enc.tmp`，解密成功后才改名 `.mp4`，中途断网不留残缺文件
-- **一键合并**：快速合并（流复制拼接，无损秒级）/ 兼容合并（转 H.264/AAC，
-  任何播放器可播）；合并前校验编码一致性与磁盘空间，后台任务带进度
+- **一键合并**：快速合并（同规格原流直拼，无损）/ HEVC 合并（混合素材统一编码）；
+  AAC 音轨沿用原流，合并前校验编码一致性与磁盘空间，后台任务带进度
 - **磁盘清理**：总占用统计、按剧 / 按集删除、**看完自动删除**、一键清空；
-  在线缓存与兼容转码缓存（上限 4GB）单独管理；删除文件后保留剧集档案，之后仍可在线播放或重新下载
+  在线缓存与 HEVC 归档转码缓存（上限 4GB）单独管理；删除文件后保留剧集档案，之后仍可在线播放或重新下载
 - **命名模板** 3 种：`剧名 集号` / `剧名 集号 第N集` / 仅剧名
 
 ### ⚙️ 设置
@@ -122,13 +122,13 @@ Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service
 
 ### 内核（Rust）
 
-| 层     | 选型                                                                                                                                                   |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 桌面壳 | [Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生壳；共用 `hongguo-service` / `hongguo-api` / `hongguo-store`                         |
-| 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                                                                            |
-| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v7，`SCHEMA_VERSION = 7`）                                                       |
-| 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                                                                                 |
-| 编解码 | 视频 remux / MP4 封装为纯 Rust；`rusty_h265` 只做 HEIF 封面软解，不是主视频路径；HEVC→H.264 为平台硬编（VideoToolbox / Media Foundation）再回落 ffmpeg |
+| 层     | 选型                                                                                                                           |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 桌面壳 | [Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生壳；共用 `hongguo-service` / `hongguo-api` / `hongguo-store` |
+| 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                                                    |
+| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v7，`SCHEMA_VERSION = 7`）                               |
+| 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                                                         |
+| 编解码 | HEVC/ByteVC1 用 `rusty_h265`，ByteVC2 用 VVdeC；remux / MP4 封装为纯 Rust；归档转码使用平台编码器或 ffmpeg                     |
 
 ### 前端（仅 Tauri WebView 壳）
 
@@ -179,6 +179,16 @@ Windows 双击 `*_x64-setup.exe`；macOS 按芯片选 `*_aarch64.dmg`（Apple Si
 
 ## 💻 开发
 
+NSH 第三壳正在开发，首版目标为 Windows、macOS、Android、iOS（纯 Rust，直接复用本地业务内核）。
+桌面启动 `make nsh`，检查与测试用 `make nsh-check`、`make nsh-test`；
+移动端工具链与当前验证范围见 [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md)。
+Linux 与 Web 留待后续迭代。当前 NSH 实现尚未完成全部功能和四端验收。
+
+The NSH shell is in development for Windows, macOS, Android and iOS. It uses Rust throughout
+and shares the existing local business core. Run `make nsh`, `make nsh-check` and `make nsh-test`
+from the repository root. Full feature parity and validation on all four platforms are still in progress.
+Linux and web support are deferred.
+
 ### 环境要求
 
 - Rust 1.99+（edition 2024）
@@ -202,8 +212,8 @@ make assets         # 重新生成图标 / macOS 名称本地化（离线）
 文档索引见 [docs/README.md](./docs/README.md)，使用排查见 [docs/faq.md](./docs/faq.md)。
 
 > **安装包不捆绑 FFmpeg**——解密、解复用、合并是纯 Rust。没有 ffmpeg 时，
-> HEVC → H.264 仍可走平台编码器（macOS VideoToolbox / Windows Media Foundation）。
-> 平台编码器与 ffmpeg 都不可用时，兼容模式会失败。
+> HEVC 归档编码可使用平台编码器（如 VideoToolbox / Media Foundation）或另行安装的 ffmpeg。
+> 没有可用 HEVC 编码器时，统一编码合并明确报错；播放和同规格原流无损合并不受影响。
 
 ---
 
@@ -259,10 +269,9 @@ hongguo-desktop/
 
 ### 播放页黑屏但有声音
 
-视频是 HEVC 编码。应用内「兼容模式」会转成 H.264 再播放——平台硬编（Apple 芯片
-VideoToolbox / Windows Media Foundation）→ ffmpeg（NVENC/QSV/AMF 硬编，或 libx264 软编）。
-两者都不可用时兼容模式失败。Windows 上缺 HEVC 视频扩展，或 Tauri 壳缺 WebView2 运行时，
-安装步骤见 [docs/faq.md](./docs/faq.md)。
+HEVC/ByteVC1/ByteVC2 使用内置解码，播放不依赖系统 HEVC 视频扩展，也不会自动转成 H.264。
+检查播放器错误和日志中的解码、GPU 呈现信息；NSH 在窗口不可见时会暂停获取画面。
+Tauri 的 WebView2 运行时问题及排查边界见 [docs/faq.md](./docs/faq.md)。
 
 ### 签名魔数能改吗
 

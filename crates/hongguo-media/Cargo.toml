@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-media"
-description = "红果桌面版媒体公共底座：demux / hevc / remux / H.264 封装 / 封面 HEIF / 后端标识"
+description = "红果桌面版媒体公共底座：demux / hevc / remux / HEVC 封装 / 封面 HEIF / 后端标识"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

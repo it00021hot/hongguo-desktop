@@ -1,7 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { WindowPresentation } from '@/service/schema/window';
 
 interface UiState {
+  applyWindowPresentation: (presentation: WindowPresentation) => void;
+  playerControlsMounted: boolean;
+  setPlayerControlsMounted: (mounted: boolean) => void;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
   browseFiltersCollapsed: boolean;
@@ -32,6 +36,17 @@ interface UiState {
 export const useUiStore = create<UiState>()(
   persist(
     (set, get) => ({
+      playerControlsMounted: false,
+      setPlayerControlsMounted: (mounted) => set({ playerControlsMounted: mounted }),
+      applyWindowPresentation: (presentation) =>
+        set({
+          miniScreen: presentation.mode === 'mini',
+          portrait: presentation.mode === 'portrait',
+          portraitFull: presentation.isPortraitFull,
+          playerFrameless: presentation.isFrameless,
+          pinned: presentation.isPinned,
+          windowFullscreen: presentation.isFullscreen,
+        }),
       // 默认折叠：图标窄栏是默认形态（用户展开后持久化记住）
       sidebarCollapsed: true,
       toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),

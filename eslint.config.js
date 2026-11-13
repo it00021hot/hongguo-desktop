@@ -18,10 +18,11 @@ export default tseslint.config(
       'captures',
       'crates/hongguo-tauri-app',
       'vendor',
-      'target',
+      '**/target/**',
       'routeTree.gen.ts',
       'node_modules',
       '.agents',
+      '**/.nsh/**',
     ],
   },
   {

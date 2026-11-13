@@ -14,6 +14,10 @@ when_to_use: 在本仓库做任何开发（新增功能、修 bug、写组件/ho
 
 ## 先判断动的是哪个壳，再按任务读对应参考文档
 
+NSH 第三壳（开发中）使用纯 Rust 与独立 Android/iOS 宿主；修改前必须读用户级
+`nsh`、`nsh-design-guides` 和 [references/nsh.md](references/nsh.md)。
+本轮支持目标是 Windows/macOS/Android/iOS；Linux/Web 后续迭代。
+
 | 你要做的事                                                | 先读                                                                                                                              |
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | **任何开发动作（通用工程宪法）**                          | 用户级 `dev-habits` skill——做事方式/代码质量/测试/安全/传输契约/日志/性能并发的门禁表在其 SKILL.md，先读它再读本表                 |
@@ -72,7 +76,7 @@ make release      # 打包发布版（Tauri 壳）
 **平台实现一律分 crate**（与媒体层 `hongguo-media-platform-*` 同一口径，不为目录整齐造转发文件）：
 
 - 回放契约 `hongguo-player-api`（`PlayerEvent`/`PlaySource`/`PlayerLike`/舞台几何/`HostWindow`）——不吃 UI、不吃平台实现；
-- 系统播放器实现 `hongguo-player-macos`（AVPlayer）/ `hongguo-player-windows`（MediaEngine frame-server：每帧 `TransferVideoFrame` 写入渲染器纹理，视频 quad 与 GPUI 同画布），平台依赖全在各自 target 表，`#![cfg(target_os = …)]`；
+- 内置软解播放器实现 `hongguo-player-macos`（软解帧由 AVSampleBufferDisplayLayer 呈现）/ `hongguo-player-windows`（软解 BGRA 帧写入同画布纹理）；AVPlayer/MediaEngine 仅供音轨与时钟，平台依赖全在各自 target 表，`#![cfg(target_os = …)]`；
 - 门面 `hongguo-player` 按 target 分派；壳只依赖门面，`#[cfg(target_os)]` 只允许出现在门面与 `platform` 门面里，业务/视图层出现平台分支即返工。
 
-GPUI 壳本身是单 crate；壳内允许的平台代码是 `platform/`（业务语义门面，`macos` / `windows` 两端实现）+ `av_spike/`（macOS Phase 0 诊断，`HONGGUO_AV_SPIKE=1`）+ 入口级 `macos.rs` / `win32.rs`。新增平台能力先问「能不能进 `hongguo-player-*` / `hongguo-media-platform-*`」，不能才考虑 `platform/`。
+GPUI 壳本身是单 crate；壳内允许的平台代码是 `platform/`（业务语义门面，`macos` / `windows` 两端实现）+ 入口级 `macos.rs` / `win32.rs`。新增平台能力先问「能不能进 `hongguo-player-*` / `hongguo-media-platform-*`」，不能才考虑 `platform/`。

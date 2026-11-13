@@ -1,0 +1,18 @@
+[package]
+name = "hongguo-nsh-video-apple"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
+hongguo-enhancement = { path = "../hongguo-enhancement" }
+pollster = "0.4"
+wgpu = { version = "=29.0.4", default-features = false, features = ["metal", "wgsl"] }
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSDictionary", "NSString", "NSURL", "NSValue", "NSRunLoop", "NSDate"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFCGTypes"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CAMetalLayer", "CATransaction"] }

@@ -123,13 +123,22 @@ impl super::HomeView {
         // 已经下好就直接读本地文件——离线可播、秒开，且没有档位概念（本地只有
         // 一版，清晰度菜单该是灰的）。记录里路径存在但文件没了（陈旧记录）时
         // 回落在在线流；在线分流（prepare）只在真的没有本地成品时才走。
-        let local_path = state
+        let local = state
             .queue()
             .completed_path(&item.series_id, ep.vid_index)
-            .filter(|p| !p.trim().is_empty() && std::path::Path::new(p).is_file());
-        let (source, definitions, definition) = match local_path {
-            Some(path) => {
-                log::info!("[Home] 本地成品命中，走本地播放：{path}");
+            .filter(|path| !path.trim().is_empty())
+            .and_then(|path| {
+                match hongguo_service::play_service::local::local_playback_codec(&path) {
+                    Ok(codec) => Some((path, codec)),
+                    Err(error) => {
+                        log::warn!("[Home] 本地下载记录不可播放，重新获取在线原流: {error}");
+                        None
+                    }
+                }
+            });
+        let (source, definitions, definition) = match local {
+            Some((path, codec)) => {
+                log::info!("[Home] 本地成品命中，内置解码 {codec}：{path}");
                 (
                     hongguo_player::PlaySource::Local { path: path.into() },
                     Vec::new(),
@@ -144,61 +153,33 @@ impl super::HomeView {
                     ep.vid_index,
                 )
                 .await;
-                let prepared = prepare(
-                    &state,
-                    &ep.vid,
-                    &progress_key,
-                    preferred_definition,
-                )
-                .await?;
+                let prepared =
+                    prepare(&state, &ep.vid, &progress_key, preferred_definition).await?;
                 // 在线起播后按两壳共用的动态策略预取后续集。
                 hongguo_service::play_service::schedule_following_episodes(
                     &state,
                     &item.series_id,
                     ep.vid_index,
                 );
-                if hongguo_bytevc2::is_bytevc2(&prepared.codec) {
-                    // 系统播放器不解 bvc2：先兼容转成 H.264 再走本地源（对齐 Tauri needsCompat）。
-                    log::info!(
-                        "[Home] {} 第 {} 集 codec={}，走兼容转码",
-                        item.series_id,
-                        ep.vid_index,
-                        prepared.codec
-                    );
-                    let compat = hongguo_service::play_service::compat_play::compat_for_playback(
-                        &state,
-                        &item.series_id,
-                        ep.vid_index,
-                        Some(ep.vid.clone()),
-                        Some(prepared.definition),
-                    )
-                    .await?;
-                    let path = hongguo_service::transcode_service::cache::playback_file(
-                        &item.series_id,
-                        ep.vid_index,
-                        Some(prepared.definition),
-                    );
-                    if !path.is_file() {
-                        return Err(hongguo_common::AppError::Media(format!(
-                            "兼容转码完成但缓存未命中（{}）",
-                            compat.url
-                        )));
-                    }
-                    (
-                        hongguo_player::PlaySource::Local { path },
-                        prepared.definitions,
-                        prepared.definition,
-                    )
-                } else {
-                    (
-                        hongguo_player::PlaySource::Online {
-                            vid: ep.vid.clone(),
-                            definition: prepared.definition,
-                        },
-                        prepared.definitions,
-                        prepared.definition,
-                    )
+                if !hongguo_service::capability_service::plays_direct(&prepared.codec) {
+                    return Err(hongguo_common::AppError::CodecUnsupported(
+                        prepared.codec.clone(),
+                    ));
                 }
+                log::info!(
+                    "[Home] {} 第 {} 集 codec={}，走内置软解直播放",
+                    item.series_id,
+                    ep.vid_index,
+                    prepared.codec
+                );
+                (
+                    hongguo_player::PlaySource::Online {
+                        vid: ep.vid.clone(),
+                        definition: prepared.definition,
+                    },
+                    prepared.definitions,
+                    prepared.definition,
+                )
             }
         };
         let on_stall: Option<Arc<dyn Fn() + Send + Sync>> = {

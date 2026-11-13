@@ -1,9 +1,7 @@
 import { useCallback } from 'react';
 import { toast } from 'sonner';
 import { useUiStore } from '@/stores/ui';
-import { applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
-import { app as appApi } from '@/service/commands';
-import { exitPortraitScreen } from '@/features/player/hooks/use-portrait-window';
+import { enterMiniScreen, exitMiniScreen } from '@/hooks/window-presentation';
 
 /**
  * 小屏播放：同一窗口缩成 480×270 落屏幕右下角，侧栏隐藏、控件换紧凑条——
@@ -27,15 +25,8 @@ export function useMiniWindow(params: {
     setSeriesPanelOpen,
   } = params;
   const miniScreen = useUiStore((s) => s.miniScreen);
-  const setMiniScreen = useUiStore((s) => s.setMiniScreen);
 
   const enterMini = useCallback(() => {
-    // 全屏窗口的尺寸归系统管（mac 全屏态 set_size 无效）：进小屏先退全屏
-    if (useUiStore.getState().windowFullscreen) {
-      void applyWindowFullscreen(false).catch(() => undefined);
-    }
-    // 竖屏几何快照是单份的：先还原大窗再进小屏，否则小屏快照记的是竖条几何（exitPortraitScreen 幂等）
-    exitPortraitScreen();
     // 大屏的浮层面板带不进 480×270 的小窗：进小屏前一并收掉
     setCommentPanelOpen(false);
     setDanmakuPanelOpen(false);
@@ -43,10 +34,8 @@ export function useMiniWindow(params: {
     setSeriesPanelOpen(false);
     // 悬停态跟着旧控制栏一起卸载（组件卸载不触发 mouseleave）
     setControlsHovered(false);
-    setMiniScreen(true);
-    void appApi.enterMiniScreen().catch((e: Error) => toast.error(e.message));
+    void enterMiniScreen().catch((e: Error) => toast.error(e.message));
   }, [
-    setMiniScreen,
     setCommentPanelOpen,
     setDanmakuPanelOpen,
     setVolumeOpen,
@@ -56,10 +45,9 @@ export function useMiniWindow(params: {
 
   /** 退出小屏：恢复窗口几何。播放器在首页原地，无需任何导航。 */
   const exitMini = useCallback(() => {
-    setMiniScreen(false);
     setControlsHovered(false); // 同 enterMini：悬停态别跨大小屏残留
-    void appApi.exitMiniScreen().catch(() => undefined);
-  }, [setMiniScreen, setControlsHovered]);
+    void exitMiniScreen().catch((e: Error) => toast.error(e.message));
+  }, [setControlsHovered]);
 
   return { miniScreen, enterMini, exitMini };
 }

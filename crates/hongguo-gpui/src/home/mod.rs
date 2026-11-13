@@ -52,7 +52,6 @@ pub(crate) mod downloads_range;
 pub(crate) mod events;
 pub(crate) mod feed;
 pub(crate) mod fmt;
-pub(crate) mod hevc_prompt;
 pub(crate) mod history_cadence;
 pub(crate) mod incognito;
 pub(crate) mod interact;
@@ -359,10 +358,6 @@ pub struct HomeView {
     portrait_full: bool,
     /// 上次落窗用的竖屏比例（变化 >1% 才重适配）。
     portrait_aspect_last: f64,
-    /// 缺 HEVC 扩展的安装引导：本会话点过「暂不安装」就不再打扰。
-    hevc_prompt_dismissed: bool,
-    /// HEVC 扩展安装中（按钮转「下载安装中…」并禁用）。
-    hevc_installing: bool,
     /// 沉浸全屏（播放器全屏按钮/F 键）：OS 全屏 + chrome（顶栏/侧栏）全藏。
     /// 顶栏最大化钮是另一档「应用全屏」——chrome 保留。
     immersive: bool,
@@ -626,8 +621,6 @@ impl HomeView {
             portrait: None,
             portrait_full: false,
             portrait_aspect_last: 0.0,
-            hevc_prompt_dismissed: false,
-            hevc_installing: false,
             immersive: false,
             frameless: false,
             pinned: false,

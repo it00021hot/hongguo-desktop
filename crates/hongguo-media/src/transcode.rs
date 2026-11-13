@@ -1,5 +1,4 @@
-//! 转码结果与文件读取。封装本身在 [`crate::mux`]——平台硬编（VideoToolbox / Media Foundation）编码出的 H.264 都经它落容器，各路产物完全同构。
-//! 纯 Rust 的「HEVC → H.264 重编码」已随播放兜底链一起移除：兜底只剩平台编码器与 ffmpeg 两档，两者都没有的机器直接报错，而不是慢吞吞地软解一整集。
+//! 归档转码结果与文件读取。HEVC 封装在 [`crate::mux`]，各平台编码器和 ffmpeg 产物使用同一输出契约。
 
 use std::path::Path;
 

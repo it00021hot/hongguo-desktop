@@ -3,7 +3,6 @@ import { toast } from 'sonner';
 import { usePlay } from '@/service/queries';
 import { usePlayerStore } from '@/stores/player';
 import { useEvent } from '@/service/tauri/events';
-import { isAppInvokeError } from '@/service/tauri/invoke';
 import { EVENTS } from '@/service/tauri/types';
 import { t } from '@/locales';
 import {
@@ -15,11 +14,17 @@ import {
   writeVolume,
 } from '@/utils/playback-prefs';
 import type { OnlineProgress, VideoDefinition } from '@/service/schema';
-
-/** 取流失败自动重试的节奏：失败页必须持续自动恢复，永不退回死报错。前 4 拍快节奏扛瞬时抖动，之后 30s 一拍长期陪跑。 */
-const AUTO_RETRY_FAST_ATTEMPTS = 4;
-const AUTO_RETRY_FAST_DELAYS_MS = [2_000, 5_000, 10_000, 15_000];
-const AUTO_RETRY_SETTLED_DELAY_MS = 30_000;
+import { useDeviceStatus, useRetryDeviceRegistration } from '@/service/queries/device';
+import { directVideoSource } from './direct-video';
+import {
+  playbackFailure,
+  rejectedPlaybackFailure,
+  playbackRetryDelay,
+  retryAfterRegistration,
+  playbackFailureForEpisode,
+  type PlaybackFailure,
+  type EpisodePlaybackFailure,
+} from './playback-failure';
 
 /**
  * 取流与起播：play mutation、清晰度切换、断供自动重试、取流进度订阅、媒体偏好贴回。
@@ -42,11 +47,23 @@ export function usePlaybackSource(params: {
   // 切集 / 加载中都会让 <video> 被卸载重建，新元素的倍速音量静音一律回默认值；
   // 「用户设的值」以 playback-prefs 进程镜像为准，每次渲染后贴回（见 read/writePlaybackRate）
 
-  const resumeHint = usePlayerStore((s) => s.resumeHint);
   const clearResumeHint = usePlayerStore((s) => s.setResumeHint);
   const [src, setSrc] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [playbackMaterialsError, setPlaybackMaterialsError] = useState(false);
+  const [failureState, setFailureState] = useState<EpisodePlaybackFailure | null>(null);
+  const failure = playbackFailureForEpisode(failureState, episodeKey);
+  const setFailure = useCallback(
+    (next: PlaybackFailure | null) => {
+      setFailureState(next ? { key: episodeKey, failure: next } : null);
+    },
+    [episodeKey],
+  );
+  const error = failure?.message ?? null;
+  const setError = useCallback(
+    (message: string | null) => {
+      setFailure(message ? { kind: 'error.media', message } : null);
+    },
+    [setFailure],
+  );
   /**
    * srcKeyRef 的 state 镜像（同点写入）：渲染期据此判定「切换在途」——
    * 目标已变、新流未到时新剧的封面+加载胶囊立即接管，否则用户看到「切了没反应」。
@@ -79,26 +96,39 @@ export function usePlaybackSource(params: {
   const [activeDefinition, setActiveDefinition] = useState(0);
   const [automaticDefinition, setAutomaticDefinition] = useState(true);
   const [definitions, setDefinitions] = useState<VideoDefinition[]>([]);
-  const [isBytevc2, setIsBytevc2] = useState(false);
 
   const { mutate: play } = usePlay();
+  const { data: registrationStatus } = useDeviceStatus();
+  const { mutate: retryDeviceRegistration, isPending: registrationPending } =
+    useRetryDeviceRegistration();
 
   /** 重新取流接续播放（自动重试与手动重试按钮共用）。 */
   const retryOnline = useCallback(() => {
-    setError(null);
+    setFailure(null);
     setSrc(null);
     setRetry((r) => ({ key: episodeKey, tick: (r.key === episodeKey ? r.tick : 0) + 1 }));
-  }, [episodeKey]);
+  }, [episodeKey, setFailure]);
+
+  const retryRegistration = useCallback(() => {
+    retryDeviceRegistration(undefined, {
+      onError: (cause) => {
+        const target = usePlayerStore.getState();
+        if (target.seriesId === seriesId && target.vidIndex === vidIndex) {
+          setFailure(rejectedPlaybackFailure(cause));
+        }
+      },
+    });
+  }, [retryDeviceRegistration, seriesId, vidIndex, setFailure]);
 
   // 取流健康守护换档到达：正在失败页的话自动重试并明示（换档是后台静默发生，失败页不会自己恢复）；
   // 正在播则不打扰——换档只影响下一次取流，画面与缓存流都不动
   useEvent(
     EVENTS.deviceRegistered,
     useCallback(() => {
-      if (!error || playbackMaterialsError) return;
+      if (!failure || !retryAfterRegistration(failure)) return;
       toast.info(t('player.deviceSwappedRetry'));
       retryOnline();
-    }, [error, playbackMaterialsError, retryOnline]),
+    }, [failure, retryOnline]),
   );
 
   // 取流失败自动重试：按退避节奏自动重取并显示进度，耗尽才退回手动重试；
@@ -109,26 +139,28 @@ export function usePlaybackSource(params: {
     if (autoRetryRef.current.key !== episodeKey) {
       autoRetryRef.current = { key: episodeKey, attempt: 0 };
     }
-    if (!error || playbackMaterialsError) {
+    const attempt = autoRetryRef.current.attempt;
+    const delay =
+      failure && registrationStatus?.isPlaybackReady !== false
+        ? playbackRetryDelay(failure, attempt)
+        : null;
+    if (delay == null) {
       queueMicrotask(() => setAutoRetry(null));
       return;
     }
-    const attempt = autoRetryRef.current.attempt + 1;
-    autoRetryRef.current.attempt = attempt;
-    const show = { attempt };
+    const show = { attempt: attempt + 1 };
     queueMicrotask(() => setAutoRetry(show));
-    const delay =
-      attempt <= AUTO_RETRY_FAST_ATTEMPTS
-        ? AUTO_RETRY_FAST_DELAYS_MS[attempt - 1]
-        : AUTO_RETRY_SETTLED_DELAY_MS;
     const timer = setTimeout(() => {
+      const target = usePlayerStore.getState();
+      if (target.seriesId !== seriesId || target.vidIndex !== vidIndex) return;
       if (autoRetryRef.current.key !== episodeKey || autoRetryRef.current.attempt !== attempt) {
         return;
       }
+      autoRetryRef.current.attempt = attempt + 1;
       retryOnline();
     }, delay);
     return () => clearTimeout(timer);
-  }, [error, episodeKey, playbackMaterialsError, retryOnline]);
+  }, [failure, episodeKey, retryOnline, registrationStatus?.isPlaybackReady, seriesId, vidIndex]);
 
   // 在线取流进度：只认当前这一集，换集后清掉。
   useEvent(
@@ -160,7 +192,7 @@ export function usePlaybackSource(params: {
     const keepPosition = lastKnownRef.current.key === episodeKey ? lastKnownRef.current.time : 0;
 
     // 跨客户端续播提示：本地播放档案没有这一集位置（resumeAt=0）时用提示里的集内位置兜底，消费即清
-    const hint = resumeHint;
+    const hint = usePlayerStore.getState().resumeHint;
     const hintMs =
       hint && hint.seriesId === seriesId && hint.vidIndex === vidIndex ? hint.positionMs / 1000 : 0;
 
@@ -171,13 +203,22 @@ export function usePlaybackSource(params: {
           if (!active) return;
           srcKeyRef.current = episodeKey;
           setSrcKey(episodeKey);
-          setPlaybackMaterialsError(false);
-          setError(res.error || null);
-          setSrc(res.error ? null : res.url);
+          // 只提供 H.264、没标编码或认不出的编码：内置解码器不解，播放也不回落到别的路径。
+          // 这一种用双语词条如实告知；其余在线失败沿用后端原文。
+          const codecUnsupported =
+            res.errorKind === 'error.codecUnsupported' ||
+            (!res.error && (!res.direct || !directVideoSource(res.url)));
+          const nextFailure = codecUnsupported
+            ? playbackFailure('error.codecUnsupported', res.error)
+            : res.error
+              ? playbackFailure(res.errorKind, res.error)
+              : null;
+          setFailure(nextFailure);
+          setSrc(nextFailure ? null : res.url);
+          if (!nextFailure) usePlayerStore.getState().confirmTarget(seriesId, vidIndex);
           setActiveDefinition(res.definition);
           setAutomaticDefinition(res.automaticDefinition);
           setDefinitions(res.definitions);
-          setIsBytevc2(res.needsCompat);
           // 续播位置在 metadata 加载后 seek，优先级：本会话播放点 > 本地 resumeAt > 云端历史提示
           pendingSeek.current = res.error
             ? 0
@@ -186,16 +227,16 @@ export function usePlaybackSource(params: {
               : res.resumeAt > 0
                 ? res.resumeAt
                 : hintMs;
-          if (!res.error && hintMs > 0) clearResumeHint(null);
+          if (!nextFailure && hintMs > 0 && usePlayerStore.getState().resumeHint === hint) {
+            clearResumeHint(null);
+          }
         },
         onError: (e) => {
           if (!active) return;
           srcKeyRef.current = '';
           setSrcKey('');
-          setPlaybackMaterialsError(isAppInvokeError(e) && e.kind === 'error.playbackMaterials');
-          setError(e.message);
+          setFailure(rejectedPlaybackFailure(e));
           setSrc(null);
-          setIsBytevc2(false);
         },
       },
     );
@@ -212,11 +253,11 @@ export function usePlaybackSource(params: {
     episodeKey,
     play,
     retryTick,
-    resumeHint,
     clearResumeHint,
     videoRef,
     srcKeyRef,
     lastKnownRef,
+    setFailure,
   ]);
 
   const handleLoadedMetadata = useCallback(
@@ -270,6 +311,9 @@ export function usePlaybackSource(params: {
   }, []);
 
   return {
+    registrationStatus,
+    retryRegistration,
+    registrationPending,
     src,
     setSrc,
     error,
@@ -277,7 +321,6 @@ export function usePlaybackSource(params: {
     autoRetry,
     retryTick,
     srcKey,
-    setSrcKey,
     srcKeyRef,
     lastKnownRef,
     pendingSeek,
@@ -287,7 +330,6 @@ export function usePlaybackSource(params: {
     activeDefinition,
     automaticDefinition,
     definitions,
-    isBytevc2,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,

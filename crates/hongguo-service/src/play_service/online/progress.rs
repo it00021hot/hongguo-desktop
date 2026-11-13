@@ -19,7 +19,7 @@ pub(crate) fn event_sink(events: &crate::events::ServiceEvents) -> ProgressSink 
 /// 取流是每秒好几 MB 的量，每次都发会把 UI 线程打满。
 pub struct ProgressReporter {
     sink: ProgressSink,
-    /// 前端按 `{seriesId}:{vidIndex}` 过滤事件（与 compat-play-progress 同一格式），别改回裸 vid。
+    /// 前端按 `{seriesId}:{vidIndex}` 过滤事件。
     key: String,
     throttle: crate::download_service::events::ProgressThrottle,
 }

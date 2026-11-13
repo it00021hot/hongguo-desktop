@@ -2,13 +2,14 @@
 
 use serde::Deserialize;
 
-use hongguo_api::history::{
-    GuestPlaybackReport, WatchHistoryPage, delete_watch_history, fetch_watch_history,
-};
+use hongguo_api::history::{GuestPlaybackReport, WatchHistoryPage};
 use hongguo_common::model::LocalHistoryItem;
 use hongguo_common::utils::time::now_ms;
 use hongguo_common::{AppError, AppResult};
-use hongguo_service::app_state::AppState;
+use hongguo_service::{
+    app_state::AppState,
+    history_service::{self, HistoryAccount},
+};
 use tauri::State;
 
 /// 批量删除历史的单条引用（book_id/vid 定位，vid_index 随条带上）。
@@ -20,35 +21,25 @@ pub struct WatchHistoryDeleteRef {
     pub vid_index: i64,
 }
 
-/// 拉一页云端观看历史（官方 App 侧栏「历史」同源）。
 #[tauri::command]
 pub async fn watch_history_list(
     state: State<'_, AppState>,
-    offset: Option<i64>,
+    expected_account: Option<HistoryAccount>,
 ) -> AppResult<WatchHistoryPage> {
-    let env = state.api_env();
-    fetch_watch_history(offset.unwrap_or(0), &env).await
+    history_service::list(state.inner(), expected_account).await
 }
 
-/// 批量删除云端观看历史（read_history/update 的 is_delete+use_soft_delete
-/// 形态）。
 #[tauri::command]
 pub async fn watch_history_delete(
     state: State<'_, AppState>,
     items: Vec<WatchHistoryDeleteRef>,
+    expected_account: Option<HistoryAccount>,
 ) -> AppResult<()> {
-    if state.settings().account.is_none() {
-        return Err(AppError::Auth("历史删除需要先登录".into()));
-    }
-    let env = state.api_env();
     let refs: Vec<(String, String, i64)> = items
         .into_iter()
         .map(|it| (it.series_id, it.vid, it.vid_index))
         .collect();
-    let n = refs.len();
-    delete_watch_history(&refs, &env).await?;
-    log::info!("[History] 批量删除 {n} 条观看历史");
-    Ok(())
+    history_service::delete(state.inner(), &refs, expected_account).await
 }
 
 /// 记录观看历史：本地必记（未登录也有历史、可管理），登录态顺路上报云端——节拍由播放器心跳按播放位置判定（`history-cadence.ts`：新剧 5 秒首报 / 同剧切集立即翻页 / 每 60 秒一拍 / 暂停·切集·退出 force 补记）；上报失败不影响本地行（reported=0 留待补传）。

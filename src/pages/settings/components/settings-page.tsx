@@ -36,8 +36,6 @@ import { AccountCard } from './account-card';
 import { ShortcutCard } from './shortcut-card';
 import { BossKeyCard, resolveBossKeyConflicts } from './boss-key-card';
 import { ToggleRow } from './toggle-row';
-import { offlineQa } from '@/utils/offline-qa';
-import { OfflineQaLocalPlayPanel } from '@/features/offline-qa/local-play-panel';
 
 /** ffmpeg 安装路径随平台：Windows 走 winget + gyan 构建，macOS 走
  *  Homebrew + 官方下载页（官方页列有各 mac 构建源）。 */
@@ -140,8 +138,6 @@ export function SettingsPage() {
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
       {/* 账户（短信登录） */}
       <AccountCard account={current.account ?? null} onChanged={() => void refetchSettings()} />
-
-      {offlineQa() ? <OfflineQaLocalPlayPanel /> : null}
 
       {/* 目录 */}
       <Card>
@@ -295,7 +291,7 @@ export function SettingsPage() {
             <span>{t('settings.transcodeBackend')}</span>
             <Badge
               variant={
-                capability?.platformHwEncoder || capability?.h264HwEncoder
+                capability?.platformHwEncoder || capability?.hevcHwEncoder
                   ? 'success'
                   : capability?.platformEncoder || capability?.hasFfmpeg
                     ? 'warning'
@@ -514,7 +510,7 @@ export function SettingsPage() {
 function backendLabel(cap: DecodeCapability | undefined): string {
   if (!cap) return t('common.loading');
   // macOS 无硬编时 VideoToolbox 走 Apple 软编会话，比 ffmpeg 快但编码仍在 CPU，归「软件加速」
-  if (cap.platformHwEncoder || cap.h264HwEncoder) return t('settings.backendFfmpegHw');
+  if (cap.platformHwEncoder || cap.hevcHwEncoder) return t('settings.backendFfmpegHw');
   if (cap.platformEncoder || cap.hasFfmpeg) return t('settings.backendFfmpegSw');
   return t('settings.backendUnavailable');
 }

@@ -30,7 +30,7 @@ pub fn active_decoder_name() -> &'static str {
     }
 }
 
-/// 一帧 8-bit 4:2:0。10/12-bit 源在打包时右移到 8-bit，供平台 H.264 编码器使用。
+/// 一帧 8-bit 4:2:0。10/12-bit 源在打包时右移到 8-bit，供平台 HEVC 编码器使用。
 ///
 /// 平面缓冲来自本次解码的缓冲池，帧销毁时自动归还——1080p 一帧约 3 MB，
 /// 逐帧向系统要新页再清零比拷贝本身还贵。
@@ -100,6 +100,47 @@ impl PlanePool {
 
     fn give_chroma(&self, buf: Vec<u8>) {
         Self::give(&self.chroma, buf, POOL_MAX_LUMA * 2);
+    }
+}
+
+/// 解码帧缓冲池的对外句柄。帧契约是「8-bit I420 + 归还即复用的平面缓冲」，
+/// 与解核无关——`hongguo-softdec` 的 HEVC 解核经它出帧，和 ByteVC2 走同一份契约。
+#[derive(Clone, Default)]
+pub struct FramePool(Arc<PlanePool>);
+
+impl FramePool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 取一块亮度平面缓冲（可能带着上一帧的容量，内容由调用方覆盖）。
+    pub fn luma(&self) -> Vec<u8> {
+        self.0.take_luma()
+    }
+
+    /// 取一块色度平面缓冲。
+    pub fn chroma(&self) -> Vec<u8> {
+        self.0.take_chroma()
+    }
+
+    /// 把填好的三个平面装成一帧；帧销毁时平面回到本池。
+    pub fn frame(
+        &self,
+        width: usize,
+        height: usize,
+        planes: [Vec<u8>; 3],
+        pts: Option<f64>,
+    ) -> DecodedFrame {
+        let [y, u, v] = planes;
+        DecodedFrame {
+            width,
+            height,
+            y,
+            u,
+            v,
+            pts,
+            pool: Some(Arc::clone(&self.0)),
+        }
     }
 }
 
@@ -235,8 +276,10 @@ fn vvdec_thread_count() -> i32 {
         .unwrap_or(4)
 }
 
+/// 从解码序第 `start_index` 个样本起解到轨尾，按显示序逐帧回调。
+/// `start_index` 须是关键帧；`read(偏移, 长度, 缓冲)` 由调用方供数（在线 Range 或本地文件）。
 #[cfg(feature = "vvdec")]
-pub(crate) fn decode_track_vvdec(
+pub fn decode_track_vvdec(
     track: &Bytevc2Track,
     start_index: usize,
     mut read: impl FnMut(u64, u64, &mut Vec<u8>) -> AppResult<()>,

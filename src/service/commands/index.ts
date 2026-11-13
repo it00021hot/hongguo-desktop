@@ -3,7 +3,6 @@
  * （Tauri 把 JS 对象的键直接映射为 command 参数名）。
  */
 export { app } from './app';
-export { capability } from './capability';
 export { settings } from './settings';
 export { login } from './login';
 export { series } from './series';

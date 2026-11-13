@@ -58,7 +58,7 @@ export function useSaveSettings() {
 - **事件驱动失效**：后端事件到了就 invalidate 对应 key。范例在 `components/layout/app-shell.tsx`：`useEvent(EVENTS.followNotices, …)` 里 `refreshFollow(payload.notices)`（追更通知缓存）；`useEvent(EVENTS.deviceRegistered, …)` 里对 `keys.feedTabs` / `keys.feedRoot` / `keys.rankRoot` 做 `invalidateQueries`（设备换档后重拉身份敏感数据）。
 - **staleTime 有意识地决定**：`useSeriesProgress` 故意不给 staleTime（详情页每次挂载必须现读本地真值），别无脑抄别人的配置。
 - 无限滚动统一走 `useInfiniteStream` 封装（items/hasMore/loadMore 形状，翻页失败不炸整页）。
-- 长任务挂起兜底：invoke 加 `Promise.race` 30s 超时（Rust 热重载会丢在途 invoke 的应答，promise 永不 settle）。
+- `call()` 当前直接等待 invoke，不提供通用 30 秒超时。播放启动只等待注册首轮结果，后续注册恢复归后台协调任务；切集按目标 key 丢弃旧回调，尚无请求级 IPC 取消。
 - 服务端数据不进 zustand、不进组件 state——那是两套缓存打架的根源。
 
 ## Zustand（跨组件 UI/会话状态）
@@ -105,6 +105,6 @@ export const useUiStore = create<UiState>()(
 
 ## 播放器专项（features/player）
 
-最敏感区域：取流/转码兜底/进度持久化/剧终接力/悬浮层状态机/三套交互裁决全在 `features/player/hooks/`（use-playback-source / use-transcode-fallback / use-playback-progress / use-binge-relay / use-player-overlay / use-player-interactions / use-mini-window / use-danmaku-settings）。改动原则：渲染结构不动、逻辑搬家不重写；自带竞态防御（带 key 读时校验、srcKey/cloudCounter 快照），**别当 redundancy 删掉**——每段都是修过的 bug。改完必冒烟：起播→切集→切清晰度→弹幕开关→小屏进出。
+最敏感区域：取流/内置软解直播放/进度持久化/剧终接力/悬浮层状态机/三套交互裁决全在 `features/player/hooks/`（use-playback-source / use-direct-video / use-playback-progress / use-binge-relay / use-player-overlay / use-player-interactions / use-mini-window / use-danmaku-settings）。改动原则：渲染结构不动、逻辑搬家不重写；自带竞态防御（带 key 读时校验、srcKey/cloudCounter 快照），**别当 redundancy 删掉**——每段都是修过的 bug。改完必冒烟：起播→切集→切清晰度→弹幕开关→小屏进出。
 
 - **表情面板定位口径**：浮在发送区**上方**，底边对齐发送区**顶边**——发送区自己的行（附件预览 / 回复目标 / 输入行）永不被面板盖住。评论区主发送框用 `EmojiPickerButton anchorTo="send-area"`（锚点铺满发送区），回复框与弹幕栏是单行输入、贴 trigger 浮起即可（`anchorTo="trigger"`）。两壳口径一致（GPUI 侧见 gpui.md）。自定义 Radix 锚点的两个坑（锚点必须排在 `PopoverTrigger` 之后、锚点要盖住锚定区才跟得上尺寸变化）见 `docs/webview-cdp-testing.md` 坑清单。

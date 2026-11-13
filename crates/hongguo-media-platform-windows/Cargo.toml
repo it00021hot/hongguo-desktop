@@ -42,6 +42,5 @@ windows = { version = "0.62", features = [
 ] }
 
 [features]
-# 门面 test-support 转发：跨 crate 的 e2e 测试通道门控（transcode_h264_for_tests
-# 的 h264_mf 软编回落路径）。生产构建不带，函数不编译。
+# 门面 test-support 转发：跨 crate 的软件 HEVC 编码验证入口。
 test-support = []

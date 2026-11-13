@@ -43,7 +43,7 @@ async fn fetch_with_registry(
     definition: Option<u32>,
     cap: hongguo_api::stream_pick::DecoderCapability,
 ) -> AppResult<hongguo_api::play_url::PlayInfo> {
-    crate::cold_start::wait().await;
+    crate::cold_start::wait(state).await?;
     let env = state.api_env();
     match hongguo_api::play_url::fetch_play_url(vid, definition, cap, &env).await {
         Ok(p) => Ok(p),
@@ -86,7 +86,7 @@ pub async fn prepare(
     if vid.is_empty() {
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
-    crate::cold_start::wait().await;
+    crate::cold_start::wait(state).await?;
     let c = cache();
     // 记下当前集：逐出策略保它、预填礼让它、切走后旧填充据此自杀。
     // 一次只看一集的**语义下有界保留**：全清的话，信息流切剧目标一弹，
@@ -109,7 +109,6 @@ pub async fn prepare(
     let automatic_definition = selection.automatic;
     let play = selection.play;
     let want = play.definition;
-    remember_codec(vid, want, &play.codec);
     // 记真实自动结果供队列查询；它不再跳过下一次的动态决策。
     if definition.is_none() {
         c.remember_auto(vid, want);
@@ -130,6 +129,7 @@ pub async fn prepare(
         return Ok(result);
     }
     c.set_definitions(vid, want, &play.definitions);
+    remember_codec(vid, want, &play.codec);
     let url = hongguo_protocol::stream_url(vid, want);
     // play 整份 move 进后台填充任务，这里先把要回给调用方的字段取出来
     let result = Prepared {
@@ -187,10 +187,9 @@ pub async fn prefetch_stream(
     if vid.is_empty() || bytes == 0 {
         return Ok(());
     }
-    crate::cold_start::wait().await;
+    crate::cold_start::wait(state).await?;
     let c = cache();
-    // 预取与真实播放同一条选流模式：无 HEVC 机器预取的也必须是 h264，
-    // 否则起播时探测结论翻转会命中一条播不了的缓存流。
+    // 预取与起播共用内置解码约束，缓存中不放入无法播放的流。
     match fetch_with_registry(state, vid, progress_key, None, crate::device::stream_cap()).await {
         Ok(_) => {}
         Err(e) => {
@@ -217,6 +216,7 @@ pub async fn prefetch_stream(
         return Ok(());
     }
     c.set_definitions(vid, want, &play.definitions);
+    remember_codec(vid, want, &play.codec);
     // 显式标记预取：keep_only 只豁免这一条，别让在途填充占住串行队列
     c.mark_prefetch(vid, want);
     log::info!("[Online] 预取 {vid} 档位 {want}，后台渐进填充开始");

@@ -12,12 +12,7 @@ authors.workspace = true
 hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
 # 共用底座：统一错误（AppError / AppResult）。
 hongguo-common = { path = "../hongguo-common" }
-# 纯 Rust 编解码核心：解复用 / 参数集读取 / 音轨直通 / 封装（转码管线复用）。
-hongguo-media = { path = "../hongguo-media" }
-# 样本表类型（TrackInfo）：平台硬解要把 hvcC 参数集转 Annex-B 喂解码器。
-hongguo-video = { path = "../hongguo-video" }
-log = "0.4"
-parking_lot = "0.13"
+hongguo-media-videotoolbox = { path = "../hongguo-media-videotoolbox" }
 
 # 本 crate 只在 macOS 目标上编译出内容（其余目标为空壳）。平台专属依赖
 # 为零：VideoToolbox 是纯 C API，手写声明零依赖（vt/ffi.rs），经

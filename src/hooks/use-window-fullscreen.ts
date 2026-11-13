@@ -3,18 +3,15 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { toast } from 'sonner';
 import { tf } from '@/locales';
 import { useUiStore } from '@/stores/ui';
+import { applyWindowFullscreen } from './window-presentation';
+
+export { applyWindowFullscreen };
 
 /**
  * 窗口级全屏，不走元素 requestFullscreen——WKWebView 里元素全屏只置 DOM 状态、原生呈现永不发生，
  * Portal 到 body 的浮层在全屏元素子树外也不可见。store 只是窗口真值的镜像：applyWindowFullscreen
  * 是唯一写入口（先调后端再落 store）；系统侧变化（Esc、mac 绿按钮）经 resize 事件回流（useWindowFullscreenSync）。
  */
-
-/** 设定窗口全屏。后端失败时 store 不翻转，按钮图标不撒谎。 */
-export async function applyWindowFullscreen(on: boolean): Promise<void> {
-  await getCurrentWindow().setFullscreen(on);
-  useUiStore.getState().setWindowFullscreen(on);
-}
 
 /** 全屏状态必然伴随窗口尺寸变化，resize 即对齐信号。 */
 export function useWindowFullscreenSync() {

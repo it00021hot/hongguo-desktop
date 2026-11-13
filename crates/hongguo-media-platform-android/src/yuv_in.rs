@@ -1,28 +1,26 @@
-//! 已解码的 I420 帧 → MediaCodec H.264。ByteVC2 不经过 ffmpeg。
+//! 已解码的 I420 帧 → MediaCodec HEVC。
 
 use hongguo_common::{AppError, AppResult};
-use hongguo_media_platform_api::video::{RateProfile, bitrate_for_profile};
+use hongguo_media_platform_api::video::bitrate_for;
 use hongguo_media_platform_api::{EncodedVideo, I420View};
 
-use super::encode::H264Encoder;
+use super::encode::HevcEncoder;
 use super::yuv::scale_nv12;
 
-/// 把显示序 I420 编成 H.264 Annex-B。
+/// 把显示序 I420 编成 HEVC Annex-B。
 pub struct YuvEncoder {
     scale_to: Option<(usize, usize)>,
     fps: f64,
-    rate: RateProfile,
-    encoder: Option<H264Encoder>,
+    encoder: Option<HevcEncoder>,
     out_dims: Option<(usize, usize)>,
     units: Vec<(f64, Vec<u8>, bool)>,
 }
 
 impl YuvEncoder {
-    pub fn new(scale_to: Option<(usize, usize)>, fps: f64, rate: RateProfile) -> Self {
+    pub fn new(scale_to: Option<(usize, usize)>, fps: f64) -> Self {
         Self {
             scale_to,
             fps,
-            rate,
             encoder: None,
             out_dims: None,
             units: Vec::new(),
@@ -38,8 +36,8 @@ impl YuvEncoder {
             _ => (nv12, frame.width, frame.height),
         };
         if self.encoder.is_none() {
-            let bitrate = bitrate_for_profile(out_w, out_h, self.fps, self.rate);
-            self.encoder = Some(H264Encoder::new(out_w, out_h, self.fps, bitrate)?);
+            let bitrate = bitrate_for(out_w, out_h, self.fps);
+            self.encoder = Some(HevcEncoder::new(out_w, out_h, self.fps, bitrate)?);
             self.out_dims = Some((out_w, out_h));
             log::info!("[ByteVC2] MediaCodec 编码会话 {out_w}x{out_h}");
         }
@@ -53,9 +51,7 @@ impl YuvEncoder {
         self.out_dims
     }
 
-    pub fn take_completed_gop(
-        &mut self,
-    ) -> Option<(Vec<hongguo_media::mux::AnnexbFrame>, f64)> {
+    pub fn take_completed_gop(&mut self) -> Option<(Vec<hongguo_media::mux::AnnexbFrame>, f64)> {
         hongguo_media::mux::split_completed_gop(&mut self.units)
     }
 
@@ -77,10 +73,7 @@ impl YuvEncoder {
             .out_dims
             .ok_or_else(|| AppError::Media("ByteVC2 编码没有分辨率".into()))?;
         if self.units.is_empty() {
-            return Err(AppError::Media("平台编码器没有产出 H.264".into()));
-        }
-        if !self.units[0].2 {
-            self.units[0].2 = true;
+            return Err(AppError::Media("平台编码器没有产出 HEVC".into()));
         }
         Ok(EncodedVideo {
             width: w,

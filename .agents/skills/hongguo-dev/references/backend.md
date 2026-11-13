@@ -88,7 +88,7 @@ pub fn series_by_id(&self, series_id: &str) -> AppResult<Option<Series>> {
 - 签名后不能动 url/body/query（连编码方式都失配）——业务代码永远不碰 signer，client.rs 内部接入。
 - Turso `execute` 只跑第一条语句，多语句 DDL 用 `execute_batch`。
 - 每次重试都要重新签名（时间戳过期）；重试耗尽报 `EmptyResponse` 不是 `Network`。
-- Rust 热重载重启会丢在途 invoke 应答——前端已有 30s 超时兜底，别拆。
+- Rust 热重载重启可能丢在途 invoke 应答；`call()` 当前没有通用超时。播放注册的首轮结果与后台重试分离，不能用前端超时替代后台任务的生命周期管理。
 - 高频进度事件不节流会刷爆 IPC（<0.5% 且 <500ms 不发）。
 - `#[allow]` 被 lint 拒；用 `#[expect(reason)]`。
 - 文件规模：拆分提醒线见 dev-habits『文件规模提醒』（约 300 行，往既有大文件堆方法同样算数）；**新增**源码文件超 800 行 CI 直接拒（`scripts/check-file-size.sh`）——别指望事后拆，写入时就按域分文件（参考 `crates/hongguo-gpui/src/home/` 的模块树）。

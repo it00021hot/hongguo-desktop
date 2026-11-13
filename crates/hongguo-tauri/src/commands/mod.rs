@@ -4,7 +4,6 @@
 
 pub mod app_cmd;
 pub mod boss_key_cmd;
-pub mod capability_cmd;
 // 下载 command 拆成 mod.rs（查询）与 actions.rs（变更）
 pub use download as download_cmd;
 pub mod danmaku_cmd;

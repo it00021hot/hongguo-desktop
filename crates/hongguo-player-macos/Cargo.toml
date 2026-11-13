@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-player-macos"
-description = "红果桌面版 macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数"
+description = "红果桌面版 macOS 内置视频解码：AVSampleBufferDisplayLayer 上屏，AVPlayer 音轨与时钟"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,6 +17,9 @@ log = "0.4"
 tokio = { version = "1", features = ["sync"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# 内置软解直播放（`direct.rs`）：索引、解码（HEVC / ByteVC1 / ByteVC2）与 NV12 打包。
+hongguo-softdec = { path = "../hongguo-softdec" }
+hongguo-common = { path = "../hongguo-common" }
 # 窗口原语与 AVFoundation/HIToolbox 绑定（与 gpui-pre-macos 的 objc2 同版本，
 # 类型必须同源——两套 objc2 是不同的类型）。
 raw-window-handle = "0.6"
@@ -35,15 +38,6 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSURL",
     "NSData",
     "NSArray",
-] }
-# AVPlayerItemVideoOutput 的取样箱（取证用）与 CVBuffer 引用类型。
-objc2-core-foundation = { version = "0.3.2", default-features = false }
-objc2-core-video = { version = "0.3.2", default-features = false, features = [
-    "std",
-    "objc2",
-    "CVBuffer",
-    "CVImageBuffer",
-    "CVPixelBuffer",
 ] }
 # CATransaction：视频子层的几何变更要禁隐式动画（切形态卡顿的根因）。
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = [

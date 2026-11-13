@@ -20,6 +20,24 @@ import { isMac } from '@/utils/platform';
 import { setAndroidLandscape } from '@/utils/android-shell';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
+import {
+  syncWindowPresentation,
+  exitMiniScreen,
+  exitPortraitScreen,
+  restoreNormalWindow,
+} from '@/hooks/window-presentation';
+import { MiniWindowExpandButton } from '@/features/player/components/mini-screen-controls';
+import { MiniDragBar } from '@/features/player/components/mini-drag-bar';
+import { IconButton } from '@/features/player/components/controls/icon-button';
+import {
+  FullscreenIcon,
+  WebFullscreenIcon,
+} from '@/features/player/components/controls/player-icons';
+
+function restoreWindow() {
+  void restoreNormalWindow().catch((error: Error) => toast.error(error.message));
+}
 
 /**
  * 顶栏中部插槽的定位 id：沉浸流/排行榜/新剧把各自的分类 tab 栏 portal
@@ -39,6 +57,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [exitOpen, setExitOpen] = useState(false);
   useEffect(() => {
     void appApi.markWindowReady().catch(() => {});
+    void syncWindowPresentation().catch((e: Error) => toast.error(e.message));
   }, []);
   // Android 返回到路由栈底：MainActivity 经前端桥（main.tsx）转来的退出
   // 意图，弹同一份确认框（桌面是关窗拦下来的同一入口）
@@ -107,6 +126,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // 藏掉，整个窗口只剩播放器（小屏窗口连标题栏都没有，窗口按钮由
   // 紧凑控制条承担）；拖拽由播放页的顶部拖拽条负责。
   const miniScreen = useUiStore((s) => s.miniScreen);
+  const playerControlsMounted = useUiStore((s) => s.playerControlsMounted);
   // 竖屏播放：窗口收窄成竖条，侧栏藏掉——窄条里侧栏会占掉近 1/5 宽，
   // 窄条窗口也没有侧栏的余地；顶栏保留（分类 tab 与窗口钮照常）
   const portrait = useUiStore((s) => s.portrait);
@@ -128,11 +148,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // 窄条窗口配常规页面布局没法用（退出实现
   // 收在 features/player 的 use-portrait-window，这里只做路由侧触发）
   useEffect(() => {
-    if (!playerSurface && useUiStore.getState().portrait) {
-      useUiStore.getState().setPortrait(false);
-      void appApi.exitPortraitScreen().catch(() => undefined);
-    }
-  }, [playerSurface]);
+    if (playerSurface) return;
+    if (miniScreen) void exitMiniScreen().catch((e: Error) => toast.error(e.message));
+    if (portrait) void exitPortraitScreen().catch((e: Error) => toast.error(e.message));
+  }, [playerSurface, miniScreen, portrait]);
   // 无边框同竖屏：只在播放 surface 成立，离开即退出并把 macOS 红绿灯
   // 显回（chrome 条件翻面就回不来了，必须在这里收尾）
   useEffect(() => {
@@ -148,9 +167,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const showChrome = !miniScreen && !playerFullscreen && !playerFrameless;
   const showSidebar = showChrome && !portrait;
+  const detachedWindowControls =
+    !playerControlsMounted && (miniScreen || portrait || playerFullscreen || playerFrameless);
+  useEffect(() => {
+    if (!detachedWindowControls) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.isContentEditable || target?.matches('input, textarea, select')) return;
+      event.preventDefault();
+      restoreWindow();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [detachedWindowControls]);
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden">
+    <div className="relative flex h-full w-full flex-col overflow-hidden">
       <a href="#content" className="skip-to-content">
         {t('common.skipToContent')}
       </a>
@@ -205,6 +238,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       {!miniScreen && !playerFullscreen && !playerFrameless && !portrait && <BottomNav />}
+
+      {detachedWindowControls && (
+        <div className="pointer-events-none absolute inset-0">
+          {!showChrome && <MiniDragBar />}
+          <div className="absolute inset-x-0 bottom-0 z-20 flex justify-end bg-gradient-to-t from-black/75 to-transparent px-2 pt-6 pb-1.5 text-white">
+            <div className="pointer-events-auto">
+              {miniScreen || portrait ? (
+                <MiniWindowExpandButton portrait={portrait} onExpand={restoreWindow} />
+              ) : (
+                <IconButton
+                  label={t(playerFullscreen ? 'player.fullscreen' : 'player.exitFrameless')}
+                  onClick={restoreWindow}
+                >
+                  {playerFullscreen ? <FullscreenIcon exit /> : <WebFullscreenIcon />}
+                </IconButton>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={exitOpen}

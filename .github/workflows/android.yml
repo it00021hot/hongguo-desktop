@@ -69,7 +69,23 @@ jobs:
 
       # beforeBuildCommand（pnpm build，产出 dist/）由 tauri CLI 自动执行
       - name: Build APK (arm64 release)
-        run: pnpm tauri android build --apk --target aarch64
+        env:
+          # 内置软解（HEVC / ByteVC1 / ByteVC2）的 ByteVC2 解码器 VVdeC 从 crate 自带源码经 NDK 交叉构建。
+          # 下面几项在本地 macOS + NDK 29 上逐个踩出来（见 docs/softdec-direct-play-plan.md 第六轮）：
+          # - BUILD_INTERNAL：runner 上没有系统 libvvdec，必须内建；system-deps 读内建产物的 pkg-config 要放行交叉。
+          # - CMAKE_TOOLCHAIN_FILE：给 NDK 工具链（包装文件钉 arm64-v8a / API 24），否则构建脚本重跑时 CMake 丢掉 Android 目标。
+          # - LIBVVDEC_LIB：VVdeC 生成的 .pc 里有 `-l:libunwind.a`（rustc 解析成空库名）和动态 libc++
+          #   （APK 不带 libc++_shared.so），改成静态 libc++；libunwind 由 Rust std 自己链。
+          SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL: always
+          PKG_CONFIG_ALLOW_CROSS_aarch64_linux_android: '1'
+          SYSTEM_DEPS_LIBVVDEC_LIB: vvdec c++_static c++abi atomic m dl
+        run: |
+          # bindgen 生成 vvdec 绑定时要 NDK sysroot 的 C 头（stdio.h 等）；CMake 的 Android 支持认 ANDROID_NDK_ROOT。
+          NDK="${NDK_HOME:-${ANDROID_NDK_HOME:-$ANDROID_NDK_LATEST_HOME}}"
+          export ANDROID_NDK_ROOT="$NDK"
+          export CMAKE_TOOLCHAIN_FILE_aarch64_linux_android="$GITHUB_WORKSPACE/scripts/android-ndk.toolchain.cmake"
+          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--sysroot=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          pnpm tauri android build --apk --target aarch64
 
       - name: Upload APK
         uses: actions/upload-artifact@v7.0.2

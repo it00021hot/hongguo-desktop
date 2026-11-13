@@ -55,8 +55,7 @@ export function usePlaybackProgress(params: {
       queuedHistory = queuedHistory
         .then(() => watchHistory.record(item))
         .then(() => {
-          void queryClient.invalidateQueries({ queryKey: keys.watchHistory, refetchType: 'none' });
-          void queryClient.invalidateQueries({ queryKey: keys.localHistory, refetchType: 'none' });
+          void queryClient.invalidateQueries({ queryKey: keys.watchHistory });
         })
         .catch(() => {});
     },

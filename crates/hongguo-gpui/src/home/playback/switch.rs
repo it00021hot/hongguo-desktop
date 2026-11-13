@@ -368,7 +368,9 @@ impl super::HomeView {
                 match opened {
                     Some(handle) => view.install_player(handle, now, epoch, cx),
                     None => view.handle_play_failure(
-                        hongguo_common::AppError::Media(crate::i18n::t("player.systemUnavailable")),
+                        hongguo_common::AppError::Media(crate::i18n::t(
+                            "player.playbackUnavailable",
+                        )),
                         cx,
                     ),
                 }

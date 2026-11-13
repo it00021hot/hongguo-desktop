@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { bossKeyConflicts, bossKeyCoreKey } from '@/utils/boss-key';
+import { bossKeyConflicts, bossKeyCoreKey, bossKeyFromEvent } from '@/utils/boss-key';
+
+describe('bossKeyFromEvent', () => {
+  const backspace = {
+    key: 'Backspace',
+    code: 'Backspace',
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+  };
+
+  it('录制时仅无修饰退格清除，普通裸键与纯修饰键继续等待', () => {
+    expect(bossKeyFromEvent(backspace)).toBe('');
+    expect(bossKeyFromEvent({ ...backspace, shiftKey: true })).toBeNull();
+    expect(bossKeyFromEvent({ ...backspace, key: 'j', code: 'KeyJ' })).toBeNull();
+    expect(
+      bossKeyFromEvent({ ...backspace, key: 'Control', code: 'ControlLeft', ctrlKey: true }),
+    ).toBeNull();
+    expect(bossKeyFromEvent({ ...backspace, ctrlKey: true })).toBe('CommandOrControl+Backspace');
+  });
+});
 
 describe('bossKeyCoreKey', () => {
   it('取末段裸键并小写化', () => {

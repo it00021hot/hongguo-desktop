@@ -3,7 +3,43 @@
 
 use tauri::AppHandle;
 
-use hongguo_common::AppResult;
+use hongguo_common::model::window::{WindowMode, WindowPresentation};
+use hongguo_common::{AppError, AppResult};
+
+fn window_result<T>(operation: &str, result: tauri::Result<T>) -> AppResult<T> {
+    result.map_err(|error| AppError::Internal(format!("{operation}: {error}")))
+}
+
+fn main_window(app: &AppHandle) -> AppResult<tauri::WebviewWindow> {
+    use tauri::Manager;
+    app.get_webview_window("main")
+        .ok_or_else(|| AppError::NotFound("main window".into()))
+}
+
+#[tauri::command]
+pub fn get_window_presentation(app: AppHandle) -> AppResult<WindowPresentation> {
+    use std::sync::atomic::Ordering;
+    let win = main_window(&app)?;
+    let mode = match current_mode() {
+        crate::window_state::Mode::Normal => WindowMode::Normal,
+        crate::window_state::Mode::Mini => WindowMode::Mini,
+        crate::window_state::Mode::Portrait => WindowMode::Portrait,
+    };
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let is_pinned = window_result("read window pin", win.is_always_on_top())?;
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let is_pinned = false;
+    let is_fullscreen = window_result("read window fullscreen", win.is_fullscreen())?;
+    #[cfg(target_os = "macos")]
+    let is_fullscreen = is_fullscreen || crate::window_fullscreen::is_exiting();
+    Ok(WindowPresentation {
+        mode,
+        is_portrait_full: PORTRAIT_IS_FULL.load(Ordering::Acquire),
+        is_frameless: FRAMELESS.load(Ordering::Acquire),
+        is_pinned,
+        is_fullscreen,
+    })
+}
 
 /// 小屏播放退出时要恢复的窗口几何（进入那一刻的快照，物理坐标）。
 #[derive(Clone, Copy)]
@@ -43,12 +79,12 @@ static FRAMELESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 #[tauri::command]
 pub fn set_traffic_lights_visible(app: AppHandle, visible: bool) -> AppResult<()> {
     use std::sync::atomic::Ordering;
-    FRAMELESS.store(!visible, Ordering::Release);
     #[cfg(target_os = "macos")]
-    set_traffic_lights_hidden(&app, !visible);
+    set_traffic_lights_hidden(&app, !visible)?;
     // Windows/Linux 没有红绿灯；AppHandle 是 Tauri 注入参数，非 macOS 目标显式忽略。
     #[cfg(not(target_os = "macos"))]
     let _ = app;
+    FRAMELESS.store(!visible, Ordering::Release);
     Ok(())
 }
 
@@ -103,37 +139,40 @@ fn place_traffic_lights(app: &AppHandle) {
 /// 且它走 GCD 主队列异步块、事后用 `set_title_bar_style` 补位永远赶不上——
 /// 直接对三颗 `NSWindowButton` setHidden，窗口结构零变化、尺寸语义全程稳定。
 #[cfg(target_os = "macos")]
-fn set_traffic_lights_hidden(app: &AppHandle, hidden: bool) {
+fn set_traffic_lights_hidden(app: &AppHandle, hidden: bool) -> AppResult<()> {
     use objc2_app_kit::{NSWindow, NSWindowButton};
     use tauri::Manager;
 
     // NSWindow/NSButton 的方法不是线程安全的，落到主线程执行
     let app = app.clone();
-    let _ = app.run_on_main_thread({
-        let app = app.clone();
-        move || {
-            let Some(win) = app.get_webview_window("main") else {
-                return;
-            };
-            let Ok(ptr) = win.ns_window() else {
-                return;
-            };
-            let ns_window = unsafe { &*(ptr as *const NSWindow) };
-            for kind in [
-                NSWindowButton::CloseButton,
-                NSWindowButton::MiniaturizeButton,
-                NSWindowButton::ZoomButton,
-            ] {
-                if let Some(btn) = ns_window.standardWindowButton(kind) {
-                    btn.setHidden(hidden);
+    window_result(
+        "set traffic lights",
+        app.run_on_main_thread({
+            let app = app.clone();
+            move || {
+                let Some(win) = app.get_webview_window("main") else {
+                    return;
+                };
+                let Ok(ptr) = win.ns_window() else {
+                    return;
+                };
+                let ns_window = unsafe { &*(ptr as *const NSWindow) };
+                for kind in [
+                    NSWindowButton::CloseButton,
+                    NSWindowButton::MiniaturizeButton,
+                    NSWindowButton::ZoomButton,
+                ] {
+                    if let Some(btn) = ns_window.standardWindowButton(kind) {
+                        btn.setHidden(hidden);
+                    }
+                }
+                // 显回后同线程再钉 origin（AppKit 可能已把灯打回默认位）
+                if !hidden {
+                    align_traffic_lights_on_window(ns_window);
                 }
             }
-            // 显回后同线程再钉 origin（AppKit 可能已把灯打回默认位）
-            if !hidden {
-                align_traffic_lights_on_window(ns_window);
-            }
-        }
-    });
+        }),
+    )
 }
 
 /// 主线程内对已取到的 `NSWindow` 钉红绿灯（供 `align_traffic_lights` /
@@ -212,15 +251,18 @@ fn align_traffic_lights_on_window(ns_window: &objc2_app_kit::NSWindow) {
 
 /// 进入小屏播放（对齐官方客户端的「小屏播放」行为）：**同一个窗口**缩成 480×270、落到工作区右下角——不另开窗口、不藏主窗、不暂停，`<video>` 元素原地不动、播放零中断。
 #[tauri::command]
-pub fn enter_mini_screen(app: AppHandle) -> AppResult<()> {
-    use tauri::Manager;
-    let Some(win) = app.get_webview_window("main") else {
-        return Ok(());
-    };
-
-    // 幂等：已在小屏（有快照）就不重复缩，重复点按钮不该把大窗几何覆盖成 480×270
+pub fn enter_mini_screen(app: AppHandle) -> AppResult<WindowPresentation> {
+    let win = main_window(&app)?;
     if saved_geometry().is_some() {
-        return Ok(());
+        return get_window_presentation(app);
+    }
+    if portrait_restore().is_some() {
+        exit_portrait_screen(app.clone())?;
+    }
+    if get_window_presentation(app.clone())?.is_fullscreen {
+        return Err(AppError::Busy(
+            "window fullscreen exit has not completed".into(),
+        ));
     }
 
     // 常态此刻还是窗口真身：先把当前几何精确写进常态槽位（防抖线程 500ms 一拍，紧接着进形态就关窗会把最后一次拖动落在档外）
@@ -228,25 +270,35 @@ pub fn enter_mini_screen(app: AppHandle) -> AppResult<()> {
 
     // 快照用 inner_size（内容尺寸）：exit 的 set_size 语义就是「设内容尺寸」，拿外框当内容还原会每圈漂移；
     // 红绿灯只 setHidden 后 styleMask 全程不动，外框与内容恒等，快照精确往返
-    let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) else {
-        return Ok(());
-    };
+    let pos = window_result("read window position", win.outer_position())?;
+    let size = window_result("read window size", win.inner_size())?;
+    let maximized = window_result("read window maximized", win.is_maximized())?;
     *saved_geometry() = Some(SavedGeometry {
         x: pos.x,
         y: pos.y,
         width: size.width,
         height: size.height,
-        maximized: win.is_maximized().unwrap_or(false),
+        maximized,
     });
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if maximized {
+        window_result("unmaximize window", win.unmaximize())?;
+    }
 
     // macOS：藏掉原生红绿灯（只 setHidden 三颗圆点，理由见 set_traffic_lights_hidden）；退出时在 exit_mini_screen 里显回
     #[cfg(target_os = "macos")]
-    set_traffic_lights_hidden(&app, true);
+    set_traffic_lights_hidden(&app, true)?;
 
-    let _ = win.set_min_size(Some(tauri::LogicalSize::new(MINI_MIN.0, MINI_MIN.1)));
+    window_result(
+        "set mini minimum size",
+        win.set_min_size(Some(tauri::LogicalSize::new(MINI_MIN.0, MINI_MIN.1))),
+    )?;
     // 上次小窗的几何有效（≥MINI_MIN 且落在任一显示器工作区内）就原样回去——三种窗态各记各的槽位；
     // 没有记忆（首次进小屏）才回 480×270 落角默认
-    if !crate::window_state::apply_saved(&win, crate::window_state::Mode::Mini, MINI_MIN) {
+    if !window_result(
+        "restore mini geometry",
+        crate::window_state::apply_saved(&win, crate::window_state::Mode::Mini, MINI_MIN),
+    )? {
         let mon = win
             .current_monitor()
             .ok()
@@ -259,44 +311,54 @@ pub fn enter_mini_screen(app: AppHandle) -> AppResult<()> {
         // 手动 min/max 而非 clamp：极小工作区下 min>max 时 clamp 会 panic
         let x = (right - w - MINI_MARGIN).max(left);
         let y = (bottom - h - MINI_MARGIN).max(top);
-        let _ = win.set_size(tauri::LogicalSize::new(w, h));
-        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+        window_result("set mini size", win.set_size(tauri::LogicalSize::new(w, h)))?;
+        window_result(
+            "set mini position",
+            win.set_position(tauri::LogicalPosition::new(x, y)),
+        )?;
     }
-    let _ = win.set_focus();
-    Ok(())
+    window_result("focus mini window", win.set_focus())?;
+    get_window_presentation(app)
 }
 
 /// 退出小屏：恢复进入前的窗口几何与最小尺寸约束。没有快照（应用启动就在小屏、或未进过）就只恢复 minSize 约束——尺寸位置保持现状，不瞎动。
 #[tauri::command]
-pub fn exit_mini_screen(app: AppHandle) -> AppResult<()> {
-    use tauri::Manager;
-    let Some(win) = app.get_webview_window("main") else {
-        return Ok(());
-    };
+pub fn exit_mini_screen(app: AppHandle) -> AppResult<WindowPresentation> {
+    let win = main_window(&app)?;
     // 原生红绿灯按模式显回（macOS 小屏时被藏了）——放在「无快照提前 return」之前，异常路径也要还原；
     // 无边框播放开着时保持隐藏：圆点不该在纯画面上复活（FRAMELESS 标记见其定义处）
     #[cfg(target_os = "macos")]
     {
         use std::sync::atomic::Ordering;
-        set_traffic_lights_hidden(&app, FRAMELESS.load(Ordering::Acquire));
+        set_traffic_lights_hidden(&app, FRAMELESS.load(Ordering::Acquire))?;
     }
     // 退出前先把当前小窗几何精确写进小屏槽位（此刻窗态还是小屏，save 按形态路由）：
     // 防抖线程 500ms 一拍，拖完立刻退出时最后一次拖动还悬在档外
     crate::window_state::save(&win);
-    let saved = saved_geometry().take();
-    let _ = win.set_min_size(Some(tauri::LogicalSize::new(MAIN_MIN.0, MAIN_MIN.1)));
+    let saved = *saved_geometry();
+    window_result(
+        "restore window minimum size",
+        win.set_min_size(Some(tauri::LogicalSize::new(MAIN_MIN.0, MAIN_MIN.1))),
+    )?;
     let Some(g) = saved else {
-        return Ok(());
+        return get_window_presentation(app);
     };
     // g.width/height 是进入时的内容尺寸（inner_size），与 set_size 语义一致（见 enter_mini_screen 快照注释）
-    let _ = win.set_size(tauri::PhysicalSize::new(g.width, g.height));
-    let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
+    window_result(
+        "restore window size",
+        win.set_size(tauri::PhysicalSize::new(g.width, g.height)),
+    )?;
+    window_result(
+        "restore window position",
+        win.set_position(tauri::PhysicalPosition::new(g.x, g.y)),
+    )?;
     if g.maximized {
         // desktop-only API，同 enter_portrait_screen 的门控说明
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        let _ = win.maximize();
+        window_result("maximize restored window", win.maximize())?;
     }
-    Ok(())
+    *saved_geometry() = None;
+    get_window_presentation(app)
 }
 
 /// 窗口置顶开关（走 WindowSetAlwaysOnTop）。**窗口级**的会话内状态：大屏置顶后进小屏依然置顶，退出小屏也不清——「钉住」是用户对整个窗口的意图，与窗口大小无关。
@@ -312,7 +374,7 @@ pub fn set_always_on_top(app: AppHandle, enabled: bool) -> AppResult<()> {
     {
         use tauri::Manager;
         if let Some(win) = app.get_webview_window("main") {
-            let _ = win.set_always_on_top(enabled);
+            window_result("set window pin", win.set_always_on_top(enabled))?;
         }
     }
     Ok(())
@@ -326,6 +388,7 @@ pub fn set_always_on_top(app: AppHandle, enabled: bool) -> AppResult<()> {
 
 /// 竖屏退出时要恢复的窗口几何（进入那一刻的快照，语义同 MINI_RESTORE）。
 static PORTRAIT_RESTORE: std::sync::Mutex<Option<SavedGeometry>> = std::sync::Mutex::new(None);
+static PORTRAIT_IS_FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 铺满档退出时要还原的普通档几何（只快照 x/y/w/h）。
 static PORTRAIT_FULL_RESTORE: std::sync::Mutex<Option<(i32, i32, u32, u32)>> =
@@ -361,13 +424,12 @@ pub(crate) fn current_mode() -> crate::window_state::Mode {
 }
 
 /// 按视频宽高比重算竖屏几何并落窗。
-fn fit_portrait(win: &tauri::WebviewWindow, aspect: f64, full: bool) {
+fn fit_portrait(win: &tauri::WebviewWindow, aspect: f64, full: bool) -> AppResult<()> {
     let mon = win.current_monitor().ok().flatten();
     let (left, top, right, bottom) = work_area_logical(mon.as_ref());
-    let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) else {
-        return;
-    };
-    let sf = win.scale_factor().unwrap_or(1.0);
+    let pos = window_result("read portrait position", win.outer_position())?;
+    let size = window_result("read portrait size", win.inner_size())?;
+    let sf = window_result("read window scale", win.scale_factor())?;
     let cur_x = pos.x as f64 / sf;
     let cur_y = pos.y as f64 / sf;
     let cur_w = size.width as f64 / sf;
@@ -398,27 +460,38 @@ fn fit_portrait(win: &tauri::WebviewWindow, aspect: f64, full: bool) {
             .min(right - w)
     };
     let y = if full { top } else { cur_y };
-    let _ = win.set_size(tauri::LogicalSize::new(w, h));
-    let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    window_result(
+        "set portrait size",
+        win.set_size(tauri::LogicalSize::new(w, h)),
+    )?;
+    window_result(
+        "set portrait position",
+        win.set_position(tauri::LogicalPosition::new(x, y)),
+    )
 }
 
 /// 进入竖屏播放。`aspect` 是视频宽高比（w/h），由前端按本壳口径算好传入（非竖屏比回落 9:16）。已在竖屏中幂等。
 #[tauri::command]
-pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
-    use tauri::Manager;
-    let Some(win) = app.get_webview_window("main") else {
-        return Ok(());
-    };
-    // 幂等 + 参数守卫：已进竖屏或 aspect 非正都拒；NaN/0/负数/无穷都拒——NaN 一旦漏进几何计算，set_size 的行为不可预期
-    if portrait_restore().is_some() || !aspect.is_finite() || aspect <= 0.0 {
-        return Ok(());
+pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<WindowPresentation> {
+    use std::sync::atomic::Ordering;
+    let win = main_window(&app)?;
+    validate_aspect(aspect)?;
+    if portrait_restore().is_some() {
+        return get_window_presentation(app);
+    }
+    if saved_geometry().is_some() {
+        exit_mini_screen(app.clone())?;
+    }
+    if get_window_presentation(app.clone())?.is_fullscreen {
+        return Err(AppError::Busy(
+            "window fullscreen exit has not completed".into(),
+        ));
     }
     // 常态此刻还是窗口真身（小屏叠加进来时小屏入口已落过常态槽，幂等无害）：先写进常态槽位再切形态，理由同 enter_mini_screen
     crate::window_state::save(&win);
-    let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) else {
-        return Ok(());
-    };
-    let maximized = win.is_maximized().unwrap_or(false);
+    let pos = window_result("read window position", win.outer_position())?;
+    let size = window_result("read window size", win.inner_size())?;
+    let maximized = window_result("read window maximized", win.is_maximized())?;
     *portrait_restore() = Some(SavedGeometry {
         x: pos.x,
         y: pos.y,
@@ -426,22 +499,32 @@ pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
         height: size.height,
         maximized,
     });
-    let _ = win.set_min_size(Some(tauri::LogicalSize::new(
-        PORTRAIT_MIN.0,
-        PORTRAIT_MIN.1,
-    )));
+    window_result(
+        "set portrait minimum size",
+        win.set_min_size(Some(tauri::LogicalSize::new(
+            PORTRAIT_MIN.0,
+            PORTRAIT_MIN.1,
+        ))),
+    )?;
     // 最大化进竖屏：退最大化直接进铺满档；普通进入优先回上次竖屏槽位，没有记忆才按比例现算
     if maximized {
         // maximize/unmaximize 是 desktop-only API；移动端该分支不可达（前端未适配窗口形态），只跳过最大化还原本身
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        let _ = win.unmaximize();
-        fit_portrait(&win, aspect, true);
-    } else if !crate::window_state::apply_saved(
-        &win,
-        crate::window_state::Mode::Portrait,
-        PORTRAIT_MIN,
-    ) {
-        fit_portrait(&win, aspect, false);
+        window_result("unmaximize window", win.unmaximize())?;
+        fit_portrait(&win, aspect, true)?;
+    } else if !window_result(
+        "restore portrait geometry",
+        crate::window_state::apply_saved(&win, crate::window_state::Mode::Portrait, PORTRAIT_MIN),
+    )? {
+        fit_portrait(&win, aspect, false)?;
+    }
+    PORTRAIT_IS_FULL.store(maximized, Ordering::Release);
+    get_window_presentation(app)
+}
+
+fn validate_aspect(aspect: f64) -> AppResult<()> {
+    if !aspect.is_finite() || aspect <= 0.0 {
+        return Err(AppError::InvalidArgs("invalid portrait aspect".into()));
     }
     Ok(())
 }
@@ -450,70 +533,81 @@ pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
 /// 铺满与否由前端镜像态传入；不在竖屏中则忽略。
 #[tauri::command]
 pub fn fit_portrait_screen(app: AppHandle, aspect: f64, full: bool) -> AppResult<()> {
-    use tauri::Manager;
-    if portrait_restore().is_none() || !aspect.is_finite() || aspect <= 0.0 {
+    if portrait_restore().is_none() {
         return Ok(());
     }
-    let Some(win) = app.get_webview_window("main") else {
-        return Ok(());
-    };
-    fit_portrait(&win, aspect, full);
-    Ok(())
+    validate_aspect(aspect)?;
+    fit_portrait(&main_window(&app)?, aspect, full)
 }
 
 /// 铺满档切换：普通→铺满先快照当前几何再撑满；铺满→普通还原快照（没有快照——最大化直接进来的——就从当前几何按普通档重算）。
 #[tauri::command]
-pub fn set_portrait_full(app: AppHandle, aspect: f64, full: bool) -> AppResult<()> {
-    use tauri::Manager;
-    if portrait_restore().is_none() {
-        return Ok(());
+pub fn set_portrait_full(app: AppHandle, aspect: f64, full: bool) -> AppResult<WindowPresentation> {
+    use std::sync::atomic::Ordering;
+    validate_aspect(aspect)?;
+    if portrait_restore().is_none() || PORTRAIT_IS_FULL.load(Ordering::Acquire) == full {
+        return get_window_presentation(app);
     }
-    let Some(win) = app.get_webview_window("main") else {
-        return Ok(());
-    };
+    let win = main_window(&app)?;
     if full {
-        let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) else {
-            return Ok(());
-        };
+        let pos = window_result("read portrait position", win.outer_position())?;
+        let size = window_result("read portrait size", win.inner_size())?;
         *portrait_full_restore() = Some((pos.x, pos.y, size.width, size.height));
-        fit_portrait(&win, aspect, true);
+        fit_portrait(&win, aspect, true)?;
     } else {
-        let saved = portrait_full_restore().take();
+        let saved = *portrait_full_restore();
         match saved {
             Some((x, y, w, h)) => {
-                let _ = win.set_size(tauri::PhysicalSize::new(w, h));
-                let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                window_result(
+                    "restore portrait size",
+                    win.set_size(tauri::PhysicalSize::new(w, h)),
+                )?;
+                window_result(
+                    "restore portrait position",
+                    win.set_position(tauri::PhysicalPosition::new(x, y)),
+                )?;
             }
-            None => fit_portrait(&win, aspect, false),
+            None => fit_portrait(&win, aspect, false)?,
         }
+        *portrait_full_restore() = None;
     }
-    Ok(())
+    PORTRAIT_IS_FULL.store(full, Ordering::Release);
+    get_window_presentation(app)
 }
 
 /// 退出竖屏：还原进入前的窗口几何与最小尺寸约束。
 #[tauri::command]
-pub fn exit_portrait_screen(app: AppHandle) -> AppResult<()> {
-    use tauri::Manager;
-    let Some(win) = app.get_webview_window("main") else {
-        return Ok(());
-    };
+pub fn exit_portrait_screen(app: AppHandle) -> AppResult<WindowPresentation> {
+    use std::sync::atomic::Ordering;
+    let win = main_window(&app)?;
     // 退出前先把当前竖屏几何精确写进竖屏槽位（此刻窗态还是竖屏，save 按形态路由），理由同 exit_mini_screen
     crate::window_state::save(&win);
-    let _ = portrait_full_restore().take();
-    let saved = portrait_restore().take();
-    let _ = win.set_min_size(Some(tauri::LogicalSize::new(MAIN_MIN.0, MAIN_MIN.1)));
+    let saved = *portrait_restore();
     let Some(g) = saved else {
-        return Ok(());
+        return get_window_presentation(app);
     };
+    window_result(
+        "restore window minimum size",
+        win.set_min_size(Some(tauri::LogicalSize::new(MAIN_MIN.0, MAIN_MIN.1))),
+    )?;
     // g.width/height 是进入时的内容尺寸（inner_size），与 set_size 语义一致（见 enter_mini_screen 快照注释）
-    let _ = win.set_size(tauri::PhysicalSize::new(g.width, g.height));
-    let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
+    window_result(
+        "restore window size",
+        win.set_size(tauri::PhysicalSize::new(g.width, g.height)),
+    )?;
+    window_result(
+        "restore window position",
+        win.set_position(tauri::PhysicalPosition::new(g.x, g.y)),
+    )?;
     if g.maximized {
         // desktop-only API，同 enter_portrait_screen 的门控说明
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        let _ = win.maximize();
+        window_result("maximize restored window", win.maximize())?;
     }
-    Ok(())
+    *portrait_full_restore() = None;
+    *portrait_restore() = None;
+    PORTRAIT_IS_FULL.store(false, Ordering::Release);
+    get_window_presentation(app)
 }
 
 /// 显示器工作区（逻辑坐标，`left/top/right/bottom`）：monitor 的 work_area 是物理像素，HiDPI 下要除以缩放系数才是窗口 API 用的逻辑坐标。拿不到显示器时给一版 14" MacBook 的保守估值——宁小勿出界，小窗被夹小一点总比伸到屏幕外强。

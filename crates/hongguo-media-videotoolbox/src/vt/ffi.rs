@@ -1,0 +1,366 @@
+//! VideoToolbox / CoreMedia / CoreVideo 的最小 FFI 声明，只声明转码链路用到的符号。
+//! VideoToolbox 是纯 C API（CF 对象），不需要 ObjC 运行时，手写声明比引 objc2 系省掉一整套版本依赖；`#[link(kind = "framework")]` 在 Apple 目标上以 `-framework` 链接。
+//! 字段/签名以 macOS SDK 头文件为准（VTCompressionSession.h、VTDecompressionSession.h、CMSampleBuffer.h、CVPixelBuffer.h）。
+#![allow(
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    dead_code
+)]
+
+use std::os::raw::c_void;
+
+pub type CFTypeRef = *const c_void;
+pub type CFAllocatorRef = *const c_void;
+pub type CFStringRef = *const c_void;
+pub type CFDictionaryRef = *const c_void;
+pub type CFMutableDictionaryRef = *const c_void;
+pub type CFNumberRef = *const c_void;
+pub type CFBooleanRef = *const c_void;
+pub type CFArrayRef = *const c_void;
+pub type CFIndex = isize;
+pub type OSType = u32;
+pub type OSStatus = i32;
+pub type Boolean = u8;
+
+pub type VTSessionRef = *mut c_void;
+pub type VTDecompressionSessionRef = VTSessionRef;
+pub type VTCompressionSessionRef = VTSessionRef;
+pub type VTPixelTransferSessionRef = *mut c_void;
+pub type CMVideoFormatDescriptionRef = *mut c_void;
+pub type CMSampleBufferRef = *mut c_void;
+pub type CMBlockBufferRef = *mut c_void;
+pub type CVPixelBufferRef = *mut c_void;
+pub type CVPixelBufferPoolRef = *mut c_void;
+pub type CMItemCount = isize;
+
+/// `kCVReturnSuccess`：CoreVideo 返回码 0。
+pub const kCVReturnSuccess: i32 = 0;
+#[cfg(test)]
+pub const kCVReturnWouldExceedAllocationThreshold: i32 = -6689;
+
+/// `CMSampleTimingInfo`（CMSampleBuffer.h）。
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CMSampleTimingInfo {
+    pub duration: CMTime,
+    pub presentationTimeStamp: CMTime,
+    pub decodeTimeStamp: CMTime,
+}
+
+/// `CMTime`（CoreMedia.h）。
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CMTime {
+    pub value: i64,
+    pub timescale: i32,
+    pub flags: u32,
+    pub epoch: i64,
+}
+
+pub type VTDecompressionOutputCallback = unsafe extern "C" fn(
+    decompressionOutputRefCon: *mut c_void,
+    sourceFrameRefCon: *mut c_void,
+    status: OSStatus,
+    infoFlags: u32,
+    imageBuffer: CVPixelBufferRef,
+    presentationTimeStamp: CMTime,
+    presentationDuration: CMTime,
+);
+
+/// `VTDecompressionOutputCallbackRecord`。
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct VTDecompressionOutputCallbackRecord {
+    pub callback: Option<VTDecompressionOutputCallback>,
+    pub refcon: *mut c_void,
+}
+
+pub type VTCompressionOutputCallback = unsafe extern "C" fn(
+    outputCallbackRefCon: *mut c_void,
+    sourceFrameRefCon: *mut c_void,
+    status: OSStatus,
+    infoFlags: u32,
+    sampleBuffer: CMSampleBufferRef,
+);
+
+// —— 常量 ——
+pub const noErr: OSStatus = 0;
+/// `kCMVideoCodecType_HEVC`（'hvc1'）
+pub const kCMVideoCodecType_HEVC: OSType = 0x6876_6331;
+/// `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange`（'420v'，NV12）
+pub const kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange: OSType = 0x3432_3076;
+/// `kVTDecodeFrameFlags`：请求异步解码。不设即同步——DecodeFrame 阻塞到
+/// 帧出来，VT 无法流水线化（实测 1080p HEVC 46.5ms/帧），必须设。
+pub const kVTDecodeFrame_EnableAsynchronousDecompression: u32 = 1 << 0;
+/// 兼容名：转码链等离线场景用同步就够（速度无所谓，同步省一轮回调）。
+pub const kVTDecodeFrame_Synchronous: u32 = 0;
+/// `kCFNumberSInt32Type`
+pub const kCFNumberSInt32Type: CFIndex = 3;
+/// `kCFStringEncodingUTF8`
+pub const kCFStringEncodingUTF8: u32 = 0x0800_0100;
+
+// —— CoreFoundation ——
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    pub static kCFAllocatorDefault: CFAllocatorRef;
+    pub static kCFBooleanTrue: CFBooleanRef;
+    pub static kCFBooleanFalse: CFBooleanRef;
+    /// `CFDictionaryKeyCallBacks` / `CFDictionaryValueCallBacks` 的默认值，按不透明内存块声明（64 位下各 48 字节：version + 5 个函数指针）
+    pub static kCFTypeDictionaryKeyCallBacks: [u8; 48];
+    pub static kCFTypeDictionaryValueCallBacks: [u8; 48];
+
+    pub fn CFRelease(cf: CFTypeRef);
+    pub fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
+    pub fn CFArrayGetValueAtIndex(array: CFArrayRef, idx: CFIndex) -> CFTypeRef;
+    pub fn CFBooleanGetValue(boolean: CFBooleanRef) -> Boolean;
+    pub fn CFDictionaryCreate(
+        allocator: CFAllocatorRef,
+        keys: *const CFTypeRef,
+        values: *const CFTypeRef,
+        numValues: CFIndex,
+        keyCallBacks: *const c_void,
+        valueCallBacks: *const c_void,
+    ) -> CFDictionaryRef;
+    pub fn CFDictionaryCreateMutable(
+        allocator: CFAllocatorRef,
+        capacity: CFIndex,
+        keyCallBacks: *const c_void,
+        valueCallBacks: *const c_void,
+    ) -> CFMutableDictionaryRef;
+    pub fn CFDictionaryGetValue(dict: CFDictionaryRef, key: CFTypeRef) -> CFTypeRef;
+    pub fn CFDictionarySetValue(dict: CFMutableDictionaryRef, key: CFTypeRef, value: CFTypeRef);
+    pub fn CFNumberCreate(
+        allocator: CFAllocatorRef,
+        theType: CFIndex,
+        valuePtr: *const c_void,
+    ) -> CFNumberRef;
+}
+
+// —— CoreMedia ——
+#[link(name = "CoreMedia", kind = "framework")]
+unsafe extern "C" {
+    pub static kCMTimeInvalid: CMTime;
+    pub static kCMSampleAttachmentKey_NotSync: CFStringRef;
+
+    pub fn CMTimeMake(value: i64, timescale: i32) -> CMTime;
+    pub fn CMBlockBufferCreateWithMemoryBlock(
+        structureAllocator: CFAllocatorRef,
+        memoryBlock: *mut c_void,
+        blockLength: usize,
+        blockAllocator: CFAllocatorRef,
+        customBlockSource: *const c_void,
+        offsetToData: usize,
+        dataLength: usize,
+        flags: u32,
+        newCMBlockBufferOut: *mut CMBlockBufferRef,
+    ) -> OSStatus;
+    pub fn CMBlockBufferReplaceDataBytes(
+        sourceBytes: *const c_void,
+        destination: CMBlockBufferRef,
+        offsetIntoDestination: usize,
+        dataLength: usize,
+    ) -> OSStatus;
+    pub fn CMBlockBufferGetDataPointer(
+        theBuffer: CMBlockBufferRef,
+        atOffset: usize,
+        lengthAtOffsetOut: *mut usize,
+        totalLengthOut: *mut usize,
+        dataPointerOut: *mut *mut u8,
+    ) -> OSStatus;
+    pub fn CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+        allocator: CFAllocatorRef,
+        parameterSetCount: usize,
+        parameterSetPointers: *const *const u8,
+        parameterSetSizes: *const usize,
+        NALUnitHeaderLength: i32,
+        extensions: CFDictionaryRef,
+        formatDescriptionOut: *mut CMVideoFormatDescriptionRef,
+    ) -> OSStatus;
+    pub fn CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+        videoDesc: CMVideoFormatDescriptionRef,
+        parameterSetIndex: usize,
+        parameterSetPointerOut: *mut *const u8,
+        parameterSetSizeOut: *mut usize,
+        parameterSetCountOut: *mut usize,
+        NALUnitHeaderLengthOut: *mut i32,
+    ) -> OSStatus;
+    pub fn CMSampleBufferCreateReady(
+        allocator: CFAllocatorRef,
+        dataBuffer: CMBlockBufferRef,
+        formatDescription: CMVideoFormatDescriptionRef,
+        sampleCount: CMItemCount,
+        numSampleTimingEntries: CMItemCount,
+        sampleTimingArray: *const CMSampleTimingInfo,
+        numSampleSizeEntries: CMItemCount,
+        // `const size_t *`——曾经错写成 u32，API 按 8 字节读取直接越界
+        sampleSizeArray: *const usize,
+        sampleBufferOut: *mut CMSampleBufferRef,
+    ) -> OSStatus;
+    pub fn CMSampleBufferGetDataBuffer(sbuf: CMSampleBufferRef) -> CMBlockBufferRef;
+    pub fn CMSampleBufferGetFormatDescription(
+        sbuf: CMSampleBufferRef,
+    ) -> CMVideoFormatDescriptionRef;
+    pub fn CMSampleBufferGetNumSamples(sbuf: CMSampleBufferRef) -> CMItemCount;
+    /// 编码器保留了我们传入的显示时间戳，这里原样读回
+    pub fn CMSampleBufferGetOutputPresentationTimeStamp(sbuf: CMSampleBufferRef) -> CMTime;
+    pub fn CMSampleBufferGetSampleAttachmentsArray(
+        sbuf: CMSampleBufferRef,
+        createIfNecessary: Boolean,
+    ) -> CFArrayRef;
+}
+
+// —— CoreVideo ——
+#[link(name = "CoreVideo", kind = "framework")]
+unsafe extern "C" {
+    pub static kCVPixelBufferPixelFormatTypeKey: CFStringRef;
+    pub static kCVPixelBufferWidthKey: CFStringRef;
+    pub static kCVPixelBufferHeightKey: CFStringRef;
+    pub static kCVPixelBufferIOSurfacePropertiesKey: CFStringRef;
+    /// 输出缓冲池的最小缓冲数：解码会话按它预分配 IOSurface，避免每帧新建/回收（VT 默认按需分配，帧率高时分配开销进帧时延）
+    pub static kCVPixelBufferPoolMinimumBufferCountKey: CFStringRef;
+    #[cfg(test)]
+    pub static kCVPixelBufferPoolAllocationThresholdKey: CFStringRef;
+
+    pub fn CVPixelBufferCreate(
+        allocator: CFAllocatorRef,
+        width: usize,
+        height: usize,
+        pixelFormatType: OSType,
+        pixelBufferAttributes: CFDictionaryRef,
+        pixelBufferOut: *mut CVPixelBufferRef,
+    ) -> OSStatus;
+    pub fn CVPixelBufferGetWidth(pixelBuffer: CVPixelBufferRef) -> usize;
+    pub fn CVPixelBufferGetPixelFormatType(pixelBuffer: CVPixelBufferRef) -> OSType;
+    pub fn CVPixelBufferGetHeight(pixelBuffer: CVPixelBufferRef) -> usize;
+    pub fn CVPixelBufferLockBaseAddress(pixelBuffer: CVPixelBufferRef, flags: u32) -> OSStatus;
+    pub fn CVPixelBufferUnlockBaseAddress(pixelBuffer: CVPixelBufferRef, flags: u32) -> OSStatus;
+    pub fn CVPixelBufferGetBaseAddress(pixelBuffer: CVPixelBufferRef) -> *mut c_void;
+    pub fn CVPixelBufferGetBytesPerRow(pixelBuffer: CVPixelBufferRef) -> usize;
+    // 平面级访问：IOSurface 背板下整块分配不等于「stride×高×1.5」的纸面加和（平面各自对齐），按整块 memset 会越界——探测帧填充必须逐平面
+    pub fn CVPixelBufferGetPlaneCount(pixelBuffer: CVPixelBufferRef) -> usize;
+    pub fn CVPixelBufferGetBaseAddressOfPlane(
+        pixelBuffer: CVPixelBufferRef,
+        planeIndex: usize,
+    ) -> *mut c_void;
+    pub fn CVPixelBufferGetBytesPerRowOfPlane(
+        pixelBuffer: CVPixelBufferRef,
+        planeIndex: usize,
+    ) -> usize;
+    pub fn CVPixelBufferGetHeightOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize)
+    -> usize;
+    pub fn CVPixelBufferGetWidthOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize) -> usize;
+    // 输出缓冲池：播放路径按分辨率建一个池反复取 420f 缓冲，避免逐帧新建 IOSurface（分配开销比区间换算本身还大）
+    pub fn CVPixelBufferPoolCreate(
+        allocator: CFAllocatorRef,
+        poolAttributes: CFDictionaryRef,
+        pixelBufferAttributes: CFDictionaryRef,
+        poolOut: *mut CVPixelBufferPoolRef,
+    ) -> i32;
+    pub fn CVPixelBufferPoolCreatePixelBuffer(
+        allocator: CFAllocatorRef,
+        pixelBufferPool: CVPixelBufferPoolRef,
+        pixelBufferOut: *mut CVPixelBufferRef,
+    ) -> i32;
+    #[cfg(test)]
+    pub fn CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
+        allocator: CFAllocatorRef,
+        pixelBufferPool: CVPixelBufferPoolRef,
+        auxAttributes: CFDictionaryRef,
+        pixelBufferOut: *mut CVPixelBufferRef,
+    ) -> i32;
+}
+
+// —— VideoToolbox ——
+#[link(name = "VideoToolbox", kind = "framework")]
+unsafe extern "C" {
+    pub static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
+    pub static kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: CFStringRef;
+    /// 解码侧：显式请求硬件解码器。不传规格（或传 `null`）时 VideoToolbox **可以自由落软解**——实测本机
+    /// 1080p HEVC 落软解要 46.8ms/帧（30fps 只需 33ms）解码跟不上实时、音画偏差一直滚大；播放是实时场景，必须点名要走硬解。
+    pub static kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: CFStringRef;
+    /// 解码会话属性：当前用的到底是不是硬件解码器（建会话后查一次留痕）。
+    pub static kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder: CFStringRef;
+    /// 解码会话属性：实时播放（不是转码/导出）。打开后 VT 允许解码器按实时流取舍（更浅的流水线、更少的参考帧缓存），
+    /// 是播放路径的主流设置（ffmpeg videotoolbox / mpv 同款）；不设时按「离线导出」档跑，帧时延更大，内容帧率逼近吞吐就持续落后。
+    pub static kVTDecompressionPropertyKey_RealTime: CFStringRef;
+    pub static kVTCompressionPropertyKey_AverageBitRate: CFStringRef;
+    pub static kVTCompressionPropertyKey_MaxKeyFrameInterval: CFStringRef;
+    pub static kVTCompressionPropertyKey_AllowFrameReordering: CFStringRef;
+    pub static kVTCompressionPropertyKey_ProfileLevel: CFStringRef;
+    pub static kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder: CFStringRef;
+    pub static kVTCompressionPropertyKey_RealTime: CFStringRef;
+    /// 单帧属性：强制本帧为关键帧（首帧起播 / 片段起点）。
+    pub static kVTEncodeFrameOptionKey_ForceKeyFrame: CFStringRef;
+    pub static kVTProfileLevel_HEVC_Main_AutoLevel: CFStringRef;
+
+    pub fn VTSessionCopyProperty(
+        session: VTSessionRef,
+        propertyKey: CFStringRef,
+        allocator: CFAllocatorRef,
+        propertyValueOut: *mut CFTypeRef,
+    ) -> OSStatus;
+    pub fn VTSessionSetProperty(
+        session: VTSessionRef,
+        propertyKey: CFStringRef,
+        propertyValue: CFTypeRef,
+    ) -> OSStatus;
+    pub fn VTCompressionSessionCreate(
+        allocator: CFAllocatorRef,
+        width: i32,
+        height: i32,
+        codecType: OSType,
+        encoderSpecification: CFDictionaryRef,
+        sourceImageBufferAttributes: CFDictionaryRef,
+        compressedDataAllocator: CFAllocatorRef,
+        outputCallback: Option<VTCompressionOutputCallback>,
+        outputCallbackRefCon: *mut c_void,
+        compressionSessionOut: *mut VTCompressionSessionRef,
+    ) -> OSStatus;
+    pub fn VTCompressionSessionEncodeFrame(
+        session: VTCompressionSessionRef,
+        imageBuffer: CVPixelBufferRef,
+        presentationTimeStamp: CMTime,
+        presentationDuration: CMTime,
+        frameProperties: CFDictionaryRef,
+        sourceFrameRefCon: *mut c_void,
+        infoFlagsOut: *mut u32,
+    ) -> OSStatus;
+    pub fn VTCompressionSessionCompleteFrames(
+        session: VTCompressionSessionRef,
+        completeUntilPresentationTimeStamp: CMTime,
+    ) -> OSStatus;
+    pub fn VTCompressionSessionInvalidate(session: VTCompressionSessionRef);
+
+    pub fn VTDecompressionSessionCreate(
+        allocator: CFAllocatorRef,
+        videoFormatDescription: CMVideoFormatDescriptionRef,
+        videoDecoderSpecification: CFDictionaryRef,
+        destinationImageBufferAttributes: CFDictionaryRef,
+        outputCallback: *const VTDecompressionOutputCallbackRecord,
+        decompressionSessionOut: *mut VTDecompressionSessionRef,
+    ) -> OSStatus;
+    pub fn VTDecompressionSessionDecodeFrame(
+        session: VTDecompressionSessionRef,
+        sampleBuffer: CMSampleBufferRef,
+        decodeFlags: u32,
+        // 每帧的 refCon，原样出现在输出回调的 sourceFrameRefCon 里。曾经漏掉这个参数：
+        // 调用方的 infoFlagsOut 被它吃掉、真正的 infoFlagsOut 读到栈上垃圾，解码一启动就写野指针段错误
+        sourceFrameRefCon: *mut c_void,
+        infoFlagsOut: *mut u32,
+    ) -> OSStatus;
+    pub fn VTDecompressionSessionWaitForAsynchronousFrames(
+        session: VTDecompressionSessionRef,
+    ) -> OSStatus;
+    pub fn VTDecompressionSessionInvalidate(session: VTDecompressionSessionRef);
+
+    pub fn VTPixelTransferSessionCreate(
+        allocator: CFAllocatorRef,
+        pixelTransferSessionOut: *mut VTPixelTransferSessionRef,
+    ) -> OSStatus;
+    pub fn VTPixelTransferSessionTransferImage(
+        session: VTPixelTransferSessionRef,
+        sourceBuffer: CVPixelBufferRef,
+        destinationBuffer: CVPixelBufferRef,
+    ) -> OSStatus;
+}

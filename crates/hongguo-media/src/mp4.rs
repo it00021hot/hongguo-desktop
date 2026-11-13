@@ -25,7 +25,7 @@ pub struct TrackSpec {
     pub mdhd: Vec<u8>,
     /// `hdlr`：`vide` / `soun`
     pub hdlr: Vec<u8>,
-    /// `stsd`：样本描述，内含 `avcC` / `esds`
+    /// `stsd`：样本描述，内含 `hvcC` / `esds`
     pub stsd: Vec<u8>,
     /// `minf` 里的 `vmhd`（视频）或 `smhd`（音频）
     pub header: Vec<u8>,

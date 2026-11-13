@@ -5,12 +5,14 @@
 pub mod bootstrap;
 pub mod commands;
 mod diagnostics;
-mod direct_bytevc2;
-mod direct_bytevc2_source;
+mod direct_video;
+mod direct_video_source;
 mod events;
 mod protocol;
 #[cfg(test)]
 mod testing;
+#[cfg(target_os = "macos")]
+mod window_fullscreen;
 mod window_state;
 
 use hongguo_common::{AppError, AppResult};
@@ -113,6 +115,8 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             if let Some(window) = app.get_webview_window("main") {
                 // 窗口还藏着（mark_window_ready 才亮出）就先恢复上次几何，再挂防抖落盘
                 window_state::restore(&window);
+                #[cfg(target_os = "macos")]
+                window_fullscreen::init(app.handle())?;
                 // 红绿灯按 Cursor 公式钉进 44px 顶栏（tao 配置位不够，见 window_cmd）
                 #[cfg(target_os = "macos")]
                 commands::window_cmd::align_traffic_lights(app.handle());
@@ -200,6 +204,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::app_cmd::exit_app,
             commands::boss_key_cmd::set_boss_key,
             commands::window_cmd::enter_mini_screen,
+            commands::window_cmd::get_window_presentation,
             commands::window_cmd::exit_mini_screen,
             commands::window_cmd::set_always_on_top,
             commands::window_cmd::enter_portrait_screen,
@@ -313,15 +318,9 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::play_cmd::play_prefetch,
             commands::play_cmd::save_playback_position,
             commands::play_cmd::series_progress,
-            // 播放解码能力（探测 / HEVC 扩展按需安装）
-            commands::capability_cmd::playback_capability,
-            commands::capability_cmd::install_hevc_extension,
-            // 转码（合并功能用；播放兜底已下线）
+            // 转码能力（兼容合并用；播放不转码，HEVC / ByteVC1 / ByteVC2 一律内置软解直播放）
             commands::transcode_cmd::decode_capability,
             commands::transcode_cmd::redetect_capability,
-            commands::transcode_cmd::transcode_for_playback,
-            commands::transcode_cmd::cancel_compat_playback,
-            commands::transcode_cmd::qa_offline_local_play,
             // 存储
             commands::storage_cmd::get_storage_usage,
             commands::storage_cmd::get_storage_series,

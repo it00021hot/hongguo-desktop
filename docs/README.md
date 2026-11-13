@@ -17,7 +17,10 @@
 | [hongguo-api-endpoints.md](./hongguo-api-endpoints.md) | 官方接口抓包台账（路径 / 签名 / 响应 / 坑）——改端点前必读 |
 | [hongguo-apk-endpoints.md](./hongguo-apk-endpoints.md) | APK 静态路径清单（「在用」列标本仓已接端点） |
 | [req-hg-003-playback-parity.md](./req-hg-003-playback-parity.md) | 播放对齐调查交接、Craft 证据与运行时验收状态（进行中） |
+| [issue-22-tauri-investigation.md](./issue-22-tauri-investigation.md) | Tauri 播放失败、历史越界、末集接力与迷你窗口恢复的排查、修复及验证记录 |
 | [webview-cdp-testing.md](./webview-cdp-testing.md) | Tauri WebView CDP / macOS WebDriver 调试 |
+| [nsh-shell-plan.md](./nsh-shell-plan.md) | NSH 0.4.0 四端壳实施方案（实施中，Linux/Web 后续迭代） |
+| [nsh-feature-parity.md](./nsh-feature-parity.md) | NSH 与 Tauri 功能对齐、平台验收进度与缺口 |
 
 ## 实现说明（已落地）
 

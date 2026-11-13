@@ -8,7 +8,7 @@ export function MiniDragBar() {
     <div
       data-tauri-drag-region
       onClick={(e) => e.stopPropagation()}
-      className="absolute inset-x-0 top-0 z-30 h-6"
+      className="pointer-events-auto absolute inset-x-0 top-0 z-30 h-6"
     />
   );
 }

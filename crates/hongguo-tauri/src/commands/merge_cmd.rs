@@ -1,4 +1,4 @@
-//! 合并任务：快速合并（流复制，不重编码）与兼容合并（转 H.264）。
+//! 合并任务：无损流复制，或统一编码为 HEVC 后合并。
 //!
 //! 启动编排（占坑/登记/进度/落库/事件）在 service 的 `merge_service::start`；这里只做查询与转调。
 
@@ -7,7 +7,7 @@ use tauri::{AppHandle, State};
 use hongguo_common::model::{MergeCandidate, MergeMode, MergePreflight, MergeTask};
 use hongguo_common::{AppError, AppResult};
 use hongguo_service::app_state::AppState;
-use hongguo_service::merge_service::{candidates, guard, prepare, remove_task};
+use hongguo_service::merge_service::{candidates, prepare, remove_task};
 
 /// 全部合并任务。
 #[tauri::command]
@@ -24,16 +24,6 @@ pub fn get_merge_candidates(state: State<'_, AppState>) -> Vec<MergeCandidate> {
 /// 删除一条合并任务记录（只删记录，不删已产出的文件）。记录若还在 running，这里会**先取消后台线程再删**——只删记录的话线程照样转码吃 CPU，跑完还会把这条记录写回存储（用户刚删掉的东西又冒出来）；取消是协作式的，在集与集之间停下。
 #[tauri::command]
 pub fn delete_merge_task(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    if let Some(task) = state
-        .store
-        .merge_tasks()?
-        .iter()
-        .find(|t| t.id == id)
-        .cloned()
-        && guard::cancel(&task.output_name)
-    {
-        log::info!("[Merge] 已请求取消 {}", task.output_name);
-    }
     remove_task(&state, &id)
 }
 

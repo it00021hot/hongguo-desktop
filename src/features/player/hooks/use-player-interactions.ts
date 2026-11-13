@@ -4,6 +4,9 @@ import { useUiStore } from '@/stores/ui';
 import { app as appApi } from '@/service/commands';
 import { portraitAspectOf } from '@/features/player/hooks/use-portrait-window';
 import { setAndroidLandscape } from '@/utils/android-shell';
+import { toast } from 'sonner';
+import { applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
+import { exitMiniScreen, exitPortraitScreen, setPortraitFull } from '@/hooks/window-presentation';
 
 /**
  * 舞台交互裁决：滚轮/触摸滑动切换、点击画面（播放/暂停）、键盘快捷键。
@@ -121,8 +124,7 @@ export function usePlayerInteractions(params: {
   const shortcutKeys = useShortcutsStore((s) => s.keys);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const video = videoRef.current;
-      if (!video) return;
+      if (e.defaultPrevented) return;
       // 输入框与富文本输入（contentEditable）里打字不劫持按键：←→/空格/↑↓ 是移动光标与输入的一部分
       const el = e.target as HTMLElement | null;
       if (el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable)) {
@@ -131,39 +133,38 @@ export function usePlayerInteractions(params: {
 
       // Esc 固定管「退出选中」——面板语义按键，不随自定义映射
       if (e.key === 'Escape') {
-        // 顺序：先退竖屏铺满回竖条，再退无边框回常规窗口（面板开着时 Esc 仍归面板）
+        if (seriesPanelOpen || commentPanelOpen || danmakuPanelOpen || volumeOpen) return;
         const ui = useUiStore.getState();
-        if (
-          ui.portraitFull &&
-          !seriesPanelOpen &&
-          !commentPanelOpen &&
-          !danmakuPanelOpen &&
-          !volumeOpen
-        ) {
-          ui.setPortraitFull(false);
-          void appApi
-            .setPortraitFull(portraitAspectOf(videoRef.current), false)
-            .catch(() => undefined);
+        if (ui.miniScreen) {
+          e.preventDefault();
+          void exitMiniScreen().catch((error: Error) => toast.error(error.message));
           return;
         }
-        // 无边框播放先退回常规窗口（红绿灯显回）；面板开着时 Esc 仍归面板
-        if (
-          ui.playerFrameless &&
-          !seriesPanelOpen &&
-          !commentPanelOpen &&
-          !danmakuPanelOpen &&
-          !volumeOpen
-        ) {
-          ui.setPlayerFrameless(false);
-          // 与窄屏「全屏观看」成对：Esc 退出时一并解开 Android 横屏锁
+        if (ui.portraitFull) {
+          e.preventDefault();
+          void setPortraitFull(portraitAspectOf(videoRef.current), false).catch((error: Error) =>
+            toast.error(error.message),
+          );
+          return;
+        }
+        if (ui.portrait) {
+          e.preventDefault();
+          void exitPortraitScreen().catch((error: Error) => toast.error(error.message));
+          return;
+        }
+        if (ui.playerFrameless) {
           setAndroidLandscape(false);
-          void appApi.setTrafficLightsVisible(true).catch(() => undefined);
+          void appApi
+            .setTrafficLightsVisible(true)
+            .then(() => ui.setPlayerFrameless(false))
+            .catch((error: Error) => toast.error(error.message));
           return;
         }
-        // 面板开着时 Esc 只管关面板；都没开且选中态时 Esc = 退出选中（滚轮/↑↓ 回到换剧）
-        if (inBinge && !seriesPanelOpen && !commentPanelOpen && !danmakuPanelOpen && !volumeOpen) {
-          setBinge(null);
+        if (ui.windowFullscreen) {
+          void applyWindowFullscreen(false).catch((error: Error) => toast.error(error.message));
+          return;
         }
+        if (inBinge) setBinge(null);
         return;
       }
 
@@ -173,6 +174,18 @@ export function usePlayerInteractions(params: {
         // ↑↓ 语义与滚轮/触摸滑动同源：未选定剧 = 切剧，选定剧 = 切集
         stepBy(dir);
       };
+
+      if (e.key === shortcutKeys.stepNext) {
+        step(1);
+        return;
+      }
+      if (e.key === shortcutKeys.stepPrev) {
+        step(-1);
+        return;
+      }
+
+      const video = videoRef.current;
+      if (!video) return;
 
       if (e.key === shortcutKeys.playPause) {
         e.preventDefault();
@@ -191,10 +204,6 @@ export function usePlayerInteractions(params: {
         video.currentTime = Number.isFinite(video.duration)
           ? Math.min(video.duration, video.currentTime + 5)
           : video.currentTime + 5;
-      } else if (e.key === shortcutKeys.stepNext) {
-        step(1);
-      } else if (e.key === shortcutKeys.stepPrev) {
-        step(-1);
       }
     };
     window.addEventListener('keydown', onKey);

@@ -390,7 +390,6 @@ mod tests {
         assert_eq!(sniff_kind(&[]), None);
     }
 
-
     #[test]
     fn qa_cached_renderable_refuses_outside_symlink() {
         let root = std::env::temp_dir().join(format!(
@@ -435,4 +434,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
-

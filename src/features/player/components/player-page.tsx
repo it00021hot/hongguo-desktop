@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DanmakuLayer } from './danmaku-layer';
 import { EnhancementLayer } from './enhancement-layer';
 import { setAndroidLandscape } from '@/utils/android-shell';
-import { isAndroid } from '@/utils/platform';
+import { STREAM_SCHEME } from '@/utils/scheme';
 import { applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
 import { InteractionRail } from './interaction-rail';
 import { CommentPanel } from './comment-panel';
@@ -18,9 +18,8 @@ import { Loadbar } from './loadbar';
 import { MiniDragBar } from './mini-drag-bar';
 import { BingeEntryBar } from './binge-entry-bar';
 import { PlayerStageChrome } from './player-stage-chrome';
-import { IdleRecoveryPanel, PlayingRecoveryOverlays } from './player-recovery-ui';
+import { IdleRecoveryPanel } from './player-recovery-ui';
 import {
-  usePlaybackCapability,
   useSeriesDetailMeta,
   useSeriesEpisodes,
   useSettings,
@@ -33,11 +32,8 @@ import { cn } from '@/lib/utils';
 import { useIncognitoMode } from './incognito';
 import { useMinimizeAutoPause } from '../hooks/use-minimize-pause';
 import { usePlaybackSource } from '../hooks/use-playback-source';
-import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
-import { useGrowingCompat } from '../hooks/use-growing-compat';
-import { directBytevc2Audio, directBytevc2Source } from '../hooks/direct-bytevc2';
-import { useDirectBytevc2 } from '../hooks/use-direct-bytevc2';
-import { visibleCompatProgress } from '../hooks/growing-fallback';
+import { directVideoAudio, directVideoSource } from '../hooks/direct-video';
+import { useDirectVideo } from '../hooks/use-direct-video';
 import { useFrameHold } from '../hooks/use-frame-hold';
 import { useSwitchSilence } from '../hooks/use-switch-silence';
 import { useSwitchVeil } from '../hooks/use-switch-veil';
@@ -51,7 +47,7 @@ import { useMiniWindow } from '../hooks/use-mini-window';
 import { usePortraitWindow } from '../hooks/use-portrait-window';
 import { useQuietStart } from '../hooks/use-quiet-start';
 import { useDanmakuWindow } from '../hooks/use-danmaku-window';
-import { useDecodeFailureProxy, useMediaRecovery } from '../hooks/use-media-recovery';
+import { useMediaRecovery } from '../hooks/use-media-recovery';
 import { useVideoLive } from '../hooks/use-video-live';
 import { isPickerClickCooldown, markAutoAdvance } from '../playback-signals';
 import { usePinWindow } from '@/hooks/use-pin-window';
@@ -111,6 +107,11 @@ export function PlayerView({
   const vidIndex = usePlayerStore((s) => s.vidIndex);
   const setTarget = usePlayerStore((s) => s.setTarget);
   const episodeKey = seriesId && vidIndex ? `${seriesId}:${vidIndex}` : '';
+  const controlsMounted = Boolean(seriesId && vidIndex);
+  useLayoutEffect(() => {
+    useUiStore.getState().setPlayerControlsMounted(controlsMounted);
+    return () => useUiStore.getState().setPlayerControlsMounted(false);
+  }, [controlsMounted]);
 
   const { data: settings } = useSettings();
   const { deleteEpisode } = useStorageActions();
@@ -127,7 +128,6 @@ export function PlayerView({
     autoRetry,
     retryTick,
     srcKey,
-    setSrcKey,
     srcKeyRef,
     lastKnownRef,
     pendingSeek: pendingSeekRef,
@@ -136,11 +136,13 @@ export function PlayerView({
     activeDefinition,
     automaticDefinition,
     definitions,
-    isBytevc2,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,
     handleVolumeChange,
+    registrationStatus,
+    retryRegistration,
+    registrationPending,
   } = usePlaybackSource({ videoRef, seriesId, vidIndex, episodeKey });
 
   /** 下载面板是否打开。开着时不让连播把这一集换掉。 */
@@ -170,7 +172,6 @@ export function PlayerView({
       episodeKey,
     });
 
-  const { data: hevcPlayable } = usePlaybackCapability();
   const { danmakuOn, danmakuDisplay, updateDanmakuDisplay, toggleDanmaku } = useDanmakuSettings();
   const {
     settings: enhanceSettings,
@@ -179,46 +180,23 @@ export function PlayerView({
     setStatus: setEnhanceStatus,
   } = useEnhancement();
 
-  // 转码兜底：onDecodeFailure 代理须先于 hook 创建
-  const { onDecodeFailure, onDecodeFailureRef } = useDecodeFailureProxy();
   const sourceReady = srcKey === episodeKey && Boolean(src);
-  const directSource = directBytevc2Source(src, isBytevc2);
-  const compatDefinition = sourceReady && activeDefinition > 0 ? activeDefinition : undefined;
-  const {
-    compatSrc,
-    compat: compatProgress,
-    playSrc,
-    streamKey,
-    startCompat,
-    forceCompat,
-    progressive,
-    showCompleteSrc,
-    noteGrowingUnavailable,
-  } = useTranscodeFallback({
-    videoRef,
-    seriesId,
-    vidIndex,
-    episodeKey,
-    error,
-    src,
-    retryTick,
-    srcKeyRef,
-    pendingSeekRef,
-    setSrcKey,
-    currentSeries,
-    hevcPlayable,
-    android: isAndroid(),
-    directPlayback: isBytevc2,
-    definition: compatDefinition,
-    sourceReady,
-    onDecodeFailure,
-  });
+  const directSource = directVideoSource(src);
+  /**
+   * 实际喂给 `<video>` 的地址。重试要换 URL：WebView2 可能缓存了失败瞬间的坏响应，同一个地址重试
+   * 永远拿坏数据；后端只解析 path，query 是纯缓存钉（后端已补 no-store，这层双保险兜旧缓存）。
+   */
+  const playSrc =
+    src && src.includes(STREAM_SCHEME) && retryTick > 0 ? `${src}?r=${retryTick}` : src;
+  /** 当前流的指纹：live/stalled 状态读时校验它，换流（切剧/切集/换清晰度）即失效 */
+  const streamKey = playSrc ?? '';
   const { videoLive, videoStalled, markLive, markStalled } = useVideoLive(streamKey);
   const handleDirectError = (reason: unknown) => {
     const detail = reason instanceof Error ? reason.message : String(reason);
-    setError(`${t('error.media')}（ByteVC2: ${detail}）`);
+    setError(`${t('player.directFailed')}（${detail}）`);
+    setSrc(null);
   };
-  const isDirectBuffering = useDirectBytevc2({
+  const isDirectBuffering = useDirectVideo({
     source: sourceReady && !error ? directSource : null,
     videoRef,
     canvasRef: directCanvasRef,
@@ -231,38 +209,23 @@ export function PlayerView({
     onWaiting: markStalled,
     onError: handleDirectError,
   });
-  const compat = visibleCompatProgress(compatProgress, videoLive);
-  useGrowingCompat(
-    videoRef,
-    progressive ? playSrc : null,
-    seriesId,
-    vidIndex,
-    noteGrowingUnavailable,
-    compatDefinition,
-  );
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;
   // 切换在途时旧流闭嘴（封面已接管画面，声音不能继续压在新剧上）
   const { isSwitchPause, holdIfSwitching } = useSwitchSilence({ videoRef, switching });
 
-  const { decodeBlocking, handleVideoError, clearDecodeBlocked } = useMediaRecovery({
+  const { handleVideoError } = useMediaRecovery({
     videoRef,
     episodeKey,
-    hevcPlayable,
-    startCompat,
-    forceCompat,
     playSrc,
-    compatSrc,
-    compat,
     error,
     setError,
     setSrc,
     retryOnline,
-    onDecodeFailureRef,
   });
 
   // 剧终三级接力与连播锁定抽在 use-binge-relay
-  const { inBinge, setBinge, advanceAfterSeriesEnd, stepEpisode } = useBingeRelay({
+  const { inBinge, setBinge, stepEpisode } = useBingeRelay({
     seriesId,
     vidIndex,
     setTarget,
@@ -315,7 +278,6 @@ export function PlayerView({
     episodeKey,
     videoLive,
     error,
-    compatActive: compat != null,
   });
   const {
     frame: heldFrame,
@@ -332,7 +294,6 @@ export function PlayerView({
     streamKey,
     playSrc,
     error,
-    compatActive: compat != null,
     veiled,
   });
 
@@ -398,7 +359,7 @@ export function PlayerView({
     setAndroidLandscape(false);
     setPhoneDanmakuSendOpen(false);
     void applyWindowFullscreen(false).catch(() => undefined);
-  }, [setPlayerFrameless]);
+  }, [setPlayerFrameless, setPhoneDanmakuSendOpen]);
 
   const onControlsEnter = useCallback(() => {
     setControlsHovered(true);
@@ -438,12 +399,8 @@ export function PlayerView({
     if (autoNext && !downloading) {
       markAutoAdvance();
       armQuiet();
-      const total = currentSeries?.episodes.length ?? 0;
-      if (total > 0 && vidIndex >= total) advanceAfterSeriesEnd();
-      else {
-        setBinge(seriesId);
-        stepEpisode(1);
-      }
+      setBinge(seriesId);
+      stepEpisode(1);
     }
   };
 
@@ -484,36 +441,28 @@ export function PlayerView({
               slideDir === -1 ? 'slide-in-from-top-10' : 'slide-in-from-bottom-10',
             )}
           >
-            {playSrc ? (
+            {playSrc && directSource ? (
               <>
                 <video
                   key={playSrc}
                   ref={videoRef}
-                  src={
-                    directSource
-                      ? directBytevc2Audio(directSource)
-                      : showCompleteSrc
-                        ? playSrc
-                        : undefined
-                  }
+                  src={directVideoAudio(directSource)}
                   crossOrigin="anonymous"
                   className={cn(
                     'absolute inset-0 size-full',
                     coverFill ? 'object-cover' : 'object-contain',
-                    directSource && 'opacity-0',
+                    'opacity-0',
                   )}
-                  autoPlay={!directSource}
-                  onLoadedMetadata={() => handleLoadedMetadataWithDanmaku(!directSource)}
+                  autoPlay={false}
+                  onLoadedMetadata={() => handleLoadedMetadataWithDanmaku(false)}
                   onPlay={(e) => {
                     if (holdIfSwitching(e.currentTarget)) return;
                     markPlayed();
                     setPaused(false);
                   }}
                   onPlaying={(event) => {
-                    if (!directSource) markLive();
                     markStalled(false);
                     report(event.currentTarget.currentTime);
-                    if (!directSource) onFirstFrame?.();
                   }}
                   onPause={(e) => {
                     if (isSwitchPause(e.currentTarget)) return;
@@ -522,19 +471,12 @@ export function PlayerView({
                     setPaused(true);
                     persist(e.currentTarget.currentTime, true);
                   }}
-                  onLoadedData={() => {
-                    if (!directSource) markLive();
-                  }}
                   onWaiting={() => markStalled(true)}
                   onSeeking={seeking}
                   onCanPlay={() => {
                     if (!isDirectBuffering()) markStalled(false);
                   }}
                   onTimeUpdate={(e) => {
-                    if (!directSource && e.currentTarget.currentTime > 0.1) {
-                      markLive();
-                      onFirstFrame?.();
-                    }
                     if (!isDirectBuffering()) markStalled(false);
                     persist(e.currentTarget.currentTime);
                     report(e.currentTarget.currentTime);
@@ -542,25 +484,19 @@ export function PlayerView({
                   onEnded={handleEnded}
                   onRateChange={handleRateChange}
                   onVolumeChange={handleVolumeChange}
-                  onError={(event) => {
-                    if (directSource)
-                      handleDirectError(event.currentTarget.error?.message || t('error.media'));
-                    else handleVideoError();
-                  }}
+                  onError={handleVideoError}
                 />
-                {directSource && (
-                  <canvas
-                    ref={directCanvasRef}
-                    data-bytevc2-direct=""
-                    className={cn(
-                      'pointer-events-none absolute inset-0 size-full',
-                      coverFill ? 'object-cover' : 'object-contain',
-                    )}
-                  />
-                )}
+                <canvas
+                  ref={directCanvasRef}
+                  data-direct-video=""
+                  className={cn(
+                    'pointer-events-none absolute inset-0 size-full',
+                    coverFill ? 'object-cover' : 'object-contain',
+                  )}
+                />
                 <EnhancementLayer
-                  videoRef={videoRef}
-                  directCanvasRef={directSource ? directCanvasRef : undefined}
+                  audioRef={videoRef}
+                  directCanvasRef={directCanvasRef}
                   src={playSrc}
                   available={videoLive}
                   cover={coverFill}
@@ -568,7 +504,7 @@ export function PlayerView({
                   onStatus={setEnhanceStatus}
                 />
                 {coverBackdrop}
-                {(switching || !videoLive) && !compat && !error && (
+                {(switching || !videoLive) && !error && (
                   <div className="absolute inset-0 z-[6] grid place-items-center">
                     <Loader2
                       className="size-8 animate-spin text-white/60"
@@ -634,77 +570,11 @@ export function PlayerView({
                     }}
                   />
                 )}
-                <PlayerStageChrome
-                  videoRef={videoRef}
-                  miniScreen={miniScreen}
-                  portrait={portrait}
-                  portraitFull={portraitFull}
-                  narrow={narrow}
-                  landscapeWatch={landscapeWatch}
-                  chromeShown={chromeShown}
-                  phoneDanmakuComposerOpen={phoneDanmakuComposerOpen}
-                  phoneMoreOpen={phoneMoreOpen}
-                  setPhoneMoreOpen={setPhoneMoreOpen}
-                  phoneSeriesOpen={phoneSeriesOpen}
-                  setPhoneSeriesOpen={setPhoneSeriesOpen}
-                  phoneEnhanceOpen={phoneEnhanceOpen}
-                  setPhoneEnhanceOpen={setPhoneEnhanceOpen}
-                  setPhoneDanmakuSendOpen={setPhoneDanmakuSendOpen}
-                  seriesId={seriesId}
-                  vidIndex={vidIndex}
-                  title={currentSeries?.title}
-                  cover={currentSeries?.cover}
-                  intro={meta?.intro}
-                  episodeCount={currentSeries?.episodeCount ?? 0}
-                  episodes={currentSeries?.episodes ?? []}
-                  currentVidKey={currentVidKey}
-                  inBinge={inBinge}
-                  setBinge={setBinge}
-                  setTarget={setTarget}
-                  stepEpisode={stepEpisode}
-                  exitMini={exitMini}
-                  togglePortrait={togglePortrait}
-                  togglePortraitFull={togglePortraitFull}
-                  enterMini={enterMini}
-                  incognitoOn={incognito.on}
-                  toggleIncognito={incognito.toggle}
-                  pinned={pinned}
-                  togglePinned={togglePinned}
-                  activeDefinition={activeDefinition}
-                  automaticDefinition={automaticDefinition}
-                  definitions={definitions}
-                  onDefinitionChange={handleDefinitionChange}
-                  playSrc={playSrc}
-                  danmakuOn={danmakuOn}
-                  toggleDanmaku={toggleDanmaku}
-                  danmakuDisplay={danmakuDisplay}
-                  updateDanmakuDisplay={updateDanmakuDisplay}
-                  enhanceSettings={enhanceSettings}
-                  updateEnhancement={updateEnhancement}
-                  enhanceStatus={enhanceStatus}
-                  enhanceAvailable={videoLive}
-                  downloading={downloading}
-                  setDownloading={setDownloading}
-                  exitLandscapeWatch={exitLandscapeWatch}
-                  onControlsEnter={onControlsEnter}
-                  onControlsLeave={onControlsLeave}
-                />
-                <PlayingRecoveryOverlays
-                  compat={compat}
-                  compatSrc={compatSrc}
-                  hevcPlayable={hevcPlayable}
-                  decodeBlocking={decodeBlocking}
-                  videoLive={videoLive}
-                  retryOnline={retryOnline}
-                  clearDecodeBlocked={clearDecodeBlocked}
-                  startCompat={startCompat}
-                />
-                {(switching || !videoLive || videoStalled) && !compat && <Loadbar />}
+                {(switching || !videoLive || videoStalled) && <Loadbar />}
               </>
             ) : (
               <IdleRecoveryPanel
                 coverBackdrop={coverBackdrop}
-                compat={compat}
                 chromeShown={chromeShown}
                 miniScreen={miniScreen}
                 vidIndex={vidIndex}
@@ -712,8 +582,69 @@ export function PlayerView({
                 autoRetry={autoRetry}
                 buffering={buffering}
                 retryOnline={retryOnline}
+                inBinge={inBinge}
+                onExitBinge={() => setBinge(null)}
+                registrationStatus={registrationStatus}
+                retryRegistration={retryRegistration}
+                registrationPending={registrationPending}
               />
             )}
+            <PlayerStageChrome
+              videoRef={videoRef}
+              mediaAvailable={Boolean(playSrc && directSource && !error)}
+              miniScreen={miniScreen}
+              portrait={portrait}
+              portraitFull={portraitFull}
+              narrow={narrow}
+              landscapeWatch={landscapeWatch}
+              chromeShown={chromeShown || !playSrc || Boolean(error)}
+              phoneDanmakuComposerOpen={phoneDanmakuComposerOpen}
+              phoneMoreOpen={phoneMoreOpen}
+              setPhoneMoreOpen={setPhoneMoreOpen}
+              phoneSeriesOpen={phoneSeriesOpen}
+              setPhoneSeriesOpen={setPhoneSeriesOpen}
+              phoneEnhanceOpen={phoneEnhanceOpen}
+              setPhoneEnhanceOpen={setPhoneEnhanceOpen}
+              setPhoneDanmakuSendOpen={setPhoneDanmakuSendOpen}
+              seriesId={seriesId}
+              vidIndex={vidIndex}
+              title={currentSeries?.title}
+              cover={currentSeries?.cover}
+              intro={meta?.intro}
+              episodeCount={currentSeries?.episodeCount ?? 0}
+              episodes={currentSeries?.episodes ?? []}
+              currentVidKey={currentVidKey}
+              inBinge={inBinge}
+              setBinge={setBinge}
+              setTarget={setTarget}
+              stepEpisode={stepEpisode}
+              exitMini={exitMini}
+              togglePortrait={togglePortrait}
+              togglePortraitFull={togglePortraitFull}
+              enterMini={enterMini}
+              incognitoOn={incognito.on}
+              toggleIncognito={incognito.toggle}
+              pinned={pinned}
+              togglePinned={togglePinned}
+              activeDefinition={activeDefinition}
+              automaticDefinition={automaticDefinition}
+              definitions={definitions}
+              onDefinitionChange={handleDefinitionChange}
+              playSrc={playSrc}
+              danmakuOn={danmakuOn}
+              toggleDanmaku={toggleDanmaku}
+              danmakuDisplay={danmakuDisplay}
+              updateDanmakuDisplay={updateDanmakuDisplay}
+              enhanceSettings={enhanceSettings}
+              updateEnhancement={updateEnhancement}
+              enhanceStatus={enhanceStatus}
+              enhanceAvailable={videoLive}
+              downloading={downloading}
+              setDownloading={setDownloading}
+              exitLandscapeWatch={exitLandscapeWatch}
+              onControlsEnter={onControlsEnter}
+              onControlsLeave={onControlsLeave}
+            />
           </div>
           {heldFrame && <FrameHold frame={heldFrame} hidden={!holdVisible} cover={coverFill} />}
           <div

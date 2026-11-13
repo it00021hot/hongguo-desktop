@@ -41,9 +41,7 @@ export function seasonFromTitle(title: string): number | null {
   return m ? chineseNumeral(m[1]!) : null;
 }
 
-/** 挑下一季：同系列（带季角标）里大于当前季的最小已上线季。当前季数来源：
- *  works 自身条目角标 → 当前标题解析，都没有视作第 1 季接最小季；
- *  返回 null = 判不出，调用方走自己的回落。 */
+/** 角标缺失时解析当前标题；当前作品不在列表且无季号时沿用无标首季口径。 */
 export function pickNextSeason(
   works: RelatedItem[],
   currentSeriesId: string,
@@ -56,8 +54,7 @@ export function pickNextSeason(
   if (tagged.length === 0) return null;
 
   const self = works.find((w) => w.seriesId === currentSeriesId);
-  const currentNo = self ? seasonNoFromTag(self.tag) : (seasonFromTitle(currentTitle) ?? null);
-  // 无标第一季：plan/v 只回其他季，剩下的带标季全是它的续季
-  if (currentNo == null) return tagged[0]!.item;
+  const currentNo = (self ? seasonNoFromTag(self.tag) : null) ?? seasonFromTitle(currentTitle);
+  if (currentNo == null) return self ? null : tagged[0]!.item;
   return tagged.find(({ no }) => no! > currentNo)?.item ?? null;
 }

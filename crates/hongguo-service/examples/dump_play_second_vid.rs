@@ -23,12 +23,17 @@ async fn main() {
     let state = Arc::new(AppStateInner::with_device(store, anon));
     let reg = register_and_swap(&state, "second-vid").await;
     println!("register ok={} iid={}", reg.ok, reg.iid);
-    if !reg.ok { std::process::exit(2); }
+    if !reg.ok {
+        std::process::exit(2);
+    }
     let env = state.api_env();
     register_content_type(&vid1, 1004);
     match fetch_play_url(&vid1, None, DecoderCapability::full(), &env).await {
         Ok(i) => println!("VID1_FIRST PLAY_OK def={}", i.definition),
-        Err(e) => { println!("VID1_FIRST ERR {e}"); std::process::exit(3); }
+        Err(e) => {
+            println!("VID1_FIRST ERR {e}");
+            std::process::exit(3);
+        }
     }
     clear_batch_cache();
     match fetch_play_url(&vid1, None, DecoderCapability::full(), &env).await {
@@ -39,11 +44,23 @@ async fn main() {
         .await
         .expect("feed");
     let mut n_ok = 0;
-    for it in page.items.iter().filter(|i| !i.vid.is_empty() && i.vid != vid1).take(3) {
+    for it in page
+        .items
+        .iter()
+        .filter(|i| !i.vid.is_empty() && i.vid != vid1)
+        .take(3)
+    {
         register_content_type(&it.vid, it.content_type);
-        print!("VID2_TRY ct={} vid={} title={} … ", it.content_type, it.vid, it.title);
+        print!(
+            "VID2_TRY ct={} vid={} title={} … ",
+            it.content_type, it.vid, it.title
+        );
         match fetch_play_url(&it.vid, None, DecoderCapability::full(), &env).await {
-            Ok(info) => { println!("PLAY_OK def={}", info.definition); n_ok += 1; break; }
+            Ok(info) => {
+                println!("PLAY_OK def={}", info.definition);
+                n_ok += 1;
+                break;
+            }
             Err(e) => println!("ERR {e}"),
         }
     }

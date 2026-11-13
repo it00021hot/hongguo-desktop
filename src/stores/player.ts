@@ -49,12 +49,13 @@ interface PlayerState {
   setSeriesPanelOpen: (open: boolean) => void;
   setCommentPanelOpen: (open: boolean) => void;
   setTarget: (seriesId: string, vidIndex: number) => void;
+  confirmTarget: (seriesId: string, vidIndex: number) => void;
   clear: () => void;
 }
 
 /**
  * 播放器状态：只放跨组件共享的播放上下文，易失数据归 TanStack Query；
- * 兼容模式/连播等持久化设置归 data.json（useSettings），不在 store 抄一份（抄了两边对不上会「改了没反应」）。
+ * 连播等持久化设置归 data.json（useSettings），不在 store 重复保存。
  */
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   seriesId: null,
@@ -83,13 +84,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setSeriesPanelOpen: (open) => set({ seriesPanelOpen: open }),
   setCommentPanelOpen: (open) => set({ commentPanelOpen: open }),
   setTarget: (seriesId, vidIndex) => {
-    // 目标持久化：重启后由首页种子（云端历史排头）自然续上，进度由本地播放档案的 resumeAt 接上
-    writeLastTarget({ seriesId, vidIndex });
     set((s) => ({
       seriesId,
       vidIndex,
       bingeSeriesId: s.bingeSeriesId === seriesId ? s.bingeSeriesId : null,
     }));
+  },
+  confirmTarget: (seriesId, vidIndex) => {
+    const current = get();
+    if (current.seriesId !== seriesId || current.vidIndex !== vidIndex) return;
+    if (!Number.isInteger(vidIndex) || vidIndex < 1) return;
+    writeLastTarget({ seriesId, vidIndex });
   },
   clear: () => {
     writeLastTarget(null);

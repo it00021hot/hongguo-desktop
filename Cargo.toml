@@ -16,11 +16,23 @@ members = [
     "crates/hongguo-bytevc2",
     "crates/hongguo-common",
     "crates/hongguo-gpui",
+    "crates/hongguo-nsh",
+    "crates/hongguo-nsh-android",
+    "crates/hongguo-nsh-ios",
+    "crates/hongguo-nsh-video-api",
+    "crates/hongguo-nsh-video-apple",
+    "crates/hongguo-nsh-video-macos",
+    "crates/hongguo-nsh-video-ios",
+    "crates/hongguo-nsh-video-windows",
+    "crates/hongguo-nsh-video-android",
+    "crates/hongguo-enhancement",
     "crates/hongguo-media",
     "crates/hongguo-media-platform",
     "crates/hongguo-media-platform-api",
     "crates/hongguo-media-platform-android",
     "crates/hongguo-media-platform-macos",
+    "crates/hongguo-media-platform-ios",
+    "crates/hongguo-media-videotoolbox",
     "crates/hongguo-media-platform-windows",
     "crates/hongguo-video",
     # 回放契约 + 系统播放器（门面 / macOS / Windows 实现）：
@@ -32,6 +44,8 @@ members = [
     "crates/hongguo-protocol",
     "crates/hongguo-service",
     "crates/hongguo-signer",
+    # 进程内软解直播放会话（HEVC / ByteVC2），两个壳共用。
+    "crates/hongguo-softdec",
     "crates/hongguo-store",
     "crates/hongguo-stream",
     "crates/hongguo-tauri",
@@ -51,6 +65,16 @@ edition = "2024"
 rust-version = "1.99.1"
 license = "PolyForm-Noncommercial-1.0.0"
 authors = ["hongguo-desktop contributors"]
+
+[workspace.dependencies]
+nsh-core = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3" }
+nsh-base = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-platform-macos = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-platform-windows = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-android-runtime = { package = "nsh-platform-android", git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-platform-ios = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
 
 [patch.crates-io]
 # gpui-pre-windows 0.3.12 的渲染器没有视频画面的落点，而系统播放器
@@ -102,10 +126,17 @@ debug = "line-tables-only"
 #
 # 它确实只是一条断言：release 不编译它，该段 SIMD 路径又由 `if ok` 守住
 # 会整段跳过。不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
-# 现状消费者是 HEIC 封面软解（`hongguo-media::heif`）——纯 Rust 视频转码
-# 兜底移除后，转码不再经过 rusty_h265。
+# 消费者是 HEIC 封面软解（`hongguo-media::heif`）与 HEVC 软解直播放
+# （`hongguo-softdec`）——后者每一帧都过这段滤波，这条配置对它是必需的。
 [profile.dev.package.rusty_h265-accel]
 debug-assertions = false
+
+# 软解直播放的出帧打包（解码器的 u16 平面 → 8-bit I420）是逐像素循环，1080p 一帧
+# 三百多万次。零优化下它不向量化：macOS dev 构建采样，解码线程约 63% 的时间耗在
+# 这一个循环上，1080p 30fps 的片子 1× 就吃满一个核，2× 直接跟不上（2026-11-11 实测）。
+# workspace 成员默认不吃下面那条 `"*"`，所以单独点名；release 不受影响。
+[profile.dev.package.hongguo-softdec]
+opt-level = 2
 
 # 依赖在 dev 下也开 O2：GPUI 壳（gpui-pre Windows 平台层）每个 vsync 都
 # 全量重绘一次窗口，dev 档零优化的 taffy 布局 + 绘制 + 文字排版让内容页

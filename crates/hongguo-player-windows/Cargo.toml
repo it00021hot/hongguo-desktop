@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-player-windows"
-description = "红果桌面版 Windows 系统播放器：Media Foundation Media Engine（frame-server）+ 自定义 IMFByteStream + 视频 quad 同画布"
+description = "红果桌面版 Windows 内置视频解码与 MediaEngine 音轨播放"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,10 +17,12 @@ log = "0.4"
 tokio = { version = "1", features = ["sync"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# 内置视频解码：建索引、解码、I420→BGRA；错误类型随它走。
+hongguo-common = { path = "../hongguo-common" }
+hongguo-softdec = { path = "../hongguo-softdec" }
 # 宿主窗口句柄（契约层传进来的 RawWindowHandle）。
 raw-window-handle = "0.6"
-# Media Foundation（Media Engine frame-server / IMFByteStream）与 D3D11 帧纹理。
-# 视频经 TransferVideoFrame 写入渲染器纹理，由 gpui-pre-windows 的 video_quad 同画布画出。
+# MediaEngine 音轨/IMFByteStream 与 D3D11 软解帧纹理。
 # 0.62 已在依赖图里（tauri/wry/sysinfo 传递引入），按需裁剪 feature。
 windows = { version = "0.62", features = [
     "Win32_Foundation",
@@ -35,5 +37,5 @@ windows = { version = "0.62", features = [
 # `windows_core::`，必须直接依赖且与 windows 同版本。
 windows-core = "0.62"
 # 视频 quad（vendored 补丁，见根 Cargo.toml 的 [patch.crates-io]）：
-# TransferVideoFrame 的纹理与 GPUI 内容画进同一张渲染目标。
+# 软解帧纹理与 GPUI 内容画进同一张渲染目标。
 gpui-pre-windows = { version = "=0.3.12", package = "gpui-pre-windows", default-features = false }
