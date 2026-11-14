@@ -1895,6 +1895,7 @@ dependencies = [
  "hongguo-api",
  "hongguo-bytevc2",
  "hongguo-common",
+ "hongguo-media",
  "hongguo-media-platform",
  "hongguo-media-types",
  "hongguo-native-clock",
