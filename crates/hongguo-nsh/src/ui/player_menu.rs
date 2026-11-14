@@ -1,4 +1,4 @@
-use super::{Icon, icon, motion::FAST_MS, radii};
+use super::{Icon, icon, motion::FAST_MS, player_popup, radii};
 use nsh_base::{MenuEvent, PopoverEvent, SheetEvent, theme};
 use nsh_core::prelude::*;
 mod navigation;
@@ -27,15 +27,10 @@ pub(crate) fn player_menu(
         })
         .on_close(move || trigger_ref.focus())
         .popup_style(|style| {
-            style
+            player_popup::surface(style)
                 .min_w(px(128.0))
                 .p_1()
-                .rounded(radii::control())
-                .border_1()
-                .border_color(move || theme().border)
-                .bg(move || theme().popover)
-                .text_color(move || theme().popover_foreground)
-                .shadow_md()
+                .rounded(radii::card())
                 .origin_bottom_right()
                 .transition()
                 .duration(move || if reduce_motion() { 0.0 } else { FAST_MS })
@@ -59,7 +54,7 @@ pub(crate) fn player_menu(
                 }
             })
         })
-        .backdrop_style(|style| style.bg(move || theme().background.opacity(0.6)))
+        .backdrop_style(|style| style.bg(move || video_surface().opacity(0.6)))
         .child(dynamic(move || {
             navigation::body(open, move || change.with(|change| change(false)), &content)
         }))
@@ -90,12 +85,12 @@ pub(crate) fn player_menu_option(
         .flex_row()
         .items_center()
         .gap_2()
-        .text_color(move || theme().popover_foreground)
-        .hover(|style| style.bg(move || theme().accent))
+        .text_color(video_ink)
+        .hover(|style| style.bg(move || player_popup::color("video-picker-hover")))
         .focus(|style| {
             style
-                .bg(move || theme().accent)
-                .text_color(move || theme().accent_foreground)
+                .bg(move || player_popup::color("video-picker-hover"))
+                .text_color(video_ink)
         })
         .disabled_style(|style| style.opacity(0.45))
         .child(
@@ -116,26 +111,6 @@ pub(crate) fn player_menu_label(label: impl IntoReactive<SharedString>) -> Text 
         .py_1p5()
 }
 
-/// A freeform player panel: an anchored desktop popup, a native mobile sheet.
-pub(crate) fn player_panel(
-    open: impl IntoReactive<bool>,
-    change: impl Fn(bool) + 'static,
-    title: impl IntoReactive<SharedString>,
-    width: f32,
-    trigger: nsh_base::ButtonElement,
-    content: impl Fn() -> View + 'static,
-) -> View {
-    panel(
-        open,
-        change,
-        title,
-        width,
-        trigger,
-        content,
-        PanelKind::Ordinary,
-    )
-}
-
 pub(crate) fn player_danmaku_panel(
     open: impl IntoReactive<bool>,
     change: impl Fn(bool) + 'static,
@@ -150,6 +125,23 @@ pub(crate) fn player_danmaku_panel(
         trigger,
         content,
         PanelKind::Danmaku,
+    )
+}
+
+pub(crate) fn player_volume_panel(
+    open: impl IntoReactive<bool>,
+    change: impl Fn(bool) + 'static,
+    trigger: nsh_base::ButtonElement,
+    content: impl Fn() -> View + 'static,
+) -> View {
+    panel(
+        open,
+        change,
+        move || crate::i18n::tr("player.volume"),
+        56.0,
+        trigger,
+        content,
+        PanelKind::Volume,
     )
 }
 
@@ -172,9 +164,9 @@ pub(crate) fn player_enhancement_panel(
 
 #[derive(Clone, Copy)]
 enum PanelKind {
-    Ordinary,
     Episodes,
     Danmaku,
+    Volume,
 }
 
 pub(crate) fn player_episode_panel(
@@ -223,6 +215,7 @@ fn panel(
 ) -> View {
     let episodes = matches!(kind, PanelKind::Episodes);
     let danmaku = matches!(kind, PanelKind::Danmaku);
+    let volume = matches!(kind, PanelKind::Volume);
     let open = open.into_reactive();
     let open = computed(move || open.get());
     effect(move || {
@@ -250,7 +243,7 @@ fn panel(
             nsh_base::popover()
                 .open(move || Some(open.get()))
                 .placement(Placement::Top)
-                .align(Align::End)
+                .align(if volume { Align::Center } else { Align::End })
                 .offset(px(if episodes || danmaku { 12.0 } else { 8.0 }))
                 .margin(px(8.0))
                 .trigger(retained_trigger(trigger, trigger_ref, open, change))
@@ -261,7 +254,7 @@ fn panel(
                 })
                 .on_close(move || trigger_ref.focus())
                 .popup_style(move |style| {
-                    style
+                    player_popup::surface(style)
                         .w(px(width))
                         .max_w(move || px(window().width.0 * 0.92))
                         .max_h(move || {
@@ -271,18 +264,14 @@ fn panel(
                                 (window().height.0 - 96.0).max(96.0)
                             })
                         })
-                        .p_4()
-                        .rounded(if danmaku { px(12.0) } else { radii::card() })
-                        .border(px(if episodes { 0.0 } else { 1.0 }))
-                        .border_color(move || video_ink().opacity(0.1))
-                        .bg(move || {
-                            if episodes {
-                                theme().color("video-picker").expect("video picker token")
-                            } else {
-                                video_surface().opacity(if danmaku { 0.85 } else { 0.95 })
-                            }
+                        .p(px(if volume { 8.0 } else { 16.0 }))
+                        .rounded(if volume {
+                            radii::control()
+                        } else if danmaku {
+                            px(12.0)
+                        } else {
+                            radii::card()
                         })
-                        .text_color(video_ink)
                         .origin_bottom_right()
                         .transition()
                         .duration(move || if reduce_motion() { 0.0 } else { FAST_MS })
@@ -339,12 +328,10 @@ fn bottom_panel(
             .on_close(move || return_focus.focus())
             .backdrop_style(|style| style.bg(move || video_surface().opacity(0.65)))
             .popup_style(|style| {
-                style
+                player_popup::surface(style)
                     .w(move || window().width)
                     .h(move || px(window().height.0 * 0.72))
                     .rounded(radii::card())
-                    .bg(video_surface)
-                    .text_color(video_ink)
             })
             .child(dynamic(move || {
                 view()

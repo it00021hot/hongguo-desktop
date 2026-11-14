@@ -8,8 +8,22 @@ use nsh_core::prelude::*;
 mod window;
 
 #[component]
+pub fn VisibilityPlaybackProbe() -> impl IntoElement {
+    crate::player::visibility_playback_probe()
+}
+
+#[component]
 /// Offline layout root using the production page presentation components.
 pub fn LayoutPreview() -> impl IntoElement {
+    let visibility = signal(false);
+    on_key("mod+shift+v", move |_| visibility.set(true));
+    view()
+        .flex_1()
+        .child(when(visibility, crate::player::visibility_preview))
+        .child(when(move || !visibility.get(), layout_body))
+}
+
+fn layout_body() -> View {
     crate::view_memory::provide();
     crate::shortcuts::Shortcuts::provide_preview();
     let emoji = signal(false);

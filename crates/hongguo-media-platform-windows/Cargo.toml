@@ -39,7 +39,6 @@ windows = { version = "0.62", features = [
     # 内存流：HEIC 字节 → IStream → WIC 解码器
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Memory",
-    "Win32_System_LibraryLoader",
 ] }
 
 [features]

@@ -53,15 +53,9 @@ fn indexed_seek_uses_prior_random_access_and_retains_signed_ticks() {
 }
 
 #[test]
-fn audio_seek_reads_a_bounded_prior_region_and_movie_duration_keeps_the_audio_tail() {
+fn movie_duration_keeps_the_audio_tail() {
     let source = open(HEVC).unwrap();
     let audio = source.audio.as_ref().unwrap();
-    let start = audio.audio_seek_sample(1.5, 3.0, 48_000);
-    assert!(
-        start > 0,
-        "a late seek must not replay the whole audio track"
-    );
-    assert!(audio.samples[start].pts as f64 / f64::from(audio.info.media_timescale) < 1.4);
     let mut bytes = HEVC.to_vec();
     let moov = find_box(&bytes, 0, bytes.len(), "moov").unwrap();
     for track in parse_boxes(&bytes, moov.start, moov.start + moov.size)
@@ -118,6 +112,14 @@ fn properties(data: &[u8]) -> Vec<u8> {
                     ]
                     .concat(),
                 ));
+                let mut mastering = Vec::new();
+                for value in [10_u16, 11, 20, 21, 30, 31, 40, 41] {
+                    mastering.extend(value.to_be_bytes());
+                }
+                mastering.extend(10_000_000_u32.to_be_bytes());
+                mastering.extend(5_u32.to_be_bytes());
+                entry.extend(build_box(b"mdcv", &mastering));
+                entry.extend(build_box(b"clli", &[3, 232, 1, 144]));
                 entry
             }
             _ => payload.to_vec(),
@@ -149,4 +151,20 @@ fn container_rotation_sar_and_color_survive_indexing_beside_decoder_extradata() 
         (Some(9), Some(16), Some(9), Some(true))
     );
     assert!(!index.video.extradata.is_empty());
+    let mastering = index
+        .video
+        .color
+        .mastering_display
+        .expect("container mastering metadata");
+    assert_eq!(mastering.primaries, [[30, 31], [10, 11], [20, 21]]);
+    assert_eq!(mastering.max_luminance, 10_000_000);
+    assert_eq!(
+        index
+            .video
+            .color
+            .content_light
+            .unwrap()
+            .max_content_light_level,
+        1000
+    );
 }

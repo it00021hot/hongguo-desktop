@@ -1,70 +1,42 @@
-# Windows native video
+# Windows video adapter
 
-Production uses the shared playback session and its actual NSH D3D11 device.
-NV12/P010 hardware frames and original-precision CPU planes enter the same color
-pipeline. The optional enhancement path receives linear FP16; final display
-mapping follows enhancement. NSH `Auto` selects verified FP16/scRGB presentation
-or a reported SDR fallback. No customer decoder selection control is added.
+Ordinary video uses NSH 0.5.0 Video: MediaEngine schedules native decoding and presents
+through NSH's D3D11 canvas. The application does not wrap D3D11VA/D3D12VA with FFmpeg.
 
-## Developer D3D11VA / D3D12VA audit
+This crate presents frames only when native decoding is unavailable, ByteVC2 is selected,
+original precision needs the extended color path, or the user requests frame enhancement.
+HEVC first tries direct D3D11 VLD on NSH's actual drawing device. Main uses NV12;
+Main10 uses P010. This path parses HEVC itself and does not load a system HEVC MFT,
+so a missing Store extension does not prevent hardware decoding when the driver supports it.
+libde265 is used after unsupported profiles/formats or native initialization, submission,
+format-change and import failures. ByteVC2 frames come from VVdeC. Native MediaEngine plays
+the audio-only MP4 view and supplies the clock. Source bytes, audio edits and sample offsets
+are retained; no playback transcoding or stream substitution occurs.
 
-The `decoder-audit` feature is development-only. It opens an explicit local,
-unencrypted H.264/HEVC MP4 fixture; it does not fetch media or access account data.
-Run it on the physical Windows machine whose GPU/display is being evaluated.
-Use the pinned native libraries built by `scripts/native-media.mjs`; the selected
-prefix must include both the D3D11VA2 and D3D12VA hardware accelerators.
+Original-precision planes enter the shared color pipeline. Enhancement receives linear FP16;
+final display mapping follows enhancement. NSH Auto selects supported FP16/scRGB output or
+an explicitly reported SDR mapping. Ordinary Windows 10 1809+ / Windows 11 are the targets.
 
-From a Windows developer terminal at the repository root:
+Codec binaries are included in the repository and unpacked by `pnpm nsh`.
+The bundle contains one private libde265 DLL with static CRT; customers need no codec packs
+or HEVC Store extension. See [native codec builds](../../docs/native-media-build.md).
 
-```powershell
-node scripts/native-media.mjs build x86_64-pc-windows-msvc
-$ffmpegPrefix = (Resolve-Path target/native-media/x86_64-pc-windows-msvc/ffmpeg-9.0.2).Path
-$env:PATH = "$ffmpegPrefix/bin;$env:PATH"
-cargo run -p hongguo-nsh-video-windows --features decoder-audit --example decoder_audit -- C:\fixtures\hevc-main10.mp4 C:\reports\main10.json both 900 off
+The former FFmpeg decoder audit was removed with its dependency.
+Compilation and PE inspection do not establish physical Windows playback, HDR accuracy,
+frame drops, A/V synchronization, decoder throughput or energy consumption.
+
+On a Windows GPU supporting Main and Main10, run the independent synthetic pixel audit:
+
+```sh
+cargo run -p hongguo-nsh-video-windows --features test-support --example hevc_d3d11_probe --release
 ```
 
-Arguments are `INPUT REPORT [d3d11|d3d12|both] [MAX_FRAMES]` and
-`[off|sharpen|anime4k|both]`. `both` runs four fresh child processes in ABBA order
-and retains each JSON report beside the aggregate. Test H.264, HEVC Main and
-Main10 separately, plus the SDR/HDR and enhancement combinations relevant to the
-release. Keep window visibility, size, monitor, refresh rate, power mode and
-background workload consistent. Driver/OS cache state is not claimed to be cold.
+The probe requires actual D3D11 decoding and exits unsuccessfully if unavailable;
+it never substitutes software for the hardware result. It compares every YUV sample,
+10-bit low bits, signed PTS, reordered/drained frame counts, and retained surface contents
+against libde265. Its elapsed time includes CPU readback and is not a playback benchmark.
+Run it on Windows 10 1809+ / Windows 11 with and without the HEVC extension, followed by
+actual application seek/switch/rate/HDR and audio-clock tests. The Mac host only cross-builds it.
 
-Both candidates use the production video component, color conversion,
-enhancement and NSH canvas. The D3D12 trial creates a device on the same adapter
-LUID, waits on the decoder frame's fence on its COPY queue, copies both video
-planes into a shared NV12/P010 texture, and queues a shared-fence wait on NSH's
-D3D11 context. The retained AVFrame protects the decoder pool slice. Native
-leases, shared textures and command allocators remain retained until GPU copy
-completion even if the window closes before a queued frame is displayed. No
-media pixel resource is downloaded to the CPU.
-
-Reports distinguish:
-
-- Decoder surface return, GPU draw completion, and whole-canvas DXGI
-  `Present`/`Present1` submission, with per-frame identities and deadlines.
-- The first 30 warm-up frames and steady-state pre-present drops/deadline misses.
-- Whether each canvas submission actually used enhancement. A requested effect
-  that fails or disappears during steady state invalidates the trial; raw
-  fallback cannot silently be reported as an enhanced comparison.
-- Extra D3D12 copy bytes, CPU submission time, GPU queue-wait count, and GPU copy
-  timestamps when the device supports COPY queue timestamp queries. The only
-  D3D12 CPU readback is the 16-byte timestamp pair for a copied frame.
-- Raw DXGI frame statistics, if supported, and the actual output color mode,
-  measured display metadata or explicit SDR fallback reason.
-
-The clock is a fixed 1x video-only monotonic clock gated on the first GPU-drawn
-frame. Fixtures must have one continuous presentation edit beginning at zero.
-GPU completion is observed through a nonblocking event query on the next draw;
-its CPU timestamp is an observation upper bound at the UI polling resolution.
-Audio decoding/output and power consumption are not measured by this
-tool. `SyncQPCTime` is a vblank reference and is not a per-frame photon timestamp;
-the report leaves physical power, photon time and total OS display drops unknown.
-Use external physical measurement and appropriate Windows trace tooling for
-those conclusions. An unavailable hardware profile or interop configuration
-fails that candidate; the audit never substitutes software or pixel download.
-
-The source has been cross-checked for Windows types. GPU execution, actual HDR
-output, device-removal recovery and comparative performance still require
-physical Windows validation. The production default remains D3D11VA; a report
-does not automatically change policy or declare either candidate optimal.
+中文：Windows 扩展 HEVC 优先直连 D3D11，保留 NV12/P010 与原始颜色元数据，失败才软解。
+缺少系统 HEVC 插件仍可尝试硬解；上述探针和实播需要 Windows 真机，不能把交叉构建当作验收。

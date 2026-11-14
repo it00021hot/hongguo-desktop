@@ -13,7 +13,6 @@ const RESOURCE_HEADER_BYTES = 16;
 const RESOURCE_ENTRY_BYTES = 8;
 const RESOURCE_TYPES = { icon: 3, groupIcon: 14, manifest: 24 };
 const DYNAMIC_CRT = /^(?:msvcp.*|msvcr.*|vcruntime.*|ucrtbase(?:d)?|api-ms-win-crt-.*)\.dll$/i;
-const SYSTEM_MEDIA = /^(?:mf[\w]*|evr|msmpeg2[av]dec)\.dll$/i;
 const WEBVIEW_LOADER = /^WebView2Loader\.dll$/i;
 
 function requirePe(condition, message) {
@@ -73,7 +72,6 @@ function inspectWindowsImage(buffer, dll) {
   if (directoryCount > 13) imports.push(...readImports(directory(13), map, 32, 4));
   for (const name of imports) {
     requirePe(!DYNAMIC_CRT.test(name), `dynamic CRT dependency: ${name}`);
-    requirePe(!SYSTEM_MEDIA.test(name), `system media dependency: ${name}`);
     requirePe(!WEBVIEW_LOADER.test(name), `WebView2 loader dependency: ${name}`);
   }
   return { imports, optional, directory, map };

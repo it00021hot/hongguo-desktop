@@ -7,6 +7,8 @@ mod fullscreen_tests;
 mod geometry;
 #[cfg(test)]
 mod layout_tests;
+#[cfg(any(target_os = "macos", test))]
+mod occlusion;
 mod platform;
 mod preview;
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
@@ -27,6 +29,7 @@ const INCOGNITO_KEY: &str = "hongguo.nsh.incognito";
 
 #[derive(Clone, Copy)]
 pub(crate) struct WindowModes {
+    exposed: Signal<bool>,
     state: Signal<State>,
     request: Signal<Option<Request>>,
     pending: Signal<bool>,
@@ -38,6 +41,9 @@ pub(crate) struct WindowModes {
 }
 
 impl WindowModes {
+    pub fn exposed(self) -> bool {
+        self.exposed.get()
+    }
     pub fn current() -> Option<Self> {
         use_context()
     }
@@ -140,6 +146,14 @@ impl WindowModes {
         self.request.set(Some(Request { serial, action }));
     }
     fn receive(self, event: &nsh_core::element::NativeEvent) {
+        if event.name.as_ref() == "visibility" {
+            if let Some(exposed) = event.data.as_bool() {
+                self.exposed.set(exposed);
+            } else {
+                log::error!("[NSH window] invalid visibility response");
+            }
+            return;
+        }
         let result = match event.name.as_ref() {
             "applied" => serde_json::from_value::<Response>(event.data.clone()).map(|response| {
                 if self
@@ -244,8 +258,9 @@ impl WindowModes {
     }
 }
 
-pub(crate) fn install() -> impl IntoElement {
+pub(crate) fn install(observe_visibility: Memo<bool>) -> impl IntoElement {
     let state = WindowModes {
+        exposed: signal(true),
         state: signal(State::initial()),
         request: signal(None),
         pending: signal(false),
@@ -280,6 +295,9 @@ pub(crate) fn install() -> impl IntoElement {
         .child(
             native("hongguo.window-modes")
                 .size(px(1.0))
+                .prop("observeVisibility", move || {
+                    serde_json::Value::Bool(observe_visibility.get())
+                })
                 .prop("request", move || {
                     let request = state.request.get();
                     if is_desktop() {

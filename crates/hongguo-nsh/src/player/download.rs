@@ -116,7 +116,6 @@ fn presenter(
             .gap_4()
             .child(
                 view()
-                    .py_3()
                     .gap_4()
                     .child(
                         view()
@@ -164,7 +163,7 @@ fn presenter(
                                     .flex_row()
                                     .gap_2()
                                     .child(
-                                        ui::field(move || tr("download.rangePlaceholder"))
+                                        ui::download_field(move || tr("download.rangePlaceholder"))
                                             .flex_1()
                                             .test_id("download-range")
                                             .font_family("monospace")
@@ -227,7 +226,7 @@ fn presenter(
                     )
                     .child(when(
                         move || !message.get().is_empty(),
-                        move || ui::status(message),
+                        move || ui::download_status(message),
                     )),
             )
             .child(
@@ -235,7 +234,6 @@ fn presenter(
                     .flex_row()
                     .justify_end()
                     .gap_2()
-                    .pb_2()
                     .child(ui::download_cancel().on_press(move || open.set(false)))
                     .child(
                         ui::download_submit()

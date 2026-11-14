@@ -43,17 +43,18 @@ pub(super) fn content(
     });
     let populated = view()
         .flex_1()
-        .p_4()
+        .py_4()
         .gap_3()
         .child(when(local_mode, move || {
             text(move || tr("history.localModeHint"))
-                .px_1()
+                .px_5()
                 .text_xs()
                 .line_height(px(16.0))
                 .text_color(move || theme().muted_foreground)
         }))
         .child(
             view()
+                .px_4()
                 .flex_row()
                 .flex_wrap()
                 .items_center()
@@ -281,6 +282,7 @@ pub(super) fn content(
             )
             .test_id("history-records")
             .flex_1()
+            .content_padding_x(px(16.0))
             .max_h(move || px((shown.with(Vec::len) as f32 * 130.0 - 8.0).max(0.0)))
             .keys(move || {
                 shown
@@ -300,6 +302,7 @@ pub(super) fn content(
                     .collect::<Vec<_>>()
             };
             ui::batch_bar()
+                .mx_4()
                 .child(
                     ui::batch_select(move || {
                         tr(

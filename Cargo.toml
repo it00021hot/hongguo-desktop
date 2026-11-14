@@ -13,14 +13,10 @@
 resolver = "3"
 members = [
     "crates/hongguo-api",
-    "crates/hongguo-audio-api",
-    "crates/hongguo-audio",
-    "crates/hongguo-audio-apple",
-    "crates/hongguo-audio-windows",
-    "crates/hongguo-audio-android",
     "crates/hongguo-bytevc2",
     "crates/hongguo-common",
-    "crates/hongguo-codec-ffi",
+    "crates/hongguo-hevc",
+    "crates/hongguo-native-clock",
     "crates/hongguo-media-types",
     "crates/hongguo-playback",
     "crates/hongguo-vvdec-sys",

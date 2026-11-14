@@ -9,6 +9,7 @@ authors.workspace = true
 
 [features]
 default = ["vvdec", "oxideav"]
+source-build = ["vvdec", "hongguo-vvdec-sys/source-build"]
 # Fraunhofer VVdeC 3.2.1（Clear BSD），固定源码静态构建。
 vvdec = ["dep:hongguo-vvdec-sys"]
 # 纯 Rust H.266（oxideav）。保留为 HONGGUO_BYTEVC2_DECODER=oxideav / 无 vvdec 时的回退与测试夹具。

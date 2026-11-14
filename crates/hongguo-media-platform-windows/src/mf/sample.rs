@@ -8,7 +8,7 @@ use windows::Win32::Media::MediaFoundation::*;
 use hongguo_common::{AppError, AppResult};
 use windows::core::GUID;
 
-use super::{mft::hr, runtime};
+use super::mft::hr;
 
 const HNS: f64 = 10_000_000.0;
 
@@ -18,7 +18,7 @@ pub(super) fn secs_to_hns(s: f64) -> i64 {
 
 /// 一个空的视频媒体类型（major=Video + 指定 subtype）。
 pub(super) fn video_type(subtype: GUID) -> AppResult<IMFMediaType> {
-    let t = runtime::media_type()?;
+    let t = hr(unsafe { MFCreateMediaType() }, "建媒体类型")?;
     unsafe {
         hr(
             t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video),
@@ -69,8 +69,8 @@ pub(super) fn type_stride(t: &IMFMediaType, width: usize) -> usize {
 /// SAFETY：`unsafe fn` 的调用方须保证返回的裸指针只在 `buf` 存活且未 `Unlock` 期间使用（即 `finish_sample` 之前）——两个约定由 [`nv12_sample`] 以固定顺序满足。
 pub(super) unsafe fn locked_buffer(len: usize) -> AppResult<(IMFSample, IMFMediaBuffer, *mut u8)> {
     unsafe {
-        let sample = runtime::sample()?;
-        let buf = runtime::memory_buffer(len as u32)?;
+        let sample = hr(MFCreateSample(), "建样本")?;
+        let buf = hr(MFCreateMemoryBuffer(len as u32), "建样本缓冲")?;
         let mut ptr = std::ptr::null_mut();
         hr(buf.Lock(&mut ptr, None, None), "锁样本缓冲")?;
         Ok((sample, buf, ptr))

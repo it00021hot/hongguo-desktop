@@ -75,6 +75,30 @@ fn HistoryRecycling() -> impl IntoElement {
         .child(text(move || opened.get()))
 }
 
+#[test]
+fn history_scrollbar_uses_the_page_edge_and_rows_keep_their_inset() -> Result<(), String> {
+    let mut app = start::<HistoryRecycling>()?;
+    app.set_viewport(size(px(800.0), px(600.0)))?;
+    app.wait_for("History 0")?;
+    let nodes = app.screen().layout_nodes();
+    let list = nodes
+        .iter()
+        .find(|node| node.test_id.as_deref() == Some("history-records"))
+        .ok_or("history list missing")?;
+    assert_eq!(list.bounds.origin.x.0, 0.0);
+    assert_eq!(list.bounds.size.width.0, 800.0);
+    let title = nodes
+        .iter()
+        .find(|node| {
+            node.text
+                .as_ref()
+                .is_some_and(|text| text.text.text == "History 0")
+        })
+        .ok_or("history title missing")?;
+    assert_eq!(title.bounds.origin.x.0, 117.0);
+    Ok(())
+}
+
 #[component]
 fn TasksRecycling() -> impl IntoElement {
     let items = signal(

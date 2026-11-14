@@ -3,6 +3,10 @@
 mod fixture;
 
 #[cfg(target_os = "macos")]
+#[path = "pixel_surface/clocked.rs"]
+mod clocked;
+
+#[cfg(target_os = "macos")]
 mod probe {
     use hongguo_nsh_video_api::frames::{FrameInfo, FrameSource, PixelFrame, register_frames};
     use hongguo_nsh_video_api::{
@@ -221,6 +225,10 @@ mod probe {
             Some("hevc") => Arc::new(super::fixture::Softdec::new()),
             _ => panic!("mode must be checker or hevc"),
         };
+        let audio = std::env::args()
+            .nth(1)
+            .expect("pass an audio-only file URL");
+        let frames = Arc::new(super::clocked::Clocked::new(frames, audio));
         let _frames = register_frames("pixel-surface", frames).unwrap();
         nsh_platform_macos::set_components(hongguo_nsh_video_macos::register);
         nsh_platform_macos::run_app(
@@ -231,6 +239,7 @@ mod probe {
             nsh_platform_macos::AppOptions {
                 title: "NSH pixel surface regression".into(),
                 size: (640, 400),
+                background: true,
                 ..Default::default()
             },
         )

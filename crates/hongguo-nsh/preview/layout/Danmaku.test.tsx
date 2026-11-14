@@ -11,6 +11,7 @@ for (const scheme of ['dark', 'light'] as const) {
       await app.waitFor('role:adjustable[' + name + ']');
     }
     await app.hover('id:app-toolbar-rest');
+    await app.wait(200);
     await app.screenshot('target/nsh-preview/danmaku-settings-' + scheme + '.png');
     await app.drag('id:hongguo.danmakuOpacity', { x: 220, y: 0 });
     await app.waitFor('text:100%');
@@ -19,6 +20,7 @@ for (const scheme of ['dark', 'light'] as const) {
     expect(app.shows('role:adjustable[不透明度]')).toBe(false);
     await app.press('role:button[弹幕设置]');
     await app.waitFor('text:100%');
+    await app.wait(200);
     await app.screenshot('target/nsh-preview/danmaku-settings-' + scheme + '-changed.png');
   });
 }

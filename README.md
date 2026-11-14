@@ -38,11 +38,11 @@ Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service
 它内置字节系短剧 App 的完整协议栈——设备注册、五头请求签名、取流、弹幕、互动、
 观看历史、短信登录——并配有一套 **CENC-AES-CTR 原生流式解密引擎**。解密、解复用、
 封装由纯 Rust 完成；HEVC/ByteVC1/ByteVC2 播放使用内置解码，不转码。
-同规格原流可无损合并；混合素材通过平台编码器或 ffmpeg 统一编码为 HEVC 后合并。**安装包不捆绑 FFmpeg 可执行文件**。
+同规格原流可无损合并；混合素材通过原生平台编码器统一编码为 HEVC 后合并。播放和归档均不依赖 FFmpeg。
 
 - **在线播放不落盘**：自定义协议渐进供数、边下边解，首帧不必等整集
 - **下载直接产出标准 MP4**：流式解密 + 原子落盘，断网断电不留残缺文件
-- **内置视频解码**：三个壳统一使用内置 HEVC/ByteVC1/ByteVC2 解码；没有系统视频或兼容转码播放分支。旧下载失效或编码不支持时重新获取在线原流
+- **原流播放**：NSH 以原生 Video 为基础，随包补齐缺失的 HEVC/ByteVC1/ByteVC2 解码能力；Tauri/GPUI 保留原有内置软解。旧下载失效时重新获取在线原流
 - **数据落 Turso 内嵌数据库**：纯 Rust、无 C 工具链依赖，带 schema 迁移链与坏档自动恢复
 
 ---
@@ -128,7 +128,7 @@ Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service
 | 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                                                    |
 | 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v7，`SCHEMA_VERSION = 7`）                               |
 | 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                                                         |
-| 编解码 | HEVC/ByteVC1 用 `rusty_h265`，ByteVC2 用 VVdeC；remux / MP4 封装为纯 Rust；归档转码使用平台编码器或 ffmpeg                     |
+| 编解码 | NSH Video + libde265 / VVdeC 专用补充；旧壳保留 `rusty_h265` / VVdeC；纯 Rust MP4 封装，归档使用原生平台编码器                 |
 
 ### 前端（仅 Tauri WebView 壳）
 
@@ -152,9 +152,8 @@ GPUI 壳用 GPUI Kit 自绘，不经过下面这层。
   `hongguo-local` 本地文件 Range 播放；`hongguo-cover` 封面代理（HEIC → JPEG，磁盘哈希缓存）
 - **签名栈**：`x-gorgon` / `x-argus` / `x-ladon` / `x-helios` / `x-medusa` 五头签名，
   黄金向量单测锁定正确性
-- **两级转码回退**：macOS VideoToolbox / Windows Media Foundation 平台硬编 →
-  ffmpeg（硬编码器 NVENC / QSV / AMF，软编 libx264），
-  启动时探测并常驻徽章展示；两者都不可用时直接报错，没有纯 Rust 视频转码兜底
+- **原生归档编码**：使用 VideoToolbox / Media Foundation / MediaCodec，按实际编码探测显示能力；
+  没有可用 HEVC 编码器时明确报错，播放和同规格无损合并不受影响
 - **可靠性**：单实例锁、协议回调三层 panic 防线、crash.log 取证、数据库坏档自动恢复、
   任务中断恢复、旧 JSON 存档一次性幂等迁移
 
@@ -180,7 +179,7 @@ Windows 双击 `*_x64-setup.exe`；macOS 按芯片选 `*_aarch64.dmg`（Apple Si
 ## 💻 开发
 
 NSH 第三壳正在开发，首版目标为 Windows、macOS、Android、iOS（纯 Rust，直接复用本地业务内核）。
-桌面启动 `make nsh`，检查与测试用 `make nsh-check`、`make nsh-test`；
+桌面启动 `pnpm nsh`（或 `make nsh`），检查与测试用 `pnpm nsh:check`、`pnpm nsh:test`；
 移动端工具链与当前验证范围见 [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md)。
 Linux 与 Web 留待后续迭代。当前 NSH 实现尚未完成全部功能和四端验收。
 
@@ -188,6 +187,20 @@ The NSH shell is in development for Windows, macOS, Android and iOS. It uses Rus
 and shares the existing local business core. Run `make nsh`, `make nsh-check` and `make nsh-test`
 from the repository root. Full feature parity and validation on all four platforms are still in progress.
 Linux and web support are deferred.
+
+```bash
+pnpm install --frozen-lockfile
+pnpm nsh
+```
+
+首次启动自动解包仓库 `vendor/native-codecs/` 的预编译 SDK，校验后缓存。
+不需要下载原生媒体 SDK，也不需要安装 FFmpeg、CMake、NASM、GPG 或 libclang。
+仍需正常 Rust 平台工具链：Windows 的 MSVC C++ Build Tools/Windows SDK，或 macOS 14+ 的 Xcode 工具。
+`pnpm nsh:setup` 可只准备 SDK、不启动窗口；离线开发与源码重建见 [原生库说明](docs/native-media-build.md)。
+
+The first NSH run unpacks a pinned, hash-verified codec SDK included in the repository. It does
+not download or build native media libraries. Normal Rust platform build tools remain
+required; rebuilding the native SDK is a separate maintainer operation.
 
 ### 环境要求
 
@@ -211,8 +224,7 @@ make assets         # 重新生成图标 / macOS 名称本地化（离线）
 
 文档索引见 [docs/README.md](./docs/README.md)，使用排查见 [docs/faq.md](./docs/faq.md)。
 
-> **安装包不捆绑 FFmpeg**——解密、解复用、合并是纯 Rust。没有 ffmpeg 时，
-> HEVC 归档编码可使用平台编码器（如 VideoToolbox / Media Foundation）或另行安装的 ffmpeg。
+> **不依赖 FFmpeg**——解密、解复用、无损合并是纯 Rust，HEVC 归档使用原生平台编码器。
 > 没有可用 HEVC 编码器时，统一编码合并明确报错；播放和同规格原流无损合并不受影响。
 
 ---
@@ -230,7 +242,7 @@ hongguo-desktop/
 │   ├── hongguo-media-platform-api/     # 平台媒体契约（帧载体 / 解码器 trait / 转码请求）
 │   ├── hongguo-media-platform-macos/   # macOS 实现（VideoToolbox 转码链）
 │   ├── hongguo-media-platform-windows/ # Windows 实现（Media Foundation / WIC）
-│   ├── hongguo-media-platform/         # 平台门面（编译期选实现）+ ffmpeg + 能力探测
+│   ├── hongguo-media-platform/         # 原生媒体编解码门面与编码能力探测
 │   ├── hongguo-store/                  # Turso 内嵌数据库（entity/ 按聚合拆分 / 迁移链 / 坏档恢复）
 │   ├── hongguo-stream/                 # 在线流契约（渐进流 / 按 (vid, 档位) 分条的缓存 / Range 应答）
 │   ├── hongguo-protocol/               # 自定义 URI 供数（hongguo-local / stream / cover）

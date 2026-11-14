@@ -32,7 +32,7 @@ pub(super) fn presentation(state: State, events: Events) -> View {
         .flex_1()
         .min_h(px(0.0))
         .gap_4()
-        .child(ui::calendar_dates(
+        .child(view().px_4().child(ui::calendar_dates(
             move || feed.with(|page| page.map_or(0, |page| page.dates.len())),
             each(
                 move || feed.with(|page| page.map(|page| page.dates.clone()).unwrap_or_default()),
@@ -62,7 +62,7 @@ pub(super) fn presentation(state: State, events: Events) -> View {
                     })
                 },
             ),
-        ))
+        )))
         .child(ui::status(reservations.message))
         .child(when(
             move || feed.error().is_some(),
@@ -119,6 +119,7 @@ pub(super) fn presentation(state: State, events: Events) -> View {
                 )
                 .test_id("new-calendar-list")
                 .flex_1()
+                .content_padding_x(px(16.0))
                 .row_gap(px(8.0))
                 .estimated_item_size(px(133.0))
                 .keys(move || {

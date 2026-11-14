@@ -131,7 +131,3 @@ pub(crate) fn import(device: &wgpu::Device, frame: &PresentationFrame) -> Result
         monochrome: false,
     })
 }
-
-#[cfg(test)]
-#[path = "native_tests.rs"]
-mod tests;

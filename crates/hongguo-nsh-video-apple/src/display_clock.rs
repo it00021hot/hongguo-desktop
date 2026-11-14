@@ -1,15 +1,11 @@
 use crate::PlayerController;
-use objc2::{
-    msg_send,
-    rc::Retained,
-    runtime::{AnyObject, Bool},
-    sel,
-};
+use objc2::{msg_send, rc::Retained, runtime::AnyObject, sel};
 use objc2_foundation::{NSRunLoop, NSRunLoopCommonModes};
+use objc2_quartz_core::{CADisplayLink, CAFrameRateRange, CAFrameRateRangeDefault};
 use std::cell::Cell;
 
 pub struct DisplayClock {
-    link: Retained<AnyObject>,
+    link: Retained<CADisplayLink>,
     maximum_fps: Cell<u32>,
     applied_fps: Cell<u32>,
 }
@@ -18,12 +14,12 @@ impl DisplayClock {
     /// # Safety
     /// Call on the main thread with a display-link factory and a target implementing hongguoFrameTick:.
     pub unsafe fn new(owner: &AnyObject, target: &AnyObject) -> Self {
-        let link: Retained<AnyObject> = unsafe {
+        let link: Retained<CADisplayLink> = unsafe {
             msg_send![owner, displayLinkWithTarget: target, selector: sel!(hongguoFrameTick:)]
         };
+        link.setPaused(true);
         unsafe {
-            let _: () = msg_send![&link, setPaused: Bool::YES];
-            let _: () = msg_send![&link, addToRunLoop: &*NSRunLoop::mainRunLoop(), forMode: NSRunLoopCommonModes];
+            link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes);
         }
         Self {
             link,
@@ -33,9 +29,7 @@ impl DisplayClock {
     }
 
     pub fn set_active(&self, active: bool, controller: &PlayerController) {
-        unsafe {
-            let _: () = msg_send![&self.link, setPaused: Bool::new(!active)];
-        }
+        self.link.setPaused(!active);
         controller.set_display_clock_active(active);
     }
 
@@ -54,20 +48,28 @@ impl DisplayClock {
             maximum / (maximum / required.min(maximum)).max(1)
         };
         if self.applied_fps.replace(preferred) != preferred {
-            unsafe {
-                let _: () = msg_send![&self.link, setPreferredFramesPerSecond: preferred as isize];
-            }
+            // preferredFramesPerSecond is unavailable on macOS. Both supported
+            // Apple targets provide the frame-rate range API (macOS 14 / iOS 16).
+            let range = if preferred == 0 {
+                unsafe { CAFrameRateRangeDefault }
+            } else {
+                let rate = preferred as f32;
+                CAFrameRateRange {
+                    minimum: rate,
+                    maximum: rate,
+                    preferred: rate,
+                }
+            };
+            self.link.setPreferredFrameRateRange(range);
         }
-        let deadline: f64 = unsafe { msg_send![&self.link, targetTimestamp] };
+        let deadline = self.link.targetTimestamp();
         if controller.display_tick(deadline).is_err() {
             self.invalidate();
         }
     }
 
     pub fn invalidate(&self) {
-        unsafe {
-            let _: () = msg_send![&self.link, invalidate];
-        }
+        self.link.invalidate();
     }
 }
 

@@ -10,7 +10,7 @@ use std::{
 
 #[component]
 fn FullscreenController() -> impl IntoElement {
-    let bridge = install();
+    let bridge = install(computed(|| false));
     let modes = WindowModes::current().unwrap();
     view()
         .child(bridge)

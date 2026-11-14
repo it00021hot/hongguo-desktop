@@ -72,7 +72,6 @@ export const COMMANDS = {
   // 应用 / 窗口
   select_folder: { args: noArgs, response: z.string().nullable() },
   open_folder: { args: z.object({ seriesId: z.string() }), response: voidResp },
-  open_external_page: { args: z.object({ page: z.string() }), response: voidResp },
   get_window_presentation: { args: noArgs, response: windowPresentationSchema },
   enter_mini_screen: { args: noArgs, response: windowPresentationSchema },
   exit_mini_screen: { args: noArgs, response: windowPresentationSchema },

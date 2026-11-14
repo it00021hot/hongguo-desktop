@@ -10,6 +10,15 @@ for (const scheme of ['dark', 'light'] as const) {
       locale: 'zh-CN',
     });
     await app.waitFor('id:app-titlebar');
+    await app.hover('id:app-toolbar-rest');
+    await app.screenshot('target/nsh-preview/toolbar-pin-off-' + scheme + '.png');
+    await app.press('id:app-titlebar >> role:button[置顶]');
+    await app.waitFor('role:button[取消置顶]');
+    await app.hover('id:app-toolbar-rest');
+    await app.wait(200);
+    await app.screenshot('target/nsh-preview/toolbar-pin-on-' + scheme + '.png');
+    await app.press('id:app-titlebar >> role:button[取消置顶]');
+    await app.waitFor('id:app-titlebar >> role:button[置顶]');
     await app.press('id:app-titlebar >> role:button[语言]');
     await app.waitFor('role:menuitem[English]');
     await app.screenshot('target/nsh-preview/toolbar-language-' + scheme + '.png');

@@ -4,18 +4,18 @@
 首轮目标为 Windows、macOS、Android、iOS；Linux 与 Web 留待后续迭代。
 当前仍在开发和验证中，尚未与 Tauri 功能完全对齐。
 
-播放使用随应用交付的 FFmpeg 9.0.2 与 VVdeC 3.2.1，平台硬解不满足时在原流上回退软件解码。
-音频由包内 AAC 解码至 PCM，再送 WASAPI、AudioUnit 或 AAudio；客户无需另装解码包或运行库。
-Windows 使用同画布 D3D11VA，按实际显示能力协商 SDR / FP16 scRGB。
-开发构建须先生成对应目标的 native prefix：`node scripts/native-media.mjs build <Rust target>`；打包脚本负责验证和随包交付。
+播放以 NSH Video 为基础，专用 libde265 / VVdeC 补齐原生缺失能力；不依赖 FFmpeg。
+原生播放器承担 AAC、音频输出、倍速和主时钟。客户无需另装解码包或运行库。
+Windows 普通 HEVC 走 MediaEngine；ByteVC2、缺 HEVC 解码器或输出精度不足时启用内部帧适配。
+`pnpm nsh` 自动解包并验证仓库 `vendor/native-codecs/` 的 SDK，日常开发无需 CMake/libclang。
 
 A pure Rust shell using NSH 0.5.0 and the existing business core. Initial targets
 are Windows, macOS, Android and iOS. Linux and Web are deferred. Development and
 platform validation are ongoing; feature parity with Tauri is incomplete.
 
-Playback bundles FFmpeg 9.0.2 and VVdeC 3.2.1, with native hardware decoding and
-same-source software recovery. Bundled AAC decoding feeds native PCM devices.
-Customers do not install codec packs, FFmpeg or a separate C/C++ runtime.
+Playback uses NSH Video and bundled libde265/VVdeC for missing native capabilities.
+Native players own audio, playback rate and timing. Customers install no codec packs or C/C++ runtime.
+The repository includes authenticated codec binaries; normal development needs no CMake or libclang.
 
 从仓库根运行 / Run from the repository root:
 
@@ -25,9 +25,15 @@ make nsh-check
 make nsh-test
 make nsh-preview
 make nsh-package TARGET=macos
+make nsh-package TARGET=windows
 make nsh-package TARGET=android
 make nsh-package TARGET=ios-simulator
 ```
+
+Windows 构建机需安装 NSIS 3，并将 `makensis` 加入 PATH；打包同时生成便携 ZIP 与
+当前用户安装器 `Hongguo-NSH_<版本>_x64-setup.exe`，不安装 WebView2。
+Windows packaging requires NSIS 3 (`makensis` on PATH) and produces both a portable ZIP
+and a per-user installer, without WebView2.
 
 移动端使用独立的纯 Rust 宿主：`hongguo-nsh-android` 与 `hongguo-nsh-ios`。
 不要用 NSH 自动生成的通用移动端宿主替代，否则会遗漏私有数据目录初始化。

@@ -1,7 +1,5 @@
 //! 平台层的统一门面：编译期按目标选择实现（macOS / Windows / Android）。[`cover`] 封面平台级静图解码（Windows WIC；其余平台返回 `None`，调用方无需写平台分支）。
 //! 无状态分发：转码、能力探测、探测缓存清理（同名转发到实现 crate）；调用方只认本模块，不感知具体平台实现与原生 API。
-//! 探测纪律与 ffmpeg 侧一致：**列表里有 ≠ 能用**，必须真实建会话试编一帧（试编帧不能小于 256×256，nvenc 曾在 64×64 上误判不可用）；
-//! 任何探测失败都安静返回不可用让分流链落到 ffmpeg，两者都没有时转码直接报错。
 
 pub mod cover;
 
@@ -17,11 +15,11 @@ use hongguo_media_platform_windows as imp;
 
 use hongguo_common::AppResult;
 
-/// 平台硬编的一次转码请求（与 ffmpeg 侧的 [`crate::ffmpeg::TranscodeRequest`] 同构）。
+/// 平台归档转码请求。
 pub use hongguo_media_platform_api::PlatformRequest;
 
 /// 平台编码层可用时执行 HEVC→HEVC 转码。
-/// 返回 `None` 表示本机平台层不接这个源（HEVC 以外、被 `HONGGUO_NO_PLATFORM` 关闭、无可用编解码会话），`Some(Err)` 表示试过但失败——两者都落回分流链的下一条路。
+/// `None` 表示没有可用的归档编解码会话，`Some(Err)` 保留实际失败原因。
 pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     if disabled_by_env() {
         return None;
@@ -112,9 +110,7 @@ pub fn clear_probe_cache() {
     }
 }
 
-/// 测试开关：强制按「平台硬编不可用」处理，验证回退链。
-///
-/// 与 `HONGGUO_NO_FFMPEG` 同一套约定。
+/// 测试开关：禁用平台归档编码。
 pub fn disabled_by_env() -> bool {
     std::env::var_os("HONGGUO_NO_PLATFORM").is_some()
 }

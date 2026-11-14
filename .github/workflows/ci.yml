@@ -22,10 +22,6 @@ concurrency:
 
 jobs:
   lint-and-test:
-    env:
-      # 从 crate 自带源码构建，保证链接到目标架构的 VVdeC。
-      SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL: always
-      PKG_CONFIG_ALLOW_CROSS_x86_64_apple_darwin: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -76,81 +72,43 @@ jobs:
       - name: ESLint
         run: pnpm exec eslint . --max-warnings=0
 
-      - name: Install pkg-config for VVdeC
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install pkgconf --version 3.0.10 --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $pkgconfDir = Join-Path $env:ProgramFiles 'pkgconf-3.0.10'
-          & (Join-Path $pkgconfDir 'pkg-config.exe') --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $pkgconfDir >> $env:GITHUB_PATH
-
-      - name: Build pinned native media (macOS host and check target)
+      - name: Set up verified native SDKs (macOS host and check target)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install gnupg nasm
           host=$(rustc -vV | sed -n 's/^host: //p')
-          node scripts/native-media.mjs build "$host"
-          node scripts/native-media.mjs verify "$host"
+          node scripts/nsh.mjs setup "$host"
           if [ "$host" != "${{ matrix.rust_target }}" ]; then
-            node scripts/native-media.mjs build "${{ matrix.rust_target }}"
-            node scripts/native-media.mjs verify "${{ matrix.rust_target }}"
+            node scripts/nsh.mjs setup "${{ matrix.rust_target }}"
           fi
-          version=$(node --input-type=module -e 'import { source } from "./scripts/native-media-config.mjs"; console.log(source.version)')
-          echo "DYLD_LIBRARY_PATH=$PWD/target/native-media/$host/ffmpeg-$version/lib" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$PWD/target/native-media/$host/libde265-1.1.3/lib" >> "$GITHUB_ENV"
 
-      - name: Build pinned native media (Windows MSVC)
+      - name: Set up verified native SDKs (Windows host and check target)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $msys = 'C:\msys64\usr\bin'
-          $mingw = 'C:\msys64\mingw64\bin'
-          & "$msys\pacman.exe" -Syu --noconfirm
+          $compiler = rustc -vV
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$msys\pacman.exe" -Syu --noconfirm
+          $hostTarget = ($compiler | Select-String '^host: (.+)$').Matches.Groups[1].Value.Trim()
+          if (!$hostTarget) { throw 'Rust host target was not found' }
+          node scripts/nsh.mjs setup $hostTarget
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$msys\pacman.exe" -S --needed --noconfirm make diffutils patch gnupg tar xz mingw-w64-x86_64-nasm
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:PATH = "$msys;$mingw;$env:PATH"
-          $env:MSYS2_PATH_TYPE = 'inherit'
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if ($LASTEXITCODE -ne 0 -or !$vs) { throw 'MSVC x64 tools were not found' }
-          $devcmd = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
-          $bootstrap = Join-Path $env:RUNNER_TEMP 'native-media-msvc.cmd'
-          @(
-            '@echo off'
-            ('call "{0}" -no_logo -arch=x64 -host_arch=x64' -f $devcmd)
-            'if errorlevel 1 exit /b %errorlevel%'
-            'set'
-          ) | Set-Content -LiteralPath $bootstrap -Encoding ascii
-          $variables = & $env:ComSpec /d /c $bootstrap
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($line in $variables) {
-            if ($line -match '^([^=]+)=(.*)$') {
-              [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
-            }
+          if ($hostTarget -ne '${{ matrix.rust_target }}') {
+            node scripts/nsh.mjs setup '${{ matrix.rust_target }}'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          if ((Get-Command bash.exe).Source -ne "$msys\bash.exe") { throw 'MSYS2 bash must precede Git Bash' }
-          $linker = (Get-Command link.exe).Source
-          if (!$linker.StartsWith($vs, [StringComparison]::OrdinalIgnoreCase)) { throw 'MSVC link.exe must precede MSYS2 link.exe' }
-          node scripts/native-media.mjs build "${{ matrix.rust_target }}"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/native-media.mjs verify "${{ matrix.rust_target }}"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $version = (Get-Content scripts/native-media.sources.json -Raw | ConvertFrom-Json).ffmpeg.version
-          Join-Path $env:GITHUB_WORKSPACE "target\native-media\${{ matrix.rust_target }}\ffmpeg-$version\bin" >> $env:GITHUB_PATH
+          Join-Path $env:GITHUB_WORKSPACE "target\native-media\$hostTarget\libde265-1.1.3\bin" >> $env:GITHUB_PATH
 
-      - name: Preserve native media manifests and corresponding source
+      - name: Preserve verified native SDKs and corresponding source
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: native-media-${{ matrix.rust_target }}
-          path: target/native-media/*/ffmpeg-*/
+          name: native-sdk-${{ matrix.rust_target }}
+          path: |
+            target/native-media/*/sdk.json
+            target/native-media/*/libde265-*/
+            target/native-media/*/vvdec-*/
           if-no-files-found: ignore
 
       - name: Rust tests

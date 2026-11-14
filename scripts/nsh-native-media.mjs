@@ -6,14 +6,14 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { source, targetSpec } from './native-media-config.mjs';
-import { verifyInstall } from './native-media-manifest.mjs';
 import { readWindowsImports, validateWindowsPe } from './nsh-windows-pe.mjs';
+import { prepareNativeSdk, verifyNativeSdk } from './native-sdk.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SYSTEM_DLLS = new Set(
@@ -22,7 +22,8 @@ const SYSTEM_DLLS = new Set(
   kernel32 kernelbase msimg32 msvfw32 ncrypt netapi32 ntdll ole32 oleacc oleaut32 opengl32
   powrprof propsys psapi rpcrt4 secur32 setupapi shell32 shcore shlwapi uiautomationcore
   user32 userenv usp10 uxtheme version winhttp wininet winmm winspool ws2_32 wtsapi32
-  wintrust windowscodecs normaliz hid dbghelp`.split(/\s+/),
+  wintrust windowscodecs normaliz hid dbghelp
+  mf mfplat mfreadwrite mfcore mfplay evr msmpeg2adec msmpeg2vdec xaudio2_8 xaudio2_9`.split(/\s+/),
 );
 
 export function desktopTriple(platform, architecture = process.arch) {
@@ -32,27 +33,28 @@ export function desktopTriple(platform, architecture = process.arch) {
   throw new Error(`Unsupported desktop media target: ${platform}/${architecture}`);
 }
 
-export function prepareNativeMedia(triple, run) {
-  const script = join(root, 'scripts/native-media.mjs');
-  run(process.execPath, [script, 'build', triple]);
-  run(process.execPath, [script, 'verify', triple]);
-  const prefix = join(root, 'target/native-media', triple, `ffmpeg-${source.version}`);
-  verifyInstall(prefix, targetSpec(triple));
-  return prefix;
+export function prepareNativeMedia(triple) {
+  return prepareNativeSdk(triple);
 }
 
 export function copyMediaNotices(prefix, triple, destination) {
-  const manifest = verifyInstall(prefix, targetSpec(triple));
+  const sdk = verifyNativeSdk(triple, dirname(prefix));
+  const manifest = JSON.parse(readFileSync(join(prefix, 'manifest.json'), 'utf8'));
+  rmSync(destination, { recursive: true, force: true });
   mkdirSync(destination, { recursive: true });
   for (const directory of ['licenses', 'sources', 'build-info'])
-    cpSync(join(prefix, directory), join(destination, 'ffmpeg', directory), { recursive: true });
-  copyFileSync(join(prefix, 'manifest.json'), join(destination, 'ffmpeg/source-manifest.json'));
+    cpSync(join(prefix, directory), join(destination, 'libde265', directory), { recursive: true });
+  copyFileSync(join(prefix, 'manifest.json'), join(destination, 'libde265/source-manifest.json'));
+  copyFileSync(join(dirname(prefix), 'sdk.json'), join(destination, 'sdk.json'));
   const vvdec = join(root, 'crates/hongguo-vvdec-sys');
   const notices = join(destination, 'vvdec');
   mkdirSync(notices, { recursive: true });
   for (const name of ['LICENSE.txt', 'AUTHORS.md'])
     copyFileSync(join(vvdec, 'vendor/vvdec', name), join(notices, name));
   copyFileSync(join(vvdec, 'SOURCE.md'), join(notices, 'SOURCE.md'));
+  copyFileSync(join(sdk.vvdec, 'manifest.json'), join(notices, 'source-manifest.json'));
+  cpSync(join(vvdec, 'vendor/vvdec'), join(notices, 'source'), { recursive: true });
+  cpSync(join(sdk.vvdec, 'build-info'), join(notices, 'build-info'), { recursive: true });
   copyFileSync(
     join(vvdec, 'vendor/vvdec/thirdparty/simde/COPYING'),
     join(notices, 'SIMDe-COPYING'),
@@ -66,7 +68,8 @@ export function copyMediaNotices(prefix, triple, destination) {
       join(anime4k, name),
     );
   if (triple.includes('android')) {
-    const ndk = process.env.NDK_HOME ?? process.env.ANDROID_NDK_ROOT ?? manifest.toolchain.sdk;
+    const ndk = process.env.NDK_HOME ?? process.env.ANDROID_NDK_ROOT;
+    if (!ndk) throw new Error('Android packaging requires NDK_HOME or ANDROID_NDK_ROOT');
     const runtime = join(destination, 'android-runtime');
     mkdirSync(runtime, { recursive: true });
     for (const name of ['NOTICE', 'NOTICE.toolchain', 'source.properties'])
@@ -79,18 +82,26 @@ export function copyMediaNotices(prefix, triple, destination) {
   }
   cpSync(join(root, 'scripts'), join(destination, 'build-scripts'), {
     recursive: true,
-    filter: (path) =>
-      path === join(root, 'scripts') ||
-      basename(path).startsWith('native-media') ||
-      basename(path) === 'nsh-android-runtime.mjs',
+    filter: (path) => {
+      const name = relative(join(root, 'scripts'), path).split(sep)[0];
+      return (
+        !name ||
+        name.startsWith('native-codec') ||
+        name.startsWith('native-cxx') ||
+        name.startsWith('native-media-relink') ||
+        name.startsWith('native-sdk') ||
+        name.startsWith('nsh-windows-') ||
+        name === 'nsh-android-runtime.mjs'
+      );
+    },
   });
   copyFileSync(join(root, 'docs/native-media-build.md'), join(destination, 'BUILD.md'));
   writeFileSync(
     join(destination, 'README.txt'),
-    `FFmpeg ${source.version}: LGPL-2.1-or-later. VVdeC: separate Clear BSD license.\n` +
-      'FFmpeg corresponding source, patches, configuration and source artifact hashes: ffmpeg/.\n' +
+    `libde265 ${manifest.source.version}: LGPL-3.0-or-later. VVdeC: separate Clear BSD license.\n` +
+      'Corresponding source, licenses, configuration and artifact hashes: libde265/ and vvdec/.\n' +
       'The source manifest describes the build prefix before bundle relocation/signing.\n' +
-      'Desktop: replace all four ABI-compatible FFmpeg libraries in the application runtime directory.\n' +
+      'Desktop: replace the ABI-compatible libde265 library in the application runtime directory.\n' +
       'macOS: libraries are in Contents/Frameworks. Re-sign each replaced dylib, then the app:\n' +
       '  codesign --force --sign - --timestamp=none <dylib>\n' +
       '  codesign --force --sign - --timestamp=none <app>\n' +
@@ -100,7 +111,8 @@ export function copyMediaNotices(prefix, triple, destination) {
 }
 
 export function copyDesktopMedia(prefix, triple, destination) {
-  const manifest = verifyInstall(prefix, targetSpec(triple));
+  verifyNativeSdk(triple, dirname(prefix));
+  const manifest = JSON.parse(readFileSync(join(prefix, 'manifest.json'), 'utf8'));
   const windows = triple.includes('windows');
   const runtime = windows ? destination : join(destination, 'Contents/Frameworks');
   const notices = windows
@@ -125,11 +137,8 @@ export function auditWindowsBundle(destination) {
   if (images.filter((name) => /\.exe$/i.test(name)).length !== 1)
     throw new Error('Windows bundle must contain one application executable');
   const dlls = images.filter((name) => /\.dll$/i.test(name));
-  if (
-    dlls.length !== 4 ||
-    !dlls.every((name) => /^(?:avcodec|avutil|avfilter|swresample)-\d+\.dll$/.test(name))
-  )
-    throw new Error('Windows bundle must contain exactly the four pinned FFmpeg DLLs');
+  if (dlls.length !== 1 || dlls[0] !== 'libde265.dll')
+    throw new Error('Windows bundle must contain exactly the pinned libde265 DLL');
   const available = new Set(images.map((name) => name.toLowerCase()));
   const inspection = [];
   for (const name of images) {
@@ -160,7 +169,8 @@ export function auditMacosBundle(destination, run) {
   const libraries = [
     ...new Set(readdirSync(frameworks).map((name) => realpathSync(join(frameworks, name)))),
   ];
-  if (libraries.length !== 4) throw new Error('macOS bundle must contain four FFmpeg dylibs');
+  if (libraries.length !== 1 || !basename(libraries[0]).startsWith('libde265.'))
+    throw new Error('macOS bundle must contain exactly the libde265 runtime');
   for (const path of [executable, ...libraries]) {
     for (const line of run('otool', ['-L', path]).split('\n').slice(1)) {
       const dependency = line.trim().split(' (')[0];

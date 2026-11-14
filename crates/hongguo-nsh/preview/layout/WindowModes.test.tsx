@@ -32,6 +32,8 @@ for (const scheme of ['dark', 'light'] as const) {
         expect(app.shows('id:bottom-nav')).toBe(false);
         expect(app.shows('id:app-titlebar')).toBe(mode === 'portrait');
         await app.keyboard.press('mod+alt+v');
+        await app.hover('id:player-window-drag-bar');
+        await app.wait(200);
         await app.screenshot('target/nsh-preview/window-' + mode + '-' + scheme + '.png');
         await app.press('id:player-window-controls >> role:button[播放]');
         await app.waitFor('id:player-window-controls >> role:button[暂停]');
@@ -48,6 +50,14 @@ for (const scheme of ['dark', 'light'] as const) {
           await app.waitFor(
             'text:window:Mini pending:false fill:false frame:false pinned:true error:',
           );
+          await app.waitFor('id:player-window-controls >> role:button[取消置顶]');
+          await app.keyboard.press('mod+alt+v');
+          await app.hover('id:player-window-drag-bar');
+          await app.wait(200);
+          await app.screenshot('target/nsh-preview/window-mini-pinned-' + scheme + '.png');
+          await app.press('id:player-window-controls >> role:button[取消置顶]');
+          await app.keyboard.press('mod+alt+a');
+          await app.waitFor('id:player-window-controls >> role:button[置顶]');
         }
         await app.press(
           'id:player-window-controls >> role:button[' +

@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 hongguo-media-types = { path = "../hongguo-media-types" }
+hongguo-native-clock = { path = "../hongguo-native-clock" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

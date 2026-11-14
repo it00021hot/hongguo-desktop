@@ -1493,9 +1493,17 @@ pub(crate) fn frame(surface: &Rc<Surface>) -> bool {
             if let (Some(fps), Some(painted)) = (&fps, painted) {
                 fps.painted(painted, shown.elapsed());
             }
-            if drawn.items.iter().any(|(item,_)|item.wants_presentation_feedback()) {
+            if drawn
+                .items
+                .iter()
+                .any(|(item, _)| item.wants_presentation_feedback())
+            {
                 let info = chain.presentation();
-                for (item,_) in &drawn.items { if item.wants_presentation_feedback() { item.did_present(&info); } }
+                for (item, _) in &drawn.items {
+                    if item.wants_presentation_feedback() {
+                        item.did_present(&info);
+                    }
+                }
             }
             drop(swap);
             surface.items_placed(drawn.items, redraw.as_deref());
@@ -1787,9 +1795,17 @@ pub(crate) fn window_frame(surface: &Rc<Surface>, frame: WindowFrame<'_>) -> boo
                 device_lost(surface);
                 return false;
             }
-            if drawn.items.iter().any(|(item,_)|item.wants_presentation_feedback()) {
+            if drawn
+                .items
+                .iter()
+                .any(|(item, _)| item.wants_presentation_feedback())
+            {
                 let info = chain.presentation();
-                for (item,_) in &drawn.items { if item.wants_presentation_feedback() { item.did_present(&info); } }
+                for (item, _) in &drawn.items {
+                    if item.wants_presentation_feedback() {
+                        item.did_present(&info);
+                    }
+                }
             }
             crate::surface::items_placed(placed, drawn.items, None);
             crate::surface::composed_placed(composed, composition, drawn.composed, &drawn.layers);

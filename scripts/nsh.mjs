@@ -15,6 +15,7 @@ import { copyMediaNotices, prepareNativeMedia, verifyNshWorkspace } from './nsh-
 import { copyAndroidRelinkHost, finishRelink, relinkEnvironment } from './nsh-relink.mjs';
 import { auditAndroidElf, verifyAndroidApk } from './nsh-android-audit.mjs';
 import { buildAndroidRuntime } from './nsh-android-runtime.mjs';
+import { runtimeEnvironment, rustTarget } from './native-sdk.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const app = join(root, 'crates/hongguo-nsh');
@@ -108,13 +109,13 @@ function android() {
     },
     run,
   );
-  environment.HONGGUO_FFMPEG_PREFIX = prepareNativeMedia('aarch64-linux-android', run);
+  environment.HONGGUO_HEVC_ROOT = prepareNativeMedia('aarch64-linux-android');
   const relink = join(output, 'Relink');
   Object.assign(
     environment,
     relinkEnvironment(
       'aarch64-linux-android',
-      environment.HONGGUO_FFMPEG_PREFIX,
+      environment.HONGGUO_HEVC_ROOT,
       linker,
       ndk,
       relink,
@@ -132,7 +133,7 @@ function android() {
     relink,
   );
   copyMediaNotices(
-    environment.HONGGUO_FFMPEG_PREFIX,
+    environment.HONGGUO_HEVC_ROOT,
     'aarch64-linux-android',
     join(output, 'NativeMedia'),
   );
@@ -218,7 +219,7 @@ function ios() {
   buildIos(target);
 }
 
-function preview() {
+function preview(environment) {
   const platform = { darwin: 'macos', win32: 'windows' }[process.platform];
   if (!platform) throw new Error('Layout preview currently requires macOS or Windows');
   const cli = spawnSync('nsh', ['--version'], { encoding: 'utf8' });
@@ -230,23 +231,34 @@ function preview() {
     'Local layout preview frame',
   );
   run('nsh', ['test', join(app, 'preview/layout'), '--target', platform], {
+    ...environment,
     CARGO_TARGET_DIR: join(app, 'preview/target'),
   });
 }
 
 try {
   if (['run', 'check', 'test', 'preview'].includes(action)) verifyNshWorkspace();
+  const hostAction = ['run', 'check', 'test', 'setup', 'preview'].includes(action);
+  const environment = hostAction
+    ? runtimeEnvironment(
+        prepareNativeMedia(action === 'setup' && target ? target : rustTarget(), run),
+      )
+    : {};
   if (action === 'check')
-    run('cargo', [
-      'check',
-      '-p',
-      'hongguo-nsh',
-      '-p',
-      'hongguo-nsh-android',
-      '-p',
-      'hongguo-nsh-ios',
-      '--all-targets',
-    ]);
+    run(
+      'cargo',
+      [
+        'check',
+        '-p',
+        'hongguo-nsh',
+        '-p',
+        'hongguo-nsh-android',
+        '-p',
+        'hongguo-nsh-ios',
+        '--all-targets',
+      ],
+      environment,
+    );
   else if (action === 'test') {
     run(process.execPath, [
       '--test',
@@ -257,20 +269,23 @@ try {
       'scripts/nsh-ios.test.mjs',
       'scripts/nsh-windows-adapters.test.mjs',
       'scripts/nsh-windows-pe.test.mjs',
-      'scripts/native-media.test.mjs',
       'scripts/native-media-relink.test.mjs',
       'scripts/nsh-native-media.test.mjs',
+      'scripts/native-sdk.test.mjs',
+      'scripts/native-sdk-package.test.mjs',
     ]);
-    run('cargo', ['test', '-p', 'hongguo-nsh', '--lib']);
-  } else if (action === 'preview') preview();
-  else if (action === 'run') run('cargo', ['run', '-p', 'hongguo-nsh']);
+    run('cargo', ['test', '-p', 'hongguo-nsh', '--lib'], environment);
+  } else if (action === 'preview') preview(environment);
+  else if (action === 'run') run('cargo', ['run', '-p', 'hongguo-nsh'], environment);
+  else if (action === 'setup')
+    console.log(`Native SDK ready: ${environment.HONGGUO_NATIVE_SDK_ROOT}`);
   else if (action === 'package' && target === 'android') android();
   else if (action === 'package' && ['ios', 'ios-simulator'].includes(target)) ios();
   else if (action === 'package' && ['windows', 'macos'].includes(target)) {
     console.log(buildDesktop(target));
   } else
     throw new Error(
-      'Usage: node scripts/nsh.mjs run|check|test|preview|package macos|windows|android|ios|ios-simulator',
+      'Usage: node scripts/nsh.mjs run|check|test|preview|setup [Rust target]|package macos|windows|android|ios|ios-simulator',
     );
 } catch (error) {
   console.error(error.message);

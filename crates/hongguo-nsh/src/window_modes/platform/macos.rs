@@ -6,11 +6,17 @@ use super::super::{
 use nsh_platform_macos::{
     ComponentContext, Components, NativeComponent,
     objc2::{MainThreadMarker, MainThreadOnly, rc::Retained},
-    objc2_app_kit::{NSEvent, NSScreen, NSView, NSWindow, NSWindowButton, NSWindowStyleMask},
+    objc2_app_kit::{
+        NSEvent, NSScreen, NSView, NSWindow, NSWindowButton, NSWindowOcclusionState,
+        NSWindowStyleMask,
+    },
     objc2_foundation::{NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSTimer},
 };
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
+
+#[path = "macos_visibility.rs"]
+mod visibility;
 
 struct AppKitWindow(Retained<NSView>);
 impl AppKitWindow {
@@ -27,6 +33,18 @@ impl AppKitWindow {
     }
 }
 impl Window for AppKitWindow {
+    fn exposed(&self) -> Result<bool, String> {
+        let window = self.window()?;
+        if !(window.isVisible()
+            && !window.isMiniaturized()
+            && window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::Visible))
+        {
+            return Ok(false);
+        }
+        visibility::exposed(&window)
+    }
     fn attached(&self) -> bool {
         self.0.window().is_some()
     }
@@ -83,14 +101,12 @@ impl Window for AppKitWindow {
     }
     fn controls_hidden(&self, hidden: bool) -> Result<(), String> {
         let window = self.window()?;
-        for kind in [
-            NSWindowButton::CloseButton,
-            NSWindowButton::MiniaturizeButton,
-            NSWindowButton::ZoomButton,
-        ] {
-            if let Some(button) = window.standardWindowButton(kind) {
-                button.setHidden(hidden);
-            }
+        if let Some(controls) = window
+            .standardWindowButton(NSWindowButton::CloseButton)
+            // AppKit owns the attached control hierarchy on this main-thread callback.
+            .and_then(|button| unsafe { button.superview() })
+        {
+            controls.setHidden(hidden);
         }
         Ok(())
     }
@@ -129,6 +145,11 @@ impl NativeComponent for Host {
     }
     fn set_prop(&mut self, name: &str, value: Option<&Value>) {
         match name {
+            "observeVisibility" => {
+                if let Some(enabled) = value.and_then(Value::as_bool) {
+                    self.desktop.borrow_mut().observe_visibility(enabled);
+                }
+            }
             "request" => {
                 if let Some(value) = value.filter(|value| !value.is_null()) {
                     match serde_json::from_value::<Request>(value.clone()) {

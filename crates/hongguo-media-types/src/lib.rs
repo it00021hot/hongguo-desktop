@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
+mod decoder;
+mod hdr;
 mod presentation;
+pub use decoder::{DecodedVideoFrame, HevcDecoderConfig, VideoDecoder};
 pub use presentation::{
     DecodeDevice, FrameDescriptor, FrameImage, HardwareFrame, HardwareHandle, HardwareKind,
     PresentationFrame,
@@ -73,4 +76,23 @@ pub struct NativeFrame {
     pub color: ColorMetadata,
     pub crop: CropRect,
     pub rotation_degrees: u16,
+}
+
+impl ColorMetadata {
+    pub fn inherit(&mut self, fallback: &Self) {
+        self.primaries = self
+            .primaries
+            .filter(|value| *value != 2)
+            .or(fallback.primaries);
+        self.transfer = self
+            .transfer
+            .filter(|value| *value != 2)
+            .or(fallback.transfer);
+        self.matrix = self.matrix.filter(|value| *value != 2).or(fallback.matrix);
+        self.full_range = self.full_range.or(fallback.full_range);
+        self.chroma_location = self.chroma_location.or(fallback.chroma_location);
+        self.sample_aspect_ratio = self.sample_aspect_ratio.or(fallback.sample_aspect_ratio);
+        self.mastering_display = self.mastering_display.or(fallback.mastering_display);
+        self.content_light = self.content_light.or(fallback.content_light);
+    }
 }

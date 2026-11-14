@@ -1,4 +1,4 @@
-use super::{Icon, icon, motion::FAST_MS, radii};
+use super::radii;
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
@@ -52,27 +52,6 @@ pub(crate) fn backend_badge(
             text(label)
                 .text_xs()
                 .line_height(px(16.0))
-                .font_weight(FontWeight::MEDIUM),
-        )
-}
-
-pub(crate) fn settings_glyph_action(
-    label: impl IntoReactive<SharedString>,
-    glyph: Icon,
-) -> nsh_base::ButtonElement {
-    super::controls::surface_height(super::ButtonVariant::Quiet, 32.0)
-        .flex_row()
-        .gap_2()
-        .px_3()
-        .py_1p5()
-        .flex_shrink_0()
-        .transition()
-        .duration(move || if reduce_motion() { 0.0 } else { FAST_MS })
-        .child(icon(glyph))
-        .child(
-            text(label)
-                .text_sm()
-                .line_height(px(20.0))
                 .font_weight(FontWeight::MEDIUM),
         )
 }

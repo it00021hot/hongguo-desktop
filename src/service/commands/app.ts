@@ -3,8 +3,6 @@ import { call } from '../tauri/invoke';
 export const app = {
   selectFolder: () => call('select_folder'),
   openFolder: (seriesId: string) => call('open_folder', { seriesId }),
-  // 白名单网址（Rust 侧校验），设置页 ffmpeg 安装指引用
-  openExternalPage: (page: string) => call('open_external_page', { page }),
   getWindowPresentation: () => call('get_window_presentation'),
   /** 小屏播放：同一窗口缩成 480×270 落屏幕右下角，播放不断；几何由后端保存，exitMiniScreen 原样恢复 */
   enterMiniScreen: () => call('enter_mini_screen'),

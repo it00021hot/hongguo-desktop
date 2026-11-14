@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderOpen, Cpu, Zap, Copy, ExternalLink } from 'lucide-react';
+import { FolderOpen, Cpu, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,7 +27,6 @@ import {
 } from '@/service/queries';
 import { app as appApi } from '@/service/commands';
 import { formatBytes } from '@/utils/format';
-import { isMac } from '@/utils/platform';
 import { useShortcutsStore } from '@/stores/shortcuts';
 import { t, tf } from '@/locales';
 import type { DecodeCapability, Settings } from '@/service/schema';
@@ -36,12 +35,6 @@ import { AccountCard } from './account-card';
 import { ShortcutCard } from './shortcut-card';
 import { BossKeyCard, resolveBossKeyConflicts } from './boss-key-card';
 import { ToggleRow } from './toggle-row';
-
-/** ffmpeg 安装路径随平台：Windows 走 winget + gyan 构建，macOS 走
- *  Homebrew + 官方下载页（官方页列有各 mac 构建源）。 */
-const FFMPEG_INSTALL = isMac()
-  ? { cmd: 'brew install ffmpeg', page: 'https://ffmpeg.org/download.html' }
-  : { cmd: 'winget install Gyan.FFmpeg', page: 'https://www.gyan.dev/ffmpeg/builds/' };
 
 /** 缓存自动清理的保留周期档位（天；0 = 不自动清理）。与 GPUI 壳
  *  `settings/storage.rs` 的 CACHE_TTL_DAYS 同档。label 用字面量类型，
@@ -291,9 +284,9 @@ export function SettingsPage() {
             <span>{t('settings.transcodeBackend')}</span>
             <Badge
               variant={
-                capability?.platformHwEncoder || capability?.hevcHwEncoder
+                capability?.platformHwEncoder
                   ? 'success'
-                  : capability?.platformEncoder || capability?.hasFfmpeg
+                  : capability?.platformEncoder
                     ? 'warning'
                     : 'secondary'
               }
@@ -301,8 +294,6 @@ export function SettingsPage() {
             >
               {backendLabel(capability)}
             </Badge>
-            {/* 装完 ffmpeg 不重启应用是看不到变化的：进程环境变量不会更新，
-                探测结果也被缓存着。给一条「重新检测」比让人去重启合理。 */}
             <Button
               size="sm"
               variant="ghost"
@@ -317,46 +308,6 @@ export function SettingsPage() {
             <p className="text-muted-foreground text-xs">
               {tf('settings.redetectDone', { backend: backendLabel(capability) })}
             </p>
-          )}
-          {/* 平台编码层不可用（ffmpeg 是兜底决定者）且确实没装时，才给一条
-              可照抄的安装路径。平台可用的机器分流不会走 ffmpeg——装了也不
-              改道，文案「装上后转码自动改走它」在那档机器上是假话，指引
-              随探测分层一并隐藏（探测严格按优先级，见 capability/probe.rs） */}
-          {capability && !capability.platformEncoder && !capability.hasFfmpeg && (
-            <div className="bg-muted/50 flex flex-col gap-2 rounded-md p-3 text-xs">
-              <p>{t('settings.ffmpegInstallHint')}</p>
-              <div className="flex flex-wrap items-center gap-2">
-                <code className="bg-background rounded px-2 py-1 font-mono">
-                  {FFMPEG_INSTALL.cmd}
-                </code>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    void navigator.clipboard
-                      .writeText(FFMPEG_INSTALL.cmd)
-                      .then(() => toast.success(t('settings.commandCopied')))
-                      .catch(() => toast.error(t('settings.copyFailed')));
-                  }}
-                >
-                  <Copy className="size-4" />
-                  {t('settings.copyCommand')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    void appApi
-                      .openExternalPage(FFMPEG_INSTALL.page)
-                      .catch((e: Error) => toast.error(e.message))
-                  }
-                >
-                  <ExternalLink className="size-4" />
-                  {t('settings.ffmpegDownloadPage')}
-                </Button>
-              </div>
-              <p className="text-muted-foreground">{t('settings.ffmpegInstallNote')}</p>
-            </div>
           )}
         </CardContent>
       </Card>
@@ -510,7 +461,7 @@ export function SettingsPage() {
 function backendLabel(cap: DecodeCapability | undefined): string {
   if (!cap) return t('common.loading');
   // macOS 无硬编时 VideoToolbox 走 Apple 软编会话，比 ffmpeg 快但编码仍在 CPU，归「软件加速」
-  if (cap.platformHwEncoder || cap.hevcHwEncoder) return t('settings.backendFfmpegHw');
-  if (cap.platformEncoder || cap.hasFfmpeg) return t('settings.backendFfmpegSw');
+  if (cap.platformHwEncoder) return t('settings.backendHardware');
+  if (cap.platformEncoder) return t('settings.backendSoftware');
   return t('settings.backendUnavailable');
 }

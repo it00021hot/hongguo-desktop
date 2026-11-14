@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "sdkVersion": "native-codecs-v2-20261114",
+  "distribution": "vendored",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "assetName": "hongguo-codecs-v2-aarch64-apple-darwin.tar.gz",
+      "archivePath": "vendor/native-codecs/hongguo-codecs-v2-aarch64-apple-darwin.tar.gz",
+      "sha256": "783a0518399c5d720d5937667751d37b4688445a25cbae8d0290ca2bee3dbcfc",
+      "byteLength": 2324435,
+      "manifestSha256": "d423d835b7661ed4cc8ac5fb7350a7899b991232b9fc3b7f7324d9f8319f3dd6",
+      "recipeSha256": "a11a831f4af8b0ee9a2589083fa852f6337b06ccf8cafe262856e9c6442d550a"
+    },
+    "x86_64-apple-darwin": {
+      "assetName": "hongguo-codecs-v2-x86_64-apple-darwin.tar.gz",
+      "archivePath": "vendor/native-codecs/hongguo-codecs-v2-x86_64-apple-darwin.tar.gz",
+      "sha256": "66d551deaa46ca1a28811ec80918e477ca4c8639fa7355195d97de7797b6bada",
+      "byteLength": 2315807,
+      "manifestSha256": "1bb47d3c33728a900071159a45ad5829ebe7c6fdd50aff3208f34710380d60d8",
+      "recipeSha256": "2b2d52c5d6b3d7df05553e4a8ebfa747d3582a440545b6b77a34dbee12fbd791"
+    },
+    "x86_64-pc-windows-msvc": {
+      "assetName": "hongguo-codecs-v2-x86_64-pc-windows-msvc.tar.gz",
+      "archivePath": "vendor/native-codecs/hongguo-codecs-v2-x86_64-pc-windows-msvc.tar.gz",
+      "sha256": "55cd9988152addbc2ccbbf667500ea3e657bcc0d988238b12003fb36ee9b01a7",
+      "byteLength": 4701960,
+      "manifestSha256": "a98eb2340fff916d7d6cb2eab89bc040e7dd1e06cbf28125f28bd6649f1a0107",
+      "recipeSha256": "00091cebf53c81a429fc98d2a6ca9024bc0c6f49118b17aba34e04257acf0b1f"
+    },
+    "aarch64-linux-android": {
+      "assetName": "hongguo-codecs-v2-aarch64-linux-android.tar.gz",
+      "archivePath": "vendor/native-codecs/hongguo-codecs-v2-aarch64-linux-android.tar.gz",
+      "sha256": "b61268b21d1e6891ab6b7dd4666fcde5df0d9c69bc1f6004eb6bca2427424e3e",
+      "byteLength": 11261349,
+      "manifestSha256": "d1d8325af4c96879847a81522f498c96f1013217f305e9fd8ec78aeed17ff35b",
+      "recipeSha256": "5b5962331f5d10d8b0e75a19bd5e19a8eb593143877a6676f353c8a2abc52929"
+    },
+    "aarch64-apple-ios": {
+      "assetName": "hongguo-codecs-v2-aarch64-apple-ios.tar.gz",
+      "archivePath": "vendor/native-codecs/hongguo-codecs-v2-aarch64-apple-ios.tar.gz",
+      "sha256": "c5fbe150f2833546c736edcd3cf1e439fcf3c99ab4a12a1a8990d5da608027f5",
+      "byteLength": 2231996,
+      "manifestSha256": "f0e3331a02fc33b182e1957de8d60ce07d8c51835aa16742ec32b3f69b2e862a",
+      "recipeSha256": "8710f5b476269857340a2b3ec6b9a75817a504d9248ba72073b15500b1de6b2f"
+    },
+    "aarch64-apple-ios-sim": {
+      "assetName": "hongguo-codecs-v2-aarch64-apple-ios-sim.tar.gz",
+      "archivePath": "vendor/native-codecs/hongguo-codecs-v2-aarch64-apple-ios-sim.tar.gz",
+      "sha256": "ea86346131e08eb1ae43c68b971cac5e8b325bf84928ae1735e7e6776a33684d",
+      "byteLength": 2257867,
+      "manifestSha256": "3ebe7b10ce913e90f805a3c2b4c4e6751c5ec697f085257f4f66456ffdf203ea",
+      "recipeSha256": "4a6ebe20afaae0dfd4d9172818b42647686a39fe2039ea3bebdfdd5361b45718"
+    }
+  }
+}

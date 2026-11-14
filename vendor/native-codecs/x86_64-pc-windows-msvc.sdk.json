@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "sdkVersion": "native-codecs-v2-20261114",
+  "target": {
+    "triple": "x86_64-pc-windows-msvc",
+    "arch": "x86_64",
+    "os": "windows",
+    "minimumOs": "10.0.17763",
+    "crt": "static",
+    "cxxRuntime": "msvc-static",
+    "cpuBaseline": "x86-64",
+    "cppAbi": "msvc"
+  },
+  "recipe": {
+    "target": {
+      "triple": "x86_64-pc-windows-msvc",
+      "arch": "x86_64",
+      "os": "windows",
+      "minimumOs": "10.0.17763",
+      "crt": "static",
+      "cxxRuntime": "msvc-static",
+      "cpuBaseline": "x86-64",
+      "cppAbi": "msvc"
+    },
+    "hevc": {
+      "source": {
+        "version": "1.1.3",
+        "commit": "ba62bf4cfb3242f3bf0a45617ff09e35236e4d82",
+        "url": "https://codeload.github.com/strukturag/libde265/tar.gz/ba62bf4cfb3242f3bf0a45617ff09e35236e4d82",
+        "sha256": "7ffe3220bba8282cc6d4a2bcf36ac1b6d2899f402c335f7df377317414a025b1"
+      },
+      "build": {
+        "options": [
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DBUILD_SHARED_LIBS=ON",
+          "-DENABLE_DECODER=OFF",
+          "-DENABLE_ENCODER=OFF",
+          "-DENABLE_SDL=OFF",
+          "-DENABLE_SHERLOCK265=OFF",
+          "-DENABLE_INTERNAL_DEVELOPMENT_TOOLS=OFF",
+          "-DWITH_FUZZERS=OFF",
+          "-DCMAKE_INSTALL_PREFIX=/Users/milo/projects/hongguo-desktop/target/native-codec-build/x86_64-pc-windows-msvc-Aatrsa/install",
+          "-DHONGGUO_LIBDE265_SOURCE=/Users/milo/projects/hongguo-desktop/target/native-codec-build/x86_64-pc-windows-msvc-Aatrsa/libde265-ba62bf4cfb3242f3bf0a45617ff09e35236e4d82",
+          "-DCMAKE_SYSTEM_NAME=Windows",
+          "-DCMAKE_SYSTEM_PROCESSOR=AMD64",
+          "-DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm@19/bin/clang-cl",
+          "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@19/bin/clang-cl",
+          "-DCMAKE_AR=/opt/homebrew/opt/llvm@19/bin/llvm-lib",
+          "-DCMAKE_LINKER=/opt/homebrew/bin/lld-link",
+          "-DCMAKE_MT=/opt/homebrew/opt/llvm@19/bin/llvm-mt",
+          "-DCMAKE_RC_COMPILER=/Users/milo/projects/hongguo-desktop/scripts/nsh-windows-rc.cjs",
+          "-DCMAKE_C_COMPILER_LAUNCHER=/Users/milo/projects/hongguo-desktop/scripts/nsh-windows-clang.cjs",
+          "-DCMAKE_CXX_COMPILER_LAUNCHER=/Users/milo/projects/hongguo-desktop/scripts/nsh-windows-clang.cjs",
+          "-DCMAKE_C_FLAGS=--target=x86_64-pc-windows-msvc -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/crt/include\" -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/include/ucrt\" -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/include/um\" -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/include/shared\" -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/include/winrt\"",
+          "-DCMAKE_CXX_FLAGS=--target=x86_64-pc-windows-msvc -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/crt/include\" -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/include/ucrt\" -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/include/um\" -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/include/shared\" -imsvc\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/include/winrt\"",
+          "-DCMAKE_EXE_LINKER_FLAGS=/LIBPATH:\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/crt/lib/x86_64\" /LIBPATH:\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/lib/ucrt/x86_64\" /LIBPATH:\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/lib/um/x86_64\"",
+          "-DCMAKE_SHARED_LINKER_FLAGS=/LIBPATH:\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/crt/lib/x86_64\" /LIBPATH:\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/lib/ucrt/x86_64\" /LIBPATH:\"/Users/milo/Library/Caches/hongguo-nsh-xwin-symbols/xwin/sdk/lib/um/x86_64\"",
+          "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+          "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"
+        ],
+        "compiler": "Homebrew clang version 19.1.7\nTarget: arm64-pc-windows-msvc\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm@19/19.1.7/bin"
+      }
+    },
+    "vvdec": {
+      "source": {
+        "version": "3.2.1",
+        "sha256": "5c334557a33cd93e981b84ba0e77126ef970a38e2481b67f0475db40f75379b8",
+        "vendoredTreeSha256": "83fc81e145afc9a733dd072786cc0c4cb6fbc1949a65c0cd93c2209afce4bb95"
+      },
+      "build": {
+        "provenance": "existing-cmake-output",
+        "cmakeCacheSha256": "5ff2e4398aa500344c8fb29d9bc828c9adbc2b45a8bf85f9f23d3cada1a4b18c",
+        "flagsSha256": "af22a1b986aa2172c1c87070aa33e08a24b3e55f585f2c6cbc54b1cc722f96e4",
+        "inspectionPath": "build-info/library-inspection.json"
+      },
+      "target": {
+        "triple": "x86_64-pc-windows-msvc",
+        "arch": "x86_64",
+        "os": "windows",
+        "minimumOs": "10.0",
+        "crt": "static",
+        "cxxRuntime": "msvc-static",
+        "cpuBaseline": "x86-64",
+        "cppAbi": "msvc"
+      }
+    }
+  },
+  "recipeSha256": "00091cebf53c81a429fc98d2a6ca9024bc0c6f49118b17aba34e04257acf0b1f",
+  "components": {
+    "hevc": {
+      "version": "1.1.3",
+      "sourceSha256": "7ffe3220bba8282cc6d4a2bcf36ac1b6d2899f402c335f7df377317414a025b1",
+      "manifestPath": "libde265-1.1.3/manifest.json"
+    },
+    "vvdec": {
+      "version": "3.2.1",
+      "sourceSha256": "5c334557a33cd93e981b84ba0e77126ef970a38e2481b67f0475db40f75379b8",
+      "manifestPath": "vvdec-3.2.1/manifest.json"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "libde265-1.1.3/bin/libde265.dll",
+      "sha256": "df530ece17f3b4cbf83f247ff22de6d5d90d9c0e9c2cbe75b3a665b7f26d6288",
+      "byteLength": 609280
+    },
+    {
+      "path": "libde265-1.1.3/build-info/build-evidence.json",
+      "sha256": "63bcc206424f24e3ab362bb90f3acae3f1f7f43a9c6d0d5c2ebf557e69198fcb",
+      "byteLength": 3963
+    },
+    {
+      "path": "libde265-1.1.3/build-info/CMakeCache.txt",
+      "sha256": "88039d24fc4f75cf4e709b51c2bef8f11d31db702f885f866d822d3d385376e8",
+      "byteLength": 25892
+    },
+    {
+      "path": "libde265-1.1.3/build-info/compile_commands.json",
+      "sha256": "daf43edebf966e194c5ebaae452c614b3fca1af48e9a6338941c9f8d966ca863",
+      "byteLength": 93355
+    },
+    {
+      "path": "libde265-1.1.3/build-info/library-inspection.json",
+      "sha256": "828987f91e433ce1924894322ae0aa4dc40fc35ae0b0128d245c2e3320962d91",
+      "byteLength": 2862
+    },
+    {
+      "path": "libde265-1.1.3/include/libde265/de265-version.h",
+      "sha256": "d7186bf679b8a51c8776f0eb68df6fa687ffa12d9140b775de49a35fa2e7978c",
+      "byteLength": 1117
+    },
+    {
+      "path": "libde265-1.1.3/include/libde265/de265.h",
+      "sha256": "0f06f06717076a0535c5e967a4fd8fdc9bd3b57d7f5a1d6fc2d0b9a89ef735b7",
+      "byteLength": 21129
+    },
+    {
+      "path": "libde265-1.1.3/lib/de265.lib",
+      "sha256": "d606afc41621282d8f8f2b8754029b36a316fe46a0dd5ca7b06139f5915d3e9a",
+      "byteLength": 24200
+    },
+    {
+      "path": "libde265-1.1.3/licenses/AUTHORS",
+      "sha256": "0cc86790616c939cbf1d422790160fde068205b9771e687bd8572afe417a0c8f",
+      "byteLength": 213
+    },
+    {
+      "path": "libde265-1.1.3/licenses/COPYING",
+      "sha256": "02cc1585a20677992e0ba578fa692635dc193735f2691dc81de924b51c4e8020",
+      "byteLength": 44339
+    },
+    {
+      "path": "libde265-1.1.3/manifest.json",
+      "sha256": "6868d18e1e34d773447a73d62f8204e9e5c67bb8c61acc47b2fa3f0445ef1241",
+      "byteLength": 5602
+    },
+    {
+      "path": "libde265-1.1.3/sources/libde265-1.1.3.tar.gz",
+      "sha256": "7ffe3220bba8282cc6d4a2bcf36ac1b6d2899f402c335f7df377317414a025b1",
+      "byteLength": 325972
+    },
+    {
+      "path": "vvdec-3.2.1/bindings.rs",
+      "sha256": "bcd3dc493b69f29d9a68a6b035f386a31278dcd11b0d2a9c9be79792491050ae",
+      "byteLength": 30542
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/CMakeCache.txt",
+      "sha256": "5ff2e4398aa500344c8fb29d9bc828c9adbc2b45a8bf85f9f23d3cada1a4b18c",
+      "byteLength": 27910
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/compiler-configuration.txt",
+      "sha256": "af22a1b986aa2172c1c87070aa33e08a24b3e55f585f2c6cbc54b1cc722f96e4",
+      "byteLength": 304582
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/library-inspection.json",
+      "sha256": "2f6fb06416d601f3aaebff55644166b165cace3859844f6c427c223c38e91154",
+      "byteLength": 4498
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/source-inventory.json",
+      "sha256": "0432d651ea7c188e599befa6875d92b6328bb4249ee60ae241c8bc3413f4551d",
+      "byteLength": 127181
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/sei.h",
+      "sha256": "7ae3088c29c8daeb092b538123ea5a746d02172e53db6047a5bfcd1f3c3d2aac",
+      "byteLength": 15092
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/version.h",
+      "sha256": "403d15b5ba0d1a23114d0b6c4eb63c48dc8188a1dd8460a53974b0b4e541b7a0",
+      "byteLength": 2464
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/vvdec.h",
+      "sha256": "01287033209c9963e2836945b3dafd01526d6078b13ae3b0d35836511e75e669",
+      "byteLength": 32150
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/vvdecDecl.h",
+      "sha256": "e8b0b41e8c675b1b75bf8bca0340e73cf78d74edb270408430279bb413064705",
+      "byteLength": 2660
+    },
+    {
+      "path": "vvdec-3.2.1/lib/vvdec.lib",
+      "sha256": "2a1ed8a1abc6226722d75d36fc62efb15c291a2c441a607457054f34e85fe684",
+      "byteLength": 16899844
+    },
+    {
+      "path": "vvdec-3.2.1/licenses/AUTHORS.md",
+      "sha256": "2a81d85d9efa0f41496249210577477bc2c67456c033fc387f155c88581a56d5",
+      "byteLength": 582
+    },
+    {
+      "path": "vvdec-3.2.1/licenses/LICENSE.txt",
+      "sha256": "10f312cabfab7f9afdd96957f84deb84f81cc52390550ded77c1bbc393685da8",
+      "byteLength": 1768
+    },
+    {
+      "path": "vvdec-3.2.1/licenses/SIMDe-COPYING",
+      "sha256": "75ce0a8c5a7bff42fbd6f8f3b469b518132132c4f4948fb8d02b1ccb5d0df9d8",
+      "byteLength": 1077
+    },
+    {
+      "path": "vvdec-3.2.1/manifest.json",
+      "sha256": "a4abbf0839bc0dfde751d8deed0bab2da8748d6bccd007e1cade0617f2ad426c",
+      "byteLength": 3142
+    },
+    {
+      "path": "vvdec-3.2.1/SOURCE.md",
+      "sha256": "f9194bcd064406eb57a2eff237a3b265a8815873aa5ae207f31a5112e0929ff1",
+      "byteLength": 1250
+    }
+  ]
+}

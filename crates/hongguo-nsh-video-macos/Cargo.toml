@@ -9,10 +9,6 @@ publish = false
 [features]
 test-support = ["hongguo-nsh-video-apple/test-support"]
 
-[[example]]
-name = "playback_probe"
-required-features = ["test-support"]
-
 [target.'cfg(target_os = "macos")'.dependencies]
 nsh-platform-macos.workspace = true
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
@@ -27,5 +23,5 @@ nsh-core.workspace = true
 env_logger = "0.11"
 hongguo-common = { path = "../hongguo-common" }
 hongguo-softdec = { path = "../hongguo-softdec" }
-hongguo-playback = { path = "../hongguo-playback" }
 hongguo-media-types = { path = "../hongguo-media-types" }
+hongguo-native-clock = { path = "../hongguo-native-clock" }

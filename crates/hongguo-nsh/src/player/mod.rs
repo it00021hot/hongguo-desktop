@@ -13,6 +13,8 @@ pub(crate) use interaction::detail_social;
 pub(crate) use interaction::{comments_preview, reviews_preview_with_header, reviews_with_header};
 mod keyboard;
 mod lifecycle;
+mod visibility_preview;
+pub(crate) use visibility_preview::{visibility_playback_probe, visibility_preview};
 mod native;
 pub(crate) mod navigation;
 mod preferences;
@@ -130,6 +132,7 @@ fn content(
             lifecycle(),
             routed.get(),
             session.with(|session| session.state.settings().pause_on_minimize),
+            window_modes.is_none_or(|modes| modes.exposed()),
         ) && !crate::boss_key::hidden()
             && window_modes.is_none_or(|modes| modes.can_play())
     });
@@ -303,6 +306,14 @@ fn content(
     )
     .on_activity(move || chrome.wake());
     let in_binge = gestures.in_binge();
+    nav.on_back(
+        computed(move || routed.get() && in_binge.get()),
+        move || {
+            if let Some(feed) = feed {
+                feed.clear_lock();
+            }
+        },
+    );
     effect(move || {
         if !visible.get()
             || panels_open.get()

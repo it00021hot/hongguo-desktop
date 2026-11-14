@@ -11,6 +11,22 @@ pub(crate) struct Bridge {
     owner: GlobalRef,
 }
 impl Bridge {
+    pub(crate) fn native_audio(&self, url: &str) -> Result<GlobalRef, String> {
+        let mut env = self.vm.attach_current_thread().map_err(error)?;
+        let result = env.with_local_frame(4, |env| -> jni::errors::Result<_> {
+            let url = env.new_string(url)?;
+            let track = env
+                .call_method(
+                    &self.owner,
+                    "createNativeAudio",
+                    "(Ljava/lang/String;)Lcom/hongguo/nsh/NativeAudioTrack;",
+                    &[JValue::Object(&url)],
+                )?
+                .l()?;
+            env.new_global_ref(track)
+        });
+        result.map_err(|failure| crate::native_audio::error(&mut env, failure))
+    }
     pub fn timestamp(&self) -> Result<i64, String> {
         let mut env = self.vm.attach_current_thread().map_err(error)?;
         env.call_static_method("java/lang/System", "nanoTime", "()J", &[])

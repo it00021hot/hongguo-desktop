@@ -26,6 +26,8 @@ use std::{
 };
 
 const TIMER_MS: u32 = (TICK_SECONDS * 1000.0) as u32;
+#[path = "windows_visibility.rs"]
+mod visibility;
 thread_local! {static TIMERS:RefCell<HashMap<usize,Weak<RefCell<Desktop>>>>=RefCell::default();}
 
 struct WinWindow {
@@ -43,6 +45,9 @@ impl WinWindow {
     }
 }
 impl Window for WinWindow {
+    fn exposed(&self) -> Result<bool, String> {
+        visibility::exposed(self.root()?)
+    }
     fn attached(&self) -> bool {
         self.root().is_ok()
     }
@@ -174,6 +179,11 @@ impl NativeComponent for Host {
     }
     fn set_prop(&mut self, name: &str, value: Option<&Value>) {
         match name {
+            "observeVisibility" => {
+                if let Some(enabled) = value.and_then(Value::as_bool) {
+                    self.desktop.borrow_mut().observe_visibility(enabled);
+                }
+            }
             "request" => {
                 if let Some(value) = value.filter(|value| !value.is_null()) {
                     match serde_json::from_value::<Request>(value.clone()) {

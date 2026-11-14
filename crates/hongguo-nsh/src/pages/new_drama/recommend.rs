@@ -183,6 +183,7 @@ pub(super) fn presentation(
         .gap_3()
         .child(
             view()
+                .px_4()
                 .flex_row()
                 .items_center()
                 .justify_end()

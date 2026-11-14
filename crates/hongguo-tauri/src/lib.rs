@@ -199,7 +199,6 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             // 应用
             commands::app_cmd::select_folder,
             commands::app_cmd::open_folder,
-            commands::app_cmd::open_external_page,
             commands::app_cmd::mark_window_ready,
             commands::app_cmd::exit_app,
             commands::boss_key_cmd::set_boss_key,

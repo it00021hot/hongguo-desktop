@@ -16,6 +16,17 @@ const shutdownTimeout = 5_000;
 const scenarioComplete = 'PIXEL_SCENARIO_COMPLETE';
 
 test(
+  'macOS native display clock survives source changes and callback teardown',
+  { skip: !enabled, timeout: 30_000 },
+  (context) => {
+    const output = run(join(root, 'target/debug/examples/display_clock'), []);
+    assert.match(output, /sourceSwitches=60 displayLinkRebuilds=10 displayLinkCallbacks=[1-9]\d*/);
+    assert.match(output, /pausedCallbacks=0 workersStopped=10/);
+    context.diagnostic(output.trim());
+  },
+);
+
+test(
   'macOS native window displays pixels and follows animated sidebar resizing',
   { skip: !enabled, timeout: 150_000 },
   async (context) => {
@@ -26,18 +37,8 @@ test(
     context.diagnostic(`Pixel screenshots and logs: ${directory}`);
     const helper = join(directory, 'pixel-inspect');
     run('swiftc', [join(root, 'scripts/nsh-macos-pixel.swift'), '-o', helper]);
-    const audio = join(directory, 'audio.m4a');
-    run('ffmpeg', [
-      '-nostdin',
-      '-v',
-      'error',
-      '-i',
-      join(root, 'crates/hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4'),
-      '-vn',
-      '-c:a',
-      'copy',
-      audio,
-    ]);
+    const audio = join(root, 'crates/hongguo-nsh-video-macos/examples/pixel_surface/audio.m4a');
+    await access(audio);
     for (const mode of ['checker', 'hevc']) {
       await verifyWindow({ binary, helper, audio, directory, mode });
     }

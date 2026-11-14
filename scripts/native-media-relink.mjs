@@ -16,7 +16,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
-const libraries = ['avcodec', 'avutil', 'swresample', 'avfilter'];
+const libraries = ['de265'];
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 function childPath(parent, path) {
@@ -100,10 +100,10 @@ export function captureLink(args, env = process.env) {
   const linker = env.HONGGUO_RELINK_REAL_LINKER;
   const destination = env.HONGGUO_RELINK_OUTPUT;
   const sdk = env.HONGGUO_RELINK_SDK_ROOT;
-  const prefix = env.HONGGUO_FFMPEG_PREFIX;
+  const prefix = env.HONGGUO_HEVC_ROOT;
   if (![linker, destination, sdk, prefix, env.HONGGUO_RELINK_TARGET].every(Boolean))
     throw new Error(
-      'Relink capture requires a target, output, real linker, target SDK and FFmpeg prefix',
+      'Relink capture requires a target, output, real linker, target SDK and HEVC prefix',
     );
   args = [...JSON.parse(env.HONGGUO_RELINK_REAL_LINKER_ARGS ?? '[]'), ...expandResponse(args)];
   const outputIndex = args.indexOf('-o') + 1;
@@ -136,7 +136,7 @@ export function captureLink(args, env = process.env) {
     const absolute = resolve(path);
     for (const [parent, token] of [
       [sdkPath, '{SDKROOT}'],
-      [prefixPath, '{FFMPEG_PREFIX}'],
+      [prefixPath, '{HEVC_PREFIX}'],
       [toolchainPath, '{TOOLCHAIN_ROOT}'],
     ]) {
       if (!parent) continue;
@@ -176,7 +176,7 @@ export function captureLink(args, env = process.env) {
   };
   try {
     for (const library of libraries)
-      save(join(prefixPath, 'lib', `lib${library}.a`), `ffmpeg/lib/lib${library}.a`);
+      save(join(prefixPath, 'lib', `lib${library}.a`), `libde265/lib/lib${library}.a`);
     const command = args.map((argument, index) =>
       index === outputIndex
         ? '{OUTPUT}'
@@ -227,7 +227,7 @@ export function replayLink(materials, { linker, sdk, prefix, output }) {
     '{MATERIALS}': resolve(materials),
     '{SDKROOT}': resolve(sdk),
     '{TOOLCHAIN_ROOT}': resolve(dirname(dirname(linker))),
-    '{FFMPEG_PREFIX}': resolve(prefix ?? join(materials, 'ffmpeg')),
+    '{HEVC_PREFIX}': resolve(prefix ?? join(materials, 'libde265')),
     '{OUTPUT}': resolve(output),
   };
   const args = manifest.args.map((value) => {
@@ -249,11 +249,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     while (args.length) {
       const key = args.shift();
       const value = args.shift();
-      if (!['--linker', '--sdk', '--ffmpeg', '--output'].includes(key) || !value)
+      if (!['--linker', '--sdk', '--hevc', '--output'].includes(key) || !value)
         throw new Error(
-          'Usage: node relink.mjs --linker <target compiler> --sdk <SDK/NDK root> [--ffmpeg <replacement prefix>] --output <binary>',
+          'Usage: node relink.mjs --linker <target compiler> --sdk <SDK/NDK root> [--hevc <replacement prefix>] --output <binary>',
         );
-      options[key === '--ffmpeg' ? 'prefix' : key.slice(2)] = value;
+      options[key === '--hevc' ? 'prefix' : key.slice(2)] = value;
     }
     replayLink(dirname(fileURLToPath(import.meta.url)), options);
   } catch (error) {

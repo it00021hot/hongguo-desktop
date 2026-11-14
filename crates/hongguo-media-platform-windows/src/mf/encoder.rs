@@ -111,7 +111,7 @@ impl Encoder {
                 }
                 let t = match offered {
                     Some(offered) => {
-                        let fresh = super::runtime::media_type()?;
+                        let fresh = hr(MFCreateMediaType(), "建媒体类型")?;
                         hr(offered.CopyAllItems(&fresh), "拷贝输入类型")?;
                         fresh
                     }

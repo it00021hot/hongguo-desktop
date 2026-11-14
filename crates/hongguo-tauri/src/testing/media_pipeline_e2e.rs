@@ -9,8 +9,6 @@ use std::time::Instant;
 use serde_json::Value;
 
 use hongguo_media::remux::concat_copy;
-use hongguo_media_platform::ffmpeg;
-use hongguo_media_platform::ffmpeg::transcode_with_ffmpeg;
 
 /// 没设就整体跳过：真实文件不进 `make test-rust`。Rust 的 `#[test]` 没有「跳过」，每个用例开头 `let Some(..) = .. else { return }`；不能用 `expect`——没准备数据的机器会直接红一片。
 fn e2e_dir() -> Option<PathBuf> {
@@ -68,21 +66,12 @@ fn scratch(tag: &str) -> PathBuf {
 fn plain_req<'a>(
     input: &'a Path,
     output: &'a Path,
-) -> hongguo_media_platform::ffmpeg::TranscodeRequest<'a> {
-    hongguo_media_platform::ffmpeg::TranscodeRequest {
+) -> hongguo_media_platform::platform::PlatformRequest<'a> {
+    hongguo_media_platform::platform::PlatformRequest {
         input,
         output,
         scale_to: None,
         on_progress: None,
-    }
-}
-
-/// 编码器的可读标签，带上是否走硬件。
-fn enc_label(e: &hongguo_media_platform::ffmpeg::probe::Encoder) -> String {
-    if e.hardware {
-        format!("{}/hw", e.name)
-    } else {
-        e.name.to_string()
     }
 }
 
@@ -315,38 +304,6 @@ fn real_merge_is_accepted_by_ffprobe() {
 }
 
 #[test]
-fn ffmpeg_transcode_produces_playable_hevc() {
-    let Some(encoder) = ffmpeg::hevc_encoder() else {
-        eprintln!("[e2e] 没探到可用的 HEVC 编码器，跳过");
-        return;
-    };
-    let Some(mut all) = episodes() else { return };
-    let src = all.swap_remove(0);
-    let dir = scratch("ffmpeg");
-    let out = dir.join("转码.mp4");
-
-    let started = Instant::now();
-    transcode_with_ffmpeg(&plain_req(&src, &out), &encoder).unwrap();
-    let elapsed = started.elapsed();
-
-    assert_eq!(video_codec(&out), "hevc", "产物应是 HEVC");
-    assert_eq!(audio_codec(&out), "aac", "音轨应直通保留为 AAC");
-
-    let source = media_seconds(&src);
-    let got = probe_duration(&out);
-    assert!(
-        (got - source).abs() < source * 0.01,
-        "转码后时长 {got:.2}s 应与源 {source:.2}s 一致"
-    );
-    println!(
-        "[e2e] ffmpeg({}) 转码 {source:.1}s 单集：{elapsed:.2?}，产物 {:.1}MB",
-        enc_label(&encoder),
-        std::fs::metadata(&out).unwrap().len() as f64 / 1048576.0
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn platform_pipeline_produces_playable_hevc() {
     let Some(mut all) = episodes() else { return };
     let src = all.swap_remove(0);
@@ -459,71 +416,11 @@ fn platform_transcode_produces_playable_hevc() {
 }
 
 #[test]
-fn ffmpeg_output_is_decodable() {
-    let Some(encoder) = ffmpeg::hevc_encoder() else {
-        eprintln!("[e2e] 没探到可用的 HEVC 编码器，跳过");
-        return;
-    };
-    let Some(all) = episodes() else { return };
-    let src = all
-        .into_iter()
-        .min_by_key(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(u64::MAX))
-        .unwrap();
-    let dir = scratch("ffmpeg");
-
-    let ff_out = dir.join("ffmpeg.mp4");
-    let ff_started = Instant::now();
-    transcode_with_ffmpeg(&plain_req(&src, &ff_out), &encoder).unwrap();
-    let ff_elapsed = ff_started.elapsed();
-
-    let tracks = hongguo_media::demux::demux_file(&ff_out).expect("产物应能解复用");
-    assert!(tracks.video_track().is_some(), "产物应有视频轨");
-    assert!(
-        (media_seconds(&ff_out) - media_seconds(&src)).abs() < media_seconds(&src) * 0.01,
-        "产物时长应与源一致"
-    );
-    println!("[e2e] ffmpeg: {:.2?}s", ff_elapsed);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn compat_merge_end_to_end_via_ffmpeg() {
-    let Some((all, _)) = mergeable_episodes() else {
-        return;
-    };
-    let inputs: Vec<PathBuf> = all.into_iter().take(3).collect();
-    let dir = scratch("compat");
-
-    let mut transcoded = Vec::new();
-    for (i, src) in inputs.iter().enumerate() {
-        let target = dir.join(format!("{:03}.mp4", i + 1));
-        let e2e_enc = ffmpeg::hevc_encoder().unwrap();
-        transcode_with_ffmpeg(&plain_req(src, &target), &e2e_enc).unwrap();
-        transcoded.push(target);
-    }
-
-    let out = dir.join("合集.mp4");
-    let (_, count) = concat_copy(&transcoded, &out).unwrap();
-    assert_eq!(count, inputs.len());
-
-    let expected: f64 = inputs.iter().map(|p| media_seconds(p)).sum();
-    let got = probe_duration(&out);
-    assert!(
-        (got - expected).abs() < expected * 0.02,
-        "兼容合并产物时长 {got:.2}s 应对齐各集之和 {expected:.2}s"
-    );
-    assert_eq!(video_codec(&out), "hevc");
-    assert_eq!(audio_codec(&out), "aac");
-    println!("[e2e] 兼容合并 {count} 集：{got:.2}s（各集之和 {expected:.2}s）");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn compat_merge_unifies_mixed_resolutions_by_scaling() {
-    let Some(encoder) = ffmpeg::hevc_encoder() else {
+    if !hongguo_media_platform::platform::encoder_available() {
         eprintln!("[e2e] 没探到可用的 HEVC 编码器，跳过");
         return;
-    };
+    }
     let Some(files) = episodes() else { return };
     let mut picks: Vec<PathBuf> = Vec::new();
     for p in &files {
@@ -554,7 +451,9 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
     let mut raw = Vec::new();
     for (i, src) in picks.iter().enumerate() {
         let t = dir.join(format!("raw{:03}.mp4", i + 1));
-        transcode_with_ffmpeg(&plain_req(src, &t), &encoder).unwrap();
+        hongguo_media_platform::platform::transcode_hevc(&plain_req(src, &t))
+            .unwrap()
+            .unwrap();
         raw.push(t);
     }
     let err = concat_copy(&raw, &dir.join("raw.mp4")).expect_err("不缩放时必须拒绝");
@@ -564,13 +463,15 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
     let mut scaled = Vec::new();
     for (i, src) in picks.iter().enumerate() {
         let t = dir.join(format!("scaled{:03}.mp4", i + 1));
-        let req = hongguo_media_platform::ffmpeg::TranscodeRequest {
+        let req = hongguo_media_platform::platform::PlatformRequest {
             input: src,
             output: &t,
             scale_to: Some((w, h)),
             on_progress: None,
         };
-        transcode_with_ffmpeg(&req, &encoder).unwrap();
+        hongguo_media_platform::platform::transcode_hevc(&req)
+            .unwrap()
+            .unwrap();
         scaled.push(t);
     }
     let out = dir.join("scaled.mp4");
@@ -592,37 +493,4 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
     );
     println!("[e2e] 混合分辨率统一到 {w}x{h} 后合并成功：{got:.2}s");
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn the_installed_ffmpeg_is_actually_used_by_the_transcode_path() {
-    let Some(encoder) = ffmpeg::hevc_encoder() else {
-        eprintln!(
-            "[e2e] 没探到可用的 HEVC 编码器，跳过：{:?}",
-            ffmpeg::ffmpeg_path()
-        );
-        return;
-    };
-    let backend = ffmpeg::backend_info();
-    assert!(
-        backend.transcode_with.starts_with("ffmpeg"),
-        "后端应报 ffmpeg，实际 {}",
-        backend.transcode_with
-    );
-    let cap = hongguo_media_platform::capability::probe::detect();
-    if cap.platform_encoder {
-        assert!(
-            !cap.has_ffmpeg && !cap.hevc_hw_encoder,
-            "平台编码层可用时 ffmpeg 兜底层应整层跳过，实际 has_ffmpeg={} hw={}",
-            cap.has_ffmpeg,
-            cap.hevc_hw_encoder
-        );
-    } else {
-        assert_eq!(cap.has_ffmpeg, ffmpeg::ffmpeg_path().is_some());
-        assert_eq!(cap.hevc_hw_encoder, encoder.hardware);
-    }
-    println!(
-        "[e2e] 后端 = {}（硬件={}），能力 = hasFfmpeg:{} hw:{}",
-        backend.transcode_with, encoder.hardware, cap.has_ffmpeg, cap.hevc_hw_encoder
-    );
 }

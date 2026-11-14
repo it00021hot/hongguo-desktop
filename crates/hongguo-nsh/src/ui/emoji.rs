@@ -183,23 +183,9 @@ pub(crate) fn emoji_picker(
         .margin(px(8.0))
         .trigger(trigger)
         .popup_style(|style| {
-            style
+            super::player_popup::surface(style)
                 .p_2()
                 .rounded_xl()
-                .border_1()
-                .border_color(move || {
-                    theme()
-                        .color("video-controls")
-                        .expect("video controls")
-                        .opacity(0.1)
-                })
-                .bg(move || {
-                    theme()
-                        .color("video-surface")
-                        .expect("video surface")
-                        .opacity(0.9)
-                })
-                .text_color(move || theme().color("video-controls").expect("video controls"))
                 .shadow_lg()
                 .origin_bottom_right()
                 .transition()
@@ -372,22 +358,9 @@ pub(crate) fn emoji_context(
     nsh_base::context_menu()
         .trigger(trigger)
         .popup_style(|style| {
-            style
+            super::player_popup::surface(style)
                 .p_1()
                 .rounded_lg()
-                .border_1()
-                .border_color(move || {
-                    theme()
-                        .color("video-controls")
-                        .expect("controls")
-                        .opacity(0.1)
-                })
-                .bg(move || {
-                    theme()
-                        .color("video-surface")
-                        .expect("surface")
-                        .opacity(0.9)
-                })
                 .shadow_lg()
         })
         .child(

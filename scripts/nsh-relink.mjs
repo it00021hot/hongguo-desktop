@@ -16,7 +16,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export function relinkEnvironment(triple, prefix, linker, sdk, destination, linkerArgs = []) {
   return {
-    HONGGUO_FFMPEG_PREFIX: prefix,
+    HONGGUO_HEVC_ROOT: prefix,
     HONGGUO_RELINK_REAL_LINKER: linker,
     HONGGUO_RELINK_REAL_LINKER_ARGS: JSON.stringify(linkerArgs),
     HONGGUO_RELINK_SDK_ROOT: sdk,
@@ -64,16 +64,16 @@ export function finishRelink(binary, triple, destination) {
   const ios = triple.includes('apple-ios');
   writeFileSync(
     join(destination, 'README.md'),
-    `# Replacing the statically linked FFmpeg libraries\n\n` +
+    `# Replacing the statically linked libde265 library\n\n` +
       `Target: ${triple}. The recorded link.json and SHA-256 inventory contain the actual final-link inputs.\n` +
       `The application binary before bundle signing has SHA-256 ${sha256}.\n\n` +
-      'objects/ contains application/Rust/native link inputs; ffmpeg/lib/ contains the four original FFmpeg archives.\n' +
-      'Exact FFmpeg source, patches, build configuration and licenses accompany these materials in ../NativeMedia/.\n' +
+      'objects/ contains application/Rust/native link inputs; libde265/lib/ contains the original HEVC archive.\n' +
+      'Exact codec source, build configuration and licenses accompany these materials in ../NativeMedia/.\n' +
       'The target SDK/NDK and its compiler are development tools; they are not required on the customer device and are not redistributed here.\n' +
       'Use a compatible target toolchain (the original compiler/SDK paths are recorded), then run:\n\n' +
-      '```sh\nnode relink.mjs --linker <target-clang> --sdk <Apple-SDK-or-Android-NDK> --ffmpeg <modified-FFmpeg-prefix> --output <new-binary>\n```\n\n' +
-      'Omit --ffmpeg to use the included original libraries. A modified prefix must provide the same four static archive names and compatible public ABI.\n' +
-      'Every captured original object/archive is checked before linking; substituting your modified FFmpeg prefix is intentionally permitted.\n\n' +
+      '```sh\nnode relink.mjs --linker <target-clang> --sdk <Apple-SDK-or-Android-NDK> --hevc <modified-libde265-prefix> --output <new-binary>\n```\n\n' +
+      'Omit --hevc to use the included original archive. A modified prefix must provide lib/libde265.a and a compatible public ABI.\n' +
+      'Every captured original object/archive is checked before linking; substituting your modified HEVC prefix is intentionally permitted.\n\n' +
       (ios
         ? 'Copy the supplied app bundle to your working directory. Simulator:\n\n```sh\nnode resign-ios.mjs --app <Hongguo.app> --binary <new-binary> --identity -\n```\n\nFor a device, use your authorized signing identity and provisioning profile:\n\n```sh\nnode resign-ios.mjs --app <Hongguo.app> --binary <new-binary> --identity <identity> --profile <profile.mobileprovision>\n```\n\nThe helper validates the app identifier/profile, replaces only its executable, then signs and verifies the bundle.\n'
         : "To build an APK with your modified library, set --output to AndroidSource/target/nsh-android/jniLibs/arm64-v8a/libnsh.so, then use the included standalone Android host:\n\n```sh\ncd AndroidSource/crates/hongguo-nsh-android/android\n./gradlew -PappVersion=<original-version> -PappMinSdk=28 clean assembleDebug\n```\n\nOn Windows use gradlew.bat. Gradle uses the developer machine's own debug signing key; no private signing key is distributed. For your production identity, configure Android's standard release signing in this copied host project.\n"),

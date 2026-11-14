@@ -7,11 +7,10 @@ pub(super) fn may_play(
     lifecycle: Lifecycle,
     current_route: bool,
     pause_in_background: bool,
+    exposed: bool,
 ) -> bool {
-    // A visible desktop window keeps playing when another app has focus.
-    // The preference is specifically for minimizing/hiding the window.
     let foreground = if desktop {
-        lifecycle != Lifecycle::Background
+        lifecycle != Lifecycle::Background && exposed
     } else {
         lifecycle == Lifecycle::Active
     };
@@ -69,18 +68,21 @@ mod tests {
     #[test]
     fn desktop_background_playback_respects_the_preference_but_other_routes_pause() {
         use super::Lifecycle::*;
-        assert!(!super::may_play(true, Background, true, true));
-        assert!(super::may_play(true, Background, true, false));
-        assert!(!super::may_play(true, Active, false, false));
-        assert!(super::may_play(true, Active, true, true));
-        assert!(super::may_play(true, Inactive, true, true));
+        assert!(!super::may_play(true, Background, true, true, false));
+        assert!(super::may_play(true, Background, true, false, false));
+        assert!(!super::may_play(true, Active, false, false, true));
+        assert!(super::may_play(true, Active, true, true, true));
+        assert!(super::may_play(true, Inactive, true, true, true));
+        assert!(!super::may_play(true, Inactive, true, true, false));
+        assert!(!super::may_play(true, Active, true, true, false));
+        assert!(super::may_play(true, Inactive, true, false, false));
     }
     #[test]
     fn mobile_background_always_pauses_and_foreground_can_resume_without_changing_user_pause() {
         use super::Lifecycle::*;
-        assert!(!super::may_play(false, Background, true, false));
-        assert!(!super::may_play(false, Background, true, true));
-        assert!(!super::may_play(false, Inactive, true, false));
-        assert!(super::may_play(false, Active, true, false));
+        assert!(!super::may_play(false, Background, true, false, true));
+        assert!(!super::may_play(false, Background, true, true, true));
+        assert!(!super::may_play(false, Inactive, true, false, true));
+        assert!(super::may_play(false, Active, true, false, true));
     }
 }

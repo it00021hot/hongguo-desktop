@@ -9,10 +9,6 @@ impl Controller {
         dc: &ID2D1DeviceContext,
         size: (f32, f32),
     ) -> Result<(), VideoError> {
-        #[cfg(feature = "decoder-audit")]
-        {
-            self.drawn = None;
-        }
         if !props.active
             || !size.0.is_finite()
             || !size.1.is_finite()
@@ -58,17 +54,6 @@ impl Controller {
             })();
             match result {
                 Ok(()) => {
-                    #[cfg(feature = "decoder-audit")]
-                    {
-                        let metadata = frame.metadata();
-                        self.drawn = Some((metadata.generation, metadata.serial, true));
-                        direct.submitted_frame(
-                            dc,
-                            self.device.as_ref().expect("drawing device"),
-                            metadata.generation,
-                            metadata.serial,
-                        )?;
-                    }
                     return Ok(());
                 }
                 Err(error) => {
@@ -84,12 +69,6 @@ impl Controller {
         }
         if let Some(raw) = &self.raw {
             raw.draw(dc, size, props.resize_mode)?;
-            #[cfg(feature = "decoder-audit")]
-            {
-                self.drawn = raw
-                    .metadata()
-                    .map(|metadata| (metadata.generation, metadata.serial, false));
-            }
             if raw.metadata().is_some() {
                 direct.submitted(dc, self.device.as_ref().expect("raw frame drawing device"))?;
             }

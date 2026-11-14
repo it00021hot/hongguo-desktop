@@ -7,15 +7,18 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+source-build = ["hongguo-bytevc2/source-build", "hongguo-hevc/source-build"]
+
 [dependencies]
 hongguo-common = { path = "../hongguo-common" }
 hongguo-video = { path = "../hongguo-video" }
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false, features = ["vvdec"] }
-hongguo-codec-ffi = { path = "../hongguo-codec-ffi" }
+hongguo-hevc = { path = "../hongguo-hevc" }
+hongguo-native-clock = { path = "../hongguo-native-clock" }
+hongguo-media = { path = "../hongguo-media" }
 parking_lot = "0.13"
-hongguo-audio-api = { path = "../hongguo-audio-api" }
-hongguo-audio = { path = "../hongguo-audio" }
 log = "0.4"
 
 [dev-dependencies]

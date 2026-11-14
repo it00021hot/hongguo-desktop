@@ -8,6 +8,7 @@ pub(super) struct Control {
     reference: ElementRef,
     source: Stored<String>,
     pending: Signal<Option<String>>,
+    pixel: Signal<bool>,
 }
 
 impl Control {
@@ -16,11 +17,12 @@ impl Control {
             reference: element_ref(),
             source: stored(uuid::Uuid::new_v4().to_string()),
             pending: signal(None),
+            pixel: signal(false),
         }
     }
 
     pub fn seek(self, seconds: f64) {
-        if !pixel_supported() {
+        if !self.pixel.get_untracked() {
             self.reference.seek(seconds);
             return;
         }
@@ -45,9 +47,11 @@ pub(super) const fn pixel_supported() -> bool {
     ))
 }
 
+#[derive(Clone)]
 pub(super) struct State {
     pub url: String,
     pub frame_source: Option<String>,
+    pub codec_extension: Option<std::rc::Rc<dyn Fn() -> Result<String, String>>>,
     pub control: Control,
     pub rate: Memo<f32>,
     pub interval: Memo<f32>,
@@ -68,10 +72,65 @@ pub(super) struct Callbacks {
 }
 
 pub(super) fn mount(state: State, callbacks: Callbacks) -> View {
-    if pixel_supported() {
-        return pixel::mount(state, callbacks);
+    let frame_url = signal(state.frame_source.clone());
+    let state = stored(state);
+    let callbacks = stored(std::rc::Rc::new(callbacks));
+    if let Some(enhancement) = crate::player::enhancement::Controller::current() {
+        effect(move || {
+            let settings = enhancement.settings.get();
+            if (!settings.anime4k_on && !settings.sharpen_on) || frame_url.get_untracked().is_some()
+            {
+                return;
+            }
+            if let Some(extension) = &state.get().codec_extension {
+                match extension() {
+                    Ok(url) => frame_url.set(Some(url)),
+                    Err(detail) => {
+                        log::warn!(
+                            "[NSH enhancement] native Video cannot process this source: {detail}"
+                        );
+                        enhancement
+                            .phase
+                            .set(hongguo_nsh_video_api::EnhancementPhase::Error);
+                        enhancement
+                            .message
+                            .set(crate::i18n::tr("player.enhanceErrGeneric"));
+                    }
+                }
+            }
+        });
     }
-    let callbacks = stored(callbacks);
+    view().flex_1().child(each(
+        move || vec![frame_url.get()],
+        |url| url.clone(),
+        move |url, _| {
+            let mut state = state.get();
+            state.frame_source = url.get_untracked();
+            if pixel_supported() && state.frame_source.is_some() {
+                pixel::mount(state, forward(callbacks))
+            } else {
+                mount_native(state, callbacks, frame_url)
+            }
+        },
+    ))
+}
+
+fn forward(callbacks: Stored<std::rc::Rc<Callbacks>>) -> Callbacks {
+    Callbacks {
+        load: Box::new(move |info| (callbacks.get().load)(info)),
+        progress: Box::new(move |info| (callbacks.get().progress)(info)),
+        buffer: Box::new(move |buffering| (callbacks.get().buffer)(buffering)),
+        error: Box::new(move |error| (callbacks.get().error)(error)),
+        end: Box::new(move || (callbacks.get().end)()),
+    }
+}
+
+fn mount_native(
+    state: State,
+    callbacks: Stored<std::rc::Rc<Callbacks>>,
+    frame_url: Signal<Option<String>>,
+) -> View {
+    state.control.pixel.set(false);
     view().flex_1().child(
         video(state.url)
             .flex_1()
@@ -89,14 +148,22 @@ pub(super) fn mount(state: State, callbacks: Callbacks) -> View {
             .muted(state.muted)
             .opacity(state.opacity)
             .paused(state.paused)
-            .on_load(move |info: &VideoInfo| callbacks.with(|callbacks| (callbacks.load)(info)))
-            .on_progress(move |info: &VideoProgress| {
-                callbacks.with(|callbacks| (callbacks.progress)(info))
+            .on_load(move |info: &VideoInfo| (callbacks.get().load)(info))
+            .on_progress(move |info: &VideoProgress| (callbacks.get().progress)(info))
+            .on_buffer(move |buffering: &bool| (callbacks.get().buffer)(buffering))
+            .on_error(move |error: &str| {
+                if frame_url.get_untracked().is_some() {
+                    return;
+                }
+                if let Some(extension) = &state.codec_extension {
+                    match extension() {
+                        Ok(url) => frame_url.set(Some(url)),
+                        Err(detail) => (callbacks.get().error)(&detail),
+                    }
+                } else {
+                    (callbacks.get().error)(error);
+                }
             })
-            .on_buffer(move |buffering: &bool| {
-                callbacks.with(|callbacks| (callbacks.buffer)(buffering))
-            })
-            .on_error(move |error: &str| callbacks.with(|callbacks| (callbacks.error)(error)))
-            .on_end(move || callbacks.with(|callbacks| (callbacks.end)())),
+            .on_end(move || (callbacks.get().end)()),
     )
 }

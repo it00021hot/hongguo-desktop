@@ -4507,44 +4507,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hongguo-audio"
-version = "0.6.6"
-dependencies = [
- "hongguo-audio-android",
- "hongguo-audio-api",
- "hongguo-audio-apple",
- "hongguo-audio-windows",
-]
-
-[[package]]
-name = "hongguo-audio-android"
-version = "0.6.6"
-dependencies = [
- "cc",
- "hongguo-audio-api",
-]
-
-[[package]]
-name = "hongguo-audio-api"
-version = "0.6.6"
-
-[[package]]
-name = "hongguo-audio-apple"
-version = "0.6.6"
-dependencies = [
- "cc",
- "hongguo-audio-api",
-]
-
-[[package]]
-name = "hongguo-audio-windows"
-version = "0.6.6"
-dependencies = [
- "cc",
- "hongguo-audio-api",
-]
-
-[[package]]
 name = "hongguo-bytevc2"
 version = "0.6.6"
 dependencies = [
@@ -4554,18 +4516,6 @@ dependencies = [
  "hongguo-vvdec-sys",
  "oxideav-core",
  "oxideav-h266",
-]
-
-[[package]]
-name = "hongguo-codec-ffi"
-version = "0.6.6"
-dependencies = [
- "cc",
- "hongguo-media-types",
- "hongguo-video",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4645,6 +4595,19 @@ dependencies = [
  "smallvec",
  "sys-locale",
  "tokio",
+]
+
+[[package]]
+name = "hongguo-hevc"
+version = "0.6.6"
+dependencies = [
+ "hongguo-common",
+ "hongguo-media",
+ "hongguo-media-types",
+ "rusty_h265",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4749,6 +4712,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hongguo-native-clock"
+version = "0.6.6"
+
+[[package]]
 name = "hongguo-nsh"
 version = "0.6.6"
 dependencies = [
@@ -4765,6 +4732,7 @@ dependencies = [
  "hongguo-media",
  "hongguo-media-platform",
  "hongguo-media-types",
+ "hongguo-native-clock",
  "hongguo-nsh-video-api",
  "hongguo-nsh-video-ios",
  "hongguo-nsh-video-macos",
@@ -4774,6 +4742,7 @@ dependencies = [
  "hongguo-service",
  "hongguo-store",
  "hongguo-stream",
+ "hongguo-video",
  "log",
  "nsh-base",
  "nsh-core",
@@ -4823,6 +4792,7 @@ dependencies = [
  "glow",
  "hongguo-enhancement",
  "hongguo-media-types",
+ "hongguo-native-clock",
  "hongguo-nsh-video-api",
  "hongguo-video-color",
  "hongguo-video-gpu",
@@ -4841,6 +4811,7 @@ name = "hongguo-nsh-video-api"
 version = "0.6.6"
 dependencies = [
  "hongguo-media-types",
+ "hongguo-native-clock",
  "serde",
  "serde_json",
 ]
@@ -4850,11 +4821,11 @@ name = "hongguo-nsh-video-apple"
 version = "0.6.6"
 dependencies = [
  "block2 0.6.2",
- "hongguo-codec-ffi",
  "hongguo-enhancement",
  "hongguo-media-types",
+ "hongguo-native-clock",
  "hongguo-nsh-video-api",
- "hongguo-playback",
+ "hongguo-video",
  "hongguo-video-color",
  "hongguo-video-gpu",
  "objc2 0.6.5",
@@ -4894,9 +4865,9 @@ dependencies = [
  "env_logger",
  "hongguo-common",
  "hongguo-media-types",
+ "hongguo-native-clock",
  "hongguo-nsh-video-api",
  "hongguo-nsh-video-apple",
- "hongguo-playback",
  "hongguo-softdec",
  "log",
  "nsh-core",
@@ -4910,15 +4881,14 @@ dependencies = [
 name = "hongguo-nsh-video-windows"
 version = "0.6.6"
 dependencies = [
- "hongguo-codec-ffi",
- "hongguo-common",
  "hongguo-enhancement",
+ "hongguo-hevc",
+ "hongguo-media",
  "hongguo-media-types",
+ "hongguo-native-clock",
  "hongguo-nsh-video-api",
- "hongguo-playback",
  "hongguo-video-color",
  "log",
- "nsh-core",
  "nsh-platform-windows",
  "pollster 0.4.0",
  "serde_json",
@@ -4931,12 +4901,12 @@ dependencies = [
 name = "hongguo-playback"
 version = "0.6.6"
 dependencies = [
- "hongguo-audio",
- "hongguo-audio-api",
  "hongguo-bytevc2",
- "hongguo-codec-ffi",
  "hongguo-common",
+ "hongguo-hevc",
+ "hongguo-media",
  "hongguo-media-types",
+ "hongguo-native-clock",
  "hongguo-video",
  "log",
  "parking_lot 0.13.0",
@@ -5165,6 +5135,9 @@ version = "0.6.6"
 dependencies = [
  "bindgen 0.71.1",
  "cmake",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

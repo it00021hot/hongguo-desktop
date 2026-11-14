@@ -21,7 +21,7 @@ crates/hongguo-service（业务编排，无任何 UI 框架，两壳共用）
 
 - 已迁出的 crate：`crates/hongguo-common`（领域模型 `model` / 统一错误 `AppError` / 纯工具 `utils` / 跨端常量 `consts`）、`crates/hongguo-signer`（请求签名，JS 1:1 禁改）、`crates/hongguo-video`（MP4 解析与 CENC 解密）、`crates/hongguo-api`（官方接口客户端，业务域 18 个：calendar / danmaku / detail / discover / emoticon / history / interact / login / new_drama / play_strategy / play_url / rank / recommend / register / reservation / search / stream_pick / warmup，另有 client / params；改端点前必读 `docs/hongguo-api-endpoints.md`）、`crates/hongguo-store`（Turso 持久化：db 迁移 / `entity/` 八个模块 device、follow、local_history、merge、playback、series、settings、task / bridge 同步门面）、`crates/hongguo-stream`（在线流契约：渐进流 / 缓存 / Range 应答 / 进程级 `cache()` 单例）、`crates/hongguo-media`（纯 Rust 编解码：demux / hevc / mp4 写出层 / mux 封装 / remux / transcode / heif 等）。本 crate 用 `hongguo_common::…` / `hongguo_signer::…` / `hongguo_video::…` / `hongguo_api::…` / `hongguo_store::…` / `hongguo_stream::…` / `hongguo_media::…` 引用；常量归属规则见 common 的 `consts/mod.rs` 头注释。
 
-- **媒体层三块**：纯 Rust 编解码在 `hongguo-media`；平台硬编（VT / MF / WIC）与 ffmpeg 执行在 `hongguo-media-platform` 门面（平台实现在 `hongguo-media-platform-{macos,windows}`，`ffmpeg` 外部进程与 `capability` 能力探测聚合并留在此）；帧契约在 `hongguo-media-platform-api`。方向恒为「平台/ffmpeg/能力探测 → 纯 Rust 核心」，不许反向（核心不依赖 tauri/gpui）。
+- **媒体层三块**：纯 Rust 容器与封装在 `hongguo-media`；原生媒体编解码和能力探测在 `hongguo-media-platform` 门面及各平台实现 crate；平台请求契约在 `hongguo-media-platform-api`。方向恒为「平台/能力探测 → 媒体核心」，禁止反向，不依赖 tauri/gpui。
 
 - **在线流的两侧分工（`hongguo-stream` 是唯一交点）**：填数据在 `crates/hongguo-service/src/play_service/online/`（`hongguo_stream::cache()` 拿全局缓存，塞 `ProgressiveStream` / 明文），答 Range 的注册胶水在 `crates/hongguo-tauri/src/protocol.rs`（供数逻辑在 `hongguo-protocol` 的 `serve`）。两边都只往下依赖 stream 契约——**别再让协议层回头调 service**（历史上协议层直接调 play_service 的缓存入口，与 service 用本层类型构成双向耦合，2026-10-11 修掉）。
 
@@ -97,4 +97,4 @@ pub fn series_by_id(&self, series_id: &str) -> AppResult<Option<Series>> {
 
 ## 动 media/platform 前必读
 
-转码分流单入口 `pipeline::transcode`（平台硬编 → ffmpeg），别绕开它直连后端。机器上两者都没有时**没有兜底**，转码直接报错——别再指望纯 Rust 软解。跨平台验证口径：显示序只用 pts 集合比对。VT/MF 硬编的决策档案与已修 FFI bug 全录在 git 历史（原 `docs/platform-transcode-progress.md`，文档清理时删除，`git log --follow` 可找回）。
+归档转码单入口 `pipeline::transcode` 使用原生平台 HEVC 编码器，不查找或调用外部 FFmpeg。没有可用编码器时明确报错，不影响播放和同规格无损合并。跨平台验证保留原始时间轴；平台编码的历史决策与 FFI 修复可查 git 历史。

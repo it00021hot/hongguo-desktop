@@ -9,7 +9,7 @@ pub fn decode_capability() -> DecodeCapability {
     hongguo_media_platform::capability::probe::detect()
 }
 
-/// 丢弃缓存重新探测一次 ffmpeg 与编码器。**用户装完 ffmpeg 之后进程的环境变量不会更新**，不重探就一直报「未检测到」——设置页点一下即可生效，不必重启应用（探测本身一到两秒）。
+/// 清除缓存并重新探测原生归档编码能力。
 #[tauri::command]
 pub fn redetect_capability() -> DecodeCapability {
     hongguo_media_platform::capability::probe::redetect()

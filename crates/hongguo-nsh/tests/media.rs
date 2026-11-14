@@ -1,7 +1,57 @@
 use super::MediaServer;
 
 #[tokio::test]
-async fn h264_uses_the_bundled_decoder_and_publishes_native_frames() {
+async fn native_audio_http_view_preserves_original_samples_and_shares_revocation() {
+    let path = std::env::temp_dir().join(format!("hg-audio-view-{}.mp4", uuid::Uuid::new_v4()));
+    let original = include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
+    std::fs::write(&path, original).unwrap();
+    let server = MediaServer::start().await.unwrap();
+    let lease = server.playback_file(&path).unwrap();
+    let url = format!("{}/audio", lease.url());
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = client.get(&url).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let masked = response.bytes().await.unwrap();
+    assert_eq!(masked.len(), original.len());
+    let media = hongguo_media::demux::demux_bytes(&masked).unwrap();
+    assert!(media.video_track().is_none());
+    let audio = media.audio_track().unwrap();
+    let source = hongguo_media::demux::demux_bytes(original).unwrap();
+    assert_eq!(
+        audio.info.samples,
+        source.audio_track().unwrap().info.samples
+    );
+    for &(offset, size) in &audio.info.samples {
+        let range = offset as usize..(offset + size) as usize;
+        assert_eq!(masked[range.clone()], original[range]);
+    }
+    let head = client.head(&url).send().await.unwrap();
+    assert_eq!(head.headers()["content-length"], original.len().to_string());
+    let partial = client
+        .get(&url)
+        .header("Range", "bytes=1-37")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(partial.status(), 206);
+    assert_eq!(partial.bytes().await.unwrap().as_ref(), &masked[1..38]);
+    assert_eq!(
+        client
+            .get(&url)
+            .header("Origin", "http://example.com")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    drop(lease);
+    assert_eq!(client.get(url).send().await.unwrap().status(), 404);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
+async fn h264_is_readable_by_native_video_without_a_frame_session() {
     let path = std::env::temp_dir().join(format!("hg-nsh-rejected-{}.mp4", uuid::Uuid::new_v4()));
     std::fs::write(
         &path,
@@ -10,39 +60,28 @@ async fn h264_uses_the_bundled_decoder_and_publishes_native_frames() {
     .unwrap();
     let server = MediaServer::start().await.unwrap();
     let lease = server.playback_file(&path).unwrap();
-    let frames = hongguo_nsh_video_api::frames::open_frames(lease.frame_source().unwrap()).unwrap();
-    frames.configure_decoder(None).unwrap();
-    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if let Some(frame) = frames.native_frame_at(0.0).unwrap() {
-                break frame;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .unwrap();
+    assert!(lease.frame_source().is_none());
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = client.get(lease.url()).send().await.unwrap();
+    assert_eq!(response.status(), 200);
     assert_eq!(
-        (
-            frame.image.descriptor().width,
-            frame.image.descriptor().height
-        ),
-        (64, 48)
+        response.bytes().await.unwrap().as_ref(),
+        include_bytes!("../../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4")
     );
-    assert!(frames.frame_at(0).unwrap().is_none());
     drop(lease);
     assert!(server.routes.sources.lock().unwrap().is_empty());
     std::fs::remove_file(path).unwrap();
 }
 
 #[tokio::test]
-async fn registered_playback_decodes_original_video_without_a_system_audio_view() {
+async fn codec_extension_decodes_the_same_http_source_and_retires_its_frame_lease() {
     let path = std::env::temp_dir().join(format!("hg-nsh-direct-{}.mp4", uuid::Uuid::new_v4()));
     let original = include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
     std::fs::write(&path, original).unwrap();
     let server = MediaServer::start().await.unwrap();
     let lease = server.playback_file(&path).unwrap();
-    let frames = hongguo_nsh_video_api::frames::open_frames(lease.frame_source().unwrap()).unwrap();
+    let handle = lease.enable_codec_extension(0.0).unwrap();
+    let frames = hongguo_nsh_video_api::frames::open_frames(&handle).unwrap();
     frames.configure_decoder(None).unwrap();
     let frame = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -63,7 +102,7 @@ async fn registered_playback_decodes_original_video_without_a_system_audio_view(
     );
     assert!(frames.holding().unwrap());
     assert!(frames.presented(frame.generation, frame.serial).unwrap());
-    assert!(lease.url().starts_with("hongguo-playback://"));
+    assert!(lease.url().starts_with("http://127.0.0.1:"));
     let source = server.routes.sources.lock().unwrap()[&lease.id].clone();
     let cancelled = std::sync::atomic::AtomicBool::new(false);
     assert_eq!(
@@ -74,6 +113,33 @@ async fn registered_playback_decodes_original_video_without_a_system_audio_view(
     assert!(frames.frame_at(0).is_err());
     assert!(frames.native_frame_at(0.0).is_err());
     assert!(source.read(0, 1, &cancelled).is_err());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
+async fn native_hevc_keeps_the_original_tracks_and_does_not_start_a_frame_decoder() {
+    let path = std::env::temp_dir().join(format!("hg-nsh-native-{}.mp4", uuid::Uuid::new_v4()));
+    let original = include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
+    std::fs::write(&path, original).unwrap();
+    let server = MediaServer::start().await.unwrap();
+    let lease = server.playback_file(&path).unwrap();
+    assert!(lease.frame_source().is_none());
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    assert_eq!(
+        client
+            .get(lease.url())
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap()
+            .as_ref(),
+        original
+    );
+    let url = lease.url().to_owned();
+    drop(lease);
+    assert_eq!(client.get(url).send().await.unwrap().status(), 404);
     std::fs::remove_file(path).unwrap();
 }
 

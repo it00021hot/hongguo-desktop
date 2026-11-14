@@ -203,11 +203,9 @@ pub(crate) fn volume(
     trigger: nsh_base::ButtonElement,
     action: impl Fn(MenuAction) + Copy + 'static,
 ) -> View {
-    ui::player_panel(
+    ui::player_volume_panel(
         move || state.open.get() == Some(Panel::Volume),
         move |open| state.set_open(Panel::Volume, open),
-        move || tr("player.volume"),
-        96.0,
         trigger,
         move || {
             view()

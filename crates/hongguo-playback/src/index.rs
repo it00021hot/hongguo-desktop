@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use hongguo_common::{AppError, AppResult};
-use hongguo_media_types::ColorMetadata;
+use hongguo_media_types::{ColorMetadata, ContentLightMetadata, MasteringDisplayMetadata};
 use hongguo_video::{
     r#box::{find_box, parse_boxes},
     sample_table::{TrackInfo, collect_tracks},
@@ -32,7 +32,6 @@ pub struct IndexedTrack {
     pub rotation_degrees: u16,
     durations: HashMap<i64, u32>,
     coverage: coverage::Coverage,
-    pub(crate) aac_seek: Option<crate::aac_seek::AacSeek>,
 }
 
 pub struct IndexedSource {
@@ -115,7 +114,7 @@ impl IndexedTrack {
         let (extradata, color) = if codec == TrackCodec::Aac {
             (info.decoder_config.clone(), ColorMetadata::default())
         } else {
-            visual_configuration(moov, &info, codec)?
+            video_configuration(moov, &info, codec)?
         };
         if extradata.is_empty() {
             return Err(AppError::Media("track has no decoder configuration".into()));
@@ -131,14 +130,6 @@ impl IndexedTrack {
             .cloned()
             .ok_or_else(|| AppError::Media("track has no movie timeline".into()))?;
         let rotation_degrees = track_rotation(moov, info.track_id)?;
-        let aac_seek = if codec == TrackCodec::Aac {
-            Some(crate::aac_seek::AacSeek::new(
-                &extradata,
-                &moov[info.stbl_offset..info.stbl_offset + info.stbl_size],
-            )?)
-        } else {
-            None
-        };
         Ok(Self {
             info,
             codec,
@@ -149,7 +140,6 @@ impl IndexedTrack {
             rotation_degrees,
             durations,
             coverage,
-            aac_seek,
         })
     }
 
@@ -167,28 +157,6 @@ impl IndexedTrack {
             .filter(|(index, sample)| is_sync(*index) && sample.pts as f64 <= target)
             .max_by_key(|(_, sample)| sample.pts)
             .map_or(0, |(index, _)| index)
-    }
-
-    pub fn audio_seek_sample(&self, media_secs: f64, rate: f64, output_rate: u32) -> usize {
-        let Some(seek) = &self.aac_seek else {
-            return 0;
-        };
-        let target_ticks = media_secs * f64::from(self.info.media_timescale);
-        let target = self
-            .samples
-            .partition_point(|sample| sample.pts as f64 <= target_ticks)
-            .saturating_sub(1);
-        let history = seek.history_secs(rate, output_rate);
-        if !history.is_finite() {
-            return 0;
-        }
-        let start_ticks = (media_secs - history) * f64::from(self.info.media_timescale);
-        let codec_start = self
-            .samples
-            .partition_point(|sample| (sample.pts as f64) < start_ticks)
-            .saturating_sub(1);
-        seek.group_start(target)
-            .map_or(codec_start, |group| group.min(codec_start))
     }
 
     pub fn duration_for_pts(&self, media_secs: f64) -> AppResult<f64> {
@@ -219,18 +187,18 @@ impl IndexedTrack {
     }
 }
 
-fn visual_configuration(
+pub fn video_configuration(
     data: &[u8],
     info: &TrackInfo,
     codec: TrackCodec,
 ) -> AppResult<(Vec<u8>, ColorMetadata)> {
-    let stsd = find_box(
-        data,
-        info.stbl_offset,
-        info.stbl_offset + info.stbl_size,
-        "stsd",
-    )
-    .ok_or_else(|| AppError::Media("video track has no stsd".into()))?;
+    let stbl_end = info
+        .stbl_offset
+        .checked_add(info.stbl_size)
+        .filter(|end| *end <= data.len())
+        .ok_or_else(|| AppError::Media("sample table is outside the media header".into()))?;
+    let stsd = find_box(data, info.stbl_offset, stbl_end, "stsd")
+        .ok_or_else(|| AppError::Media("video track has no stsd".into()))?;
     let entries = parse_boxes(data, stsd.start + 8, stsd.start + stsd.size);
     if entries.len() != 1 {
         return Err(AppError::Media(
@@ -246,11 +214,25 @@ fn visual_configuration(
         TrackCodec::Hevc => "hvcC",
         TrackCodec::H264 => "avcC",
         TrackCodec::Bytevc2 => "bv2C",
-        TrackCodec::Aac => unreachable!(),
+        TrackCodec::Aac => return Err(AppError::Media("audio has no visual configuration".into())),
     };
     let configuration = find_box(data, inner, entry.start + entry.size, configuration_box)
         .ok_or_else(|| AppError::Media(format!("video track has no {configuration_box}")))?;
     let mut color = parse_color(data, inner, entry.start + entry.size);
+    if let Some(mastering) = find_box(data, inner, entry.start + entry.size, "mdcv") {
+        color.mastering_display = Some(
+            MasteringDisplayMetadata::from_payload(
+                &data[mastering.start..mastering.start + mastering.size],
+            )
+            .ok_or_else(|| AppError::Media("invalid MP4 mastering display metadata".into()))?,
+        );
+    }
+    if let Some(light) = find_box(data, inner, entry.start + entry.size, "clli") {
+        color.content_light = Some(
+            ContentLightMetadata::from_payload(&data[light.start..light.start + light.size])
+                .ok_or_else(|| AppError::Media("invalid MP4 content light metadata".into()))?,
+        );
+    }
     if let Some(pasp) = find_box(data, inner, entry.start + entry.size, "pasp")
         && pasp.size == 8
     {

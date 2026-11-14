@@ -627,7 +627,13 @@ impl SwapChain {
 
     pub(crate) fn presentation(&self) -> crate::NativePresentation {
         let mut statistics = windows::Win32::Graphics::Dxgi::DXGI_FRAME_STATISTICS::default();
-        let statistics = unsafe { self.swap.GetFrameStatistics(&mut statistics) }.ok().map(|_|statistics);
-        crate::NativePresentation { submitted_at:std::time::Instant::now(),present_count:unsafe { self.swap.GetLastPresentCount() }.ok(),statistics }
+        let statistics = unsafe { self.swap.GetFrameStatistics(&mut statistics) }
+            .ok()
+            .map(|_| statistics);
+        crate::NativePresentation {
+            submitted_at: std::time::Instant::now(),
+            present_count: unsafe { self.swap.GetLastPresentCount() }.ok(),
+            statistics,
+        }
     }
 }

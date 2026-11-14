@@ -71,7 +71,7 @@ pub(super) fn mount<E: IntoElement>(
                 source
                     .map(|source| VideoSource {
                         url: source.lease.url().to_owned(),
-                        frame_source: source.lease.frame_source().map(str::to_owned),
+                        frame_source: source.lease.frame_source(),
                         resume_at: source.resume_at,
                         history: source.history.clone(),
                         expected_duration: source.expected_duration,
@@ -164,6 +164,18 @@ pub(super) fn mount<E: IntoElement>(
                     super::renderer::State {
                         url: mounted.url,
                         frame_source: mounted.frame_source,
+                        codec_extension: Some(std::rc::Rc::new(move || {
+                            source.with(|source| {
+                                source
+                                    .ok_or_else(|| "media source is no longer current".to_string())?
+                                    .lease
+                                    .enable_codec_extension(
+                                        pending_seek
+                                            .get_untracked()
+                                            .unwrap_or(native_position.get_untracked().0),
+                                    )
+                            })
+                        })),
                         control,
                         rate: computed(move || rate.get()),
                         interval: computed(|| 250.0),

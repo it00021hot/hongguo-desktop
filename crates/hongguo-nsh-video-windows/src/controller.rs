@@ -34,8 +34,6 @@ pub(crate) struct Controller {
     buffering: Option<bool>,
     ended: bool,
     waiting_for_device: bool,
-    #[cfg(feature = "decoder-audit")]
-    drawn: Option<(u64, u64, bool)>,
 }
 
 impl Default for Controller {
@@ -56,17 +54,11 @@ impl Default for Controller {
             buffering: None,
             ended: false,
             waiting_for_device: false,
-            #[cfg(feature = "decoder-audit")]
-            drawn: None,
         }
     }
 }
 
 impl Controller {
-    #[cfg(feature = "decoder-audit")]
-    pub fn drawn_identity(&self) -> Option<(u64, u64, bool)> {
-        self.drawn
-    }
     pub fn set_props(&mut self, props: &VideoProps) -> Result<(), VideoError> {
         if self.device_removed() {
             self.suspend_for_device();
@@ -294,10 +286,6 @@ impl Controller {
             self.bitmap = None;
             self.pending = None;
             self.queued = None;
-            #[cfg(feature = "decoder-audit")]
-            {
-                self.drawn = None;
-            }
             return Ok(());
         }
         shared
@@ -379,10 +367,6 @@ impl Controller {
             direct.empty_edit();
             self.raw = None;
             self.bitmap = None;
-            #[cfg(feature = "decoder-audit")]
-            {
-                self.drawn = None;
-            }
         }
         if props.active
             && !gap

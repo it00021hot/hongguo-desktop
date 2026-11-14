@@ -26,6 +26,7 @@ mod window_modes;
 pub use bootstrap::configure_mobile_data_root;
 pub use preview::LayoutPreview;
 pub use preview::UiPreview;
+pub use preview::VisibilityPlaybackProbe;
 pub use typography_preview::TypographyPreview;
 
 use i18n::tr;
@@ -104,7 +105,11 @@ pub fn App() -> impl IntoElement {
                 let handle = events::SessionHandle::new(session.get().expect("loaded session"));
                 let boss_key =
                     boss_key::install(handle.with(|session| session.state.settings().boss_key));
-                let window_modes = window_modes::install();
+                let window_modes = window_modes::install(computed(move || {
+                    handle.identity();
+                    is_desktop()
+                        && handle.with(|session| session.state.settings().pause_on_minimize)
+                }));
                 let file_access = file_access::install();
                 let appearance = handle.with(|session| session.state.settings().theme);
                 set_color_scheme(match appearance.as_str() {

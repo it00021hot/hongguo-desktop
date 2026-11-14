@@ -101,7 +101,7 @@ pub(crate) fn page(nav: Navigation, title: impl IntoReactive<SharedString> + Clo
         .border_b_1()
         .border_color(move || theme().border)
         .child(when(
-            move || nav.routes().with(|routes| routes.len() > 1),
+            move || nav.can_back(),
             move || {
                 button("", ButtonVariant::Quiet)
                     .accessibility_label(move || tr("nav.back"))
@@ -264,6 +264,10 @@ pub(crate) fn shell_with_theme(
     crate::native_window::install();
     let collapsed = signal(false);
     let pinned = signal(false);
+    let is_pinned = move || {
+        crate::window_modes::WindowModes::current()
+            .map_or_else(|| pinned.get(), |modes| modes.state().pinned)
+    };
     view()
         .flex_1()
         .child(
@@ -286,7 +290,7 @@ pub(crate) fn shell_with_theme(
                         .gap_0p5()
                         .child(
                             toolbar_button(Icon::Back, "nav.back")
-                                .disabled(move || nav.routes().with(Vec::len) <= 1)
+                                .disabled(move || !nav.can_back())
                                 .on_press(move || nav.back()),
                         )
                         .child(
@@ -342,17 +346,31 @@ pub(crate) fn shell_with_theme(
                         .gap_1()
                         .style_when(move || window().width.0 < 768.0, |style| style.hidden())
                         .child(
-                            toolbar_button(Icon::Pin, "player.pin")
-                                .selected(move || {
-                                    crate::window_modes::WindowModes::current()
-                                        .map_or_else(|| pinned.get(), |modes| modes.state().pinned)
+                            super::controls::surface(ButtonVariant::Quiet)
+                                .accessibility_label(move || {
+                                    tr(if is_pinned() {
+                                        "player.unpin"
+                                    } else {
+                                        "player.pin"
+                                    })
                                 })
+                                .min_h(px(28.0))
+                                .size(px(28.0))
+                                .p_0()
+                                .selected(is_pinned)
                                 .selected_style(|style| {
                                     style
                                         .bg(move || theme().background.opacity(0.0))
                                         .border(px(0.0))
-                                        .text_color(move || theme().primary)
+                                        .text_color(move || theme().foreground)
                                 })
+                                .child(dynamic(move || {
+                                    icon(if is_pinned() {
+                                        Icon::PinFilled
+                                    } else {
+                                        Icon::Pin
+                                    })
+                                }))
                                 .on_press(move || {
                                     if let Some(modes) = crate::window_modes::WindowModes::current()
                                     {

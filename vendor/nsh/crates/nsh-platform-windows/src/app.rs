@@ -546,7 +546,7 @@ fn initial_environment() -> Environment {
         idiom: Idiom::Desktop,
         file_requests: true,
         notifications: true,
-        audio: cfg!(feature = "media"),
+        audio: true,
         // wgpu, in builds with it, until it finds no GPU.
         shaders: nsh_engine::shader::LINKED,
         ..Environment::default()

@@ -29,15 +29,30 @@ impl ReadAt for Source {
 
 pub(super) struct Frames {
     pub session: Arc<PlaybackSession>,
+    audio_url: Option<String>,
 }
 
 impl Frames {
-    pub fn new(session: Arc<PlaybackSession>) -> Self {
-        Self { session }
+    pub fn new(session: Arc<PlaybackSession>, audio_url: Option<String>) -> Self {
+        Self { session, audio_url }
     }
 }
 
 impl FrameSource for Frames {
+    fn configure_native_clock(
+        &self,
+        factory: &dyn Fn(String) -> Result<Arc<dyn hongguo_native_clock::Clock>, String>,
+    ) -> Result<(), String> {
+        if self.session.has_native_clock() {
+            return Ok(());
+        }
+        if let Some(url) = &self.audio_url {
+            self.session
+                .configure_clock(factory(url.clone())?)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
     fn info(&self) -> Result<Option<FrameInfo>, String> {
         self.session
             .info()

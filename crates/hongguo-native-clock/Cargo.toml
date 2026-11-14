@@ -1,0 +1,8 @@
+[package]
+name = "hongguo-native-clock"
+description = "Thread-owned native player control and playback clock bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false

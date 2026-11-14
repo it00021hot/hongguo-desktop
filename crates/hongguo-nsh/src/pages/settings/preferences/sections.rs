@@ -111,13 +111,18 @@ pub(super) fn playback(draft: Signal<Draft>, busy: Signal<bool>, extra: impl Int
                 |draft, value| draft.auto_delete = value,
             ))
             .child(when(is_desktop, move || {
-                toggle(
-                    "settings.pauseOnMinimize",
-                    draft,
-                    busy,
-                    |draft| draft.pause_on_minimize,
-                    |draft, value| draft.pause_on_minimize = value,
-                )
+                view()
+                    .gap_1p5()
+                    .child(toggle(
+                        "settings.pauseWhenHidden",
+                        draft,
+                        busy,
+                        |draft| draft.pause_on_minimize,
+                        |draft, value| draft.pause_on_minimize = value,
+                    ))
+                    .child(ui::form_description(move || {
+                        tr("settings.pauseWhenHiddenDesc")
+                    }))
             }))
             .child(extra),
     )

@@ -6,7 +6,8 @@ use hongguo_nsh_video_api::{
 use nsh_core::prelude::*;
 
 pub(super) fn mount(state: State, callbacks: Callbacks) -> View {
-    let callbacks = stored(callbacks);
+    state.control.pixel.set(true);
+    let callbacks = stored(std::rc::Rc::new(callbacks));
     let enhancement = Controller::current();
     effect(move || {
         if let Some(enhancement) = enhancement {
@@ -58,7 +59,7 @@ pub(super) fn mount(state: State, callbacks: Callbacks) -> View {
                     Ok(event) => event,
                     Err(error) => {
                         log::error!("[NSH pixel video] invalid event: {error}");
-                        callbacks.with(|callbacks| (callbacks.error)(&tr("nsh.playbackFailed")));
+                        (callbacks.get().error)(&tr("nsh.playbackFailed"));
                         return;
                     }
                 };
@@ -75,7 +76,8 @@ pub(super) fn mount(state: State, callbacks: Callbacks) -> View {
                 if *id != source_id.get() {
                     return;
                 }
-                callbacks.with(|callbacks| match event {
+                let callbacks = callbacks.get();
+                match event {
                     VideoEvent::LoadStart { .. } => (callbacks.buffer)(&true),
                     VideoEvent::Load {
                         duration_ms,
@@ -177,7 +179,7 @@ pub(super) fn mount(state: State, callbacks: Callbacks) -> View {
                                 .set(key.map_or_else(SharedString::default, tr));
                         }
                     }
-                });
+                }
             }),
     )
 }

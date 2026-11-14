@@ -6,6 +6,7 @@ pub(crate) struct PreviewDriver(WindowModes);
 
 pub(crate) fn provide_preview() -> PreviewDriver {
     let state = WindowModes {
+        exposed: signal(true),
         state: signal(State::initial()),
         request: signal(None),
         pending: signal(false),

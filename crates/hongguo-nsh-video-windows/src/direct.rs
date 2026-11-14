@@ -1,4 +1,4 @@
-//! One consumer of the shared native decoder, PCM output and presentation clock.
+//! One consumer of the indexed decoder and native audio presentation clock.
 use crate::{VideoError, presentation::Presentation, seek_gate::SeekGate};
 use hongguo_media_types::{DecodeDevice, PresentationFrame};
 use hongguo_nsh_video_api::{
@@ -43,6 +43,9 @@ impl Direct {
 
     pub fn configure(&mut self, device: Arc<dyn DecodeDevice>) -> Result<bool, VideoError> {
         self.reset_device();
+        self.lease
+            .configure_native_clock_if_owner(&crate::native_audio::open)
+            .map_err(error)?;
         self.configured = self
             .lease
             .configure_decoder_if_owner(Some(device))
@@ -70,7 +73,7 @@ impl Direct {
     }
 
     pub fn apply(&self, props: &VideoProps) -> Result<(), VideoError> {
-        // The shared session gates PCM until this exact video generation is drawn.
+        // The shared session gates native audio until this video generation is drawn.
         self.lease
             .control(PlaybackControl {
                 playing: !props.paused && props.active,
@@ -185,9 +188,7 @@ impl Direct {
         generation: u64,
         serial: u64,
     ) -> Result<(), VideoError> {
-        if (cfg!(feature = "decoder-audit") || self.needs_raw()?)
-            && self.last_submission != Some((generation, serial))
-        {
+        if self.needs_raw()? && self.last_submission != Some((generation, serial)) {
             if self.presentations.len() >= 64 {
                 return Err(error(
                     "presentation feedback backlog exceeded its bounded audit queue",

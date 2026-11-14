@@ -13,6 +13,7 @@ mod tests;
 
 pub(super) const TICK_SECONDS: f64 = 0.04;
 const CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(3);
+const VISIBILITY_INTERVAL: Duration = Duration::from_millis(250);
 type EventSink = Box<dyn Fn(&str, Value)>;
 
 #[derive(Clone)]
@@ -31,6 +32,7 @@ pub(super) struct Capture {
 }
 pub(super) trait Window {
     fn attached(&self) -> bool;
+    fn exposed(&self) -> Result<bool, String>;
     fn capture(&self) -> Result<Capture, String>;
     fn apply(&self, plan: Plan) -> Result<(), String>;
     fn controls_hidden(&self, hidden: bool) -> Result<(), String>;
@@ -49,6 +51,9 @@ pub(super) struct Desktop {
     start: Instant,
     pending: Option<Pending>,
     last: Option<State>,
+    observe_visibility: bool,
+    last_visibility: Option<bool>,
+    visibility_checked_at: Option<Instant>,
 }
 
 impl Desktop {
@@ -64,6 +69,39 @@ impl Desktop {
             start: Instant::now(),
             pending: None,
             last: None,
+            observe_visibility: false,
+            last_visibility: None,
+            visibility_checked_at: None,
+        }
+    }
+    pub fn observe_visibility(&mut self, enabled: bool) {
+        if self.observe_visibility == enabled {
+            return;
+        }
+        self.observe_visibility = enabled;
+        log::debug!("[NSH visibility] observing={enabled}");
+        self.visibility_checked_at = None;
+        if !enabled && self.last_visibility.take() == Some(false) {
+            (self.emit)("visibility", Value::Bool(true));
+        }
+    }
+    fn sample_visibility(&mut self) {
+        if !self.observe_visibility
+            || self
+                .visibility_checked_at
+                .is_some_and(|checked| checked.elapsed() < VISIBILITY_INTERVAL)
+        {
+            return;
+        }
+        self.visibility_checked_at = Some(Instant::now());
+        match self.window.exposed() {
+            Ok(exposed) if self.last_visibility != Some(exposed) => {
+                log::debug!("[NSH visibility] exposed={exposed}");
+                self.last_visibility = Some(exposed);
+                (self.emit)("visibility", Value::Bool(exposed));
+            }
+            Ok(_) => {}
+            Err(error) => self.report(error),
         }
     }
     pub fn request(&mut self, request: Request) {
@@ -162,6 +200,7 @@ impl Desktop {
                 Some("The system did not confirm the requested window mode".into()),
             );
         }
+        self.sample_visibility();
         let Ok(capture) = self.window.capture() else {
             return;
         };

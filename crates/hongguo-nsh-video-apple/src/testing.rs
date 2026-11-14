@@ -178,3 +178,6 @@ fn pump_events(application: &NSApplication, duration: Duration) {
         application.updateWindows();
     }
 }
+pub fn probe_native_audio_clock() {
+    crate::native_audio::probe::run();
+}

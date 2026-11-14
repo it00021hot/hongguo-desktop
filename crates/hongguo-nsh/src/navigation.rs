@@ -1,6 +1,9 @@
 pub(crate) use crate::pages::DetailPrefill;
 use nsh_core::prelude::*;
 
+#[cfg(test)]
+mod binge_tests;
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Route {
     Catalog,
@@ -34,7 +37,23 @@ impl Route {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Navigation(Signal<Vec<Route>>, Signal<Vec<Route>>);
+pub(crate) struct Navigation(
+    Signal<Vec<Route>>,
+    Signal<Vec<Route>>,
+    Signal<Option<BackAction>>,
+);
+
+#[derive(Clone, Copy)]
+struct BackAction {
+    enabled: Memo<bool>,
+    action: Stored<std::rc::Rc<dyn Fn()>>,
+}
+
+impl PartialEq for BackAction {
+    fn eq(&self, other: &Self) -> bool {
+        self.enabled == other.enabled
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct AccountPrompt(Signal<bool>);
@@ -61,7 +80,11 @@ impl AccountPrompt {
 
 impl Navigation {
     pub(crate) fn new() -> Self {
-        Self(signal(vec![Route::Catalog]), signal(Vec::new()))
+        Self(
+            signal(vec![Route::Catalog]),
+            signal(Vec::new()),
+            signal(None),
+        )
     }
     pub(crate) fn routes(self) -> Signal<Vec<Route>> {
         self.0
@@ -111,11 +134,47 @@ impl Navigation {
         }
     }
     pub(crate) fn back(self) {
+        if let Some(back) = self.2.get_untracked()
+            && back.enabled.get_untracked()
+        {
+            (back.action.get())();
+            return;
+        }
         self.0.update(|routes| {
             if routes.len() > 1
                 && let Some(route) = routes.pop()
             {
                 self.1.update(|future| future.push(route));
+            }
+        });
+    }
+    pub(crate) fn can_back(self) -> bool {
+        self.0.with(Vec::len) > 1 || self.2.get().is_some_and(|back| back.enabled.get())
+    }
+    pub(crate) fn on_back(self, enabled: Memo<bool>, action: impl Fn() + 'static) {
+        let back = BackAction {
+            enabled,
+            action: stored(std::rc::Rc::new(action) as std::rc::Rc<dyn Fn()>),
+        };
+        effect(move || {
+            if enabled.get() {
+                self.2.set(Some(back));
+            } else if self
+                .2
+                .get_untracked()
+                .is_some_and(|back| back.enabled == enabled)
+            {
+                self.2.set(None);
+            }
+        });
+        cleanup(move || {
+            if self
+                .2
+                .try_get()
+                .flatten()
+                .is_some_and(|back| back.enabled == enabled)
+            {
+                self.2.try_set(None);
             }
         });
     }

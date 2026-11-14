@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-media-platform"
-description = "红果桌面版平台层编解码：MF / VT / WIC 平台硬编 + ffmpeg 执行 + 能力探测"
+description = "红果桌面版平台媒体编解码与能力探测"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

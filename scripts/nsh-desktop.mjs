@@ -3,7 +3,8 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'no
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateWindowsPe } from './nsh-windows-pe.mjs';
-import { validateDependency } from './native-media-manifest.mjs';
+import { runtimeEnvironment } from './native-sdk.mjs';
+import { buildWindowsInstaller } from './nsh-windows-installer.mjs';
 import {
   auditMacosBundle,
   auditWindowsBundle,
@@ -48,7 +49,7 @@ export function buildDesktop(target) {
       '--message-format=json-render-diagnostics',
     ],
     {
-      HONGGUO_FFMPEG_PREFIX: prefix,
+      ...runtimeEnvironment(prefix),
       ...(target === 'macos' ? { MACOSX_DEPLOYMENT_TARGET: '14.0' } : {}),
     },
   );
@@ -68,6 +69,7 @@ export function buildDesktop(target) {
     join(destination, 'NativeMedia/runtime-inspection.json'),
     JSON.stringify(inspection, null, 2),
   );
+  const installer = buildWindowsInstaller(destination);
   run(
     'powershell.exe',
     [
@@ -81,7 +83,7 @@ export function buildDesktop(target) {
       HONGGUO_NSH_PACKAGE_ZIP: join(output, 'Hongguo.zip'),
     },
   );
-  return destination;
+  return installer;
 }
 
 export function desktopExecutable(build) {
@@ -117,7 +119,12 @@ function validateMacos(executable) {
   for (const line of dependencies.split('\n').slice(1)) {
     const dependency = line.trim().split(' (compatibility version ')[0];
     if (!dependency) continue;
-    validateDependency({ os: 'macos' }, dependency);
+    if (
+      !dependency.startsWith('/System/Library/') &&
+      !dependency.startsWith('/usr/lib/') &&
+      !/^@rpath\/libde265(?:\.\d+)*\.dylib$/.test(dependency)
+    )
+      throw new Error(`Unexpected macOS runtime dependency: ${dependency}`);
   }
 }
 
@@ -157,6 +164,11 @@ function macos(binary, output, prefix, triple) {
       LSMinimumSystemVersion: '14.0',
       LSApplicationCategoryType: 'public.app-category.video',
       NSHighResolutionCapable: true,
+      NSAppTransportSecurity: {
+        NSExceptionDomains: {
+          '127.0.0.1': { NSExceptionAllowsInsecureHTTPLoads: true },
+        },
+      },
     }),
   );
   run('plutil', ['-convert', 'xml1', plist]);

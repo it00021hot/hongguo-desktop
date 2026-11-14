@@ -7,6 +7,7 @@ mod diagnostics;
 mod display_clock;
 mod frame;
 mod native;
+mod native_audio;
 mod output;
 mod render;
 mod surface;

@@ -18,6 +18,9 @@ for (const scheme of ['dark', 'light'] as const) {
       await app.hover('id:app-toolbar-rest');
       await app.screenshot('target/nsh-preview/settings-' + scheme + '-expanded-1280x840.png');
       await app.scroll('id:preferences-form >> id:form-scroll', 757);
+      await app.waitFor('role:switch[窗口不可见时暂停播放]');
+      await app.press('role:switch[窗口不可见时暂停播放]');
+      await app.press('role:switch[窗口不可见时暂停播放]');
       await app.hover('id:app-toolbar-rest');
       await app.wait(160);
       await app.screenshot('target/nsh-preview/settings-' + scheme + '-playback-1280x840.png');

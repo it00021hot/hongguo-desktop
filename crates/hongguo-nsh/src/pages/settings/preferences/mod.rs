@@ -100,11 +100,7 @@ fn form(
             .child(sections::naming(draft, busy))
             .child(proxy::section(draft, busy, message, external))
             .child(ui::form_separator())
-            .child(sections::playback(
-                draft,
-                busy,
-                transcode::section(runtime, message, external),
-            ))
+            .child(sections::playback(draft, busy, transcode::section(runtime)))
             .child(when(is_desktop, move || keyboard::shortcuts(active)))
             .child(keyboard::boss(draft, busy))
             .child(cache::section(draft, busy, message, external, runtime))

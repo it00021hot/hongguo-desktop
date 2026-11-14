@@ -1,4 +1,4 @@
-use nsh_base::{PopoverEvent, theme};
+use nsh_base::PopoverEvent;
 use nsh_core::prelude::*;
 
 pub(crate) fn player_send_popover(
@@ -48,18 +48,9 @@ pub(crate) fn player_send_popover(
                 ),
             )
             .popup_style(|style| {
-                style
+                super::player_popup::surface(style)
                     .p_3()
                     .rounded(super::radii::card())
-                    .border_1()
-                    .border_color(move || {
-                        theme()
-                            .color("video-controls")
-                            .expect("controls")
-                            .opacity(0.1)
-                    })
-                    .bg(move || theme().color("video-picker").expect("picker"))
-                    .text_color(move || theme().color("video-controls").expect("controls"))
                     .shadow_lg()
             })
             .child(when(open, move || {

@@ -10,6 +10,10 @@ import org.json.JSONObject;
 
 /** System ABI only. Rust owns typed props, source epochs, rendering and enhancement state. */
 public final class PixelVideoComponent implements NshComponent {
+    public NativeAudioTrack createNativeAudio(String source) throws java.io.IOException {
+        if (closed) throw new IllegalStateException("video component is closed");
+        return new NativeAudioTrack(source);
+    }
     private final NativeEventSink events;
     final PixelPlayback playback;
     private volatile long handle;

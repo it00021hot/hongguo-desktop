@@ -138,7 +138,6 @@ impl super::SettingsView {
         let capability = DecodeCapability {
             // 半硬件一档（macOS Apple 软编会话）：徽标显示「软件加速」
             platform_encoder: true,
-            has_ffmpeg: scene != "settings-no-ffmpeg",
             ..Default::default()
         };
         self.capability = Some(capability);

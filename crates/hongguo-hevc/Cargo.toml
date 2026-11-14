@@ -1,0 +1,28 @@
+[package]
+name = "hongguo-hevc"
+description = "Dedicated HEVC decoder for missing native Video codecs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+links = "de265"
+
+[features]
+source-build = []
+
+[build-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[dependencies]
+hongguo-common = { path = "../hongguo-common" }
+hongguo-media-types = { path = "../hongguo-media-types" }
+rusty_h265 = "=0.7.1"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hongguo-media = { path = "../hongguo-media" }

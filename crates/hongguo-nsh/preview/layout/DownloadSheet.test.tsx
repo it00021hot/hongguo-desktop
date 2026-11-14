@@ -4,7 +4,7 @@ const test: (name: string, body: () => Promise<void>, timeout?: number) => void 
 
 for (const colorScheme of ['dark', 'light'] as const) {
   test(
-    'player download sheet matches Tauri ' + colorScheme,
+    'player download sheet keeps consistent content insets and selection ' + colorScheme,
     async () => {
       const app = await open('.', {
         width: 1280,

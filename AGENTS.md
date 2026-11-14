@@ -9,12 +9,15 @@ NSH 第三壳正在开发（NSH 0.5.0，纯 Rust）：`crates/hongguo-nsh` 是�
 Android、iOS，Linux/Web 后续迭代。开发前另读 `nsh` 与 `nsh-design-guides`，
 项目接入与验证说明见 `.agents/skills/hongguo-dev/references/nsh.md`。
 
-NSH 是主力壳，播放使用包内 FFmpeg 9.0.2 / VVdeC 3.2.1 与共享 `hongguo-playback`，
-按实际设备选择硬解、同源回退软解；AAC 经包内解码/重采样/倍速后输出 PCM，时钟来自实际设备消费。
-Windows 生产默认同 NSH D3D11 设备的 D3D11VA；D3D12VA 只用于开发验收对照。
+NSH 是主力壳，普通视频使用 NSH 0.5.0 Video，原生引擎调度软硬解、AAC、倍速和时钟。
+原生能力缺口由专用 libde265 / VVdeC 补齐；保留原流、分辨率、位深与时间轴，不使用 FFmpeg。
+Windows 默认 MediaEngine；缺 HEVC 解码器、ByteVC2 或原生输出精度不足时启用内部帧适配。
+Windows 扩展 HEVC/ByteVC1 优先直接 D3D11 VLD，Main10 使用 P010，不依赖系统 HEVC MFT；
+实际硬解/表面不可用才回退 libde265。ByteVC2 使用 VVdeC；硬解失败须保留音频时钟位置、代次隔离和原位深元数据。
+Windows 仅以普通 Windows 10 1809+ 与 Windows 11 为支持和验收范围，不支持 Windows N；不得再以兼容缺失 Media Foundation 的 N 版作为架构约束。
 帧保留原始位深/颜色/crop/SAR/旋转，原生表面持有到 GPU 完成；增强后才做最终显示映射。
 Tauri、GPUI 保留原内置软解与系统音轨时钟，不新增硬解路线；无壳选择开关或系统 HEVC 扩展探测。
-`PlayResponse.direct` 表示内置解码。NSH 可直接解本地 H.264，在线播放和下载仍不改变现有排除 H.264 的选流规则。
+`PlayResponse.direct` 保留旧壳的内置解码语义；NSH 按实际媒体轨道装配播放器。在线播放和下载保持现有选流规则。
 下载记录中的旧文件失效时重新获取在线原流，显式打开不支持的本地文件则报错。
 同规格原流无损合并；异规格素材统一编码为 HEVC，完成封存普通 MP4 后再拼接。
 禁止恢复兼容播放转码、`.play.mp4`、grow/HLS 播放链路。
@@ -43,10 +46,10 @@ Tauri、GPUI 保留原内置软解与系统音轨时钟，不新增硬解路线�
 - `crates/hongguo-signer/` 请求签名：字节系五头签名 + 设备注册原语；**JS 1:1 移植禁改写法**，`constants.rs` 的值与服务端一一对应不得改动（无 common / tauri 依赖）
 - `crates/hongguo-video/` MP4 解析与 CENC 解密：box/样本表/稀疏缓冲/流式计划 + CENC-AES-CTR + 密钥派生；`fixtures` 是 feature `test-support` 门控的测试辅助（下游测试造 MP4 样本用）
 - `crates/hongguo-media-types/` 原位深平面、色彩/HDR 元数据、原生设备/帧租约与呈现帧契约；不依赖 UI 或解码实现。
-- `crates/hongguo-codec-ffi/` 包内 FFmpeg 的 C ABI 边界：HEVC/H264 软件与平台硬解、AAC/PCM/resample/atempo；只链接受控 native prefix，禁止借用系统/Homebrew 库。
+- `crates/hongguo-hevc/` 专用 libde265 HEVC 解码边界；默认链接仓库随附的认证 SDK，不探测系统库或自动源码构建。
 - `crates/hongguo-vvdec-sys/` 固定 VVdeC 3.2.1 源码、构建与 FFI；SIMD 按运行时能力分派，Windows 不设全局 AVX2 下限。
-- `crates/hongguo-playback/` NSH 共用索引/多轨时间轴、关键帧恢复、有界帧/PCM 队列、设备时钟与总恢复预算；不依赖 UI。
-- `crates/hongguo-audio-api/` / `hongguo-audio` / `hongguo-audio-{apple,windows,android}`：PCM 契约、目标分派与 AudioUnit/WASAPI/AAudio 输出，欠载补零不推进媒体时钟。
+- `crates/hongguo-playback/` NSH 缺失编码的样本索引、时间轴、有界视频帧队列和原生时钟同步；不承担通用音频解码。
+- `crates/hongguo-native-clock/` 原生播放器线程所有权、合并控制邮箱与时钟快照；音轨视图保持原始 MP4 偏移与 edits。
 - `crates/hongguo-video-color/` / `hongguo-video-gpu/`：共用色彩策略/LUT、WGSL/HLSL 原语和原位深 GPU 转换；working 保留 HDR，最终输出才 tone/gamut map。
 - `crates/hongguo-api/` 官方接口客户端。业务域 18 个：`calendar` / `danmaku` / `detail` / `discover` / `emoticon` / `history` / `interact` / `login` / `new_drama` / `play_strategy` / `play_url` / `rank` / `recommend` / `register` / `reservation` / `search` / `stream_pick` / `warmup`（另有 `client` / `params`）。改端点或参数前必读 `docs/hongguo-api-endpoints.md`。commentapi 互动枚举（object_type / comment_type / commit_source / data_type 等，值即契约）集中在 `params::interaction`，使用点只引用不写字面量
 - `crates/hongguo-store/` 持久化：Turso 内嵌库（`db` 连接与 schema 迁移 / `entity/` 八个模块 `device` / `follow` / `local_history` / `merge` / `playback` / `series` / `settings` / `task` / `bridge` 同步门面）；`paths::ScopedDataDir` 是 feature `test-support` 门控的测试辅助（落盘用例把数据目录重定向到临时目录）。无 tauri 依赖
@@ -58,7 +61,7 @@ Tauri、GPUI 保留原内置软解与系统音轨时钟，不新增硬解路线�
 - `crates/hongguo-media-platform-macos/` macOS 平台实现：VideoToolbox 转码链（硬编优先、软编回落）；平台依赖全在 target 表，`#![cfg(target_os = "macos")]`，异目标空壳
 - `crates/hongguo-media-platform-windows/` Windows 平台实现：Media Foundation HEVC 归档编解码 + WIC 封面静图；编码能力以真实 HEVC 编码探测，`#![cfg(target_os = "windows")]`，异目标空壳
 - `crates/hongguo-media-platform-android/` Android 平台实现：MediaCodec HEVC 归档编解码（硬/软由系统选，契约同 media-platform-api）；`ndk` 依赖只进 android target 表，`#![cfg(target_os = "android")]`，异目标空壳
-- `crates/hongguo-media-platform/` 平台层门面：按编译目标 re-export 实现 crate + 分派无状态操作（HEVC 归档转码 / 探测 / 清缓存 / HEIC 封面 `platform::cover`），`ffmpeg`（外部进程的探测与执行）与 `capability`（实际编码能力探测）聚合并留在此；转码两级分流编排仍在 service 的 `transcode_service::pipeline`。`platform::transcode_hevc_for_tests` 由 feature `test-support` 门控（壳 e2e 用）。无 tauri/gpui 依赖
+- `crates/hongguo-media-platform/` 平台媒体门面：原生 HEVC 归档转码、真实编码探测、清缓存和封面；无外部 FFmpeg 回退。归档能力不足明确报错，不影响播放或同规格无损合并。
 - `crates/hongguo-protocol/` 自定义 URI 协议供数逻辑：`url`（按平台的 URL 形态与编解码）+ `local` + `cover`（HEIC 封面三级转码阶梯）+ `pool`（常驻工作池与 panic 加固）+ `serve`（三路供数入口，产出元组）。**无 tauri 依赖**——HTTP 组装与 Builder 注册是壳胶水（hongguo-tauri 的 `protocol.rs`）
 - `crates/hongguo-service/` 业务编排层：`download` / `play` / `merge` / `login` / `series` / `settings` / `storage` / `transcode` / `capability` / `follow` / `history` 各有 `*_service`，另有 `device` 模块（设备档案）+ 全局业务状态 `AppState`（壳经 Tauri `manage` 注入，GPUI 壳直接构造）+ 共用任务运行时 `runtime`（后台任务任意线程可派发）+ 业务事件总线 `events`（`ServiceEvent`，壳订阅适配）。**不依赖任何 UI 框架**（源码静态闸扫 tauri 引用）：进度与状态只发布事件，发送机制由壳决定
 - `crates/hongguo-tauri/` Tauri 装配层：`commands`（IPC 薄层）、`bootstrap`（启动装配）、`diagnostics`（panic 取证）、`protocol.rs`（协议注册胶水）、`events.rs`（service 事件 → 前端事件的原名原载荷转发）、`testing`（跨层 e2e 与守卫元测试）——`prepare()` 产出装好的 Builder，`build(generate_context!)` 留在 crates/hongguo-tauri-app

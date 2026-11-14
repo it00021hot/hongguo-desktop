@@ -15,6 +15,155 @@ struct NativeBindings {
     opacity: HashMap<NodeId, f32>,
 }
 
+#[test]
+fn native_video_error_mounts_the_codec_extension_once_and_switches_seek_commands()
+-> Result<(), String> {
+    let native = Arc::new(Mutex::new(None));
+    let custom = Arc::new(Mutex::new(None));
+    let native_seen = native.clone();
+    let custom_seen = custom.clone();
+    let mut config = EngineConfig::new(Root::of::<NativeVideo>());
+    config.clock = nsh_core::time::Clock::manual(std::time::SystemTime::UNIX_EPOCH);
+    let mut app = Headless::start(config).map_err(|error| error.to_string())?;
+    app.observe(move |_, batch| {
+        for item in &batch.items {
+            match item {
+                nsh_core::MountItem::NativeProps {
+                    id,
+                    props: nsh_core::NativeProps::Video(_),
+                    ..
+                } => *native_seen.lock().unwrap() = Some(*id),
+                nsh_core::MountItem::ComponentProps { id, props } => {
+                    for (key, value) in props {
+                        if key.as_ref() == hongguo_nsh_video_api::STATE_PROP {
+                            *custom_seen.lock().unwrap() = Some((
+                                *id,
+                                serde_json::from_value::<hongguo_nsh_video_api::VideoProps>(
+                                    value.clone().unwrap(),
+                                )
+                                .unwrap(),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+    app.wait_for("text:extension:0")?;
+    let native = native.lock().unwrap().unwrap();
+    let report_error = |app: &mut Headless| {
+        app.engine().control().dispatch_event(
+            native,
+            EventKind::Error,
+            EventPayload::Error {
+                message: "native codec unavailable".into(),
+            },
+        );
+        app.run_for(Duration::from_millis(20))
+    };
+    report_error(&mut app)?;
+    app.wait_for("text:extension:1")?;
+    let (custom, props) = custom
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("codec extension mounted");
+    assert_ne!(native, custom);
+    assert_eq!(
+        props.source.unwrap().frame_source.as_deref(),
+        Some("hongguo-frames://native-codec-fallback")
+    );
+    app.press("Seek native")?;
+    let (target, request) = latest_request(&app);
+    assert_eq!(target, custom);
+    assert_eq!(request.position_ms, 12_500);
+    report_error(&mut app)?;
+    assert!(app.screen().matches("text:extension:1")?);
+    Ok(())
+}
+
+#[component]
+fn NativeVideo() -> impl IntoElement {
+    let control = Control::new();
+    let attempts = signal(0_u32);
+    view()
+        .child(text(move || {
+            format!("extension:{count}", count = attempts.get())
+        }))
+        .child(
+            crate::ui::button("Seek native", crate::ui::ButtonVariant::Quiet)
+                .on_press(move || control.seek(12.5)),
+        )
+        .child(super::mount(
+            State {
+                url: "http://127.0.0.1:12345/media/native-fixture".into(),
+                frame_source: None,
+                codec_extension: Some(std::rc::Rc::new(move || {
+                    attempts.update(|count| *count += 1);
+                    Ok("hongguo-frames://native-codec-fallback".into())
+                })),
+                control,
+                rate: computed(|| 1.5),
+                interval: computed(|| 250.0),
+                volume: signal(0.5),
+                muted: computed(|| false),
+                opacity: computed(|| 1.0),
+                paused: computed(|| false),
+                active: computed(|| true),
+                resize_mode: computed(|| hongguo_nsh_video_api::ResizeMode::Contain),
+            },
+            Callbacks {
+                load: Box::new(|_| {}),
+                progress: Box::new(|_| {}),
+                buffer: Box::new(|_| {}),
+                error: Box::new(|_| {}),
+                end: Box::new(|| {}),
+            },
+        ))
+}
+
+#[test]
+fn ordinary_video_uses_the_nsh_video_host_and_native_seek() -> Result<(), String> {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let observation = seen.clone();
+    let mut app = Headless::start(EngineConfig::new(Root::of::<NativeVideo>()))
+        .map_err(|error| error.to_string())?;
+    app.observe(move |_, batch| {
+        for item in &batch.items {
+            if let nsh_core::MountItem::NativeProps {
+                id,
+                props: nsh_core::NativeProps::Video(props),
+                ..
+            } = item
+            {
+                observation.lock().unwrap().push((*id, props.clone()));
+            }
+        }
+    });
+    app.wait_for("Seek native")?;
+    let (node, props) = seen
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .expect("native Video mounted");
+    assert_eq!(
+        props.source.as_deref(),
+        Some("http://127.0.0.1:12345/media/native-fixture")
+    );
+    assert_eq!(props.rate, 1.5);
+    assert_eq!(props.volume, 0.5);
+    app.press("Seek native")?;
+    assert!(app.screen().commands().iter().any(|(id, command)| {
+        *id == node && matches!(command, Command::Seek(seconds) if *seconds == 12.5)
+    }));
+    assert!(!app.screen().commands().iter().any(|(_, command)| {
+        matches!(command, Command::Native { name, .. } if name.as_ref() == hongguo_nsh_video_api::SEEK_COMMAND)
+    }));
+    Ok(())
+}
+
 #[component]
 fn ReplacedVideo() -> impl IntoElement {
     crate::ui::test_log::watch("native-source-replacement");
@@ -47,6 +196,7 @@ fn ReplacedVideo() -> impl IntoElement {
                     State {
                         url: format!("https://example.invalid/{generation}.mp4"),
                         frame_source: Some(format!("hongguo-frames://fixture-{generation}")),
+                        codec_extension: None,
                         control: Control::new(),
                         rate: computed(|| 1.0),
                         interval: computed(|| 250.0),
@@ -183,6 +333,7 @@ fn Video() -> impl IntoElement {
             State {
                 url: "https://example.invalid/synthetic.mp4".into(),
                 frame_source: None,
+                codec_extension: None,
                 control,
                 rate: computed(|| 1.0),
                 interval: computed(|| 250.0),

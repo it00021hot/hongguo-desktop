@@ -93,10 +93,8 @@ impl Runtime {
                 async move {
                     if preview {
                         Ok(DecodeCapability {
-                            hevc_hw_encoder: true,
                             platform_encoder: true,
                             platform_hw_encoder: true,
-                            ..Default::default()
                         })
                     } else {
                         bridge::request(async { blocking(|| Ok(probe::detect())).await }).await
@@ -130,10 +128,8 @@ impl Runtime {
         spawn(async move {
             let outcome = if preview {
                 Ok(DecodeCapability {
-                    hevc_hw_encoder: true,
                     platform_encoder: true,
                     platform_hw_encoder: true,
-                    ..Default::default()
                 })
             } else {
                 bridge::request(async { blocking(|| Ok(probe::redetect())).await }).await
@@ -195,8 +191,8 @@ async fn blocking<T: Send + 'static>(
 pub(super) fn backend_label(capability: Option<DecodeCapability>) -> SharedString {
     tr(match capability {
         None => "common.loading",
-        Some(cap) if cap.platform_hw_encoder || cap.hevc_hw_encoder => "settings.backendFfmpegHw",
-        Some(cap) if cap.platform_encoder || cap.has_ffmpeg => "settings.backendFfmpegSw",
+        Some(cap) if cap.platform_hw_encoder => "settings.backendHardware",
+        Some(cap) if cap.platform_encoder => "settings.backendSoftware",
         Some(_) => "settings.backendUnavailable",
     })
 }

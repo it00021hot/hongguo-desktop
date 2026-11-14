@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 
 [target.'cfg(target_os = "android")'.dependencies]
+hongguo-native-clock = { path = "../hongguo-native-clock" }
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-video-gpu = { path = "../hongguo-video-gpu" }

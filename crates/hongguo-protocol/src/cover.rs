@@ -195,53 +195,10 @@ fn acquire(remote: &str) -> Result<(Vec<u8>, &'static str, &'static str), String
     {
         match result {
             Ok(bytes) => return Ok((bytes, JPEG_KIND.0, JPEG_KIND.1)),
-            Err(msg) => log::warn!("[Cover] WIC 平台解码失败，落 ffmpeg/软解: {msg}"),
+            Err(msg) => log::warn!("[Cover] WIC 平台解码失败，使用内置软解: {msg}"),
         }
     }
 
-    // 2) ffmpeg 级：直接吃 http 输入，一步到位
-    if let Some(ffmpeg) = hongguo_media_platform::ffmpeg::probe::ffmpeg_path() {
-        // ffmpeg 自己不会建目录：tmp 落在 cover-cache 里，必须先 ensure
-        ensure_cache_dir()?;
-        let tmp = cache_tmp(remote);
-        let mut cmd = std::process::Command::new(ffmpeg);
-        cmd.args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            // 网络输入 10 秒读超时（微秒）：CDN 抖动不该把 <img> 挂死
-            "-rw_timeout",
-            "10000000",
-            "-i",
-            remote,
-            "-frames:v",
-            "1",
-            "-update",
-            "1",
-            "-f",
-            "image2",
-        ])
-        .arg(&tmp);
-        // HEIC 封面转码在首页加载期就会跑：GUI 进程里控制面子进程会闪黑窗
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
-        let out = cmd.output().map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
-        if out.status.success() {
-            return hongguo_store::paths::qa_read(&tmp)
-                .map(|bytes| (bytes, JPEG_KIND.0, JPEG_KIND.1))
-                .map_err(|e| format!("读取转码产物失败: {e}"));
-        }
-        let _ = hongguo_store::paths::qa_remove_file(&tmp);
-        log::warn!(
-            "[Cover] ffmpeg 转码失败，落纯软解: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-
-    // 3) 纯软解级：HEIF 解析 + rusty_h265 + JPEG，零外部依赖
     let heic = bytes_of(&mut downloaded, remote)?;
     let jpeg = hongguo_media::heif::decode_primary_to_jpeg(heic)
         .map_err(|e| format!("HEIC 软解失败: {e}"))?;

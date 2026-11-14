@@ -96,9 +96,8 @@ fn presentation(nav: Navigation, mode: Signal<Mode>, recommend: View, calendar: 
             .flex_1()
             .min_h(px(0.0))
             .gap_3()
-            .px_4()
             .pt_3()
-            .child(when(move || !is_desktop(), move || mode_tabs(mode)))
+            .child(when(move || !is_desktop(), move || mode_tabs(mode).px_4()))
             .child(recommend.style_when(
                 move || mode.get() != Mode::Recommend,
                 |style| style.hidden(),

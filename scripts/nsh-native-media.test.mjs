@@ -1,19 +1,18 @@
 import assert from 'node:assert/strict';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readlinkSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { source, targetSpec } from './native-media-config.mjs';
-import { writeManifest } from './native-media-manifest.mjs';
+import { prepareNativeSdk } from './native-sdk.mjs';
 import {
   auditWindowsBundle,
   copyDesktopMedia,
@@ -40,53 +39,47 @@ test('CLI and production builds cannot resolve a second NSH core or testing sour
     assert.throws(() => validateNshSource({ packages: [entry, foreign] }), /vendored source/);
 });
 
-function fixture(directory, triple) {
-  const prefix = join(directory, 'prefix');
-  for (const name of ['licenses', 'sources', 'build-info']) {
-    mkdirSync(join(prefix, name), { recursive: true });
-    writeFileSync(join(prefix, name, 'fixture.txt'), name);
-  }
-  return { prefix, target: targetSpec(triple) };
-}
-
-test('desktop delivery includes all four DLLs and exact corresponding source materials', (context) => {
+test('desktop delivery includes one codec DLL and authenticated corresponding source', (context) => {
   const directory = mkdtempSync(join(tmpdir(), 'hongguo-media-package-'));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
   const triple = 'x86_64-pc-windows-msvc';
-  const { prefix, target } = fixture(directory, triple);
-  mkdirSync(join(prefix, 'bin'));
-  const names = ['avcodec-63.dll', 'avutil-61.dll', 'swresample-7.dll', 'avfilter-12.dll'];
-  for (const name of names) writeFileSync(join(prefix, 'bin', name), `fixture ${name}`);
-  writeManifest(prefix, { source, target });
+  const prefix = prepareNativeSdk(triple, { destination: join(directory, 'sdk') });
   const destination = join(directory, 'Hongguo');
+  mkdirSync(join(destination, 'NativeMedia/ffmpeg'), { recursive: true });
+  writeFileSync(join(destination, 'NativeMedia/ffmpeg/obsolete.dll'), 'old runtime');
   copyDesktopMedia(prefix, triple, destination);
-  for (const name of names)
-    assert.equal(readFileSync(join(destination, name), 'utf8'), `fixture ${name}`);
-  assert.equal(
-    readFileSync(join(destination, 'NativeMedia/ffmpeg/sources/fixture.txt'), 'utf8'),
-    'sources',
+  assert.equal(existsSync(join(destination, 'NativeMedia/ffmpeg')), false);
+  assert.deepEqual(
+    readFileSync(join(destination, 'libde265.dll')),
+    readFileSync(join(prefix, 'bin/libde265.dll')),
   );
   const manifest = JSON.parse(
-    readFileSync(join(destination, 'NativeMedia/ffmpeg/source-manifest.json'), 'utf8'),
+    readFileSync(join(destination, 'NativeMedia/libde265/source-manifest.json'), 'utf8'),
   );
-  assert.equal(manifest.source.sha256, source.sha256);
+  assert.equal(manifest.source.version, '1.1.3');
+  assert.ok(readFileSync(join(destination, 'NativeMedia/libde265/licenses/COPYING')).length);
+  assert.ok(readFileSync(join(destination, 'NativeMedia/vvdec/source/LICENSE.txt')).length);
+  assert.ok(
+    readFileSync(join(destination, 'NativeMedia/build-scripts/native-codec-cmake/CMakeLists.txt'))
+      .length,
+  );
   writeFileSync(join(destination, 'Hongguo.exe'), 'fixture');
   writeFileSync(join(destination, 'WebView2Loader.dll'), 'unapproved');
-  assert.throws(() => auditWindowsBundle(destination), /exactly the four pinned FFmpeg DLLs/);
+  assert.throws(() => auditWindowsBundle(destination), /exactly the pinned libde265 DLL/);
 });
 
-test('macOS delivery keeps relative dylib symlinks valid inside Frameworks', (context) => {
-  const directory = mkdtempSync(join(tmpdir(), 'hongguo-media-symlinks-'));
-  context.after(() => rmSync(directory, { recursive: true, force: true }));
-  const triple = 'aarch64-apple-darwin';
-  const { prefix, target } = fixture(directory, triple);
-  mkdirSync(join(prefix, 'lib'));
-  writeFileSync(join(prefix, 'lib/libavutil.61.dylib'), 'fixture dylib');
-  symlinkSync('libavutil.61.dylib', join(prefix, 'lib/libavutil.dylib'));
-  writeManifest(prefix, { source, target });
-  const destination = join(directory, 'Hongguo.app');
-  copyDesktopMedia(prefix, triple, destination);
-  const link = join(destination, 'Contents/Frameworks/libavutil.dylib');
-  assert.equal(readlinkSync(link), 'libavutil.61.dylib');
-  assert.equal(readFileSync(link, 'utf8'), 'fixture dylib');
-});
+test(
+  'macOS delivery keeps relative dylib symlinks valid inside Frameworks',
+  { skip: process.platform === 'win32' },
+  (context) => {
+    const directory = mkdtempSync(join(tmpdir(), 'hongguo-media-symlinks-'));
+    context.after(() => rmSync(directory, { recursive: true, force: true }));
+    const triple = 'aarch64-apple-darwin';
+    const prefix = prepareNativeSdk(triple, { destination: join(directory, 'sdk') });
+    const destination = join(directory, 'Hongguo.app');
+    copyDesktopMedia(prefix, triple, destination);
+    const link = join(destination, 'Contents/Frameworks/libde265.dylib');
+    assert.equal(readlinkSync(link), 'libde265.0.dylib');
+    assert.deepEqual(readFileSync(link), readFileSync(join(prefix, 'lib/libde265.dylib')));
+  },
+);

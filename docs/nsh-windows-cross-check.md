@@ -1,143 +1,83 @@
-# 在 macOS 检查 NSH Windows 目标
+# macOS 上检查 NSH Windows 目标
 
-本流程用于 macOS 上的真实 `x86_64-pc-windows-msvc` 类型检查与 lint。
-不修改 Windows 原生打包流程，也不代表 Windows 应用已完成链接、安装或运行。
+默认构建使用仓库 `vendor/native-codecs/` 的 Windows MSVC 编解码库，
+不构建 FFmpeg、libde265 或 VVdeC，也不要求 CMake、NASM、GPG、MSYS2 或 bindgen。
+交叉检查需要 Rust Windows target、cargo-xwin、LLVM 资源编译器/链接器和 Microsoft SDK。
+原生 Windows 开发只需常规 MSVC Build Tools/Windows SDK 与 Rust。
 
-## 工具链依据
-
-当前播放使用仓库内固定的 `hongguo-vvdec-sys` / VVdeC 3.2.1。原
-`vvdec-sys 0.7.0` 的 3.0.0 构建曾遇到 LLVM 诊断差异：LLVM 的
-[PR 111434](https://github.com/llvm/llvm-project/pull/111434) 于 2024-10-28 新增非平凡类型
-memcpy/memset 诊断；[PR 117387](https://github.com/llvm/llvm-project/pull/117387)
-将其独立为 `-Wnontrivial-memcall`。LLVM 19 发布分支早于这两项改动。
-2026-11-13 使用相同 MSVC/SDK 参数、原 VVdec 头文件与 Werror 对照：LLVM 23 报四处诊断，
-LLVM 19.1.7 零诊断通过；随后完整 NSH `--all-targets` 严格 clippy 通过。
-
-使用 Homebrew 官方 [llvm@19](https://formulae.brew.sh/formula/llvm@19)，许可证为
-Apache-2.0 WITH LLVM-exception。它是 keg-only，与默认 LLVM 并行安装；不要覆盖全局 PATH。
-保留 VVdec 的 Werror，不修改 registry/SDK 源码，不添加警告抑制。
+## 准备与检查
 
 ```sh
-brew install llvm@19
-cargo install cargo-xwin --version 0.23.1 --locked
 rustup target add x86_64-pc-windows-msvc
+cargo install cargo-xwin --version 0.23.1 --locked
+node scripts/nsh.mjs setup x86_64-pc-windows-msvc
+mkdir -p target/nsh-cross-tools
+ln -sfn "$PWD/scripts/nsh-windows-rc.cjs" target/nsh-cross-tools/rc.exe
 ```
 
-另需现有 LLVM 的 `llvm-rc`/`lld-link`、CMake、Ninja、pkg-config 与 Node。
-`cargo xwin` 负责准备 Windows CRT/SDK。
-
-## 首次检查或清空 target 后
-
-在仓库根执行。适配器使用显式环境变量选工具，不提交本机绝对路径：
+在仓库根执行，工具路径由本机安装位置提供，不写入项目配置：
 
 ```sh
-mkdir -p target/nsh-cross-tools/pkgconfig
-ln -sfn "$PWD/scripts/nsh-windows-rc.cjs" target/nsh-cross-tools/rc.exe
-
 PATH="$PWD/target/nsh-cross-tools:$PATH" \
-NSH_WINDOWS_CLANG="$(brew --prefix llvm@19)/bin/clang-cl" \
 NSH_WINDOWS_RC="$(brew --prefix llvm)/bin/llvm-rc" \
 RC_x86_64_pc_windows_msvc="$(brew --prefix llvm)/bin/llvm-rc" \
-CMAKE_C_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" \
-CMAKE_CXX_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" \
 RUSTFLAGS='-C target-cpu=x86-64 -C link-arg=/STACK:8388608 -C target-feature=+crt-static' \
-CARGO_INCREMENTAL=0 \
-PKG_CONFIG_ALLOW_CROSS_x86_64_pc_windows_msvc=1 \
-PKG_CONFIG_PATH= \
-PKG_CONFIG_LIBDIR_x86_64_pc_windows_msvc="$PWD/target/nsh-cross-tools/pkgconfig" \
+XWIN_CACHE_DIR="$HOME/Library/Caches/hongguo-nsh-xwin-symbols" \
+XWIN_INCLUDE_DEBUG_SYMBOLS=true XWIN_ARCH=x86_64 CARGO_INCREMENTAL=0 \
 cargo xwin clippy -p hongguo-nsh --all-targets --target x86_64-pc-windows-msvc \
   -- -D warnings -D clippy::allow_attributes
 ```
 
-空的目标 pkg-config 默认目录阻止查询宿主库；当前 VVdeC 从仓库固定源码静态构建，
-不探测系统 libvvdec。FFmpeg 只读取目标三元组对应的受控 prefix。
-Rust 与 FFmpeg 使用 x86-64 基线；VVdeC 按 SIMD 源文件启用 SSE4.1/AVX2 并在运行期分派，
-不得通过全局 `CFLAGS=/arch:AVX2` 抬高最低 CPU。clang-cl 的基线修订见
-[`SOURCE.md`](../crates/hongguo-vvdec-sys/SOURCE.md)。
+相同环境下用 `cargo xwin build -p hongguo-nsh --bin hongguo-nsh --release --target x86_64-pc-windows-msvc`
+实际链接 release EXE。cargo-xwin 0.23.1 自行处理 cwd 配置和 CRT，
+所以交叉命令显式传递完整 Rustflags，不能只依赖 Cargo 的额外 `--config`。
+独立 SDK 缓存包含静态 CRT 的官方 PDB，避免使用旧的不含符号缓存导致 LNK4099。
 
-[clang 适配器](../scripts/nsh-windows-clang.cjs) 接收 CMake 的原 compiler 参数，
-实际调用 `NSH_WINDOWS_CLANG`。原有前端 `-W*` 与 `-pedantic` 统一转为 `/clang:` 形式以保序，
-避免 `-Wall` 被 clang-cl 误作 MSVC `/Wall`；driver 级数字警告等级（例如新缓存中的 `-W0`）、
-Werror 与已有 unused-command-line 设置保持原形式，没有新增 `-Wno`。
-[RC 适配器](../scripts/nsh-windows-rc.cjs) 将 CMake manifest 编译使用的 Windows `/fo`、
-`/nologo` 参数转成真实 `llvm-rc` 形式；缺失工具或子进程失败均传播非零退出码。
+正常 Windows 打包仍在 Windows 宿主执行 `pnpm nsh:package -- windows` 或
+`make nsh-package TARGET=windows`，使用项目的静态 CRT 配置。
+构建硬要求实际编译 ICO 和 GUI manifest，不沿用过期资源。
 
-## 已存在的 CMake 缓存
+## 编解码与审计
 
-CMake 的 launcher 环境变量只在首次配置时初始化；已有缓存会优先。
-若旧缓存指向临时 launcher，先更新同一份自有构建缓存，再运行上面的检查命令：
+默认 Video 使用 NSH MediaEngine/D3D11。原生缺失能力由包内专用核补齐，
+不是 FFmpeg 的 D3D11VA/D3D12VA 候选对比。原有 FFmpeg decoder-audit 已删除。
 
-```sh
-for NSH_VVDEC_CACHE in target/x86_64-pc-windows-msvc/debug/build/hongguo-vvdec-sys-*/out/build/CMakeCache.txt; do
-  test -f "$NSH_VVDEC_CACHE" || continue
-  NSH_VVDEC_SOURCE="$(rg '^CMAKE_HOME_DIRECTORY:INTERNAL=' "$NSH_VVDEC_CACHE")"
-  NSH_VVDEC_SOURCE="${NSH_VVDEC_SOURCE#*=}"
-  cmake -S "$NSH_VVDEC_SOURCE" -B "${NSH_VVDEC_CACHE%/CMakeCache.txt}" \
-    -DCMAKE_C_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" \
-    -DCMAKE_CXX_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" || exit
-done
-```
-
-这是 CMake 的公开配置入口，不修改生成的 build.ninja、第三方源码或 SDK。
-本机可通过 `cmake --help-variable 'CMAKE_<LANG>_COMPILER_LAUNCHER'` 与
-`cmake --help-manual cmake-env-variables.7` 核对初始化规则。
-
-The scripts support checking the real Windows MSVC target from macOS with the pinned VVdec source.
-LLVM 19 is installed alongside the default LLVM; warning gates remain enabled. This check does not
-replace native Windows packaging or runtime validation.
-
-## 真正链接带资源的 release exe
-
-Windows 原生打包仍在 Windows 宿主执行 `make nsh-package TARGET=windows`。
-它通过 [NSH 专用配置](../crates/hongguo-nsh/windows-build.toml) 追加静态 CRT，
-与根配置合并后保留 x86-64 基线和 8MiB stack。
-`build.rs` 复用已锁定、MIT 许可的 embed-resource 3.0.12，硬要求编译现有应用 ICO 和
-GUI manifest；编译失败或缺资源编译器时直接失败，不使用旧资源继续打包。
-
-cargo-xwin 0.23.1 自行读取 cwd 配置并设置 Rustflags/CRT，不能仅依赖传给 Cargo 的
-`--config`：交叉构建显式传递完整三项 Rustflags，让 xwin 和 Rust/C++ 同时选择静态 CRT。
-本轮已在真实 rustc 命令、`CARGO_CFG_TARGET_FEATURE` 和 VVdec 的 `-MT` 参数确认生效。
-
-静态 CRT 的官方 PDB 也必须安装，避免 LNK4099。cargo-xwin 0.23.1 的旧缓存 DONE
-只记录架构，后加 `XWIN_INCLUDE_DEBUG_SYMBOLS` 不会补提取 PDB；首次使用下面独立缓存，
-不改旧 SDK 或手工修改缓存标记。下载中断后仍使用同一路径由官方工具恢复。
+扩展 HEVC 现优先直接 D3D11 VLD（NV12/P010），不加载系统 HEVC MFT；失败回退 libde265。
+真实目标检查加入 `-p hongguo-nsh-video-windows --features hongguo-nsh-video-windows/test-support`，
+会同时编译独立 `hevc_d3d11_probe`。沿用上方交叉环境，以以下 Cargo 命令实际链接该探针：
 
 ```sh
-mkdir -p target/nsh-cross-tools/pkgconfig
-ln -sfn "$PWD/scripts/nsh-windows-rc.cjs" target/nsh-cross-tools/rc.exe
-
-PATH="$PWD/target/nsh-cross-tools:$PATH" \
-NSH_WINDOWS_CLANG="$(brew --prefix llvm@19)/bin/clang-cl" \
-NSH_WINDOWS_RC="$(brew --prefix llvm)/bin/llvm-rc" \
-RC_x86_64_pc_windows_msvc="$(brew --prefix llvm)/bin/llvm-rc" \
-CMAKE_C_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" \
-CMAKE_CXX_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" \
-RUSTFLAGS='-C target-cpu=x86-64 -C link-arg=/STACK:8388608 -C target-feature=+crt-static' \
-XWIN_CACHE_DIR="$HOME/Library/Caches/hongguo-nsh-xwin-symbols" \
-XWIN_INCLUDE_DEBUG_SYMBOLS=true XWIN_ARCH=x86_64 \
-CARGO_INCREMENTAL=0 \
-PKG_CONFIG_ALLOW_CROSS_x86_64_pc_windows_msvc=1 PKG_CONFIG_PATH= \
-PKG_CONFIG_LIBDIR_x86_64_pc_windows_msvc="$PWD/target/nsh-cross-tools/pkgconfig" \
-cargo xwin build --release -p hongguo-nsh --bin hongguo-nsh --target x86_64-pc-windows-msvc
+cargo xwin build -p hongguo-nsh-video-windows --features test-support --example hevc_d3d11_probe --release --target x86_64-pc-windows-msvc
 ```
 
-默认产物为 `target/x86_64-pc-windows-msvc/release/hongguo-nsh.exe`。
-若修改 Cargo target-dir，以 Cargo 报告的实际 artifact 为准；正式包装脚本已经如此处理。
-如根 CPU/stack 配置变更，交叉命令中的两项对应参数也要同步。
+探针须在 Windows GPU 上运行，不能在 Mac 上把编译成功记作硬解成功。
+它不使用 HEVC MFT，不降级为软件被测路径；同时对照 libde265 检查完整 Main/Main10 像素、PTS、
+重排/尾帧及表面租约。运行时与主包一样需要随包的 libde265.dll，无额外工具依赖。
 
-[Windows PE 校验器](../scripts/nsh-windows-pe.mjs) 已接入正式 Windows 包装步骤：
-要求 AMD64、GUI、至少 8MiB stack；有界读取普通/delay imports，拒绝动态 CRT；
-检查真实 ICON/GROUP_ICON 引用和应用身份、asInvoker、DPI、长路径 manifest。
-截断、无效 RVA、目录循环或缺失资源均硬失败，不依赖用户机器安装 LLVM 才能校验。
+Windows SDK 的 libde265 DLL 使用 x86-64 基线、MSVC ABI 和静态 CRT；
+SIMD 按对象编译并在运行期分派，不使用全局 AVX2。
+VVdeC 3.2.1 的构建与局部 clang-cl 兼容修改见其 SOURCE.md。
+LLVM 19 是维护者重建该旧内核时使用的并行工具链，不是新机日常启动要求。
+
+新 release EXE 与唯一媒体 DLL 均经过 `auditWindowsBundle`：
+检查 PE 架构、静态 CRT、普通/delay imports、系统媒体 DLL、图标和 manifest，
+拒绝 WebView2Loader、外部 VC runtime 和未随包第三方 DLL。
+
+真实 MSVC 类型检查、链接和 PE 审计均不代表 Windows 真机播放已通过。
+画面、音画同步、掉帧、HDR、首帧/seek、持续倍速与能耗仍需物理机器验收。
+
+## 生成 Windows 测试安装器
+
+原生 Windows `make nsh-package TARGET=windows` 自动生成 NSIS 安装器；构建机需安装 NSIS 3。
+macOS 上可对上述真实交叉链接 EXE 组装 `Hongguo.exe`、认证 SDK 的 `libde265.dll` 和
+`copyDesktopMedia` 提供的 NativeMedia 来源材料，再执行：
 
 ```sh
-node --input-type=module -e \
-  'import {readFileSync} from "node:fs"; import {validateWindowsPe} from "./scripts/nsh-windows-pe.mjs"; console.log(validateWindowsPe(readFileSync(process.argv[1])));' \
-  "$PWD/target/x86_64-pc-windows-msvc/release/hongguo-nsh.exe"
-node --test scripts/nsh-desktop.test.mjs scripts/nsh-ios.test.mjs \
-  scripts/nsh-windows-adapters.test.mjs scripts/nsh-windows-pe.test.mjs
+node scripts/nsh-windows-installer.mjs <Windows包目录>
 ```
 
-本轮已真实链接静态 CRT exe，导入表仅剩 31 个 Windows 系统 DLL；嵌入 7 幅应用图标和
-1 份 manifest，manifest 字节与源文件一致。官方符号完整缓存重链接后 LNK4099 消失。
-这是链接、资源及依赖验证；Windows 实机的安装、启动、播放和系统通知仍需验收。
+脚本重新审计 PE 与依赖，拒绝旧 FFmpeg 包，输出同级 `Hongguo-NSH_<版本>_x64-setup.exe`。
+此操作支持 macOS 的 NSIS 编译器，不需要 Wine，不执行 Windows 安装程序。
+安装范围为当前用户、普通 Windows 10 1809+ 与 Windows 11，不安装 WebView2 或 HEVC 商店插件。
+默认安装目录与 Tauri 隔离；卸载使用打包时的逐文件清单，不递归删除安装目录或用户数据。
+交叉生成与解包校验仍不代替 Windows 实机安装、卸载和播放验收。

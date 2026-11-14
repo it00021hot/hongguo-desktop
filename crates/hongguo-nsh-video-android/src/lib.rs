@@ -7,6 +7,7 @@ mod direct;
 mod direct_texture;
 mod ffi;
 mod gl_state;
+mod native_audio;
 mod output_color;
 mod pixel_bytes;
 mod raw_yuv;

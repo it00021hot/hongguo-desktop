@@ -6,6 +6,10 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "description": "红果短剧桌面客户端（Windows / macOS）",
   "scripts": {
+    "nsh": "node scripts/nsh.mjs run",
+    "nsh:setup": "node scripts/nsh.mjs setup",
+    "nsh:check": "node scripts/nsh.mjs check",
+    "nsh:test": "node scripts/nsh.mjs test",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",

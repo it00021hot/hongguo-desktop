@@ -38,10 +38,6 @@
 //!
 //! [`MountItem::Component`]: nsh_core::MountItem::Component
 
-#[cfg(feature = "media")]
-mod video;
-#[cfg(not(feature = "media"))]
-#[path = "native/video_disabled.rs"]
 mod video;
 mod web;
 
@@ -119,7 +115,9 @@ use crate::{
 /// ```
 pub trait NativeComponent {
     /// Opts into diagnostic feedback after the complete NSH canvas is submitted.
-    fn wants_presentation_feedback(&self) -> bool { false }
+    fn wants_presentation_feedback(&self) -> bool {
+        false
+    }
 
     /// Called after a successful window Present/Present1. GPU draw completion and
     /// physical scanout remain separate events; inspect the raw DXGI history.
@@ -239,8 +237,13 @@ impl ComponentContext {
     /// The actual NSH drawing-device generation on this component's UI thread.
     /// Stable across component remounts; changes when NSH recreates the device.
     pub fn drawing_device_generation(&self) -> windows::core::Result<u64> {
-        let unavailable = || windows::core::Error::new(windows::Win32::Foundation::E_INVALIDARG,"drawing_device_generation requires a live component on its UI thread");
-        let surface=Surface::by_key(self.surface).ok_or_else(unavailable)?;
+        let unavailable = || {
+            windows::core::Error::new(
+                windows::Win32::Foundation::E_INVALIDARG,
+                "drawing_device_generation requires a live component on its UI thread",
+            )
+        };
+        let surface = Surface::by_key(self.surface).ok_or_else(unavailable)?;
         surface.view(self.id).ok_or_else(unavailable)?;
         Ok(crate::gfx::generation())
     }
@@ -700,11 +703,23 @@ impl ComponentItem {
 
 impl Hosted for ComponentItem {
     fn wants_presentation_feedback(&self) -> bool {
-        self.component.try_borrow().ok().and_then(|component| component.as_ref().map(|component|component.wants_presentation_feedback())).unwrap_or(false)
+        self.component
+            .try_borrow()
+            .ok()
+            .and_then(|component| {
+                component
+                    .as_ref()
+                    .map(|component| component.wants_presentation_feedback())
+            })
+            .unwrap_or(false)
     }
 
-    fn did_present(&self, info:&crate::NativePresentation) {
-        if let Ok(component) = self.component.try_borrow() && let Some(component) = &*component { component.did_present(info); }
+    fn did_present(&self, info: &crate::NativePresentation) {
+        if let Ok(component) = self.component.try_borrow()
+            && let Some(component) = &*component
+        {
+            component.did_present(info);
+        }
     }
     fn draw(&self, cx: &mut DrawCx<'_>, size: (f32, f32)) {
         let Ok(component) = self.component.try_borrow() else {
@@ -953,7 +968,6 @@ fn intersect(a: RECT, b: RECT) -> Option<RECT> {
 }
 
 /// Where a video's source is.
-#[cfg(any(feature = "media", test))]
 #[derive(Debug, PartialEq)]
 pub(crate) enum Location {
     /// A URL Media Foundation opens (`https://`, `file://`, ...).
@@ -962,7 +976,6 @@ pub(crate) enum Location {
     Path(std::path::PathBuf),
 }
 
-#[cfg(any(feature = "media", test))]
 impl Location {
     /// The URL the media engine opens.
     pub(crate) fn url(&self) -> String {
@@ -974,7 +987,6 @@ impl Location {
 }
 
 /// Resolves `source` (`asset:/` URIs against `base`).
-#[cfg(any(feature = "media", test))]
 pub(crate) fn locate(source: &str, base: Option<&AssetBase>) -> Option<Location> {
     if let Some(path) = source.strip_prefix("asset:/") {
         let path = path.trim_start_matches('/');
@@ -1001,7 +1013,6 @@ pub(crate) fn locate(source: &str, base: Option<&AssetBase>) -> Option<Location>
 /// A `file:` URL for a Windows path (`C:\a b\c.mp4` →
 /// `file:///C:/a%20b/c.mp4`; `\\server\share\c.mp4` →
 /// `file://server/share/c.mp4`).
-#[cfg(any(feature = "media", test))]
 fn file_url(path: &str) -> String {
     let unc = path.strip_prefix(r"\\");
     let mut url = String::with_capacity(path.len() + 8);

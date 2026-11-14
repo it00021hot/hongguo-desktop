@@ -11,8 +11,8 @@ compile-time fixtures, and workspace member examples. The website and unrelated
 example applications are omitted. All application NSH dependencies must resolve
 to this one tree. The Cargo and Git caches are never patched in place.
 
-Local changes include the Windows backend's optional system media and
-same-canvas high-precision display composition. Android additionally exposes a
+Local changes include the Windows backend's same-canvas high-precision display
+composition. Android additionally exposes a
 conservative `SurfaceComposition.supports(View)` admission check: separate HDR
 surfaces are excluded under Canvas shaders/transitions, masks, rounded ancestor clipping,
 nonidentity transforms, or partial ancestor opacity. Intersecting sibling overlays

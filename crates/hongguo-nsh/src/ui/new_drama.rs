@@ -88,6 +88,7 @@ fn NewDramaGridSurface(
                     }
                 })
                 .flex_1()
+                .content_padding_x(px(16.0))
                 .columns(columns)
                 .column_gap(px(16.0))
                 .row_gap(px(16.0))
@@ -96,7 +97,7 @@ fn NewDramaGridSurface(
                 })
                 .estimated_item_size(move || {
                     let columns = columns.get() as f32;
-                    let card_width = (width.get() - (columns - 1.0) * 16.0) / columns;
+                    let card_width = (width.get() - 32.0 - (columns - 1.0) * 16.0) / columns;
                     px((card_width - 2.0).max(0.0) * 4.0 / 3.0 + 78.0)
                 })
                 .footer(view().pt_8().pb_2().items_center().child(when(

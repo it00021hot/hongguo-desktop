@@ -7,6 +7,9 @@ license.workspace = true
 publish = false
 autotests = false
 
+[features]
+source-build = ["hongguo-playback/source-build"]
+
 [build-dependencies]
 embed-resource = "=3.0.12"
 
@@ -19,9 +22,11 @@ hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false }
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-common = { path = "../hongguo-common" }
 hongguo-media = { path = "../hongguo-media" }
+hongguo-video = { path = "../hongguo-video" }
 hongguo-media-platform = { path = "../hongguo-media-platform" }
 hongguo-service = { path = "../hongguo-service" }
 hongguo-playback = { path = "../hongguo-playback" }
+hongguo-native-clock = { path = "../hongguo-native-clock" }
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-store = { path = "../hongguo-store" }
 hongguo-stream = { path = "../hongguo-stream" }

@@ -24,11 +24,12 @@ pub(crate) use window_player::{
 mod emoji_editor;
 pub(crate) use emoji_editor::{EmojiEditorSkin, emoji_editor, emoji_editor_views};
 mod download;
+mod player_popup;
 pub(crate) use batch::{batch_bar, batch_delete, batch_select};
 pub(crate) use download::download_submit;
 pub(crate) use download::{
-    download_cancel, download_count, download_episode, download_grid, download_quick,
-    download_range_error, download_sheet,
+    download_cancel, download_count, download_episode, download_field, download_grid,
+    download_quick, download_range_error, download_sheet, download_status,
 };
 mod personal_poster;
 pub(crate) use personal_poster::{
@@ -108,9 +109,7 @@ pub(crate) use form_controls::update_action;
 mod settings_keys;
 mod settings_metrics;
 pub(crate) use settings_keys::{KeyBindingKind, settings_key};
-pub(crate) use settings_metrics::{
-    BackendLevel, backend_badge, settings_glyph_action, settings_note,
-};
+pub(crate) use settings_metrics::{BackendLevel, backend_badge, settings_note};
 mod icons;
 mod motion;
 mod navigation;
@@ -171,8 +170,8 @@ pub(crate) use navigation::{
 };
 pub(crate) use player_menu::{
     player_episode, player_episode_cell, player_episode_group, player_episode_panel,
-    player_episode_sheet, player_menu, player_menu_label, player_menu_option, player_panel,
-    player_toggle_icon, player_volume_slider,
+    player_episode_sheet, player_menu, player_menu_label, player_menu_option, player_toggle_icon,
+    player_volume_panel, player_volume_slider,
 };
 pub(crate) use select::{SelectControl, SelectOption, select};
 pub(crate) use sheet::sheet;

@@ -63,7 +63,9 @@ pub(crate) struct ItemPointer {
 /// header with its title and buttons, a dialog. Items take the pointer
 /// before the views below them ([`crate::input`]).
 pub(crate) trait Hosted {
-    fn wants_presentation_feedback(&self) -> bool { false }
+    fn wants_presentation_feedback(&self) -> bool {
+        false
+    }
     fn did_present(&self, _info: &crate::NativePresentation) {}
     /// Draws the item in `size` (points; the context is in item
     /// coordinates).

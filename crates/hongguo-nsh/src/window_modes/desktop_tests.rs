@@ -8,14 +8,21 @@ struct Fake {
     fullscreen: bool,
     controls_hidden: bool,
     visible: bool,
+    capture_available: bool,
     pinned: bool,
 }
 impl Window for Rc<RefCell<Fake>> {
+    fn exposed(&self) -> Result<bool, String> {
+        Ok(self.borrow().visible)
+    }
     fn attached(&self) -> bool {
         self.borrow().attached
     }
     fn capture(&self) -> Result<Capture, String> {
         let state = self.borrow();
+        if !state.capture_available {
+            return Err("window is not on a display".into());
+        }
         Ok(Capture {
             geometry: state.geometry,
             fullscreen: state.fullscreen,
@@ -65,6 +72,7 @@ fn fixture() -> (Desktop, Rc<RefCell<Fake>>, Events) {
         fullscreen: false,
         controls_hidden: false,
         visible: true,
+        capture_available: true,
         pinned: false,
     }));
     let events = Events::default();
@@ -76,6 +84,49 @@ fn fixture() -> (Desktop, Rc<RefCell<Fake>>, Events) {
         state,
         events,
     )
+}
+
+#[test]
+fn visibility_observation_emits_changes_only_while_enabled() {
+    let (mut desktop, window, events) = fixture();
+    desktop.observe_visibility(true);
+    desktop.tick();
+    assert!(
+        events
+            .borrow()
+            .iter()
+            .any(|(name, value)| name == "visibility" && value == true)
+    );
+    window.borrow_mut().visible = false;
+    desktop.observe_visibility(false);
+    desktop.observe_visibility(true);
+    desktop.tick();
+    assert!(
+        events
+            .borrow()
+            .iter()
+            .any(|(name, value)| name == "visibility" && value == false)
+    );
+    events.borrow_mut().clear();
+    desktop.observe_visibility(false);
+    events.borrow_mut().clear();
+    desktop.tick();
+    assert!(!events.borrow().iter().any(|(name, _)| name == "visibility"));
+}
+
+#[test]
+fn visibility_is_reported_even_when_window_geometry_is_unavailable() {
+    let (mut desktop, window, events) = fixture();
+    window.borrow_mut().capture_available = false;
+    window.borrow_mut().visible = false;
+    desktop.observe_visibility(true);
+    desktop.tick();
+    assert!(
+        events
+            .borrow()
+            .iter()
+            .any(|(name, value)| name == "visibility" && value == false)
+    );
 }
 fn mini() -> Request {
     Request {

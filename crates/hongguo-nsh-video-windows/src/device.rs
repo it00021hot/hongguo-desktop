@@ -27,4 +27,11 @@ unsafe impl DecodeDevice for DeviceLease {
     fn generation(&self) -> u64 {
         self.generation
     }
+    fn hevc_decoder(
+        &self,
+        config: &hongguo_media_types::HevcDecoderConfig,
+    ) -> Result<Option<Box<dyn hongguo_media_types::VideoDecoder>>, String> {
+        crate::hevc::Decoder::open(&self.device, config)
+            .map(|decoder| Some(Box::new(decoder) as Box<dyn hongguo_media_types::VideoDecoder>))
+    }
 }

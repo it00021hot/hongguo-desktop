@@ -43,8 +43,7 @@ test(
       const object = join(prefix, 'value.o');
       writeFileSync(source, `int fixture_value(void) { return ${value}; }\n`);
       run(compiler, ['-isysroot', sdk, '-c', source, '-o', object]);
-      for (const name of ['avcodec', 'avutil', 'swresample', 'avfilter'])
-        run('ar', ['rcs', join(prefix, 'lib', `lib${name}.a`), object]);
+      for (const name of ['de265']) run('ar', ['rcs', join(prefix, 'lib', `lib${name}.a`), object]);
     };
     buildLibrary(original, 7);
     buildLibrary(replacement, 9);
@@ -62,7 +61,7 @@ test(
         sdk,
         '-L',
         join(original, 'lib'),
-        '-lavutil',
+        '-lde265',
         ...Array.from({ length: 1000 }, () => '-Wl,-dead_strip'),
         '-o',
         output,
@@ -79,7 +78,7 @@ test(
           HONGGUO_RELINK_REAL_LINKER: compiler,
           HONGGUO_RELINK_OUTPUT: materials,
           HONGGUO_RELINK_SDK_ROOT: sdk,
-          HONGGUO_FFMPEG_PREFIX: original,
+          HONGGUO_HEVC_ROOT: original,
           HONGGUO_RELINK_TARGET: 'fixture-host',
         },
       },

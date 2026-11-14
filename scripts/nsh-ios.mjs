@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -49,13 +50,22 @@ export function buildIos(target) {
   const destination = createBundle(rustTarget, simulator);
   copyMediaNotices(prefix, rustTarget, join(dirname(destination), 'NativeMedia'));
   signBundle(destination, simulator);
-  run('ditto', [
-    '-c',
-    '-k',
-    '--keepParent',
-    dirname(destination),
-    join(root, 'target/nsh-ios', `Hongguo-${simulator ? 'simulator' : 'device'}.zip`),
-  ]);
+  const staging = mkdtempSync(join(root, 'target/nsh-ios/.package-'));
+  try {
+    const product = join(staging, 'Hongguo');
+    mkdirSync(product);
+    for (const name of ['Hongguo.app', 'NativeMedia', 'Relink'])
+      cpSync(join(dirname(destination), name), join(product, name), { recursive: true });
+    run('ditto', [
+      '-c',
+      '-k',
+      '--keepParent',
+      product,
+      join(root, 'target/nsh-ios', `Hongguo-${simulator ? 'simulator' : 'device'}.zip`),
+    ]);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
   return destination;
 }
 

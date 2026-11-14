@@ -27,6 +27,12 @@ make nsh-package TARGET=ios-simulator
 make nsh-package TARGET=ios
 ```
 
+日常开发也可用 `pnpm nsh` / `pnpm nsh:check` / `pnpm nsh:test`，不要求 Make 或全局 NSH CLI。
+入口自动解包并校验 `vendor/native-codecs/` 的固定 SDK，默认不源码构建；`pnpm nsh:setup` 只准备依赖。
+VVdeC 的 vendored 源码在 `crates/hongguo-vvdec-sys/vendor/vvdec`，不是根 `vendor/`。
+正常 Rust 平台 SDK 仍需安装。源码重建必须显式 `source-build`，详见 `docs/native-media-build.md`。
+六目标原生编解码归档随仓库提供，不依赖外部 SDK 发布或新机 CMake/libclang。
+
 桌面打包仅在对应宿主执行。Android 需要已配置的 ANDROID_HOME、NDK_HOME、JDK 与
 Gradle 9.7.0（仓库内 wrapper 固定版本与 SHA-256）；AGP 沿用现有 Android 工程的 9.3.1。
 本项目宿主与原生编译保留 Android 9/API 28 下限；0.5.0 AAR 的 manifest 声明 API 26，
@@ -46,9 +52,13 @@ Gradle 9.7.0（仓库内 wrapper 固定版本与 SHA-256）；AGP 沿用现有 A
 
 桌面包直接构建本项目 `hongguo-nsh` Rust 入口，使用 `scripts/nsh-desktop.mjs` 装包；
 不使用默认启用 QuickJS 的 NSH 通用发布宿主。打包前检查生产依赖图排除 JS 运行时，
-VVdeC 固定从源码静态构建。macOS 产物为 `target/nsh-desktop/macos/红果.app`
+VVdeC 默认使用随附的静态库。macOS 产物为 `target/nsh-desktop/macos/红果.app`
 及 `Hongguo.zip`，使用 ad hoc 签名，签名和系统库依赖校验失败即终止。
-Windows 原生产物为 `target/nsh-desktop/windows/Hongguo/` 及 `Hongguo.zip`；
+Windows 原生打包另需安装 NSIS 3（`makensis` 在 PATH 中，仅构建工具），
+产物为 `target/nsh-desktop/windows/Hongguo/`、`Hongguo.zip` 和 `Hongguo-NSH_<版本>_x64-setup.exe`；
+安装器为当前用户安装，包含完整原生运行库与来源/许可材料，不下载 WebView2 或解码插件。
+默认目录为 `%LOCALAPPDATA%\Programs\HongguoNSH`，与旧 Tauri 安装隔离。
+卸载只删除打包清单内的文件，保留账号、设置、下载与用户额外放入的文件。
 仍需 Windows 宿主实际构建、运行与安装验收。脚本只生成产物，不安装或发布。
 
 macOS 上的真实 Windows MSVC 交叉检查另见 [工具链与可复现命令](../../../../docs/nsh-windows-cross-check.md)。
@@ -61,7 +71,7 @@ Android 打包只从 NSH AAR 提取 Java 层，原生部分使用本项目 Rust 
 避免把 NSH 预构建的另一份原生库装进应用。HTTP 明文只对 127.0.0.1 媒体供数放行。
 
 Android 的 CMake 入口为 scripts/nsh-android.cmake，固定 arm64 ABI 并读取打包脚本提供的 API 下限。
-VVdeC 从源码构建，bindgen 显式使用 NDK sysroot。system-deps 7 对 NDK 导出的
+VVdeC 默认使用认证 SDK；维护源码构建的 bindgen 显式使用 NDK sysroot。system-deps 7 对 NDK 导出的
 `-l:libunwind.a` 会产生无效 Rust 库名，因此通过其正式 LIB 覆盖配置声明目标链接库；
 C++ 运行库采用静态链接，已用 llvm-readelf 确认 libnsh.so 只依赖系统动态库。
 这不是跳过媒体库或错误放行，最终链接与 APK 安装仍须通过。
@@ -80,17 +90,14 @@ iOS 需要完整 Xcode 与对应 SDK，最低 iOS 16.0。设备签名需要 NSH_
 异步业务经共用 service runtime 调度，NSH 资源销毁时取消未完成的桥接请求。
 service 事件在 NSH 执行环境更新状态；订阅溢出后重新读取快照。
 
-共用播放服务固定使用内置解码能力，NSH 无需启动声明或兼容模式开关。
-NSH 使用 `hongguo-playback`：包内 FFmpeg 9.0.2、VVdeC 3.2.1，保留原流的有符号
-时间轴和原位深帧；Windows 默认同设备 D3D11VA，Apple 使用 VideoToolbox，Android
-按实际输出能力准入 MediaCodec，失败在相同原流上回退包内软件核。H.264 解核只开放
-已明确支持的本地文件，在线/下载选流仍排除 H.264，不恢复兼容转码。
-下载记录的本地文件失效时重新获取在线原流；各平台要求有效的 `frameSource`，缺失则报错。
-AAC 由包内 FFmpeg 解成 PCM，经 WASAPI、AudioUnit 或 AAudio 输出，设备已播放采样
-映射为主时钟；有音轨欠载时不切换墙钟。原生首帧呈现后才解除 hold；代次和控制 owner
-阻止旧组件的 seek、pause、设备绑定及呈现回调影响新组件。FrameLease 必须保留至 GPU
-消费结束。关闭增强仍保留必要的颜色处理，显示映射位于增强之后。旧壳继续使用旧软解链。
-构建方式见 `docs/native-media-build.md`，已执行和待执行的验收见 `docs/nsh-decoder-validation.md`。
+NSH 使用原生 Video；ByteVC2、缺失 HEVC 解码器和输出精度缺口使用内部专用帧适配。
+libde265 / VVdeC 保留原始位深，原生 AVPlayer/MediaEngine/MediaPlayer 播放不移动样本偏移的音轨视图并提供时钟。
+Windows HEVC 扩展优先直接 D3D11 VLD（Main/NV12、Main10/P010），不经过系统 HEVC MFT，
+仅实际不可用/失败时回退 libde265；硬解探针与无扩展环境验证见 Windows adapter README。
+不保留 FFmpeg、PCM 设备环或外部安装引导。所有媒体 URL 是带临时访问范围的本机 HTTP Range。
+首帧呈现及原生时钟就绪后才解除 hold；代次和 owner 隔离旧 seek、控制及呈现回调。
+FrameLease 保留至 GPU 消费结束，显示映射位于增强之后。旧壳继续使用原有软解。
+构建和实际验证范围见 docs/native-media-build.md、docs/nsh-decoder-validation.md。
 
 媒体源只通过注册过的临时 URL 读取，关闭页面即注销。媒体按块读取，
 不得把路径或任意上游 URL 暴露成可由请求方选择的文件/代理入口。

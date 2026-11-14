@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { auditWindowsBundle } from './nsh-native-media.mjs';
 import { readWindowsImports, validateWindowsPe } from './nsh-windows-pe.mjs';
 
 const PE = 0x80;
@@ -67,6 +70,19 @@ function executable(
   return image;
 }
 
+function imageWithImport(name, { dll = false, delayed = false } = {}) {
+  const image = executable(delayed ? 'kernel32.dll' : name);
+  if (dll) image.writeUInt16LE(0x2022, PE + 22);
+  if (delayed) {
+    image.writeUInt32LE(RVA + 0x80, OPTIONAL + 216);
+    image.writeUInt32LE(64, OPTIONAL + 220);
+    image.writeUInt32LE(1, RAW + 0x80);
+    image.writeUInt32LE(RVA + 0xc0, RAW + 0x84);
+    image.write(name, RAW + 0xc0);
+  }
+  return image;
+}
+
 test('the portable image contains system imports, icon images and a GUI manifest', () => {
   assert.deepEqual(validateWindowsPe(executable()), {
     imports: ['kernel32.dll'],
@@ -102,26 +118,71 @@ test('delay-loaded C runtime dependencies also reject the single-executable pack
   assert.throws(() => validateWindowsPe(image), /dynamic CRT dependency/);
 });
 
-test('both executable and bundled DLL imports reject system codecs and WebView2 loaders', () => {
-  for (const name of ['mf.dll', 'mfplat.dll', 'mfreadwrite.dll', 'evr.dll', 'WebView2Loader.dll']) {
+test('executable and bundled DLL imports accept ordinary Windows system media libraries', () => {
+  for (const name of ['mf.dll', 'mfplat.dll', 'mfreadwrite.dll', 'evr.dll']) {
     for (const dll of [false, true]) {
-      const image = executable(name);
-      if (dll) image.writeUInt16LE(0x2022, PE + 22);
-      assert.throws(() => readWindowsImports(image, { dll }), /system media|WebView2 loader/);
-      const delayed = executable();
-      if (dll) delayed.writeUInt16LE(0x2022, PE + 22);
-      delayed.writeUInt32LE(RVA + 0x80, OPTIONAL + 216);
-      delayed.writeUInt32LE(64, OPTIONAL + 220);
-      delayed.writeUInt32LE(1, RAW + 0x80);
-      delayed.writeUInt32LE(RVA + 0xc0, RAW + 0x84);
-      delayed.write(name, RAW + 0xc0);
-      assert.throws(() => readWindowsImports(delayed, { dll }), /system media|WebView2 loader/);
+      for (const delayed of [false, true]) {
+        assert.deepEqual(
+          readWindowsImports(imageWithImport(name, { dll, delayed }), { dll }),
+          delayed ? ['kernel32.dll', name] : [name],
+        );
+      }
     }
   }
-  const dll = executable('avutil-61.dll');
+});
+
+test('both executable and bundled DLL imports reject WebView2 loaders', () => {
+  for (const dll of [false, true]) {
+    for (const delayed of [false, true]) {
+      assert.throws(
+        () => readWindowsImports(imageWithImport('WebView2Loader.dll', { dll, delayed }), { dll }),
+        /WebView2 loader/,
+      );
+    }
+  }
+  const dll = executable('libde265.dll');
   dll.writeUInt16LE(0x2022, PE + 22);
-  assert.deepEqual(readWindowsImports(dll, { dll: true }), ['avutil-61.dll']);
+  assert.deepEqual(readWindowsImports(dll, { dll: true }), ['libde265.dll']);
   assert.throws(() => readWindowsImports(dll), /expected executable image/);
+});
+
+test('Windows bundle audits accept system media imports and reject unknown normal or delay imports', (context) => {
+  const directory = mkdtempSync(join(tmpdir(), 'hongguo-pe-bundle-'));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const application = 'Hongguo.exe';
+  const libraries = ['libde265.dll'];
+  writeFileSync(join(directory, application), executable());
+  for (const name of libraries)
+    writeFileSync(join(directory, name), imageWithImport('kernel32.dll', { dll: true }));
+
+  for (const dll of [false, true]) {
+    const path = join(directory, dll ? libraries[0] : application);
+    for (const delayed of [false, true]) {
+      for (const dependency of [
+        'mf.dll',
+        'MFPLAT.dll',
+        'mfreadwrite.dll',
+        'mfcore.dll',
+        'mfplay.dll',
+        'evr.dll',
+        'msmpeg2adec.dll',
+        'msmpeg2vdec.dll',
+        'xaudio2_8.dll',
+        'xaudio2_9.dll',
+      ]) {
+        writeFileSync(path, imageWithImport(dependency, { dll, delayed }));
+        assert.doesNotThrow(() => auditWindowsBundle(directory));
+      }
+      for (const dependency of ['unbundled.dll', 'mfthirdparty.dll', 'xaudio2_8thirdparty.dll']) {
+        writeFileSync(path, imageWithImport(dependency, { dll, delayed }));
+        assert.throws(
+          () => auditWindowsBundle(directory),
+          /neither bundled nor approved system DLL/,
+        );
+      }
+    }
+    writeFileSync(path, imageWithImport('kernel32.dll', { dll }));
+  }
 });
 
 test('missing icons, groups, manifest and broken group references cannot pass packaging', () => {

@@ -43,6 +43,22 @@ pub enum FrameImage {
 }
 
 impl FrameImage {
+    pub fn with_color_and_rotation(self, color: ColorMetadata, rotation_degrees: u16) -> Self {
+        match self {
+            Self::Cpu(mut frame) => {
+                let image = Arc::make_mut(&mut frame);
+                image.color = color;
+                image.rotation_degrees = rotation_degrees;
+                Self::Cpu(frame)
+            }
+            Self::Hardware(frame) => {
+                let mut descriptor = frame.descriptor();
+                descriptor.color = color;
+                descriptor.rotation_degrees = rotation_degrees;
+                Self::Hardware(Arc::new(DescribedFrame { frame, descriptor }))
+            }
+        }
+    }
     pub fn descriptor(&self) -> FrameDescriptor {
         match self {
             Self::Cpu(frame) => FrameDescriptor {
@@ -55,6 +71,23 @@ impl FrameImage {
             },
             Self::Hardware(frame) => frame.descriptor(),
         }
+    }
+}
+
+struct DescribedFrame {
+    frame: Arc<dyn HardwareFrame>,
+    descriptor: FrameDescriptor,
+}
+// SAFETY: the original native lease owns the handle for the entire wrapper lifetime.
+unsafe impl HardwareFrame for DescribedFrame {
+    fn handle(&self) -> HardwareHandle {
+        self.frame.handle()
+    }
+    fn descriptor(&self) -> FrameDescriptor {
+        self.descriptor.clone()
+    }
+    fn present_at(&self, time: i64) -> Result<(), String> {
+        self.frame.present_at(time)
     }
 }
 
@@ -88,4 +121,10 @@ pub unsafe trait DecodeDevice: Send + Sync {
         0
     }
     fn generation(&self) -> u64;
+    fn hevc_decoder(
+        &self,
+        _config: &crate::HevcDecoderConfig,
+    ) -> Result<Option<Box<dyn crate::VideoDecoder>>, String> {
+        Ok(None)
+    }
 }

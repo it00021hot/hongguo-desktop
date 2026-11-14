@@ -1,4 +1,9 @@
 {
   "extends": "./.nsh/tsconfig.json",
-  "include": ["*.test.tsx", "layout/*.test.tsx", "typography/*.test.tsx"]
+  "include": [
+    "*.test.tsx",
+    "layout/*.test.tsx",
+    "layout/.native/*.test.tsx",
+    "typography/*.test.tsx"
+  ]
 }

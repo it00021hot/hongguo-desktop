@@ -86,6 +86,10 @@ pub fn direct_control(
         return Ok(());
     }
     if let Some(player) = player(handle) {
+        let bridge = player.bridge.clone();
+        lease.configure_native_clock_if_owner(&|url| {
+            crate::native_audio::open(bridge.clone(), url)
+        })?;
         player.wake();
     }
     Ok(())

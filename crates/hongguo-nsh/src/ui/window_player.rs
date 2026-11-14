@@ -226,23 +226,38 @@ pub(crate) fn window_player_controls(
                         .child(when(
                             move || !state.portrait.get(),
                             move || {
-                                buttons::surface(move || tr("player.pin"))
-                                    .selected(state.pinned)
-                                    .text_color(move || {
-                                        theme()
-                                            .color("video-controls")
-                                            .expect("video controls")
-                                            .opacity(if state.pinned.get() { 1.0 } else { 0.55 })
+                                buttons::surface(move || {
+                                    tr(if state.pinned.get() {
+                                        "player.unpin"
+                                    } else {
+                                        "player.pin"
                                     })
-                                    .child(dynamic(move || {
-                                        let glyph = buttons::glyph(Icon::Pin);
-                                        if state.pinned.get() {
-                                            glyph.fill_current()
-                                        } else {
-                                            glyph
-                                        }
-                                    }))
-                                    .on_press(move || send(WindowPlayerAction::TogglePinned))
+                                })
+                                .selected(state.pinned)
+                                .text_color(move || {
+                                    theme().color("video-controls").expect("video controls")
+                                })
+                                .selected_style(|style| {
+                                    style
+                                        .bg(move || {
+                                            theme()
+                                                .color("video-surface")
+                                                .expect("video surface")
+                                                .opacity(0.0)
+                                        })
+                                        .border(px(0.0))
+                                        .text_color(move || {
+                                            theme().color("video-controls").expect("video controls")
+                                        })
+                                })
+                                .child(dynamic(move || {
+                                    buttons::glyph(if state.pinned.get() {
+                                        Icon::PinFilled
+                                    } else {
+                                        Icon::Pin
+                                    })
+                                }))
+                                .on_press(move || send(WindowPlayerAction::TogglePinned))
                             },
                         ))
                         .child(when(

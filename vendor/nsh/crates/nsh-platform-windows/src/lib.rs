@@ -28,10 +28,6 @@ mod agent;
 mod animation;
 mod app;
 mod app_window;
-#[cfg(feature = "media")]
-mod audio;
-#[cfg(not(feature = "media"))]
-#[path = "audio_disabled.rs"]
 mod audio;
 mod canvas;
 mod chrome;

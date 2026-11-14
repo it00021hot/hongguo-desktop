@@ -50,25 +50,6 @@ pub fn open_folder(app: AppHandle, state: State<'_, AppState>, series_id: String
         .map_err(|e| hongguo_common::AppError::Io(e.to_string()))
 }
 
-/// 用系统默认浏览器打开外部网址。只给固定的白名单网址用（设置页的 ffmpeg 安装指引），不接受任意输入拼 URL。
-#[tauri::command]
-pub fn open_external_page(app: AppHandle, page: String) -> AppResult<()> {
-    use tauri_plugin_opener::OpenerExt;
-
-    const ALLOWED: &[&str] = &[
-        "https://www.gyan.dev/ffmpeg/builds/",
-        "https://ffmpeg.org/download.html",
-    ];
-    if !ALLOWED.contains(&page.as_str()) {
-        return Err(hongguo_common::AppError::InvalidArgs(format!(
-            "不允许打开的网址: {page}"
-        )));
-    }
-    app.opener()
-        .open_url(page, None::<&str>)
-        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))
-}
-
 /// 前端界面挂载完成：亮出窗口 + 开启关闭拦截。窗口配置 `visible: false`（启动白屏治理），本命令是唯一显示时机——AppShell 挂载、监听就位后才调用，首帧已提交不再白屏。
 /// 显示只发生在 false→true 的那次翻转上：本命令随 AppShell 重挂载会重复调用，无条件 show 会把最小化/隐身中的窗口抢到前台。
 #[tauri::command]

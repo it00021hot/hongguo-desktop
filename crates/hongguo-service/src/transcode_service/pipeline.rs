@@ -1,20 +1,9 @@
-//! 转码流水线编排。分流策略（媒体层的关键决策）：平台原生硬编可用 → 用平台；
-//! 仅当显式打开 `HONGGUO_ALLOW_FFMPEG=1` 时才用 ffmpeg（有硬件编码器时接近实时）；
-//! 都没有 → 直接报错。本模块只负责合并归档。
-//! 两条路都产出 HEVC MP4，上游失败自动落回下一条；实际走了哪条由
-//! [`hongguo_media::Backend`] 报告，谁都不许再拿字符串猜。
-
 use std::path::Path;
 
 use crate::transcode_service::cache;
-use hongguo_common::AppResult;
+use hongguo_common::{AppError, AppResult};
 use hongguo_media::transcode::TranscodeResult;
 
-/// 转码一个文件（兼容格式合并的分集输入）。
-///
-/// `scale_to` 给出时把画面统一到该分辨率——短剧各集由平台分别编码，混着不同
-/// 分辨率是常态，不统一的话转码产物依然规格不一，拼接那一步照样过不去。
-/// `on_progress` 收到已编码秒数，用于把进度从「第 N/M 集」细化到集内百分比。
 pub fn transcode(
     source: &Path,
     target: &Path,
@@ -22,165 +11,50 @@ pub fn transcode(
     on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
 ) -> AppResult<TranscodeResult> {
     if !source.exists() {
-        return Err(hongguo_common::AppError::NotFound(
-            source.display().to_string(),
-        ));
+        return Err(AppError::NotFound(source.display().to_string()));
     }
-
     let demuxed = hongguo_media::demux::demux_file(source)?;
     let codec = &demuxed
         .video_track()
-        .ok_or_else(|| hongguo_common::AppError::Media("归档输入缺少视频轨道".into()))?
+        .ok_or_else(|| AppError::Media("归档输入缺少视频轨道".into()))?
         .info
         .codec;
-    if !hongguo_media::hevc::is_hevc(codec) && !hongguo_bytevc2::is_bytevc2(codec) {
-        return Err(hongguo_common::AppError::CodecUnsupported(codec.clone()));
+    let bytevc2 = hongguo_bytevc2::is_bytevc2(codec);
+    if !hongguo_media::hevc::is_hevc(codec) && !bytevc2 {
+        return Err(AppError::CodecUnsupported(codec.clone()));
     }
-
-    // 命中缓存直接返回
     if cache::is_complete(target) && output_is_hevc_archive(target) {
         return Ok(TranscodeResult {
             output_path: target.to_string_lossy().to_string(),
             backend: hongguo_media_platform::capability::selected_backend(),
         });
     }
-
     cache::discard_completion(target);
-
-    // ByteVC2：默认走进程内 vvdec + 平台 HEVC，不拉起外部 ffmpeg。
-    // ffmpeg/librempeg 仅在 HONGGUO_ALLOW_FFMPEG=1 时作为调试 fallback，
-    // 且只在内置路径失败并清掉产物之后才尝试。
-    if is_bytevc2_source(source) {
-        let platform_req = hongguo_media_platform::platform::PlatformRequest {
-            input: source,
-            output: target,
-            scale_to,
-            on_progress,
-        };
-        log::info!("[Transcode] ByteVC2 内置解码: {}", target.display());
-        let builtin = hongguo_media_platform::transcode_bytevc2(&platform_req);
-        if builtin.is_ok() && output_is_hevc_archive(target) {
-            return complete_archive(target, hongguo_media::Backend::Platform);
-        }
-        let builtin_err = match builtin {
-            Ok(()) => {
-                let _ = hongguo_store::paths::qa_remove_file(target);
-                hongguo_common::AppError::Media("ByteVC2 解码产物无法播放".into())
-            }
-            Err(err) => {
-                let _ = hongguo_store::paths::qa_remove_file(target);
-                err
-            }
-        };
-        if let Some(ff) = hongguo_media_platform::ffmpeg::try_transcode_bytevc2(&platform_req) {
-            return match ff {
-                Ok(()) if output_is_hevc_archive(target) => {
-                    let encoder = hongguo_media_platform::ffmpeg::hevc_encoder();
-                    let backend = if encoder.is_some_and(|e| e.hardware) {
-                        hongguo_media::Backend::FfmpegHw
-                    } else {
-                        hongguo_media::Backend::FfmpegSw
-                    };
-                    log::info!(
-                        "[Transcode] ByteVC2 走 ffmpeg 调试 fallback（{}）: {}",
-                        backend.decoder_label(),
-                        target.display()
-                    );
-                    complete_archive(target, backend)
-                }
-                Ok(()) => {
-                    let _ = hongguo_store::paths::qa_remove_file(target);
-                    Err(hongguo_common::AppError::Media(
-                        "ByteVC2 ffmpeg 产物无法播放".into(),
-                    ))
-                }
-                Err(err) => {
-                    let _ = hongguo_store::paths::qa_remove_file(target);
-                    Err(err)
-                }
-            };
-        }
-        return Err(builtin_err);
-    }
-
-    // 分流 1：平台原生编码，不依赖用户装任何东西；失败后仅在显式允许时落回 ffmpeg。
-    let mut backend: Option<hongguo_media::Backend> = None;
-    // 两条路都失败时，最后一个真实原因要透给用户——吞掉它就只剩一句「没找到 ffmpeg」的假话。
-    let mut last_error: Option<String> = None;
-    if let Some(done) = hongguo_media_platform::platform::transcode_hevc(
-        &hongguo_media_platform::platform::PlatformRequest {
-            input: source,
-            output: target,
-            scale_to,
-            on_progress,
-        },
-    ) {
-        match done {
-            Ok(()) => {
-                if output_is_hevc_archive(target) {
-                    backend = Some(hongguo_media::Backend::Platform);
-                } else {
-                    log::warn!("[Transcode] 平台硬编产物校验未通过，删除后尝试下一条路");
-                    last_error = Some("平台编码器产出的文件无法播放".to_string());
-                    let _ = hongguo_store::paths::qa_remove_file(target);
-                }
-            }
-            Err(e) => {
-                log::warn!("[Transcode] 平台硬编失败，尝试下一条路: {e}");
-                last_error = Some(e.to_string());
-            }
-        }
-    }
-
-    // 分流 2：ffmpeg 调试 fallback（含硬编码器；默认关闭，见 HONGGUO_ALLOW_FFMPEG）
-    if backend.is_none()
-        && let Some(encoder) = hongguo_media_platform::ffmpeg::hevc_encoder()
-    {
-        let req = hongguo_media_platform::ffmpeg::TranscodeRequest {
-            input: source,
-            output: target,
-            scale_to,
-            on_progress,
-        };
-        match hongguo_media_platform::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
-            Ok(()) => {
-                // 退出码 0 不等于文件可播（磁盘写满截断、被杀毒软件半路锁文件），
-                // 与合并那头的产物校验对齐同一道闸。
-                if output_is_hevc_archive(target) {
-                    backend = Some(if encoder.hardware {
-                        hongguo_media::Backend::FfmpegHw
-                    } else {
-                        hongguo_media::Backend::FfmpegSw
-                    });
-                } else {
-                    log::warn!("[Transcode] ffmpeg 产物校验未通过，删除产物");
-                    last_error = Some("ffmpeg 产出的文件无法播放".to_string());
-                    let _ = hongguo_store::paths::qa_remove_file(target);
-                }
-            }
-            Err(e) => {
-                log::warn!("[Transcode] ffmpeg 转码失败: {e}");
-                last_error = Some(e.to_string());
-            }
-        }
-    }
-
-    let Some(backend) = backend else {
-        return Err(match last_error {
-            Some(e) => hongguo_common::AppError::Media(format!("转码失败：{e}")),
-            None => hongguo_common::AppError::Media(
-                "没有可用的转码后端：系统编码器不可用，且未启用 ffmpeg 调试 fallback（需显式设置 HONGGUO_ALLOW_FFMPEG=1）。"
-                    .into(),
-            ),
-        });
+    let request = hongguo_media_platform::platform::PlatformRequest {
+        input: source,
+        output: target,
+        scale_to,
+        on_progress,
     };
-
-    log::info!(
-        "[Transcode] 转码完成，后端 {}: {}",
-        backend.decoder_label(),
-        target.display()
-    );
-    complete_archive(target, backend)
+    let result = if bytevc2 {
+        hongguo_media_platform::transcode_bytevc2(&request)
+    } else {
+        hongguo_media_platform::platform::transcode_hevc(&request).unwrap_or_else(|| {
+            Err(AppError::Media(
+                "当前设备没有可用的 HEVC 归档编解码器".into(),
+            ))
+        })
+    };
+    if let Err(error) = result {
+        let _ = hongguo_store::paths::qa_remove_file(target);
+        return Err(error);
+    }
+    if !output_is_hevc_archive(target) {
+        let _ = hongguo_store::paths::qa_remove_file(target);
+        return Err(AppError::Media("平台编码器产出的 HEVC 归档校验失败".into()));
+    }
+    log::info!("[Transcode] 平台归档完成: {}", target.display());
+    complete_archive(target, hongguo_media::Backend::Platform)
 }
 
 fn complete_archive(target: &Path, backend: hongguo_media::Backend) -> AppResult<TranscodeResult> {
@@ -192,6 +66,7 @@ fn complete_archive(target: &Path, backend: hongguo_media::Backend) -> AppResult
     })
 }
 
+#[cfg(test)]
 fn is_bytevc2_source(path: &Path) -> bool {
     hongguo_media::demux::demux_file(path)
         .ok()
@@ -226,7 +101,6 @@ pub(crate) fn output_is_hevc_archive(path: &Path) -> bool {
             matches!(track.info.codec.as_str(), "hvc1" | "hev1") && !track.info.samples.is_empty()
         });
     }
-    // 校验失败必须留痕：平台层产物被拒后静默落 ffmpeg，没有这行日志就查不出「为什么没用上硬编」。
     if let Err(e) = demuxed {
         log::warn!("[Transcode] 产物校验：解复用失败: {e}");
     }

@@ -92,13 +92,9 @@ pub(crate) fn mobile_player_more(
                 .on_close(move || trigger_ref.focus())
                 .backdrop_style(|style| style.bg(move || ink("video-surface").opacity(0.5)))
                 .popup_style(|style| {
-                    style
+                    super::player_popup::surface(style)
                         .max_h(move || px(window().height.0 * 0.78))
                         .rounded_t(px(16.0))
-                        .border_t_1()
-                        .border_color(move || ink("video-controls").opacity(0.1))
-                        .bg(move || ink("video-sheet"))
-                        .text_color(move || ink("video-controls"))
                         .pt_2()
                 })
                 .child(dynamic(move || {
@@ -263,14 +259,14 @@ fn more_switch(checked: Signal<bool>) -> nsh_base::SwitchElement {
                 .border_color(move || ink("video-controls").opacity(0.0))
                 .justify_center()
                 .rounded_full()
-                .bg(move || theme().input)
-                .checked(|style| style.bg(move || theme().primary))
+                .bg(move || ink("video-controls").opacity(0.2))
+                .checked(|style| style.bg(move || ink("video-picker-active")))
         })
         .thumb_style(|style| {
             style
                 .size_4()
                 .rounded_full()
-                .bg(move || theme().background)
+                .bg(move || ink("video-controls"))
                 .checked(|style| style.translate_x(px(14.0)))
                 .transition()
                 .duration(move || if reduce_motion() { 0.0 } else { FAST_MS })

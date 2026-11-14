@@ -58,6 +58,14 @@ impl AudioOutput {
         self.control.held.swap(held, Ordering::AcqRel) != held
     }
     pub fn ready(&self) -> Result<bool, OutputError> {
+        if !self
+            .control
+            .frames
+            .configure_native_clock_if_owner(&crate::native_audio::open)
+            .map_err(decoder_error)?
+        {
+            return Ok(false);
+        }
         if let Some(error) = self
             .control
             .error

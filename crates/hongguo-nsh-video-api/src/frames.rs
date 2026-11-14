@@ -48,6 +48,12 @@ pub struct PlaybackPosition {
 }
 
 pub trait FrameSource: Send + Sync {
+    fn configure_native_clock(
+        &self,
+        _factory: &dyn Fn(String) -> Result<Arc<dyn hongguo_native_clock::Clock>, String>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
     fn info(&self) -> Result<Option<FrameInfo>, String>;
     fn frame_at(&self, position_ms: u64) -> Result<Option<Arc<PixelFrame>>, String>;
     fn seek(&self, position_ms: u64) -> Result<u64, String>;
@@ -174,6 +180,13 @@ pub struct FrameLease {
 }
 
 impl FrameLease {
+    pub fn configure_native_clock_if_owner(
+        &self,
+        factory: &dyn Fn(String) -> Result<Arc<dyn hongguo_native_clock::Clock>, String>,
+    ) -> Result<bool, String> {
+        self.with_control(|source| source.configure_native_clock(factory))
+            .map(|result| result.is_some())
+    }
     pub fn is_control_owner(&self) -> Result<bool, String> {
         self.with_control(|_| Ok(())).map(|result| result.is_some())
     }

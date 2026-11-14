@@ -28,8 +28,6 @@ export const playResponseSchema = z.object({
 });
 
 export const decodeCapabilitySchema = z.object({
-  hasFfmpeg: z.boolean(),
-  hevcHwEncoder: z.boolean(),
   /** 平台原生编码层可用（macOS：VideoToolbox 会话，含 Apple 软编；Windows：硬件 MFT） */
   platformEncoder: z.boolean(),
   /** 平台原生**硬编**——只决定徽标「硬件加速」档，不是 macOS 生产闸门 */

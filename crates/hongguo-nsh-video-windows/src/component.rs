@@ -23,38 +23,6 @@ struct PixelVideo {
 }
 
 impl NativeComponent for PixelVideo {
-    #[cfg(feature = "decoder-audit")]
-    fn wants_presentation_feedback(&self) -> bool {
-        if !self.shared.consumer_active.load(Ordering::Acquire) {
-            return false;
-        }
-        self.shared
-            .props
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .source
-            .as_ref()
-            .is_some_and(|source| crate::audit::stats::wants(&source.id))
-    }
-    #[cfg(feature = "decoder-audit")]
-    fn did_present(&self, info: &nsh_platform_windows::NativePresentation) {
-        if let Some((_, serial, enhanced)) = self.controller.borrow().drawn_identity()
-            && let Some(source) = &self
-                .shared
-                .props
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .source
-        {
-            crate::audit::stats::submitted(
-                &source.id,
-                serial,
-                enhanced,
-                info,
-                self.shared.context.output_color_info().ok(),
-            );
-        }
-    }
     fn draw(&self, dc: &ID2D1DeviceContext, size: (f32, f32)) {
         let result = self.controller.borrow_mut().draw(&self.shared, dc, size);
         if let Err(error) = result {

@@ -2,6 +2,7 @@
 //! （`deprotect` 原位替换 / `decrypt_file` / `decrypt_buffer` / `streaming` 流式按 Range 惰性解）。
 //! `fixtures` 只在测试构建（feature `test-support`）里存在，供解析层测试共用同一份字节构造。
 
+pub mod audio_view;
 pub mod crypto;
 
 pub mod r#box;
