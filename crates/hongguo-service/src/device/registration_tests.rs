@@ -133,10 +133,14 @@ async fn server_registration_limits_survive_reopen_and_manual_retry() {
         let state = Arc::new(AppStateInner::with_db(db));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
-        let (_, result) = tokio::join!(
-            respond_with_headers(&listener, "429 Too Many Requests", "", headers),
-            register_and_swap_at(&state, "服务端限制", &origin, Duration::ZERO),
-        );
+        let (_, result) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                respond_with_headers(&listener, "429 Too Many Requests", "", headers),
+                register_and_swap_at(&state, "服务端限制", &origin, Duration::ZERO),
+            )
+        })
+        .await
+        .expect("registration must reach the loopback server before its deadline");
         assert!(!result.ok);
         let before = read_meta(&state.store);
         assert!(registration_blocked(&before, now_ms()));

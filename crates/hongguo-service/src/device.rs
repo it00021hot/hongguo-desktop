@@ -814,6 +814,9 @@ mod tests {
 
     #[tokio::test]
     async fn reuse_mode_and_rejection_do_not_register() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         hongguo_api::register::reset_register_http_sends();
         let db = store();
         let old = registered_profile(&reg_result());
@@ -1259,6 +1262,9 @@ mod tests {
 
     #[tokio::test]
     async fn failed_meta_write_still_blocks_after_reopen() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         let dir = std::env::temp_dir().join(format!("hg-block-side-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1300,6 +1306,9 @@ mod tests {
 
     #[test]
     fn memory_store_cannot_hide_a_failed_block_write() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         let db = store();
         let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
@@ -1314,6 +1323,9 @@ mod tests {
 
     #[tokio::test]
     async fn reuse_entries_reject_incomplete_profiles_without_http() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         hongguo_api::register::reset_register_http_sends();
         let db = store();
@@ -1381,6 +1393,9 @@ mod tests {
 
     #[test]
     fn corrupt_or_unreadable_sidecar_stays_blocked_until_explicit_clear() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         assert_ne!(libc_euid(), 0, "权限测试不能在 root 下得出假通过");
         let dir = std::env::temp_dir().join(format!("hg-side-bad-{}", std::process::id()));
@@ -1505,6 +1520,9 @@ mod tests {
 
     #[tokio::test]
     async fn dual_write_failure_leaves_unknown_marker_across_reopen() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         FAIL_SIDECAR_WRITES.store(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("hg-dual-fail-{}", std::process::id()));
@@ -1563,6 +1581,9 @@ mod tests {
 
     #[tokio::test]
     async fn missing_trusted_state_has_no_automatic_registration() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         hongguo_api::register::reset_register_http_sends();
         let memory = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
@@ -1584,6 +1605,9 @@ mod tests {
 
     #[tokio::test]
     async fn offline_qa_does_not_lift_a_missing_trusted_block() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         hongguo_api::register::reset_register_http_sends();
         let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
@@ -1614,6 +1638,9 @@ mod tests {
 
     #[tokio::test]
     async fn normal_reuse_keeps_the_block_and_does_not_register() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         hongguo_api::register::reset_register_http_sends();
         let previous_qa = std::env::var_os(hongguo_common::offline_qa::ENV);
@@ -1654,6 +1681,9 @@ mod tests {
 
     #[test]
     fn temp_symlinks_do_not_change_an_outside_sentinel() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         let root = std::env::var_os("CARGO_TARGET_DIR")
             .map(std::path::PathBuf::from)
@@ -1744,6 +1774,9 @@ mod tests {
 
     #[test]
     fn journal_left_by_a_crash_still_blocks_after_reopen() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         clear_force_block();
         let dir = std::env::temp_dir().join(format!("hg-journal-crash-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

@@ -426,6 +426,9 @@ mod tests {
 
     #[test]
     fn qa_cleanup_does_not_follow_a_cache_directory_symlink() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         let root = std::env::var_os("CARGO_TARGET_DIR")
             .map(std::path::PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())

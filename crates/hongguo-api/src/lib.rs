@@ -2,6 +2,9 @@
 //!（`mod` + `model` [+ `parse`]）；改任何端点或参数前必读
 //! `docs/hongguo-api-endpoints.md`。签名由 `hongguo-signer` 产出（签完不能再动 url/body/query）。
 
+#[cfg(test)]
+mod test_isolation;
+
 pub mod calendar;
 pub mod client;
 pub mod danmaku;

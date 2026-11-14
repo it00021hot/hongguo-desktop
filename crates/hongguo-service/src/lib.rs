@@ -21,6 +21,9 @@ pub mod transcode_service;
 pub use app_state::{AppState, AppStateInner};
 
 #[cfg(test)]
+mod test_isolation;
+
+#[cfg(test)]
 mod tests {
     /// 红线：service 层禁止裸 `tokio::spawn` / `Handle::current` / `block_on`——无 Tokio 上下文的线程会 panic→abort，后台任务一律走 `crate::runtime::spawn`。
     #[test]

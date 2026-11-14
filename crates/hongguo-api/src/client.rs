@@ -936,6 +936,9 @@ mod tests {
 
     #[tokio::test]
     async fn offline_userinfo_host_returns_before_send() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
         unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
         let client = reqwest::Client::builder().no_proxy().build().unwrap();

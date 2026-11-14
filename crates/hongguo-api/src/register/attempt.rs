@@ -342,6 +342,9 @@ mod tests {
 
     #[tokio::test]
     async fn offline_register_post_does_not_count_a_send() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         let _guard = lock().await;
         let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
         unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
@@ -440,6 +443,9 @@ mod tests {
 
     #[tokio::test]
     async fn reuse_mode_sends_zero_register_requests() {
+        if crate::test_isolation::run_in_child() {
+            return;
+        }
         let _guard = lock().await;
         reset_register_http_sends();
         let path = std::env::temp_dir().join(format!("hg-reuse-set-{}", std::process::id()));
