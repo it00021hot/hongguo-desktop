@@ -45,6 +45,9 @@ pub(crate) async fn open() -> AppResult<Arc<Session>> {
         .map_err(|error| AppError::Internal(error.to_string()))??;
     let media = MediaServer::start().await.map_err(AppError::Internal)?;
     hongguo_service::device::arm_cold_start();
+    // 封面/头像缓存自动清理：启动跑一轮、每小时一轮，策略每轮现读设置
+    // （默认两档全 0 = 不动用户缓存；手动「磁盘清理」页不受影响）。
+    hongguo_service::storage_service::cache::start_auto_clean_loop(state.clone());
     let registration = hongguo_service::runtime::spawn({
         let state = state.clone();
         async move { hongguo_service::device::ensure_registered(&state).await }
