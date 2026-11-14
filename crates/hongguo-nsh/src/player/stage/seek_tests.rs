@@ -10,13 +10,15 @@ fn LaggingNativePosition() -> impl IntoElement {
     let pending = signal(false);
     let paused = signal(true);
     let requested = signal(None::<f64>);
+    let geometry = ui::PlayerGeometry {
+        source: signal((720.0, 1280.0)),
+        viewport: signal((0.0, 0.0)),
+        comment_anchor: element_ref(),
+        comment_trigger: element_ref(),
+    };
+    provide_context(geometry);
     let state = ControlState {
-        geometry: ui::PlayerGeometry {
-            source: signal((720.0, 1280.0)),
-            viewport: signal((0.0, 0.0)),
-            comment_anchor: element_ref(),
-            comment_trigger: element_ref(),
-        },
+        geometry,
         caption: computed(ui::WindowCaption::default),
         paused,
         rate: signal(1.0),

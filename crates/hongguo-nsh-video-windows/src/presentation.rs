@@ -26,10 +26,21 @@ impl Presentation {
         generation: u64,
         serial: u64,
     ) -> Result<Self, VideoError> {
-        // SAFETY: Flush submits this window's DrawBitmap before the same-device
-        // EVENT query. Completion is polled on that window thread, never waited.
+        let pending = Self::prepare(device, generation, serial)?;
+        // SAFETY: Flush submits DrawBitmap before the same-device EVENT query.
+        unsafe { dc.Flush(None, None) }.map_err(error)?;
+        pending.end();
+        Ok(pending)
+    }
+
+    /// Allocate before recording foreign GPU work so an allocation failure cannot
+    /// release a decoder pool lease while its copy is already in flight.
+    pub fn prepare(
+        device: &ID3D11Device,
+        generation: u64,
+        serial: u64,
+    ) -> Result<Self, VideoError> {
         unsafe {
-            dc.Flush(None, None).map_err(error)?;
             let context = device.GetImmediateContext().map_err(error)?;
             let mut query = None;
             device
@@ -42,14 +53,20 @@ impl Presentation {
                 )
                 .map_err(error)?;
             let query = query.ok_or_else(|| error("D3D11 returned no presentation query"))?;
-            context.End(&query);
-            context.Flush();
             Ok(Self {
                 context,
                 query,
                 generation,
                 serial,
             })
+        }
+    }
+
+    /// All fallible work precedes submission. Commands use the protected immediate context.
+    pub fn end(&self) {
+        unsafe {
+            self.context.End(&self.query);
+            self.context.Flush();
         }
     }
 

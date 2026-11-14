@@ -1,13 +1,18 @@
 use super::*;
 
 impl Controller {
-    pub(super) fn draw_picture(
+    pub(super) fn draw_picture_with(
         &mut self,
         shared: &Arc<Shared>,
         props: &VideoProps,
+        direct: &mut Direct,
         dc: &ID2D1DeviceContext,
         size: (f32, f32),
     ) -> Result<(), VideoError> {
+        #[cfg(feature = "decoder-audit")]
+        {
+            self.drawn = None;
+        }
         if !props.active
             || !size.0.is_finite()
             || !size.1.is_finite()
@@ -19,18 +24,21 @@ impl Controller {
         }
         // A held/seek frame must be visible before its completion is acknowledged;
         // an older enhanced picture cannot satisfy this gate.
-        let needs_raw = self
-            .direct
-            .as_ref()
-            .map(Direct::needs_raw)
-            .transpose()?
-            .unwrap_or(false);
+        let needs_raw = direct.needs_raw()?;
         let picture = shared
             .picture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
-            .filter(|picture| !needs_raw && shared.valid(picture.revision))
+            .filter(|picture| {
+                !needs_raw
+                    && shared.valid(picture.revision)
+                    && self
+                        .raw
+                        .as_ref()
+                        .and_then(RawFrame::metadata)
+                        .is_some_and(|raw| raw.generation == picture.frame.metadata().generation)
+            })
             .map(|picture| picture.frame.clone());
         if let Some(frame) = picture {
             let result = (|| {
@@ -49,7 +57,20 @@ impl Controller {
                 )
             })();
             match result {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    #[cfg(feature = "decoder-audit")]
+                    {
+                        let metadata = frame.metadata();
+                        self.drawn = Some((metadata.generation, metadata.serial, true));
+                        direct.submitted_frame(
+                            dc,
+                            self.device.as_ref().expect("drawing device"),
+                            metadata.generation,
+                            metadata.serial,
+                        )?;
+                    }
+                    return Ok(());
+                }
                 Err(error) => {
                     self.bitmap = None;
                     *shared
@@ -63,9 +84,13 @@ impl Controller {
         }
         if let Some(raw) = &self.raw {
             raw.draw(dc, size, props.resize_mode)?;
-            if raw.metadata().is_some()
-                && let Some(direct) = &mut self.direct
+            #[cfg(feature = "decoder-audit")]
             {
+                self.drawn = raw
+                    .metadata()
+                    .map(|metadata| (metadata.generation, metadata.serial, false));
+            }
+            if raw.metadata().is_some() {
                 direct.submitted(dc, self.device.as_ref().expect("raw frame drawing device"))?;
             }
         }

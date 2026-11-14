@@ -16,8 +16,9 @@ final class PixelDirectGate {
     void audioBuffering(boolean buffering) { audioBuffering = buffering; }
     void beginSeek() { ready = false; holding = true; audioSeeking = true; }
     void seekCompleted(long generation) { this.generation = generation; ready = false; holding = true; audioSeeking = false; }
-    boolean accepts(long generation) { return !closed && !audioSeeking && (this.generation < 0 || this.generation == generation); }
+    boolean accepts(long generation) { return !closed && !audioSeeking && generation >= this.generation; }
     void presented(long generation) { this.generation = generation; ready = true; holding = false; }
+    void emptyVideo() { if (!closed && !audioSeeking) { ready = true; holding = false; } }
     void holding(boolean holding) { this.holding = holding; }
     void close() { closed = true; ready = false; holding = true; }
 }

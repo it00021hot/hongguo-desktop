@@ -7,7 +7,8 @@
 - `hongguo-nsh-ios`：UIKit 启动；先配置 app 容器内的 Application Support，再挂载根组件。
 - `hongguo-media-videotoolbox`：macOS/iOS 共用 VT 管线；平台门面分别由两端实现 crate 转出。
 
-NSH 0.4.0，不加入 QuickJS。界面开发先读 `nsh` 与 `nsh-design-guides`，
+NSH 0.5.0，不加入 QuickJS。Cargo 依赖与 CLI 统一锁定发布提交
+`f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1`。界面开发先读 `nsh` 与 `nsh-design-guides`，
 设计规范与动效清单在 `crates/hongguo-nsh/DESIGN.md`。页面控件只用本壳 `ui`，
 不得用 React/shadcn 组件替代 NSH 控件；颜色从 theme.json 的语义令牌读取。
 
@@ -28,10 +29,20 @@ make nsh-package TARGET=ios
 
 桌面打包仅在对应宿主执行。Android 需要已配置的 ANDROID_HOME、NDK_HOME、JDK 与
 Gradle 9.7.0（仓库内 wrapper 固定版本与 SHA-256）；AGP 沿用现有 Android 工程的 9.3.1。
-NSH 0.4.0 的 AAR 要求 Android 9/API 28，宿主最低版本与原生编译一起使用此下限。
+本项目宿主与原生编译保留 Android 9/API 28 下限；0.5.0 AAR 的 manifest 声明 API 26，
+不据此扩大尚未验证的本项目支持范围。
 首批 APK 为 arm64-v8a，
 由本地调试签名构建；发布签名尚未接入。NSH_DISTRIBUTION 可指定 NSH 安装目录，
 未设置时从 nsh 可执行文件的真实位置解析。
+
+0.5.0 的 CLI 安装包不再附带 embedding SDK，`nsh component add android` 只安装通用
+运行时，不能替代本项目需要的 AAR。Android 构建前从
+[同版本发布页](https://github.com/longbridge/nsh/releases/tag/v0.5.0) 下载
+`nsh-embed-android.zip` 与 `.sha256`，在下载目录执行
+`shasum -a 256 -c nsh-embed-android.zip.sha256`；校验后将压缩包内的
+`nsh-embed-android/nsh.aar` 放到 `${NSH_DISTRIBUTION}/embed/android/nsh.aar`
+（默认 `~/.nsh/embed/android/nsh.aar`）。升级 CLI 后需同步重装同版本 SDK。
+缺失 SDK 时构建入口在启动 Rust 编译前报错。
 
 桌面包直接构建本项目 `hongguo-nsh` Rust 入口，使用 `scripts/nsh-desktop.mjs` 装包；
 不使用默认启用 QuickJS 的 NSH 通用发布宿主。打包前检查生产依赖图排除 JS 运行时，
@@ -41,7 +52,10 @@ Windows 原生产物为 `target/nsh-desktop/windows/Hongguo/` 及 `Hongguo.zip`�
 仍需 Windows 宿主实际构建、运行与安装验收。脚本只生成产物，不安装或发布。
 
 macOS 上的真实 Windows MSVC 交叉检查另见 [工具链与可复现命令](../../../../docs/nsh-windows-cross-check.md)。
-锁定的 VVdec 3.0.0 使用并行安装的 LLVM 19.1.7；保留默认 LLVM、Werror、第三方源码与 SDK。
+锁定的 VVdeC 3.2.1 使用并行安装的 LLVM 19.1.7；保留默认 LLVM、Werror 与 SDK，源码局部兼容改动记录在该解核的 SOURCE.md。
+NSH 0.5.0 使用的 wgpu 29 要求 `gpu-allocator 0.28.0` 的 Windows 绑定与其统一为
+`windows 0.62.2`；锁文件保留 GPUI 旧依赖所需的独立 `windows 0.57.0`，不能全局替换。
+Windows 目标的严格 clippy 会检出两套 COM 类型混用导致的编译失败。
 
 Android 打包只从 NSH AAR 提取 Java 层，原生部分使用本项目 Rust 宿主构建的 libnsh.so，
 避免把 NSH 预构建的另一份原生库装进应用。HTTP 明文只对 127.0.0.1 媒体供数放行。
@@ -67,11 +81,16 @@ iOS 需要完整 Xcode 与对应 SDK，最低 iOS 16.0。设备签名需要 NSH_
 service 事件在 NSH 执行环境更新状态；订阅溢出后重新读取快照。
 
 共用播放服务固定使用内置解码能力，NSH 无需启动声明或兼容模式开关。
-所有成功起播使用内置解码：HEVC/ByteVC1/ByteVC2，不接 H.264 系统视频路径。
+NSH 使用 `hongguo-playback`：包内 FFmpeg 9.0.2、VVdeC 3.2.1，保留原流的有符号
+时间轴和原位深帧；Windows 默认同设备 D3D11VA，Apple 使用 VideoToolbox，Android
+按实际输出能力准入 MediaCodec，失败在相同原流上回退包内软件核。H.264 解核只开放
+已明确支持的本地文件，在线/下载选流仍排除 H.264，不恢复兼容转码。
 下载记录的本地文件失效时重新获取在线原流；各平台要求有效的 `frameSource`，缺失则报错。
-`hongguo-softdec::DirectSession` 负责索引、有界 BGRA 队列、取消和 seek 代次；
-帧注册由媒体租约持有，平台仅上传纹理与呈现。系统媒体读取遮罩视频轨的原 MP4，
-负责 AAC 音频和真实时钟；关闭增强仍显示相同软解像素，不恢复兼容播放链。
+AAC 由包内 FFmpeg 解成 PCM，经 WASAPI、AudioUnit 或 AAudio 输出，设备已播放采样
+映射为主时钟；有音轨欠载时不切换墙钟。原生首帧呈现后才解除 hold；代次和控制 owner
+阻止旧组件的 seek、pause、设备绑定及呈现回调影响新组件。FrameLease 必须保留至 GPU
+消费结束。关闭增强仍保留必要的颜色处理，显示映射位于增强之后。旧壳继续使用旧软解链。
+构建方式见 `docs/native-media-build.md`，已执行和待执行的验收见 `docs/nsh-decoder-validation.md`。
 
 媒体源只通过注册过的临时 URL 读取，关闭页面即注销。媒体按块读取，
 不得把路径或任意上游 URL 暴露成可由请求方选择的文件/代理入口。
@@ -92,6 +111,12 @@ Headless 的 `screen().texts()` 可能包含虚拟列表停放单元的旧内容
 返回后的状态断言及原生截图，不能用第一个匹配作者的文本判定列表有没有滚动。
 
 ## 验证记录与边界
+
+2026-11-14 升级至 NSH/CLI 0.5.0：330 项 Rust 行为测试、21 项包装脚本测试通过；
+macOS 与真实 Windows MSVC 目标严格 clippy 通过，Android arm64 与 iOS arm64 模拟器
+宿主 release 目标检查通过。macOS 独立控件预览四项通过，已目检明暗、桌面/窄窗及 sheet
+截图（`target/nsh-preview`）。这些结果不代表新正式包、Windows 真机播放或功耗验证完成。
+生成的 debug 预览宿主仍有既有 `__eh_frame` 链接警告；未修改发布配置屏蔽它。
 
 布局对齐使用无数据库、无官方 API、无真实视频播放的独立预览；正式客户端播放另有独立数据目录的验收入口，两者证据分别记录：
 

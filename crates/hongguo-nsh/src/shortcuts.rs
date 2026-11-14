@@ -318,6 +318,7 @@ impl Shortcuts {
                         KeyOptions {
                             when: When::Always,
                             repeat: false,
+                            ..Default::default()
                         },
                         move |_| self.captured(stroke),
                     );

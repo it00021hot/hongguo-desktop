@@ -14,26 +14,28 @@ use hongguo_common::{AppError, AppResult};
 
 use super::decoder::frame_size_of;
 use super::probe::MF_VERSION;
-use super::sample::type_stride;
+use super::{runtime, sample::type_stride};
 
 /// COM(MTA) + MF 的进程级初始化：**一次初始化，永不拆卸**。
 /// 按会话配对 `CoUninitialize`/`MFShutdown` 会触发 COM 拆卸与 MF 组件后台线程（实测微软 HEVC 扩展解码器带常驻工作线程）的退出竞态：
 /// 全量测试 + MF 会话并行的进程里，~1/3 在**全部用例通过之后**的退出阶段于 ntdll 固定偏移处访问违例（WER 事件日志实证）。
 /// 常驻进程（本应用就是）一次初始化、交给进程退出统一回收是标准做法，没有泄漏语义。
-pub(super) static SESSION_INIT: std::sync::Once = std::sync::Once::new();
+static SESSION_INIT: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
 
 /// 在专用线程上跑 MF 会话。scoped 线程允许闭包借用非 'static 数据
 /// （请求/解复用结果），COM 状态不落在 tokio 工作线程上。
 pub(super) fn run_on_mf_thread<T: Send>(f: impl FnOnce() -> AppResult<T> + Send) -> AppResult<T> {
     std::thread::scope(|s| {
         s.spawn(move || {
-            SESSION_INIT.call_once(|| {
+            runtime::ensure_available()?;
+            let initialized = SESSION_INIT.get_or_init(|| {
                 // RPC_E_CHANGED_MODE：进程已按别的模式初始化过 COM——沿用现状即可，MTA 是否由本调用建立不影响会话正确性
                 let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-                if let Err(e) = unsafe { MFStartup(MF_VERSION, 0) } {
-                    log::error!("[Platform/mf] MFStartup 失败: {e}");
-                }
+                runtime::startup(MF_VERSION).map_err(|error| error.to_string())
             });
+            if let Err(error) = initialized {
+                return Err(AppError::Media(error.clone()));
+            }
             f()
         })
         .join()
@@ -89,16 +91,13 @@ pub(super) fn enum_activates(
     unsafe {
         let mut list: *mut Option<IMFActivate> = std::ptr::null_mut();
         let mut n = 0u32;
-        hr(
-            MFTEnumEx(
-                category,
-                flags,
-                input.map(|p| p as *const _),
-                output.map(|p| p as *const _),
-                &mut list,
-                &mut n,
-            ),
-            "MFTEnumEx",
+        runtime::enum_transforms(
+            category,
+            flags.0 as u32,
+            input.map_or(std::ptr::null(), |p| p as *const _),
+            output.map_or(std::ptr::null(), |p| p as *const _),
+            &mut list,
+            &mut n,
         )?;
         let mut out = Vec::with_capacity(n as usize);
         if !list.is_null() {
@@ -179,8 +178,8 @@ impl SyncMft {
         }
         (|| -> AppResult<Option<IMFSample>> {
             unsafe {
-                let sample = hr(MFCreateSample(), "建输出样本")?;
-                let buf = hr(MFCreateMemoryBuffer(self.out_alloc_size()), "建输出缓冲")?;
+                let sample = runtime::sample()?;
+                let buf = runtime::memory_buffer(self.out_alloc_size())?;
                 hr(sample.AddBuffer(&buf), "挂输出缓冲")?;
                 Ok(Some(sample))
             }
@@ -366,8 +365,8 @@ impl AsyncMft {
                     None
                 } else {
                     let size = self.out_alloc_size();
-                    let s = hr(MFCreateSample(), "建输出样本")?;
-                    let buf = hr(MFCreateMemoryBuffer(size), "建输出缓冲")?;
+                    let s = runtime::sample()?;
+                    let buf = runtime::memory_buffer(size)?;
                     hr(s.AddBuffer(&buf), "挂输出缓冲")?;
                     Some(s)
                 };

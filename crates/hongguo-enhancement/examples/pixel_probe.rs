@@ -156,3 +156,80 @@ fn render(
     buffer.unmap();
     Ok(pixels)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_enhancement_mode_preserves_hdr_headroom_and_negative_wide_gamut_values() {
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+            let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+            let device = Arc::new(device);
+            let queue = Arc::new(queue);
+            let input = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("hdr-enhancement-regression"),
+                size: wgpu::Extent3d {
+                    width: WIDTH,
+                    height: HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let pixel = [0x4000_u16, 0xae66, 0x3800, 0x3c00];
+            let pixels = (0..WIDTH * HEIGHT)
+                .flat_map(|_| pixel.into_iter().flat_map(u16::to_le_bytes))
+                .collect::<Vec<_>>();
+            queue.write_texture(
+                input.as_image_copy(),
+                &pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(WIDTH * HALF_PIXEL_BYTES),
+                    rows_per_image: Some(HEIGHT),
+                },
+                input.size(),
+            );
+            let mut pipeline = Pipeline::new(device.clone(), queue.clone(), WIDTH, HEIGHT)
+                .await
+                .unwrap();
+            for (anime4k, sharpen) in [(false, false), (false, true), (true, false), (true, true)] {
+                let mut options = Enhancement::default();
+                options.anime4k_on = anime4k;
+                options.sharpen_on = sharpen;
+                options.strength = 100;
+                pipeline.prepare(options).await.unwrap();
+                let scale = if anime4k { 2 } else { 1 };
+                let output = render(
+                    &device,
+                    &queue,
+                    &pipeline,
+                    &input,
+                    (WIDTH * scale, HEIGHT * scale),
+                )
+                .unwrap();
+                let width = WIDTH * scale;
+                let center =
+                    ((HEIGHT * scale / 2) * width + width / 2) as usize * HALF_PIXEL_BYTES as usize;
+                let red = u16::from_le_bytes(output[center..center + 2].try_into().unwrap());
+                let green = u16::from_le_bytes(output[center + 2..center + 4].try_into().unwrap());
+                assert!(
+                    red > 0x3c00 && red < 0x7c00,
+                    "mode={anime4k}/{sharpen} clipped HDR highlight: {red:#x}"
+                );
+                assert!(
+                    green & 0x8000 != 0 && green & 0x7fff > 0x0100,
+                    "mode={anime4k}/{sharpen} clipped wide gamut negative: {green:#x}"
+                );
+            }
+        });
+    }
+}

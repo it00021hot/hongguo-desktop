@@ -88,14 +88,20 @@ impl MediaServer {
     fn register(&self, source: Source) -> Result<MediaLease, String> {
         let id = uuid::Uuid::new_v4().to_string();
         let session = Arc::new(
-            hongguo_softdec::DirectSession::open(Arc::new(source.clone()))
-                .map_err(|error| error.to_string())?,
+            hongguo_playback::PlaybackSession::open(
+                Arc::new(source.clone()),
+                hongguo_playback::SessionConfig {
+                    defer_decoder_binding: true,
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| error.to_string())?,
         );
         let frames = hongguo_nsh_video_api::frames::register_frames(
             &id,
             Arc::new(direct::Frames::new(session.clone())),
         )?;
-        self.publish(id, source.audio(session), Some(frames))
+        self.publish(id, source, Some(frames))
     }
 
     fn publish(
@@ -109,8 +115,13 @@ impl MediaServer {
             .lock()
             .map_err(|_| "media routes lock poisoned")?
             .insert(id.clone(), source);
+        let url = if frames.is_some() {
+            format!("hongguo-playback://{id}")
+        } else {
+            format!("http://{}/media/{id}", self.routes.authority)
+        };
         Ok(MediaLease {
-            url: format!("http://{}/media/{id}", self.routes.authority),
+            url,
             id,
             sources: self.routes.sources.clone(),
             frames,

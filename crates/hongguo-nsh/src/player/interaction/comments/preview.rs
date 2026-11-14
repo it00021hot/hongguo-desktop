@@ -341,6 +341,7 @@ fn install_empty_shortcut(feed: Signal<Feed>) {
         KeyOptions {
             when: When::Always,
             repeat: false,
+            ..Default::default()
         },
         move |_| {
             let mut empty = Feed::default();

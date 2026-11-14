@@ -193,6 +193,7 @@ pub(super) fn field(
                 KeyOptions {
                     when: nsh_core::keymap::When::Always,
                     repeat: true,
+                    ..Default::default()
                 },
                 move |_| search.step(delta),
             );
@@ -202,6 +203,7 @@ pub(super) fn field(
             KeyOptions {
                 when: nsh_core::keymap::When::Always,
                 repeat: false,
+                ..Default::default()
             },
             move |_| submit_input(),
         );

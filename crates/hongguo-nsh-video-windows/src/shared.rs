@@ -1,4 +1,4 @@
-//! Same-adapter D3D11 soft-decoded BGRA → DX12/WGPU input frames.
+//! Same-adapter linear scRGB FP16 D3D11 → DX12/WGPU input frames.
 //! Native registration and Direct2D output are separate from this interop boundary.
 
 use hongguo_nsh_video_api::{ErrorCode, FrameMetadata};
@@ -22,7 +22,9 @@ use windows::{
                 D3D12_TEXTURE_LAYOUT_UNKNOWN, ID3D12Fence, ID3D12Resource,
             },
             Dxgi::{
-                Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
+                Common::{
+                    DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC,
+                },
                 IDXGIDevice,
             },
         },
@@ -85,10 +87,14 @@ pub struct SharedFrames {
     serial: u64,
     size: wgpu::Extent3d,
     busy: Arc<AtomicBool>,
+    format: wgpu::TextureFormat,
 }
 
 impl SharedFrames {
-    /// `decoder` must be the video-enabled D3D11 device attached to this MediaEngine.
+    pub(crate) fn busy(&self) -> bool {
+        self.busy.load(Ordering::Acquire)
+    }
+    /// `decoder` is the actual NSH D3D11 drawing device.
     /// The adapter identity is verified against WGPU before any resource is shared.
     pub fn new(
         device: Arc<wgpu::Device>,
@@ -96,6 +102,27 @@ impl SharedFrames {
         width: u32,
         height: u32,
     ) -> Result<Self, VideoError> {
+        Self::with_format(
+            device,
+            decoder,
+            width,
+            height,
+            wgpu::TextureFormat::Rgba16Float,
+        )
+    }
+
+    pub(crate) fn with_format(
+        device: Arc<wgpu::Device>,
+        decoder: &ID3D11Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Result<Self, VideoError> {
+        let native_format = match format {
+            wgpu::TextureFormat::Rgba16Float => DXGI_FORMAT_R16G16B16A16_FLOAT,
+            wgpu::TextureFormat::Bgra8Unorm => DXGI_FORMAT_B8G8R8A8_UNORM,
+            _ => return Err(gpu_error("unsupported shared presentation format")),
+        };
         if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
             return Err(gpu_error("invalid shared video dimensions"));
         }
@@ -129,7 +156,7 @@ impl SharedFrames {
                 Height: height,
                 DepthOrArraySize: 1,
                 MipLevels: 1,
-                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                Format: native_format,
                 SampleDesc: DXGI_SAMPLE_DESC {
                     Count: 1,
                     Quality: 0,
@@ -196,10 +223,11 @@ impl SharedFrames {
                 depth_or_array_layers: 1,
             },
             busy: Arc::new(AtomicBool::new(false)),
+            format,
         })
     }
 
-    /// Original and enhanced output share the same retained soft-decoded frame.
+    /// Original and enhanced output share the same color-mapped native frame.
     pub fn copy_frame(
         &mut self,
         raw: &ID3D11Texture2D,
@@ -221,7 +249,7 @@ impl SharedFrames {
             let mut description = Default::default();
             raw.GetDesc(&mut description);
             if source_device != destination_device
-                || description.Format != DXGI_FORMAT_B8G8R8A8_UNORM
+                || description.Format != DXGI_FORMAT_R16G16B16A16_FLOAT
                 || description.Width != self.size.width
                 || description.Height != self.size.height
                 || description.SampleDesc.Count != 1
@@ -259,7 +287,7 @@ impl SharedFrames {
         let texture = unsafe {
             let raw = wgpu::hal::dx12::Device::texture_from_raw(
                 self.resource.clone(),
-                wgpu::TextureFormat::Bgra8Unorm,
+                self.format,
                 wgpu::TextureDimension::D2,
                 self.size,
                 1,
@@ -268,12 +296,12 @@ impl SharedFrames {
             self.device.create_texture_from_hal::<wgpu::hal::api::Dx12>(
                 raw,
                 &wgpu::TextureDescriptor {
-                    label: Some("mediaengine-shared-frame"),
+                    label: Some("native-video-shared-scrgb-frame"),
                     size: self.size,
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Bgra8Unorm,
+                    format: self.format,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING
                         | wgpu::TextureUsages::COPY_SRC
                         | wgpu::TextureUsages::RENDER_ATTACHMENT,

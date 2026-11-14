@@ -11,8 +11,10 @@ mod encoder;
 mod mft;
 mod pipeline;
 mod probe;
+mod runtime;
 mod sample;
 mod scaler;
+mod symbols;
 mod yuv_encode;
 
 pub use pipeline::transcode_hevc;

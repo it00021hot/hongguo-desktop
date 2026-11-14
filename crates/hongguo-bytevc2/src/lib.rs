@@ -18,14 +18,19 @@ mod container;
 mod decode;
 mod extradata;
 mod sample;
+#[cfg(feature = "vvdec")]
+mod vvdec;
 
 pub use codec::{CONFIG_BOX, FOURCC, WIRE_NAME, is_bytevc2, is_bytevc2_fourcc};
 pub use container::{Bytevc2Track, read_moov_at, track_from_moov};
-#[cfg(feature = "vvdec")]
-pub use decode::decode_track_vvdec;
 pub use decode::{
     DecodedFrame, FramePool, Plaintext, active_decoder_name, decode_plaintext_mp4, open_plaintext,
     presentation_tick,
 };
+#[cfg(feature = "vvdec")]
+pub use decode::{decode_track_vvdec, decode_track_vvdec_native};
 pub use extradata::{annexb_from_extradata, length_size_from_extradata};
-pub use sample::sample_to_annexb;
+pub use hongguo_media_types::{ChromaSampling, ColorMetadata, CropRect, NativeFrame, NativePlane};
+pub use sample::{sample_to_annexb, sample_to_annexb_checked};
+#[cfg(feature = "vvdec")]
+pub use vvdec::VvdecDecoder;

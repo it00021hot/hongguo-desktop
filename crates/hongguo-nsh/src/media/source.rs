@@ -16,10 +16,6 @@ pub(super) struct Source {
 
 #[derive(Clone)]
 enum SourceKind {
-    Audio {
-        original: Box<Source>,
-        session: Arc<hongguo_softdec::DirectSession>,
-    },
     File {
         file: Arc<Mutex<File>>,
         len: u64,
@@ -32,15 +28,6 @@ enum SourceKind {
 }
 
 impl Source {
-    pub(super) fn audio(&self, session: Arc<hongguo_softdec::DirectSession>) -> Self {
-        Self {
-            kind: SourceKind::Audio {
-                original: Box::new(self.clone()),
-                session,
-            },
-            revoked: self.revoked.clone(),
-        }
-    }
     pub(super) fn file(path: &Path) -> Result<Self, String> {
         let file = File::open(path).map_err(|error| error.to_string())?;
         let metadata = file.metadata().map_err(|error| error.to_string())?;
@@ -77,7 +64,6 @@ impl Source {
 
     pub(super) fn len(&self) -> Option<u64> {
         match &self.kind {
-            SourceKind::Audio { original, .. } => original.len(),
             SourceKind::File { len, .. } | SourceKind::Online { len, .. } => Some(*len),
         }
     }
@@ -102,13 +88,6 @@ impl Source {
             return Err("media read cancelled".into());
         }
         match &self.kind {
-            SourceKind::Audio { original, session } => {
-                let mut bytes = original.read_with(start, count, &interrupted)?;
-                session
-                    .mask_video_tracks_cancellable(start, &mut bytes, interrupted)
-                    .map_err(|error| error.to_string())?;
-                Ok(bytes)
-            }
             SourceKind::File { file, .. } => {
                 let mut file = file.lock().map_err(|_| "media file lock poisoned")?;
                 if interrupted() {

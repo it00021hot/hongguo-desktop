@@ -16,6 +16,6 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let neighbors = pixel(p + vec2i(-1, 0)) + pixel(p + vec2i(1, 0))
         + pixel(p + vec2i(0, -1)) + pixel(p + vec2i(0, 1));
     let amount = params.value.x;
-    let color = clamp(center.rgb * (1.0 + 4.0 * amount) - neighbors.rgb * amount, vec3f(0), vec3f(1));
+    let color = center.rgb * (1.0 + 4.0 * amount) - neighbors.rgb * amount;
     textureStore(output_image, id.xy, vec4f(color, center.a));
 }

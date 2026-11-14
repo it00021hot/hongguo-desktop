@@ -14,6 +14,7 @@ pub(crate) fn login_dialog(
             KeyOptions {
                 when: nsh_core::keymap::When::Always,
                 repeat: false,
+                ..Default::default()
             },
             move |_| close(),
         );

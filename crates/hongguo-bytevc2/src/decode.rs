@@ -12,7 +12,6 @@ use hongguo_common::{AppError, AppResult};
 
 use crate::container::{self, Bytevc2Track, SampleReader};
 use crate::extradata::annexb_from_extradata;
-use crate::sample::append_annexb;
 
 /// 送进解码器的显示时间刻度。与封装层 90kHz 相同，重排后按这个刻度还原秒。
 const PRESENTATION_TIMESCALE: i64 = 90_000;
@@ -282,20 +281,27 @@ fn vvdec_thread_count() -> i32 {
 pub fn decode_track_vvdec(
     track: &Bytevc2Track,
     start_index: usize,
-    mut read: impl FnMut(u64, u64, &mut Vec<u8>) -> AppResult<()>,
+    read: impl FnMut(u64, u64, &mut Vec<u8>) -> AppResult<()>,
     on_frame: &mut impl FnMut(DecodedFrame) -> AppResult<()>,
 ) -> AppResult<()> {
-    use vvdec::{AccessUnit, Decoder, Error as VvError};
+    let pool = FramePool::new();
+    decode_track_vvdec_native(track, start_index, read, &mut |frame| {
+        on_frame(legacy_i4208(&frame, &pool)?)
+    })
+}
 
+#[cfg(feature = "vvdec")]
+pub fn decode_track_vvdec_native(
+    track: &Bytevc2Track,
+    start_index: usize,
+    mut read: impl FnMut(u64, u64, &mut Vec<u8>) -> AppResult<()>,
+    on_frame: &mut impl FnMut(crate::NativeFrame) -> AppResult<()>,
+) -> AppResult<()> {
     let length_size = crate::length_size_from_extradata(&track.config)?;
     let params = annexb_from_extradata(&track.config)?;
     let timeline = track.info.sample_pts();
     let stamp_pts = timeline.len() == track.info.samples.len() && !timeline.is_empty();
-    let mut dec = Decoder::builder()
-        .num_threads(vvdec_thread_count())
-        .build()
-        .map_err(map_vvdec_err)?;
-    let pool = Arc::new(PlanePool::default());
+    let mut dec = crate::VvdecDecoder::new(vvdec_thread_count())?;
     // 样本缓冲与 Annex-B 缓冲整集复用；vvdec 在 `decode` 返回前已把载荷拷进自己的码流缓冲。
     let mut raw = Vec::new();
     let mut annexb = Vec::new();
@@ -309,64 +315,43 @@ pub fn decode_track_vvdec(
             annexb.extend_from_slice(&params);
         }
         let prefix = annexb.len();
-        append_annexb(&raw, length_size, &mut annexb);
+        crate::sample::append_annexb_checked(&raw, length_size, &mut annexb)?;
         if annexb.len() == prefix {
             continue;
         }
         sent_params = true;
-        let mut au = AccessUnit::new(annexb.as_slice());
-        // 首包（参数集+样本）标 RAP，便于随机接入。
-        if first_au {
-            au.is_random_access_point = true;
-        }
-        if stamp_pts {
-            let ticks = presentation_tick(timeline[index]);
-            if ticks >= 0 {
-                au.cts = Some(ticks as u64);
-            }
-        }
-        match dec.decode(au) {
-            Ok(Some(frame)) => on_frame(pack_vvdec_frame(&frame, &pool)?)?,
-            Ok(None) => {}
-            Err(VvError::TryAgain) => {}
-            Err(e) => return Err(map_vvdec_err(e)),
+        if let Some(frame) = dec.decode(&annexb, stamp_pts.then(|| timeline[index]), first_au)? {
+            on_frame(frame)?;
         }
     }
     if !sent_params {
         return Err(AppError::Media("ByteVC2 没有可解码的样本".into()));
     }
-    loop {
-        match dec.flush() {
-            Ok(Some(frame)) => on_frame(pack_vvdec_frame(&frame, &pool)?)?,
-            Ok(None) | Err(VvError::Eof) => break,
-            Err(VvError::RestartRequired) => break,
-            Err(e) => return Err(map_vvdec_err(e)),
-        }
+    while let Some(frame) = dec.flush()? {
+        on_frame(frame)?;
     }
     Ok(())
 }
 
 #[cfg(feature = "vvdec")]
-fn pack_vvdec_frame(frame: &vvdec::Frame, pool: &Arc<PlanePool>) -> AppResult<DecodedFrame> {
-    use vvdec::{ColorFormat, PlaneComponent};
-
-    let width = (frame.width() as usize) & !1;
-    let height = (frame.height() as usize) & !1;
+fn legacy_i4208(frame: &crate::NativeFrame, pool: &FramePool) -> AppResult<DecodedFrame> {
+    use crate::ChromaSampling;
+    let width = frame.width & !1;
+    let height = frame.height & !1;
     if width == 0 || height == 0 {
         return Err(AppError::Media("ByteVC2 解码分辨率无效".into()));
     }
-    let bit_depth = frame.bit_depth();
+    let bit_depth = frame.bit_depth;
     let shift = match bit_depth {
-        0 | 8 => 0u8,
+        8 => 0u8,
         10 => 2,
-        12 => 4,
         other => {
             return Err(AppError::Media(format!("ByteVC2 位深暂不支持: {other}")));
         }
     };
-    let with_chroma = match frame.color_format() {
-        ColorFormat::Yuv420Planar => true,
-        ColorFormat::Yuv400Planar => false,
+    let with_chroma = match frame.chroma {
+        ChromaSampling::Yuv420 => true,
+        ChromaSampling::Monochrome => false,
         other => {
             return Err(AppError::Media(format!(
                 "ByteVC2 像素格式暂不支持: {other:?}"
@@ -374,44 +359,47 @@ fn pack_vvdec_frame(frame: &vvdec::Frame, pool: &Arc<PlanePool>) -> AppResult<De
         }
     };
     let y_plane = frame
-        .plane(PlaneComponent::Y)
+        .planes
+        .first()
         .ok_or_else(|| AppError::Media("ByteVC2 帧缺 Y 平面".into()))?;
-    let mut y = pool.take_luma();
+    let mut y = pool.luma();
     plane8_into(
-        y_plane.as_ref(),
-        y_plane.stride() as usize,
+        &y_plane.data,
+        y_plane.stride,
         width,
         height,
-        y_plane.bytes_per_sample() as usize,
+        y_plane.bytes_per_sample as usize,
         shift,
         &mut y,
     )?;
     let cw = width / 2;
     let ch = height / 2;
-    let mut u = pool.take_chroma();
-    let mut v = pool.take_chroma();
+    let mut u = pool.chroma();
+    let mut v = pool.chroma();
     if with_chroma {
         let u_plane = frame
-            .plane(PlaneComponent::U)
+            .planes
+            .get(1)
             .ok_or_else(|| AppError::Media("ByteVC2 帧缺 U 平面".into()))?;
         let v_plane = frame
-            .plane(PlaneComponent::V)
+            .planes
+            .get(2)
             .ok_or_else(|| AppError::Media("ByteVC2 帧缺 V 平面".into()))?;
         plane8_into(
-            u_plane.as_ref(),
-            u_plane.stride() as usize,
+            &u_plane.data,
+            u_plane.stride,
             cw,
             ch,
-            u_plane.bytes_per_sample() as usize,
+            u_plane.bytes_per_sample as usize,
             shift,
             &mut u,
         )?;
         plane8_into(
-            v_plane.as_ref(),
-            v_plane.stride() as usize,
+            &v_plane.data,
+            v_plane.stride,
             cw,
             ch,
-            v_plane.bytes_per_sample() as usize,
+            v_plane.bytes_per_sample as usize,
             shift,
             &mut v,
         )?;
@@ -421,23 +409,7 @@ fn pack_vvdec_frame(frame: &vvdec::Frame, pool: &Arc<PlanePool>) -> AppResult<De
             plane.resize(cw * ch, 128);
         }
     }
-    let pts = frame
-        .cts()
-        .map(|ticks| ticks as f64 / PRESENTATION_TIMESCALE as f64);
-    Ok(DecodedFrame {
-        width,
-        height,
-        y,
-        u,
-        v,
-        pts,
-        pool: Some(Arc::clone(pool)),
-    })
-}
-
-#[cfg(feature = "vvdec")]
-fn map_vvdec_err(err: vvdec::Error) -> AppError {
-    AppError::Media(format!("ByteVC2 vvdec 解码失败: {err}"))
+    Ok(pool.frame(width, height, [y, u, v], frame.pts))
 }
 
 /// 把一个平面收紧成 8-bit、去掉行尾填充，写进 `out`（先清空，容量复用）。
@@ -534,7 +506,7 @@ fn decode_track_oxideav(
             annexb.extend_from_slice(&params);
         }
         let prefix = annexb.len();
-        append_annexb(&raw, length_size, &mut annexb);
+        crate::sample::append_annexb_checked(&raw, length_size, &mut annexb)?;
         if annexb.len() == prefix {
             continue;
         }

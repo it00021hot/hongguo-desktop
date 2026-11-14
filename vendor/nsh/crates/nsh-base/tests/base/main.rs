@@ -1,0 +1,53 @@
+//! `nsh/base`'s components in a Rust app, run headless (`nsh_testing`):
+//! what a user does with them and what the app hears and shows.
+
+mod accordion;
+mod avatar;
+mod button;
+mod calendar;
+mod carousel;
+mod checkbox;
+mod collapsible;
+mod color_picker;
+mod combobox;
+mod command;
+mod data_table;
+mod date_picker;
+mod dialog;
+mod diff;
+mod dock;
+mod editor;
+mod editor_completion;
+mod editor_definition;
+mod editor_diagnostics;
+mod editor_languages;
+#[cfg(feature = "emoji-picker")]
+mod emoji_picker;
+mod focus_within;
+mod hover_card;
+mod link;
+mod menu;
+mod menu_list;
+mod menu_room;
+mod number_input;
+mod otp_input;
+mod pagination;
+mod plot;
+mod popups;
+mod radio;
+mod resizable;
+mod rich_editor;
+mod rust_root;
+mod scrollbar;
+mod select;
+mod sheet;
+mod slider;
+mod submenu;
+mod switch;
+mod tabs;
+mod terminal;
+mod text_view;
+mod time_field;
+mod toggle;
+mod toolbar;
+mod tree;

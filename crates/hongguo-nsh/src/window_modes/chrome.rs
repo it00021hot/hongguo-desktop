@@ -1,5 +1,5 @@
 use super::{Action, Mode, WindowModes};
-use nsh_core::{desktop::TitleBarStyle, element::desktop, prelude::*};
+use nsh_core::{desktop::TitleBarStyle, prelude::*};
 
 pub(super) fn install(modes: WindowModes) {
     if !matches!(os(), nsh_core::platform::Os::Windows) {
@@ -20,13 +20,10 @@ pub(super) fn install(modes: WindowModes) {
             };
         }
         // Default disables SDK-painted caption buttons; our HWND bridge owns the borderless frame.
-        desktop::set_title_bar(
-            if hidden {
-                TitleBarStyle::Default
-            } else {
-                TitleBarStyle::Hidden
-            },
-            Some(px(44.0)),
-        );
+        crate::native_window::set_title_bar(if hidden {
+            TitleBarStyle::Default
+        } else {
+            TitleBarStyle::Hidden
+        });
     });
 }

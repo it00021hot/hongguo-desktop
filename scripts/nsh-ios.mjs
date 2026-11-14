@@ -11,6 +11,10 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { copyMediaNotices, prepareNativeMedia, verifyNshWorkspace } from './nsh-native-media.mjs';
+import { finishRelink, relinkEnvironment } from './nsh-relink.mjs';
+import { profileEntitlements } from './native-media-resign-ios.mjs';
+export { profileEntitlements } from './native-media-resign-ios.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const minimumVersion = '16.0';
@@ -21,21 +25,37 @@ export function buildIos(target) {
   if (!['ios', 'ios-simulator'].includes(target)) throw new Error('Expected ios or ios-simulator');
   const simulator = target === 'ios-simulator';
   const rustTarget = simulator ? 'aarch64-apple-ios-sim' : 'aarch64-apple-ios';
+  verifyNshWorkspace();
+  const prefix = prepareNativeMedia(rustTarget, run);
   const sdk = output('xcrun', [
     '--sdk',
     simulator ? 'iphonesimulator' : 'iphoneos',
     '--show-sdk-path',
   ]);
+  const relink = join(root, 'target/nsh-ios', simulator ? 'simulator' : 'device', 'Relink');
+  const linker = output('xcrun', [
+    '--sdk',
+    simulator ? 'iphonesimulator' : 'iphoneos',
+    '--find',
+    'clang',
+  ]);
   run('cargo', ['build', '-p', 'hongguo-nsh-ios', '--target', rustTarget, '--release'], {
+    ...relinkEnvironment(rustTarget, prefix, linker, sdk, relink),
     IPHONEOS_DEPLOYMENT_TARGET: minimumVersion,
     SDKROOT: sdk,
-    SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL: 'always',
-    [`PKG_CONFIG_ALLOW_CROSS_${rustTarget}`]: '1',
-    [`PKG_CONFIG_LIBDIR_${rustTarget}`]: '',
     [`BINDGEN_EXTRA_CLANG_ARGS_${rustTarget}`]: `-isysroot "${sdk}" --target=arm64-apple-ios${minimumVersion}${simulator ? '-simulator' : ''}`,
   });
+  finishRelink(join(root, 'target', rustTarget, 'release/hongguo-nsh-ios'), rustTarget, relink);
   const destination = createBundle(rustTarget, simulator);
+  copyMediaNotices(prefix, rustTarget, join(dirname(destination), 'NativeMedia'));
   signBundle(destination, simulator);
+  run('ditto', [
+    '-c',
+    '-k',
+    '--keepParent',
+    dirname(destination),
+    join(root, 'target/nsh-ios', `Hongguo-${simulator ? 'simulator' : 'device'}.zip`),
+  ]);
   return destination;
 }
 
@@ -67,6 +87,7 @@ function createBundle(rustTarget, simulator) {
 <key>CFBundleSupportedPlatforms</key><array><string>${simulator ? 'iPhoneSimulator' : 'iPhoneOS'}</string></array>
 <key>MinimumOSVersion</key><string>${minimumVersion}</string>
 <key>LSRequiresIPhoneOS</key><true/>
+<key>CADisableMinimumFrameDurationOnPhone</key><true/>
 <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
@@ -186,34 +207,6 @@ function readProfile(profile) {
   } finally {
     rmSync(directory, { recursive: true });
   }
-}
-
-export function profileEntitlements({ expiresAt, prefix, granted }, now = Date.now()) {
-  const expiration = Date.parse(expiresAt);
-  if (!Number.isFinite(expiration))
-    throw new Error('The provisioning profile has no valid expiration date');
-  if (expiration <= now) throw new Error('The provisioning profile has expired');
-  if (typeof prefix !== 'string' || !prefix || !granted)
-    throw new Error('The provisioning profile has no application identifier');
-  const identifier = `${prefix}.${bundleId}`;
-  const pattern = granted['application-identifier'];
-  if (
-    typeof pattern !== 'string' ||
-    !(
-      pattern === identifier ||
-      (pattern.endsWith('*') && identifier.startsWith(pattern.slice(0, -1)))
-    )
-  ) {
-    throw new Error(`The provisioning profile does not authorize ${bundleId}`);
-  }
-  const team = granted['com.apple.developer.team-identifier'];
-  if (typeof team !== 'string' || !team)
-    throw new Error('The provisioning profile has no signing team');
-  return {
-    'application-identifier': identifier,
-    'com.apple.developer.team-identifier': team,
-    'get-task-allow': granted['get-task-allow'] === true,
-  };
 }
 
 function run(command, args, environment = {}) {

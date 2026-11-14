@@ -1,6 +1,8 @@
 mod chrome;
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 mod desktop;
+#[cfg(test)]
+mod fullscreen_tests;
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 mod geometry;
 #[cfg(test)]
@@ -13,8 +15,8 @@ mod privacy;
 mod tests;
 mod types;
 mod wire;
-use nsh_core::prelude::*;
 use nsh_core::storage::Storage;
+use nsh_core::{desktop::WindowMode, prelude::*};
 pub(crate) use preview::{PreviewDriver, provide_preview};
 pub(crate) use types::{Mode, portrait_aspect};
 use types::{PHONE_ASPECT, REFIT_DELTA};
@@ -31,6 +33,7 @@ pub(crate) struct WindowModes {
     error: Signal<SharedString>,
     aspect: Signal<f64>,
     applied_aspect: Stored<f64>,
+    windowed_mode: Stored<WindowMode>,
     preview: bool,
 }
 
@@ -197,7 +200,15 @@ impl WindowModes {
             }
             "exitFullscreen" | "toggleFullscreen" => {
                 if !self.preview {
-                    nsh_core::element::desktop::toggle_full_screen();
+                    let window = nsh_core::element::desktop::current_window();
+                    if let Some(state) = window.state() {
+                        if state.mode == WindowMode::FullScreen {
+                            window.set_mode(self.windowed_mode.get());
+                        } else if event.name.as_ref() == "toggleFullscreen" {
+                            self.windowed_mode.replace(state.mode);
+                            window.set_mode(WindowMode::FullScreen);
+                        }
+                    }
                 }
                 return;
             }
@@ -241,9 +252,18 @@ pub(crate) fn install() -> impl IntoElement {
         error: signal(SharedString::default()),
         aspect: signal(PHONE_ASPECT),
         applied_aspect: stored(PHONE_ASPECT),
+        windowed_mode: stored(WindowMode::Normal),
         preview: false,
     };
     provide_context(state);
+    let window = nsh_core::element::desktop::current_window();
+    effect(move || {
+        if let Some(window) = window.state()
+            && window.mode != WindowMode::FullScreen
+        {
+            state.windowed_mode.replace(window.mode);
+        }
+    });
     chrome::install(state);
     let initial = Storage::get_item(INCOGNITO_KEY).as_deref() == Some("true");
     if initial && is_desktop() {

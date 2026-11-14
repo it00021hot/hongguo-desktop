@@ -21,7 +21,8 @@ hongguo-common = { path = "../hongguo-common" }
 hongguo-media = { path = "../hongguo-media" }
 hongguo-media-platform = { path = "../hongguo-media-platform" }
 hongguo-service = { path = "../hongguo-service" }
-hongguo-softdec = { path = "../hongguo-softdec" }
+hongguo-playback = { path = "../hongguo-playback" }
+hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-store = { path = "../hongguo-store" }
 hongguo-stream = { path = "../hongguo-stream" }
 hongguo-protocol = { path = "../hongguo-protocol" }

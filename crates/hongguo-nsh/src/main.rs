@@ -23,6 +23,8 @@ fn main() -> impl std::process::Termination {
             data_dir: std::env::var_os("HONGGUO_DATA_DIR").map(std::path::PathBuf::from),
             #[cfg(target_os = "windows")]
             app_id: "com.hongguo.nsh".to_owned(),
+            #[cfg(target_os = "windows")]
+            output_color_mode: platform::OutputColorMode::Auto,
             size: (1280, 840),
             ..Default::default()
         },

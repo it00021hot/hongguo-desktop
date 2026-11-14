@@ -1,0 +1,13 @@
+[package]
+name = "hongguo-vvdec-sys"
+description = "Pinned static VVdeC native bindings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "BSD-3-Clause-Clear"
+links = "vvdec"
+build = "build.rs"
+
+[build-dependencies]
+bindgen = "0.71"
+cmake = "0.1"

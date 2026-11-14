@@ -13,8 +13,17 @@
 resolver = "3"
 members = [
     "crates/hongguo-api",
+    "crates/hongguo-audio-api",
+    "crates/hongguo-audio",
+    "crates/hongguo-audio-apple",
+    "crates/hongguo-audio-windows",
+    "crates/hongguo-audio-android",
     "crates/hongguo-bytevc2",
     "crates/hongguo-common",
+    "crates/hongguo-codec-ffi",
+    "crates/hongguo-media-types",
+    "crates/hongguo-playback",
+    "crates/hongguo-vvdec-sys",
     "crates/hongguo-gpui",
     "crates/hongguo-nsh",
     "crates/hongguo-nsh-android",
@@ -35,6 +44,8 @@ members = [
     "crates/hongguo-media-videotoolbox",
     "crates/hongguo-media-platform-windows",
     "crates/hongguo-video",
+    "crates/hongguo-video-color",
+    "crates/hongguo-video-gpu",
     # 回放契约 + 系统播放器（门面 / macOS / Windows 实现）：
     # 平台实现分 crate，壳只依赖门面。
     "crates/hongguo-player",
@@ -54,7 +65,7 @@ members = [
 # vendor/ 由 [patch.crates-io] 的 path 引用。位于 workspace 目录树内、被
 # path/patch 引用的包会被 Cargo 自动收成 member；若不排除，门禁会去 lint
 # 上游代码（clippy -D warnings 必挂），cargo test 也会跑它们的用例。
-exclude = ["vendor/*"]
+exclude = ["vendor/*", "vendor/nsh"]
 
 # 各 crate 共享的 package 字段：发版只改这里一处（另需改 package.json 与
 # tauri.conf.json），成员用 `xxx.workspace = true` 继承。
@@ -67,16 +78,17 @@ license = "PolyForm-Noncommercial-1.0.0"
 authors = ["hongguo-desktop contributors"]
 
 [workspace.dependencies]
-nsh-core = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3" }
-nsh-base = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-platform-macos = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-platform-windows = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-android-runtime = { package = "nsh-platform-android", git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-platform-ios = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-core = { path = "vendor/nsh/crates/nsh-core" }
+nsh-base = { path = "vendor/nsh/crates/nsh-base" }
+nsh-engine = { path = "vendor/nsh/crates/nsh-engine", default-features = false }
+nsh-testing = { path = "vendor/nsh/crates/nsh-testing", default-features = false }
+nsh-platform-macos = { path = "vendor/nsh/crates/nsh-platform-macos", default-features = false }
+nsh-platform-windows = { path = "vendor/nsh/crates/nsh-platform-windows", default-features = false }
+nsh-android-runtime = { package = "nsh-platform-android", path = "vendor/nsh/crates/nsh-platform-android", default-features = false }
+nsh-platform-ios = { path = "vendor/nsh/crates/nsh-platform-ios", default-features = false }
 
 [patch.crates-io]
+wgpu-hal = { path = "vendor/wgpu-hal" }
 # gpui-pre-windows 0.3.12 的渲染器没有视频画面的落点，而系统播放器
 # （Media Foundation Media Engine 的 frame-server 模式）经 TransferVideoFrame
 # 把帧写进渲染器设备上的纹理，需要渲染器把它画出来——且必须与 GPUI 内容

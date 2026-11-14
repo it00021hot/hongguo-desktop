@@ -1,8 +1,9 @@
 package com.hongguo.nsh;
 
 import java.io.IOException;
+import org.json.JSONObject;
 
-/** Audio stays on MediaPlayer; Rust owns every video frame and its generation. */
+/** Rust owns the decoder, PCM device clock and presentation generation. */
 final class PixelDirect {
     private final PixelPlayback playback;
     private final long handle;
@@ -13,7 +14,6 @@ final class PixelDirect {
     private boolean endEmitted;
     private boolean closed;
     private Boolean reportedBuffering;
-    private final Runnable clock = this::tick;
 
     PixelDirect(PixelPlayback playback, long epoch, String source) throws IOException {
         this.playback = playback;
@@ -21,30 +21,27 @@ final class PixelDirect {
         this.handle = playback.owner.nativeHandle();
         nativeOpen(handle, epoch, source);
     }
-    boolean mayPlay() { return gate.mayPlay() && !ended && !playback.seeks.pending(); }
-    void prepared() { publishLoad(); wake(); }
-    void wake() {
-        playback.handler.removeCallbacks(clock);
-        if (!closed && playback.prepared && playback.active()) playback.handler.post(clock);
-    }
-    private void tick() {
-        if (closed || playback.generation != epoch || playback.player == null || !playback.prepared) return;
-        try {
-            nativeClock(handle, epoch, Math.max(0, playback.player.getCurrentPosition()), playback.seeks.audioPending());
-            if (playback.active() && playback.player.isPlaying()) playback.handler.postDelayed(clock, 16);
-        } catch (RuntimeException error) { playback.error("decoderFailed", "Audio clock is unavailable"); }
-    }
+    // Playback intent belongs to the UI; core holding gates the real PCM clock.
+    boolean mayPlay() { return !closed && !ended; }
+    boolean needsFrames() { return !ended && (gate.holding() || !gate.ready()); }
+    void prepared() { publishLoad(); }
+    void control(boolean playing, float volume, boolean muted, double rate, boolean claimOwner) throws IOException { nativeControl(handle, epoch, playing, volume, muted, rate, claimOwner); }
+    JSONObject status() throws Exception { return new JSONObject(nativeStatus(handle, epoch)); }
+    boolean isOwner() throws IOException { return nativeIsOwner(handle, epoch); }
     void beginSeek() {
         gate.beginSeek(); ended = false; endEmitted = false;
-        if (playback.player.isPlaying()) playback.player.pause();
-        playback.player.setVolume(0f, 0f);
-        nativeClock(handle, epoch, Math.max(0, playback.player.getCurrentPosition()), true);
     }
-    void audioSeekCompleted(long position) throws IOException {
-        gate.seekCompleted(nativeSeek(handle, epoch, position));
+    boolean seek(long position) throws IOException {
+        long generation = nativeSeek(handle, epoch, position);
+        if (generation < 0) return false;
+        beginSeek();
+        gate.seekCompleted(generation);
+        return true;
     }
     void presented(long generation, long serial, long pts, int width, int height) {
         if (!gate.accepts(generation)) return;
+        try { if (!nativePresented(handle, epoch, generation, serial)) return; }
+        catch (IOException error) { playback.error("decoderFailed", "Native presentation acknowledgment failed"); return; }
         boolean changed = !gate.mayPlay();
         boolean first = !gate.ready();
         gate.presented(generation);
@@ -64,6 +61,16 @@ final class PixelDirect {
         if (changed) playback.reapplyControls();
     }
     void audioBuffering(boolean buffering) { gate.audioBuffering(buffering); publishBuffering(); }
+    void emptyVideo() {
+        try {
+            if (!isOwner() || !status().getBoolean("videoGap")) return;
+            gate.emptyVideo();
+            publishBuffering();
+            publishLoad();
+            playback.seeks.videoComplete();
+            playback.reapplyControls();
+        } catch (Exception error) { playback.error("decoderFailed", "Empty movie interval could not be confirmed"); }
+    }
     private void publishBuffering() {
         boolean buffering = gate.buffering();
         if (reportedBuffering == null || reportedBuffering != buffering) {
@@ -88,11 +95,13 @@ final class PixelDirect {
         if (closed) return;
         closed = true;
         gate.close();
-        playback.handler.removeCallbacks(clock);
         nativeClose(handle, epoch);
     }
     private static native void nativeOpen(long handle, long epoch, String source) throws IOException;
-    private static native void nativeClock(long handle, long epoch, long position, boolean seeking);
+    private static native void nativeControl(long handle, long epoch, boolean playing, float volume, boolean muted, double rate, boolean claimOwner) throws IOException;
+    private static native String nativeStatus(long handle, long epoch) throws IOException;
+    private static native boolean nativeIsOwner(long handle, long epoch) throws IOException;
+    private static native boolean nativePresented(long handle, long epoch, long generation, long serial) throws IOException;
     private static native long nativeSeek(long handle, long epoch, long position) throws IOException;
     private static native void nativeClose(long handle, long epoch);
 }

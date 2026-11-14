@@ -1,8 +1,17 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateWindowsPe } from './nsh-windows-pe.mjs';
+import { validateDependency } from './native-media-manifest.mjs';
+import {
+  auditMacosBundle,
+  auditWindowsBundle,
+  copyDesktopMedia,
+  desktopTriple,
+  prepareNativeMedia,
+  validateNshSource,
+} from './nsh-native-media.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_CARGO_OUTPUT_BYTES = 64 * 1024 * 1024;
@@ -21,6 +30,9 @@ export function buildDesktop(target) {
   ]);
   if (/^(?:nsh-js|quickjs[^ ]*) v/m.test(dependencies))
     throw new Error('The pure Rust desktop host must not include QuickJS');
+  validateNshSource(JSON.parse(run('cargo', ['metadata', '--format-version=1'])));
+  const triple = desktopTriple(target);
+  const prefix = prepareNativeMedia(triple, run);
   const build = run(
     'cargo',
     [
@@ -36,7 +48,7 @@ export function buildDesktop(target) {
       '--message-format=json-render-diagnostics',
     ],
     {
-      SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL: 'always',
+      HONGGUO_FFMPEG_PREFIX: prefix,
       ...(target === 'macos' ? { MACOSX_DEPLOYMENT_TARGET: '14.0' } : {}),
     },
   );
@@ -45,10 +57,17 @@ export function buildDesktop(target) {
   else validateWindowsPe(readFileSync(executable));
   const output = join(root, 'target/nsh-desktop', target);
   mkdirSync(output, { recursive: true });
-  if (target === 'macos') return macos(executable, output);
+  if (target === 'macos') return macos(executable, output, prefix, triple);
   const destination = join(output, 'Hongguo');
+  rmSync(destination, { recursive: true, force: true });
   mkdirSync(destination, { recursive: true });
   copyFileSync(executable, join(destination, 'Hongguo.exe'));
+  copyDesktopMedia(prefix, triple, destination);
+  const inspection = auditWindowsBundle(destination);
+  writeFileSync(
+    join(destination, 'NativeMedia/runtime-inspection.json'),
+    JSON.stringify(inspection, null, 2),
+  );
   run(
     'powershell.exe',
     [
@@ -98,21 +117,26 @@ function validateMacos(executable) {
   for (const line of dependencies.split('\n').slice(1)) {
     const dependency = line.trim().split(' (compatibility version ')[0];
     if (!dependency) continue;
-    if (
-      !isAbsolute(dependency) ||
-      (!dependency.startsWith('/System/Library/') && !dependency.startsWith('/usr/lib/'))
-    )
-      throw new Error(`Application depends on a non-system library: ${dependency}`);
+    validateDependency({ os: 'macos' }, dependency);
   }
 }
 
-function macos(binary, output) {
+function macos(binary, output, prefix, triple) {
   const destination = join(output, '红果.app');
+  rmSync(destination, { recursive: true, force: true });
   const contents = join(destination, 'Contents');
   const executable = join(contents, 'MacOS/hongguo-nsh');
   mkdirSync(dirname(executable), { recursive: true });
   mkdirSync(join(contents, 'Resources'), { recursive: true });
   copyFileSync(binary, executable);
+  copyDesktopMedia(prefix, triple, destination);
+  const rpaths = [
+    ...run('otool', ['-l', executable]).matchAll(/cmd LC_RPATH[\s\S]*?\n\s*path (.+?) \(offset/g),
+  ].map((match) => match[1]);
+  for (const path of rpaths) {
+    if (path.includes('/native-media/'))
+      run('install_name_tool', ['-delete_rpath', path, executable]);
+  }
   copyFileSync(
     join(root, 'crates/hongguo-tauri-app/icons/icon.icns'),
     join(contents, 'Resources/AppIcon.icns'),
@@ -136,6 +160,8 @@ function macos(binary, output) {
     }),
   );
   run('plutil', ['-convert', 'xml1', plist]);
+  for (const library of auditMacosBundle(destination, run))
+    run('codesign', ['--force', '--sign', '-', '--timestamp=none', library]);
   run('codesign', ['--force', '--sign', '-', '--timestamp=none', destination]);
   run('codesign', ['--verify', '--deep', '--strict', destination]);
   run('ditto', ['-c', '-k', '--keepParent', destination, join(output, 'Hongguo.zip')]);

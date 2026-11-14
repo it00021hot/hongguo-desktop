@@ -12,6 +12,7 @@ pub(crate) fn provide_preview() -> PreviewDriver {
         error: signal(SharedString::default()),
         aspect: signal(super::PHONE_ASPECT),
         applied_aspect: stored(super::PHONE_ASPECT),
+        windowed_mode: stored(nsh_core::desktop::WindowMode::Normal),
         preview: true,
     };
     provide_context(state);

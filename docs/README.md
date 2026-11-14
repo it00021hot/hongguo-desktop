@@ -19,7 +19,10 @@
 | [req-hg-003-playback-parity.md](./req-hg-003-playback-parity.md) | 播放对齐调查交接、Craft 证据与运行时验收状态（进行中） |
 | [issue-22-tauri-investigation.md](./issue-22-tauri-investigation.md) | Tauri 播放失败、历史越界、末集接力与迷你窗口恢复的排查、修复及验证记录 |
 | [webview-cdp-testing.md](./webview-cdp-testing.md) | Tauri WebView CDP / macOS WebDriver 调试 |
-| [nsh-shell-plan.md](./nsh-shell-plan.md) | NSH 0.4.0 四端壳实施方案（实施中，Linux/Web 后续迭代） |
+| [nsh-shell-plan.md](./nsh-shell-plan.md) | NSH 0.5.0 四端壳实施方案（实施中，Linux/Web 后续迭代） |
+| [nsh-decoder-plan.md](./nsh-decoder-plan.md) | NSH 0.5.0 已批准的完整播放方案与发布门槛 |
+| [nsh-decoder-validation.md](./nsh-decoder-validation.md) | 新解码、PCM、平台呈现及正式包的实际验证结果和待测边界 |
+| [native-media-build.md](./native-media-build.md) | 固定 FFmpeg 来源、跨端构建、包依赖闭包与静态重链接材料 |
 | [nsh-feature-parity.md](./nsh-feature-parity.md) | NSH 与 Tauri 功能对齐、平台验收进度与缺口 |
 
 ## 实现说明（已落地）

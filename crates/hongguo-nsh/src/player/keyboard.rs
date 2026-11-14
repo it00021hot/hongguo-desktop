@@ -19,6 +19,7 @@ pub(crate) fn bind(
                 KeyOptions {
                     when: When::NotEditing,
                     repeat: false,
+                    ..Default::default()
                 },
                 move |_| {
                     if enabled.get_untracked() && !shortcuts.is_capturing() {

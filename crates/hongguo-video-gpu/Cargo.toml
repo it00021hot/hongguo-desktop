@@ -1,0 +1,19 @@
+[package]
+name = "hongguo-video-gpu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+hongguo-media-types = { path = "../hongguo-media-types" }
+hongguo-video-color = { path = "../hongguo-video-color" }
+wgpu = { version = "=29.0.4", default-features = false, features = ["wgsl"] }
+
+[dev-dependencies]
+naga = { version = "29", features = ["wgsl-in"] }
+pollster = "0.4"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dev-dependencies]
+wgpu = { version = "=29.0.4", default-features = false, features = ["metal"] }

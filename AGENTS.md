@@ -4,14 +4,17 @@
 
 ## 开始任何开发前
 
-NSH 第三壳正在开发（NSH 0.4.0，纯 Rust）：`crates/hongguo-nsh` 是共享界面与装配，
+NSH 第三壳正在开发（NSH 0.5.0，纯 Rust）：`crates/hongguo-nsh` 是共享界面与装配，
 `hongguo-nsh-android` / `hongguo-nsh-ios` 是独立移动端宿主。首版目标为 Windows、macOS、
 Android、iOS，Linux/Web 后续迭代。开发前另读 `nsh` 与 `nsh-design-guides`，
 项目接入与验证说明见 `.agents/skills/hongguo-dev/references/nsh.md`。
 
-Tauri、GPUI、NSH 的播放服务固定使用内置解码能力，无壳选择开关或系统 HEVC 探测分支。
-`PlayResponse.direct` 表示内置视频解码，
-系统媒体只读取原 MP4 的音轨视图并提供时钟；H.264 不参与播放或下载选流。
+NSH 是主力壳，播放使用包内 FFmpeg 9.0.2 / VVdeC 3.2.1 与共享 `hongguo-playback`，
+按实际设备选择硬解、同源回退软解；AAC 经包内解码/重采样/倍速后输出 PCM，时钟来自实际设备消费。
+Windows 生产默认同 NSH D3D11 设备的 D3D11VA；D3D12VA 只用于开发验收对照。
+帧保留原始位深/颜色/crop/SAR/旋转，原生表面持有到 GPU 完成；增强后才做最终显示映射。
+Tauri、GPUI 保留原内置软解与系统音轨时钟，不新增硬解路线；无壳选择开关或系统 HEVC 扩展探测。
+`PlayResponse.direct` 表示内置解码。NSH 可直接解本地 H.264，在线播放和下载仍不改变现有排除 H.264 的选流规则。
 下载记录中的旧文件失效时重新获取在线原流，显式打开不支持的本地文件则报错。
 同规格原流无损合并；异规格素材统一编码为 HEVC，完成封存普通 MP4 后再拼接。
 禁止恢复兼容播放转码、`.play.mp4`、grow/HLS 播放链路。
@@ -39,6 +42,12 @@ Tauri、GPUI、NSH 的播放服务固定使用内置解码能力，无壳选择�
 - `crates/hongguo-common/` 共用底座：领域模型（`model/`）、统一错误（`error.rs`，无 tauri 依赖）、纯工具（`utils/`）、跨端常量（`consts/`）。Tauri 壳与 GPUI 壳共用；常量归属规则见 `consts/mod.rs` 头注释
 - `crates/hongguo-signer/` 请求签名：字节系五头签名 + 设备注册原语；**JS 1:1 移植禁改写法**，`constants.rs` 的值与服务端一一对应不得改动（无 common / tauri 依赖）
 - `crates/hongguo-video/` MP4 解析与 CENC 解密：box/样本表/稀疏缓冲/流式计划 + CENC-AES-CTR + 密钥派生；`fixtures` 是 feature `test-support` 门控的测试辅助（下游测试造 MP4 样本用）
+- `crates/hongguo-media-types/` 原位深平面、色彩/HDR 元数据、原生设备/帧租约与呈现帧契约；不依赖 UI 或解码实现。
+- `crates/hongguo-codec-ffi/` 包内 FFmpeg 的 C ABI 边界：HEVC/H264 软件与平台硬解、AAC/PCM/resample/atempo；只链接受控 native prefix，禁止借用系统/Homebrew 库。
+- `crates/hongguo-vvdec-sys/` 固定 VVdeC 3.2.1 源码、构建与 FFI；SIMD 按运行时能力分派，Windows 不设全局 AVX2 下限。
+- `crates/hongguo-playback/` NSH 共用索引/多轨时间轴、关键帧恢复、有界帧/PCM 队列、设备时钟与总恢复预算；不依赖 UI。
+- `crates/hongguo-audio-api/` / `hongguo-audio` / `hongguo-audio-{apple,windows,android}`：PCM 契约、目标分派与 AudioUnit/WASAPI/AAudio 输出，欠载补零不推进媒体时钟。
+- `crates/hongguo-video-color/` / `hongguo-video-gpu/`：共用色彩策略/LUT、WGSL/HLSL 原语和原位深 GPU 转换；working 保留 HDR，最终输出才 tone/gamut map。
 - `crates/hongguo-api/` 官方接口客户端。业务域 18 个：`calendar` / `danmaku` / `detail` / `discover` / `emoticon` / `history` / `interact` / `login` / `new_drama` / `play_strategy` / `play_url` / `rank` / `recommend` / `register` / `reservation` / `search` / `stream_pick` / `warmup`（另有 `client` / `params`）。改端点或参数前必读 `docs/hongguo-api-endpoints.md`。commentapi 互动枚举（object_type / comment_type / commit_source / data_type 等，值即契约）集中在 `params::interaction`，使用点只引用不写字面量
 - `crates/hongguo-store/` 持久化：Turso 内嵌库（`db` 连接与 schema 迁移 / `entity/` 八个模块 `device` / `follow` / `local_history` / `merge` / `playback` / `series` / `settings` / `task` / `bridge` 同步门面）；`paths::ScopedDataDir` 是 feature `test-support` 门控的测试辅助（落盘用例把数据目录重定向到临时目录）。无 tauri 依赖
 - `crates/hongguo-stream/` 在线流契约：内存渐进流（`ProgressiveStream`）、按 (vid, 档位) 分条的缓存（`StreamCache`）、Range 应答（`serve`）+ `range`（RangeSpec/ProtocolResponse）、进程级 `cache()` 单例。**填充侧（service）与应答侧（protocol）共用的上游**——两侧都只往下依赖它，禁止反向。无 tauri 依赖

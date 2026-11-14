@@ -6,13 +6,26 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+decoder-audit = ["dep:hongguo-codec-ffi", "dep:hongguo-playback", "dep:hongguo-common", "dep:nsh-core"]
+
+[[example]]
+name = "decoder_audit"
+required-features = ["decoder-audit"]
+
 [target.'cfg(target_os = "windows")'.dependencies]
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-enhancement = { path = "../hongguo-enhancement" }
+hongguo-media-types = { path = "../hongguo-media-types" }
+hongguo-video-color = { path = "../hongguo-video-color" }
+hongguo-codec-ffi = { path = "../hongguo-codec-ffi", optional = true }
+hongguo-playback = { path = "../hongguo-playback", optional = true }
+hongguo-common = { path = "../hongguo-common", optional = true }
+nsh-core = { workspace = true, optional = true }
 nsh-platform-windows.workspace = true
 pollster = "0.4"
 serde_json = "1"
 log = "0.4"
 wgpu = { version = "=29.0.4", default-features = false, features = ["dx12", "wgsl"] }
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
 windows-core = "0.62"

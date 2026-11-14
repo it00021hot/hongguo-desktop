@@ -1,19 +1,14 @@
 package com.hongguo.nsh;
 
 import android.app.Activity;
-import android.media.AudioAttributes;
-import android.media.MediaPlayer;
-import android.media.PlaybackParams;
-import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.Choreographer;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.json.JSONException;
 import org.json.JSONObject;
 
-/** One platform decoder/clock. Every MediaPlayer operation runs on this main handler. */
 final class PixelPlayback {
     final Activity activity;
     final PixelVideoComponent owner;
@@ -21,15 +16,15 @@ final class PixelPlayback {
     final PixelOutput output;
     final PixelSeeks seeks;
     final PixelAudio audio;
-    MediaPlayer player;
     PixelDirect direct;
     long generation;
     String sourceId = "";
     boolean prepared;
-    private boolean reportedProgress;
     private JSONObject props;
     private volatile boolean released;
     private final Runnable progress = this::progress;
+    private boolean framesWanted;
+    private final Choreographer.FrameCallback framePulse = this::frame;
 
     PixelPlayback(Activity activity, PixelVideoComponent owner) {
         this.activity = activity;
@@ -62,113 +57,103 @@ final class PixelPlayback {
     void apply(JSONObject next, long version) throws Exception {
         JSONObject source = next.optJSONObject("source");
         String id = source == null ? "" : source.getString("id");
-        String url = source == null ? "" : source.getString("url");
-        boolean changed = version != generation;
-        if (changed) {
-            releasePlayer();
+        if (version != generation) {
+            releaseSource();
             generation = version;
             sourceId = id;
-            reportedProgress = false;
             output.sourceChanged();
         }
         props = next;
         output.root.setAlpha(next.getBoolean("active") ? 1f : 0f);
-        if (source == null || url.isEmpty()) return;
-        if (player == null && changed) create(url, version, source.optString("frameSource", ""));
-        controls();
-    }
-    private void create(String url, long version, String frames) throws Exception {
-        final MediaPlayer candidate = new MediaPlayer();
-        player = candidate;
-        candidate.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build());
-        if (frames.isEmpty()) throw new java.io.IOException("Android playback requires a frame source");
-        direct = new PixelDirect(this, version, frames);
-        candidate.setVolume(0f, 0f);
-        output.prepare();
-        candidate.setOnPreparedListener(ready -> {
-            if (!current(ready, version)) return;
+        if (source == null) return;
+        if (direct == null) {
+            String frames = source.optString("frameSource", "");
+            if (frames.isEmpty()) throw new java.io.IOException("Android playback requires a frame source");
+            direct = new PixelDirect(this, version, frames);
+            output.prepare();
             prepared = true;
+            emit("loadStart");
             direct.prepared();
-            reapplyControls();
-        });
-        candidate.setOnCompletionListener(video -> { if (current(video, version)) { audio.abandon(); direct.ended(); } });
-        candidate.setOnSeekCompleteListener(video -> { if (current(video, version)) seeks.complete(); });
-        candidate.setOnInfoListener((video, what, extra) -> {
-            if (!current(video, version)) return true;
-            if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) direct.audioBuffering(true);
-            if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) direct.audioBuffering(false);
-            return false;
-        });
-        candidate.setOnErrorListener((video, what, extra) -> {
-            if (current(video, version)) { audio.abandon(); error("decoderFailed", "MediaPlayer error " + what + "/" + extra); }
-            return true;
-        });
-        emit("loadStart");
-        candidate.setDataSource(activity, Uri.parse(url));
-        candidate.prepareAsync();
-    }
-    private boolean current(MediaPlayer video, long version) { return !released && video == player && generation == version; }
-    private void controls() throws JSONException {
-        handler.removeCallbacks(progress);
-        if (player == null || !prepared || props == null) return;
-        boolean play = props.getBoolean("active") && !props.getBoolean("paused") && direct.mayPlay();
-        float volume = props.getBoolean("muted") ? 0f : (float) props.getDouble("volume");
-        player.setVolume(direct.mayPlay() ? volume : 0f, direct.mayPlay() ? volume : 0f);
-        if (!play) {
-            if (player.isPlaying()) player.pause();
-            audio.update(false);
-        } else if (!audio.interrupted) {
-            if (!player.isPlaying()) player.start();
-            // setPlaybackParams starts a paused player; defer speed until playback.
-            float speed = (float) props.getDouble("rate");
-            if (Math.abs(player.getPlaybackParams().getSpeed() - speed) > 0.0001f) player.setPlaybackParams(new PlaybackParams().allowDefaults().setSpeed(speed));
-            audio.update(true);
         }
-        if (props.getBoolean("active")) handler.postDelayed(progress, interval());
-        direct.wake();
+        controls(true);
+    }
+    private void controls(boolean claimOwner) throws Exception {
+        handler.removeCallbacks(progress);
+        if (!prepared || direct == null || props == null) return;
+        if (!claimOwner && !direct.isOwner()) { audio.abandon(); return; }
+        boolean wanted = props.getBoolean("active") && !props.getBoolean("paused") && direct.mayPlay();
+        if (!wanted) audio.update(false);
+        else if (!audio.interrupted) audio.update(true);
+        boolean playing = wanted && !audio.interrupted && audio.granted();
+        direct.control(playing, (float) props.getDouble("volume"), props.getBoolean("muted"), props.getDouble("rate"), claimOwner);
+        updateFrames(playing);
+        if (framesWanted) handler.postDelayed(progress, interval());
     }
     private int interval() { return props == null ? 250 : Math.max(16, Math.min(10_000, props.optInt("progressIntervalMs", 250))); }
     void reapplyControls() {
         try {
-            String latest=owner.latestState(generation);
-            if (latest == null) return; // A newer source or disposal owns subsequent controls.
-            props=new JSONObject(latest);
-            controls();
-        } catch (Exception error) { error("decoderFailed", "MediaPlayer could not restore playback controls"); }
+            String latest = owner.latestState(generation);
+            if (latest == null) return;
+            props = new JSONObject(latest);
+            controls(false);
+        } catch (Exception error) { error("decoderFailed", "Native PCM controls could not be restored"); }
+    }
+    void interruptAudio() {
+        if (direct == null || props == null) return;
+        try { direct.control(false, (float) props.getDouble("volume"), props.getBoolean("muted"), props.getDouble("rate"), false); }
+        catch (Exception error) { error("decoderFailed", "Native PCM interruption failed"); }
+        updateFrames(false);
+    }
+    private void updateFrames(boolean playing) {
+        boolean wanted = active() && direct != null && (playing || direct.needsFrames());
+        if (wanted == framesWanted) return;
+        framesWanted = wanted;
+        if (wanted) Choreographer.getInstance().postFrameCallback(framePulse);
+        else Choreographer.getInstance().removeFrameCallback(framePulse);
+    }
+    private void frame(long ignoredFrameTimeNanos) {
+        if (!framesWanted || released || direct == null) return;
+        try {
+            if (!direct.isOwner()) { stopFrames(); return; }
+            output.frame();
+            owner.frameTick();
+            Choreographer.getInstance().postFrameCallback(framePulse);
+        } catch (Exception error) { stopFrames(); error("decoderFailed", "Display scheduling failed"); }
+    }
+    private void stopFrames() {
+        framesWanted = false;
+        Choreographer.getInstance().removeFrameCallback(framePulse);
     }
     private void progress() {
-        if (released || player == null || !prepared || props == null || !props.optBoolean("active")) return;
+        if (released || !prepared || direct == null || props == null || !active()) return;
         try {
-            int position = Math.max(0, player.getCurrentPosition());
-            if (!reportedProgress && position > 0) {
-                reportedProgress = true;
-                android.util.Log.i("HongguoVideo", "First native progress generation=" + generation + " positionMs=" + position);
-            }
-            emit("progress", "positionMs", position, "durationMs", duration(player));
-        }
-        catch (RuntimeException error) { error("decoderFailed", "MediaPlayer position is unavailable"); return; }
-        handler.postDelayed(progress, interval());
+            JSONObject status = direct.status();
+            emit("progress", "positionMs", status.getLong("positionMs"), "durationMs", status.opt("durationMs"));
+            direct.audioBuffering(status.getBoolean("isBuffering"));
+            if (status.getBoolean("isEnded")) { audio.abandon(); direct.ended(); updateFrames(false); }
+        } catch (Exception error) { error("decoderFailed", "Native PCM position is unavailable"); return; }
+        if (framesWanted) handler.postDelayed(progress, interval());
     }
     void emit(String type, Object... fields) { owner.event(PixelJson.event(type, sourceId, fields)); }
-    private static Object duration(MediaPlayer video) { int value=video.getDuration(); return value>0 ? value : JSONObject.NULL; }
-    Object duration() { return duration(player); }
+    Object duration() {
+        try { return direct == null ? JSONObject.NULL : direct.status().opt("durationMs"); }
+        catch (Exception error) { error("decoderFailed", "Native media duration is unavailable"); return JSONObject.NULL; }
+    }
     boolean active() { return props != null && props.optBoolean("active"); }
     void error(String code, String detail) { if (!released) emit("error", "code", code, "detail", detail); }
-    private void releasePlayer() {
+    private void releaseSource() {
+        stopFrames();
         handler.removeCallbacks(progress);
         seeks.clear();
         prepared = false;
         audio.abandon();
-        MediaPlayer previous = player;
-        player = null;
-        // Retire the frame consumer before releasing its audio clock.
         if (direct != null) { direct.close(); direct = null; }
-        if (previous != null) previous.release();
     }
     void release() {
         if (released) return;
         released = true;
-        releasePlayer();
+        releaseSource();
+        audio.release();
         output.release();
         handler.removeCallbacksAndMessages(null);
     }

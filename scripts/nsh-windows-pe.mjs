@@ -13,6 +13,8 @@ const RESOURCE_HEADER_BYTES = 16;
 const RESOURCE_ENTRY_BYTES = 8;
 const RESOURCE_TYPES = { icon: 3, groupIcon: 14, manifest: 24 };
 const DYNAMIC_CRT = /^(?:msvcp.*|msvcr.*|vcruntime.*|ucrtbase(?:d)?|api-ms-win-crt-.*)\.dll$/i;
+const SYSTEM_MEDIA = /^(?:mf[\w]*|evr|msmpeg2[av]dec)\.dll$/i;
+const WEBVIEW_LOADER = /^WebView2Loader\.dll$/i;
 
 function requirePe(condition, message) {
   if (!condition) throw new Error(`Invalid Windows PE: ${message}`);
@@ -26,7 +28,7 @@ function range(buffer, offset, length) {
   return buffer.subarray(offset, offset + length);
 }
 
-export function validateWindowsPe(buffer) {
+function inspectWindowsImage(buffer, dll) {
   const dos = range(buffer, 0, 64);
   requirePe(dos.toString('ascii', 0, 2) === 'MZ', 'missing DOS signature');
   const pe = dos.readUInt32LE(60);
@@ -35,16 +37,14 @@ export function validateWindowsPe(buffer) {
   requirePe(coff.readUInt16LE(0) === AMD64, 'expected AMD64 desktop executable');
   const characteristics = coff.readUInt16LE(18);
   requirePe(
-    characteristics & IMAGE_EXECUTABLE && !(characteristics & IMAGE_DLL),
-    'expected executable image',
+    characteristics & IMAGE_EXECUTABLE && Boolean(characteristics & IMAGE_DLL) === dll,
+    dll ? 'expected DLL image' : 'expected executable image',
   );
   const sectionCount = coff.readUInt16LE(2);
   requirePe(sectionCount > 0 && sectionCount <= 96, 'invalid section count');
   const optionalSize = coff.readUInt16LE(16);
   const optional = range(buffer, pe + 24, optionalSize);
   requirePe(optional.length >= 136 && optional.readUInt16LE(0) === PE32_PLUS, 'expected PE32+');
-  requirePe(optional.readUInt16LE(68) === WINDOWS_GUI, 'expected Windows GUI subsystem');
-  requirePe(optional.readBigUInt64LE(72) >= MIN_STACK_BYTES, 'desktop stack must retain 8 MiB');
   const directoryCount = optional.readUInt32LE(108);
   requirePe(
     directoryCount >= 3 && 112 + directoryCount * 8 <= optional.length,
@@ -71,7 +71,22 @@ export function validateWindowsPe(buffer) {
   });
   const imports = readImports(directory(1), map, 20, 12);
   if (directoryCount > 13) imports.push(...readImports(directory(13), map, 32, 4));
-  for (const name of imports) requirePe(!DYNAMIC_CRT.test(name), `dynamic CRT dependency: ${name}`);
+  for (const name of imports) {
+    requirePe(!DYNAMIC_CRT.test(name), `dynamic CRT dependency: ${name}`);
+    requirePe(!SYSTEM_MEDIA.test(name), `system media dependency: ${name}`);
+    requirePe(!WEBVIEW_LOADER.test(name), `WebView2 loader dependency: ${name}`);
+  }
+  return { imports, optional, directory, map };
+}
+
+export function readWindowsImports(buffer, { dll = false } = {}) {
+  return inspectWindowsImage(buffer, dll).imports;
+}
+
+export function validateWindowsPe(buffer) {
+  const { imports, optional, directory, map } = inspectWindowsImage(buffer, false);
+  requirePe(optional.readUInt16LE(68) === WINDOWS_GUI, 'expected Windows GUI subsystem');
+  requirePe(optional.readBigUInt64LE(72) >= MIN_STACK_BYTES, 'desktop stack must retain 8 MiB');
   const resources = directory(2);
   requirePe(resources.rva && resources.size, 'missing icon and manifest resources');
   const root = map(resources.rva, resources.size);

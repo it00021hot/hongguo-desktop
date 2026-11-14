@@ -3,7 +3,7 @@ use hongguo_nsh_video_android as video;
 use nsh_android_runtime::jni::{
     JNIEnv,
     objects::{JClass, JObject, JString},
-    sys::{jboolean, jint, jlong, jstring},
+    sys::{jboolean, jdouble, jfloat, jint, jlong, jstring},
 };
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -62,18 +62,68 @@ pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeOpen(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeClock(
+pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeControl(
     mut env: JNIEnv<'_>,
     _: JClass<'_>,
     handle: jlong,
     generation: jlong,
-    position: jlong,
-    seeking: jboolean,
+    playing: jboolean,
+    volume: jfloat,
+    muted: jboolean,
+    rate: jdouble,
+    claim_owner: jboolean,
 ) {
     io_boundary(&mut env, |_| {
-        video::direct_clock(handle, generation, position, seeking != 0);
-        Ok(())
+        video::direct_control(
+            handle,
+            generation,
+            playing != 0,
+            volume,
+            muted != 0,
+            rate,
+            claim_owner != 0,
+        )
     });
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeStatus(
+    mut env: JNIEnv<'_>,
+    _: JClass<'_>,
+    handle: jlong,
+    generation: jlong,
+) -> jstring {
+    io_boundary(&mut env, |env| {
+        env.new_string(video::direct_status(handle, generation)?)
+            .map(JString::into_raw)
+            .map_err(|error| error.to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativePresented(
+    mut env: JNIEnv<'_>,
+    _: JClass<'_>,
+    handle: jlong,
+    epoch: jlong,
+    generation: jlong,
+    serial: jlong,
+) -> jboolean {
+    io_boundary(&mut env, |_| {
+        video::direct_presented(handle, epoch, generation, serial).map(u8::from)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeIsOwner(
+    mut env: JNIEnv<'_>,
+    _: JClass<'_>,
+    handle: jlong,
+    epoch: jlong,
+) -> jboolean {
+    io_boundary(&mut env, |_| {
+        video::direct_is_owner(handle, epoch).map(u8::from)
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -152,10 +202,12 @@ pub extern "system" fn Java_com_hongguo_nsh_PixelVideoComponent_nativeViewport(
     surface: JObject<'_>,
     width: jint,
     height: jint,
-) {
+    hdr_peak: jfloat,
+    float_output: jboolean,
+) -> jlong {
     boundary(&mut env, |env| {
-        video::viewport(env, handle, surface, width, height)
-    });
+        video::viewport(env, handle, surface, width, height, hdr_peak, float_output)
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_hongguo_nsh_PixelVideoComponent_nativeEvent(
@@ -167,6 +219,18 @@ pub extern "system" fn Java_com_hongguo_nsh_PixelVideoComponent_nativeEvent(
 ) {
     boundary(&mut env, |env| video::event(env, handle, generation, json));
 }
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_hongguo_nsh_PixelVideoComponent_nativeFrameTick(
+    mut env: JNIEnv<'_>,
+    _: JClass<'_>,
+    handle: jlong,
+) {
+    boundary(&mut env, |_| {
+        video::frame_tick(handle);
+        Ok(())
+    });
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_hongguo_nsh_PixelVideoComponent_nativeDestroy(
     mut env: JNIEnv<'_>,

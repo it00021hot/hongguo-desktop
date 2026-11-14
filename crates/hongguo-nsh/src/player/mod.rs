@@ -316,6 +316,7 @@ fn content(
             KeyOptions {
                 when: nsh_core::keymap::When::NotEditing,
                 repeat: false,
+                ..Default::default()
             },
             move |_| {
                 chrome.wake();

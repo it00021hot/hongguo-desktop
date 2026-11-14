@@ -8,22 +8,33 @@
 # 用 [target.<triple>] 而不是 [build]：后者对所有目标生效，写死
 # x86-64-v3 会让 aarch64 直接编译失败，而 bundle.targets 里有 dmg。
 
-# Windows x64：Haswell 2013+ / Zen 2015+
+# Windows x64 uses baseline instructions; codecs select SIMD at runtime.
 # /STACK：MSVC 链接器默认主线程栈仅 1MB，而 GPUI 元素竞技场（gpui-pre
 # 0.3.x）每层元素布局是 ~14 个嵌套帧，debug 帧又大——播放控制栏树深过
 # 1e6c349 复杂度后 1MB 直接打穿（0xC00000FD 栈溢出闪退，悬停播放区必
 # 现）。抬到 8MB（对齐 Rust 线程默认栈；只改保留值，不提交不占内存）。
 [target.x86_64-pc-windows-msvc]
 rustflags = [
-    "-C", "target-cpu=x86-64-v3",
+    "-C", "target-cpu=x86-64",
+    "-C", "target-feature=+crt-static",
     "-C", "link-arg=/STACK:8388608",
 ]
 
 # Apple Silicon：M1 及以后的机器全都支持 apple-m1 这一档，不用再细分
 [target.aarch64-apple-darwin]
-rustflags = ["-C", "target-cpu=apple-m1"]
+rustflags = [
+    "-C", "target-cpu=apple-m1",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../Frameworks",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../native-media/aarch64-apple-darwin/ffmpeg-9.0.2/lib",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../../native-media/aarch64-apple-darwin/ffmpeg-9.0.2/lib",
+]
 
 # Intel Mac：只上 v2（SSE4.2/POPCNT）。v3 的 AVX2 会挡掉 2012-2013 年的机器，
 # 而 tauri.conf.json 的 minimumSystemVersion 仍是 10.15，那些机器跑得动。
 [target.x86_64-apple-darwin]
-rustflags = ["-C", "target-cpu=x86-64-v2"]
+rustflags = [
+    "-C", "target-cpu=x86-64-v2",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../Frameworks",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../native-media/x86_64-apple-darwin/ffmpeg-9.0.2/lib",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../../native-media/x86_64-apple-darwin/ffmpeg-9.0.2/lib",
+]

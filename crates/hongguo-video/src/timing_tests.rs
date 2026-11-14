@@ -335,3 +335,36 @@ fn timeline_shifts_by_edit_media_start() {
     let dts = info.timeline().0;
     assert!((dts[0] - pts[0]).abs() < 1e-12);
 }
+
+#[test]
+fn negative_composition_times_preserve_the_shared_movie_origin() {
+    let mut video = cfr_info(2);
+    video.ctts = vec![(2, -512)];
+    let audio = cfr_info(2);
+
+    assert!((video.sample_pts()[0] + 1.0 / 30.0).abs() < 1e-9);
+    assert_eq!(audio.sample_pts()[0], 0.0);
+}
+
+#[test]
+fn edit_lists_retain_empty_segments_and_non_unit_rates() {
+    let mut entries = Vec::new();
+    for (duration, media_time, rate) in [
+        (10u32, -1i32, 0x1_0000i32),
+        (100, 1024, 0),
+        (50, 2048, 0x2_0000),
+    ] {
+        entries.extend(duration.to_be_bytes());
+        entries.extend(media_time.to_be_bytes());
+        entries.extend(rate.to_be_bytes());
+    }
+    let data = full(b"elst", 0, &entry_count_and_entries(&entries));
+    let mut info = cfr_info(2);
+
+    read_elst(&data, 8, data.len() - 8, &mut info);
+
+    assert_eq!(info.edit_list.len(), 3);
+    assert_eq!(info.edit_list[0].media_time, -1);
+    assert_eq!(info.edit_list[1].media_rate, 0);
+    assert_eq!(info.edit_list[2].media_rate, 0x2_0000);
+}

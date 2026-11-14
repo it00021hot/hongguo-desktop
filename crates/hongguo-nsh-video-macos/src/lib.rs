@@ -43,6 +43,7 @@ impl NativeComponent for PixelVideo {
             .as_ref()
             .map(|source| source.id.clone())
             .unwrap_or_default();
+        let playing = state.source.is_some() && state.active && !state.paused;
         let result = self
             .controller
             .as_ref()
@@ -54,6 +55,8 @@ impl NativeComponent for PixelVideo {
             });
         if let Err((code, detail)) = result {
             self.fail(code, detail);
+        } else {
+            self.view.set_clock_active(playing);
         }
     }
 
@@ -94,6 +97,7 @@ impl PixelVideo {
 
 impl Drop for PixelVideo {
     fn drop(&mut self) {
+        self.view.detach_clock();
         if let Ok(controller) = &self.controller {
             controller.stop();
         }
@@ -101,14 +105,33 @@ impl Drop for PixelVideo {
 }
 
 pub fn register(components: &Components) {
+    register_factory(components, |_| {});
+}
+
+#[cfg(feature = "test-support")]
+pub fn register_with_observer(
+    components: &Components,
+    observer: impl Fn(hongguo_nsh_video_apple::PresentationObservation) + Send + Sync + 'static,
+) {
+    let observer = std::sync::Arc::new(observer);
+    register_factory(components, move |controller| {
+        let observer = observer.clone();
+        controller.set_presentation_observer(move |observation| observer(observation));
+    });
+}
+
+fn register_factory(components: &Components, configure: impl Fn(&PlayerController) + 'static) {
     components.register(
         COMPONENT_NAME,
-        Rc::new(|context: ComponentContext| {
+        Rc::new(move |context: ComponentContext| {
             let mtm =
                 MainThreadMarker::new().expect("NSH native factory runs on the AppKit thread");
             let view = view::PixelView::new(mtm);
             let sink = context.clone();
             let controller = view.attach(move |event| emit(&sink, event));
+            if let Ok(controller) = &controller {
+                configure(controller);
+            }
             Box::new(PixelVideo {
                 view,
                 controller,

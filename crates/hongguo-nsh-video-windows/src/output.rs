@@ -2,7 +2,7 @@
 //! displayed-frame reference drops; D2D Flush precedes the next D3D11 fence/copy.
 
 use crate::{FrameLease, SharedFrames, VideoError, draw};
-use hongguo_nsh_video_api::{ErrorCode, ResizeMode};
+use hongguo_nsh_video_api::{ErrorCode, FrameMetadata, ResizeMode};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -20,13 +20,20 @@ pub(crate) struct OutputSlot {
 }
 
 impl OutputSlot {
+    pub(crate) fn gpu_busy(&self) -> bool {
+        self.shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .busy()
+    }
     pub fn new(
         device: Arc<wgpu::Device>,
         decoder: &ID3D11Device,
         width: u32,
         height: u32,
+        format: wgpu::TextureFormat,
     ) -> Result<Arc<Self>, VideoError> {
-        let shared = SharedFrames::new(device, decoder, width, height)?;
+        let shared = SharedFrames::with_format(device, decoder, width, height, format)?;
         let texture = shared.native_texture().clone();
         Ok(Arc::new(Self {
             shared: Mutex::new(shared),
@@ -75,6 +82,7 @@ impl OutputLease {
     pub fn submit(
         self,
         input: FrameLease,
+        metadata: FrameMetadata,
         mut encoder: wgpu::CommandEncoder,
         queue: &wgpu::Queue,
         complete: impl FnOnce(Arc<DisplayedFrame>) + Send + 'static,
@@ -89,7 +97,7 @@ impl OutputLease {
             frame.completed();
             drop(input);
             drop(frame);
-            complete(Arc::new(DisplayedFrame { slot }));
+            complete(Arc::new(DisplayedFrame { slot, metadata }));
         });
     }
 
@@ -105,9 +113,13 @@ impl OutputLease {
 
 pub struct DisplayedFrame {
     slot: Arc<OutputSlot>,
+    metadata: FrameMetadata,
 }
 
 impl DisplayedFrame {
+    pub(crate) fn metadata(&self) -> FrameMetadata {
+        self.metadata
+    }
     pub fn same_slot(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.slot, &other.slot)
     }
@@ -122,7 +134,14 @@ impl DisplayedFrame {
         target: (f32, f32),
         mode: ResizeMode,
     ) -> Result<(), VideoError> {
-        draw::draw_bitmap(dc, bitmap, self.slot.size, target, mode)?;
+        draw::draw_bitmap(
+            dc,
+            bitmap,
+            self.slot.size,
+            self.metadata.sample_aspect_ratio,
+            target,
+            mode,
+        )?;
         // SAFETY: Flush submits all reads of this shared frame before its reference
         // may be dropped and a later D3D11 output clear/fence is queued.
         unsafe { dc.Flush(None, None) }

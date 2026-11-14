@@ -2,6 +2,45 @@
 //! [`super::sample_table`] 只负责「样本在哪、多大」；拼接还需要「样本占多久」——四张表同属时间轴一件事，放在一起。
 
 use super::sample_table::TrackInfo;
+use hongguo_common::{AppError, AppResult};
+
+#[path = "movie_timeline.rs"]
+mod movie;
+pub use movie::{EditSegment, MappedTime, MediaPosition, MovieTimeline, TrackTimeline};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EditEntry {
+    pub segment_duration: u64,
+    pub media_time: i64,
+    /// Signed 16.16 fixed point playback rate; zero means dwell.
+    pub media_rate: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MediaSampleTime {
+    pub dts: i64,
+    pub pts: i64,
+    pub duration: u32,
+}
+
+pub fn movie_timescale(data: &[u8]) -> AppResult<u32> {
+    use crate::r#box::find_box;
+    let Some(header) = find_box(data, 0, data.len(), "mvhd") else {
+        return Ok(0);
+    };
+    let offset = match data.get(header.start) {
+        Some(0) => 12,
+        Some(1) => 20,
+        _ => return Err(AppError::Media("unsupported mvhd version".into())),
+    };
+    let bytes = data
+        .get(header.start + offset..header.start + offset + 4)
+        .filter(|_| offset + 4 <= header.size)
+        .ok_or_else(|| AppError::Media("truncated mvhd timescale".into()))?;
+    Ok(u32::from_be_bytes(bytes.try_into().map_err(|_| {
+        AppError::Media("invalid mvhd timescale".into())
+    })?))
+}
 
 /// 从 `stts` 读每段的样本数与时长增量：version+flags(4) | entry_count(4) | entries(sample_count 4, sample_delta 4)。
 /// 游程条数与 `stsz` 样本数不一定是同一套：一条条目代表连续一段等长样本，合并按段拼、不按样本展开。
@@ -83,8 +122,12 @@ pub(super) fn read_elst(data: &[u8], start: usize, size: usize, info: &mut Track
         return;
     }
     let version = data[start];
+    if version > 1 {
+        return;
+    }
     let entry = if version == 1 { 20 } else { 12 };
     let count = read_entry_count(data, start, size, entry);
+    info.edit_list.clear();
     for i in 0..count {
         let at = start + 8 + i * entry;
         if at + entry > start + size {
@@ -96,82 +139,123 @@ pub(super) fn read_elst(data: &[u8], start: usize, size: usize, info: &mut Track
             // media_time 是 SInt32：零扩展会把全 1 读成天文数字正数，空 edit 判定就废了
             i64::from(u32_at(data, at + 4) as i32)
         };
-        if media_time < 0 {
-            continue; // 空 edit：只占 presentation 时长，不指媒体位置
-        }
-        info.edit_media_start_secs = media_time as f64 / f64::from(info.media_timescale);
-        break; // 首个非空 edit 即锚点，多 edit 流按首个锚定
+        let segment_duration = if version == 1 {
+            u64_at(data, at)
+        } else {
+            u64::from(u32_at(data, at))
+        };
+        let rate_at = at + entry - 4;
+        info.edit_list.push(EditEntry {
+            segment_duration,
+            media_time,
+            media_rate: u32_at(data, rate_at) as i32,
+        });
     }
+    info.edit_media_start_secs = info
+        .edit_list
+        .iter()
+        .find(|edit| edit.media_time >= 0)
+        .map_or(0.0, |edit| {
+            edit.media_time as f64 / f64::from(info.media_timescale)
+        });
 }
 
 impl TrackInfo {
-    /// 每样本的**解码**时间与**显示**时间（秒），一次算齐；两者都按**解码序**（样本序）索引、同量平移过。
-    /// 带 B 帧的码流里 **pts 不保证递增**（「显示序下递增」才是不变量，由消费方保证）；**dts 恒递增**，是消费方重排的安全水位。
-    fn timeline(&self) -> (Vec<f64>, Vec<f64>) {
+    /// Raw signed media ticks, in decode order. No edit or per-track origin shift is applied.
+    pub fn media_sample_timeline(&self) -> AppResult<Vec<MediaSampleTime>> {
+        let samples = self.samples.len() as u64;
+        let timing_count: u64 = self.stts.iter().map(|run| u64::from(run.0)).sum();
+        let composition_count: u64 = self.ctts.iter().map(|run| u64::from(run.0)).sum();
+        if self.media_timescale == 0
+            || timing_count != samples
+            || (!self.ctts.is_empty() && composition_count != samples)
+        {
+            return Err(AppError::Media("inconsistent media sample timeline".into()));
+        }
+        if self.stts.iter().any(|run| run.1 == 0) {
+            return Err(AppError::Media("zero sample duration".into()));
+        }
+        self.sample_times()
+    }
+
+    fn sample_times(&self) -> AppResult<Vec<MediaSampleTime>> {
         let total = self.samples.len();
         if self.stts.is_empty() || self.media_timescale == 0 || total == 0 {
-            return (Vec::new(), Vec::new());
+            return Ok(Vec::new());
         }
-        let timescale = f64::from(self.media_timescale);
-
-        // 展开到与样本数等长：表短于样本数按最后一段 delta 延续，表长则多出段丢弃（不一致只出现在畸形文件上）
-        let mut dts = Vec::with_capacity(total);
-        let mut pts = Vec::with_capacity(total);
-        let mut cursor = 0u64;
+        let mut times = Vec::with_capacity(total);
+        let mut cursor = 0i64;
         let mut last_delta = 1u32;
         let mut ctts = self
             .ctts
             .iter()
             .flat_map(|&(c, o)| std::iter::repeat_n(o, c as usize));
         for &(count, delta) in &self.stts {
-            last_delta = delta.max(1);
+            last_delta = delta;
             for _ in 0..count {
-                if dts.len() == total {
+                if times.len() == total {
                     break;
                 }
                 let offset = i64::from(ctts.next().unwrap_or(0));
-                dts.push(cursor as f64 / timescale);
-                pts.push((cursor as i64 + offset) as f64 / timescale);
-                cursor += u64::from(delta);
+                let pts = cursor
+                    .checked_add(offset)
+                    .ok_or_else(|| AppError::Media("sample timestamp overflow".into()))?;
+                times.push(MediaSampleTime {
+                    dts: cursor,
+                    pts,
+                    duration: delta,
+                });
+                cursor = cursor
+                    .checked_add(i64::from(delta))
+                    .ok_or_else(|| AppError::Media("sample timestamp overflow".into()))?;
             }
-            if dts.len() == total {
+            if times.len() == total {
                 break;
             }
         }
-        while dts.len() < total {
-            let t = cursor as f64 / timescale;
-            dts.push(t);
-            pts.push(t);
-            cursor += u64::from(last_delta);
+        while times.len() < total {
+            times.push(MediaSampleTime {
+                dts: cursor,
+                pts: cursor,
+                duration: last_delta,
+            });
+            cursor = cursor
+                .checked_add(i64::from(last_delta))
+                .ok_or_else(|| AppError::Media("sample timestamp overflow".into()))?;
         }
+        Ok(times)
+    }
 
-        // 负偏移（version 1 ctts）会让最早显示时间落在 0 之前（音轨与封装层都从 0 起步）：
-        // 整体等量平移不破坏相对时序；dts 跟着同量平移，两轴必须对齐否则「显示-解码」差失真
-        if let Some(min) = pts.iter().cloned().reduce(f64::min)
-            && min < 0.0
-        {
-            for p in &mut pts {
-                *p -= min;
+    fn timeline(&self) -> (Vec<f64>, Vec<f64>) {
+        let times = self.sample_times().unwrap_or_default();
+        let timescale = f64::from(self.media_timescale);
+        let mut movie_start = 0u64;
+        let mut media_rate = 1.0;
+        for edit in &self.edit_list {
+            if edit.media_time >= 0 {
+                media_rate = f64::from(edit.media_rate) / 65_536.0;
+                break;
             }
-            for d in &mut dts {
-                *d -= min;
-            }
+            movie_start = movie_start.saturating_add(edit.segment_duration);
         }
-
-        // elst：presentation 时间轴 = 媒体时间轴 − edit 起点（AAC priming 由容器的 edit list 表达）。
-        // 减出负值是刻意的——起点前样本（编码器前置静音）就该落在 0 之前，由消费方按「pts ≥ 起点」过滤
-        if self.edit_media_start_secs > 0.0 {
-            for p in &mut pts {
-                *p -= self.edit_media_start_secs;
+        let movie_start = if self.movie_timescale > 0 {
+            movie_start as f64 / f64::from(self.movie_timescale)
+        } else {
+            0.0
+        };
+        let map = |ticks: i64| {
+            if media_rate == 0.0 {
+                movie_start
+            } else {
+                movie_start + (ticks as f64 / timescale - self.edit_media_start_secs) / media_rate
             }
-            for d in &mut dts {
-                *d -= self.edit_media_start_secs;
-            }
-        }
+        };
+        let dts = times.iter().map(|time| map(time.dts)).collect();
+        let pts = times.iter().map(|time| map(time.pts)).collect();
         (dts, pts)
     }
 
-    /// 每样本的**显示**时间戳（秒），由 `stts`/`ctts` 游程展开、整体平移到 0 起点。
+    /// 每样本的显示时间（秒），保留负时间；多段 edit 的完整映射使用 MovieTimeline。
     /// 按**解码序**索引，带 B 帧时不保证按下标递增；没有 `stts`、时基为 0 或没有样本时返回空 `Vec`（调用方回落合成轴）。
     pub fn sample_pts(&self) -> Vec<f64> {
         self.timeline().1

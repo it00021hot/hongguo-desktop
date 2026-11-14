@@ -7,12 +7,29 @@ pub const EVENT_NAME: &str = "video";
 pub const STATE_PROP: &str = "state";
 pub const SEEK_COMMAND: &str = "seek";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct FrameMetadata {
+    pub generation: u64,
+    pub serial: u64,
     pub pts_ms: u64,
     pub width: u32,
     pub height: u32,
+    /// Pixel width / height after applying the display rotation.
+    pub sample_aspect_ratio: (u32, u32),
+}
+
+impl Default for FrameMetadata {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            serial: 0,
+            pts_ms: 0,
+            width: 0,
+            height: 0,
+            sample_aspect_ratio: (1, 1),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

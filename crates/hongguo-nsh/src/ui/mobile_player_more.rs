@@ -57,6 +57,7 @@ pub(crate) fn mobile_player_more(
                 KeyOptions {
                     when: nsh_core::keymap::When::NotEditing,
                     repeat: true,
+                    ..Default::default()
                 },
                 |_| {},
             );

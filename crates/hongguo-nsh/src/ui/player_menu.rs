@@ -235,6 +235,7 @@ fn panel(
                 KeyOptions {
                     when: nsh_core::keymap::When::NotEditing,
                     repeat: true,
+                    ..Default::default()
                 },
                 |_| {},
             );

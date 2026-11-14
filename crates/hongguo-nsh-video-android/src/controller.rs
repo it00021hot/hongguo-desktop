@@ -13,6 +13,8 @@ pub(crate) struct Viewport {
     pub width: u32,
     pub height: u32,
     pub version: u64,
+    pub hdr_peak: f32,
+    pub float_output: bool,
 }
 pub(crate) struct Mailbox {
     pub props: VideoProps,
@@ -27,8 +29,6 @@ pub(crate) struct Shared {
     pub revision: AtomicU64,
     pub stop: AtomicBool,
     pub direct: Mutex<Option<crate::direct::DirectSlot>>,
-    pub audio_position: AtomicU64,
-    pub audio_seeking: AtomicBool,
     wake: SyncSender<()>,
 }
 impl Shared {
@@ -46,8 +46,6 @@ impl Shared {
             revision: AtomicU64::new(0),
             stop: AtomicBool::new(false),
             direct: Mutex::new(None),
-            audio_position: AtomicU64::new(0),
-            audio_seeking: AtomicBool::new(false),
             wake,
         });
         let worker = shared.clone();
@@ -92,7 +90,7 @@ impl Shared {
         self.revision.fetch_add(1, Ordering::Release);
         drop(mailbox);
         if let Some(direct) = old_direct {
-            direct.lease.close();
+            direct.close();
         }
         self.wake();
         Ok(())
@@ -100,7 +98,7 @@ impl Shared {
     pub fn close_direct(&self) {
         let old = self.direct.lock().expect("Android direct source").take();
         if let Some(direct) = old {
-            direct.lease.close();
+            direct.close();
         }
     }
     pub fn event(&self, generation: u64, event: VideoEvent) {

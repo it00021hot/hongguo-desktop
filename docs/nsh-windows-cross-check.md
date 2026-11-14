@@ -5,7 +5,8 @@
 
 ## 工具链依据
 
-锁定的 `vvdec-sys 0.7.0` 内置 VVdec 3.0.0。LLVM 的
+当前播放使用仓库内固定的 `hongguo-vvdec-sys` / VVdeC 3.2.1。原
+`vvdec-sys 0.7.0` 的 3.0.0 构建曾遇到 LLVM 诊断差异：LLVM 的
 [PR 111434](https://github.com/llvm/llvm-project/pull/111434) 于 2024-10-28 新增非平凡类型
 memcpy/memset 诊断；[PR 117387](https://github.com/llvm/llvm-project/pull/117387)
 将其独立为 `-Wnontrivial-memcall`。LLVM 19 发布分支早于这两项改动。
@@ -39,8 +40,8 @@ NSH_WINDOWS_RC="$(brew --prefix llvm)/bin/llvm-rc" \
 RC_x86_64_pc_windows_msvc="$(brew --prefix llvm)/bin/llvm-rc" \
 CMAKE_C_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" \
 CMAKE_CXX_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" \
-CFLAGS=/arch:AVX2 CXXFLAGS=/arch:AVX2 \
-CARGO_INCREMENTAL=0 SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL=always \
+RUSTFLAGS='-C target-cpu=x86-64 -C link-arg=/STACK:8388608 -C target-feature=+crt-static' \
+CARGO_INCREMENTAL=0 \
 PKG_CONFIG_ALLOW_CROSS_x86_64_pc_windows_msvc=1 \
 PKG_CONFIG_PATH= \
 PKG_CONFIG_LIBDIR_x86_64_pc_windows_msvc="$PWD/target/nsh-cross-tools/pkgconfig" \
@@ -48,9 +49,11 @@ cargo xwin clippy -p hongguo-nsh --all-targets --target x86_64-pc-windows-msvc \
   -- -D warnings -D clippy::allow_attributes
 ```
 
-空的目标 pkg-config 默认目录阻止查询宿主库；system-deps 在编译 VVdec 后自行将生成的目标
-`libvvdec.pc` 所在目录加入查询路径，不依赖 Cargo 输出目录的哈希。
-`/arch:AVX2` 对应仓库已有 Windows x86-64-v3 下限，供 CMake 的 SSE/AVX 检测使用。
+空的目标 pkg-config 默认目录阻止查询宿主库；当前 VVdeC 从仓库固定源码静态构建，
+不探测系统 libvvdec。FFmpeg 只读取目标三元组对应的受控 prefix。
+Rust 与 FFmpeg 使用 x86-64 基线；VVdeC 按 SIMD 源文件启用 SSE4.1/AVX2 并在运行期分派，
+不得通过全局 `CFLAGS=/arch:AVX2` 抬高最低 CPU。clang-cl 的基线修订见
+[`SOURCE.md`](../crates/hongguo-vvdec-sys/SOURCE.md)。
 
 [clang 适配器](../scripts/nsh-windows-clang.cjs) 接收 CMake 的原 compiler 参数，
 实际调用 `NSH_WINDOWS_CLANG`。原有前端 `-W*` 与 `-pedantic` 统一转为 `/clang:` 形式以保序，
@@ -65,7 +68,7 @@ CMake 的 launcher 环境变量只在首次配置时初始化；已有缓存会�
 若旧缓存指向临时 launcher，先更新同一份自有构建缓存，再运行上面的检查命令：
 
 ```sh
-for NSH_VVDEC_CACHE in target/x86_64-pc-windows-msvc/debug/build/vvdec-sys-*/out/build/CMakeCache.txt; do
+for NSH_VVDEC_CACHE in target/x86_64-pc-windows-msvc/debug/build/hongguo-vvdec-sys-*/out/build/CMakeCache.txt; do
   test -f "$NSH_VVDEC_CACHE" || continue
   NSH_VVDEC_SOURCE="$(rg '^CMAKE_HOME_DIRECTORY:INTERNAL=' "$NSH_VVDEC_CACHE")"
   NSH_VVDEC_SOURCE="${NSH_VVDEC_SOURCE#*=}"
@@ -87,7 +90,7 @@ replace native Windows packaging or runtime validation.
 
 Windows 原生打包仍在 Windows 宿主执行 `make nsh-package TARGET=windows`。
 它通过 [NSH 专用配置](../crates/hongguo-nsh/windows-build.toml) 追加静态 CRT，
-与根配置合并后保留 x86-64-v3 和 8MiB stack，不改变 Tauri/GPUI 的构建策略。
+与根配置合并后保留 x86-64 基线和 8MiB stack。
 `build.rs` 复用已锁定、MIT 许可的 embed-resource 3.0.12，硬要求编译现有应用 ICO 和
 GUI manifest；编译失败或缺资源编译器时直接失败，不使用旧资源继续打包。
 
@@ -109,11 +112,10 @@ NSH_WINDOWS_RC="$(brew --prefix llvm)/bin/llvm-rc" \
 RC_x86_64_pc_windows_msvc="$(brew --prefix llvm)/bin/llvm-rc" \
 CMAKE_C_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" \
 CMAKE_CXX_COMPILER_LAUNCHER="$PWD/scripts/nsh-windows-clang.cjs" \
-CFLAGS=/arch:AVX2 CXXFLAGS=/arch:AVX2 \
-RUSTFLAGS='-C target-cpu=x86-64-v3 -C link-arg=/STACK:8388608 -C target-feature=+crt-static' \
+RUSTFLAGS='-C target-cpu=x86-64 -C link-arg=/STACK:8388608 -C target-feature=+crt-static' \
 XWIN_CACHE_DIR="$HOME/Library/Caches/hongguo-nsh-xwin-symbols" \
 XWIN_INCLUDE_DEBUG_SYMBOLS=true XWIN_ARCH=x86_64 \
-CARGO_INCREMENTAL=0 SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL=always \
+CARGO_INCREMENTAL=0 \
 PKG_CONFIG_ALLOW_CROSS_x86_64_pc_windows_msvc=1 PKG_CONFIG_PATH= \
 PKG_CONFIG_LIBDIR_x86_64_pc_windows_msvc="$PWD/target/nsh-cross-tools/pkgconfig" \
 cargo xwin build --release -p hongguo-nsh --bin hongguo-nsh --target x86_64-pc-windows-msvc

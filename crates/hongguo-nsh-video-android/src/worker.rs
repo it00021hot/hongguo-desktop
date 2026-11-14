@@ -25,6 +25,8 @@ struct Worker {
     budget: FrameBudget,
     holding: Option<bool>,
     terminal: bool,
+    gpu_recovery: Option<(bool, String)>,
+    video_gap: bool,
 }
 pub(crate) fn run(shared: Arc<Shared>, receiver: Receiver<()>) {
     let vm = shared.bridge.vm.clone();
@@ -50,16 +52,22 @@ pub(crate) fn run(shared: Arc<Shared>, receiver: Receiver<()>) {
         budget: FrameBudget::default(),
         holding: None,
         terminal: false,
+        gpu_recovery: None,
+        video_gap: false,
     };
     while !worker.shared.stop.load(Ordering::Acquire) {
         worker.step();
-        if worker.enabled() {
+        if worker
+            .renderer
+            .as_ref()
+            .is_some_and(|renderer| !renderer.ready())
+        {
             let _ = receiver.recv_timeout(FRAME_TICK);
         } else if receiver.recv().is_err() {
             break;
         }
     }
-    // Java calls destroy only after releasing its sole MediaPlayer on the UI thread.
+    // Java retires playback controls before destroying this native renderer.
     worker.renderer.take();
 }
 impl Worker {
@@ -103,17 +111,42 @@ impl Worker {
             )
         };
         if revision != self.revision {
+            self.video_gap = false;
             let source_changed = props.source != self.props.source;
             let changed_mode = props.enhancement != self.props.enhancement;
             let props_changed = props != self.props;
-            if source_changed || !props.active || viewport.version != self.viewport.version {
+            let window_changed = viewport.window.as_ref().map(|window| window.ptr())
+                != self.viewport.window.as_ref().map(|window| window.ptr());
+            if source_changed {
                 self.detach();
+            }
+            if window_changed && let Some(renderer) = &mut self.renderer {
+                renderer.output_changed(viewport.version);
+            }
+            if window_changed
+                && let (Some(renderer), Some(window)) =
+                    (&mut self.renderer, viewport.window.clone())
+                && let Err(detail) = renderer.surface.rebind(
+                    window,
+                    viewport.width,
+                    viewport.height,
+                    viewport.hdr_peak,
+                )
+            {
+                let had_surface = renderer.has_decoder_surface();
+                if let Err(error) = self.shared.bridge.direct_holding(self.generation, true) {
+                    self.error(ErrorCode::GpuFailed, error);
+                    return;
+                }
+                self.renderer.take();
+                self.gpu_recovery = Some((had_surface, detail));
             }
             if source_changed || changed_mode {
                 self.failed = None;
                 self.status = None;
             }
             if source_changed {
+                self.gpu_recovery = None;
                 self.terminal = false;
                 self.budget = FrameBudget::default();
                 self.requested_output = false;
@@ -145,6 +178,20 @@ impl Worker {
             return;
         }
         if let Some(lease) = self.direct_lease() {
+            match lease.is_control_owner() {
+                Ok(true) => {}
+                Ok(false) => {
+                    if let Some(renderer) = &mut self.renderer {
+                        let _ = renderer.poll();
+                        renderer.binding_lost();
+                    }
+                    return;
+                }
+                Err(error) => {
+                    self.error(ErrorCode::DecoderFailed, error);
+                    return;
+                }
+            }
             match lease.info() {
                 Ok(Some(info)) => size = Some((info.width, info.height)),
                 Ok(None) => {}
@@ -153,6 +200,12 @@ impl Worker {
                     return;
                 }
             }
+        }
+        if !self.enabled() {
+            if let Some(renderer) = &mut self.renderer {
+                let _ = renderer.poll();
+            }
+            return;
         }
         if size != self.video_size {
             self.detach();
@@ -167,6 +220,9 @@ impl Worker {
             self.error(ErrorCode::SeekFailed, error);
         }
         if self.prepare_renderer(size) {
+            if self.viewport.window.is_none() {
+                return;
+            }
             self.draw();
         }
     }
@@ -175,11 +231,13 @@ impl Worker {
         self.renderer.take();
     }
     fn fallback(&mut self, code: ErrorCode, detail: String) {
-        self.fallback_for(self.props.enhancement, code, detail);
+        self.fallback_for(self.options(), code, detail);
     }
     fn fallback_for(&mut self, settings: Enhancement, code: ErrorCode, detail: String) {
         self.shared.bridge.clear_exception();
-        if !(settings.anime4k_on || settings.sharpen_on) {
+        if code == ErrorCode::FrameFormatUnsupported
+            || !(settings.anime4k_on || settings.sharpen_on)
+        {
             self.error(code, detail);
             return;
         }
@@ -192,6 +250,7 @@ impl Worker {
             return;
         }
         self.terminal = true;
+        self.renderer.take();
         if self.current()
             && let Some(source) = &self.props.source
         {

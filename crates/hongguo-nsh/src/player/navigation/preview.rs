@@ -32,6 +32,7 @@ pub(crate) fn build() -> View {
                     KeyOptions {
                         when: When::NotEditing,
                         repeat: false,
+                        ..Default::default()
                     },
                     move |_| controller.step_keyboard(direction),
                 );
@@ -41,6 +42,7 @@ pub(crate) fn build() -> View {
                 KeyOptions {
                     when: When::NotEditing,
                     repeat: false,
+                    ..Default::default()
                 },
                 move |_| controller.exit_binge(),
             );

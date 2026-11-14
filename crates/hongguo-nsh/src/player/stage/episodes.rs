@@ -101,6 +101,7 @@ fn grid(state: MenuState, busy: Memo<bool>, action: impl Fn(MenuAction) + Copy +
                 KeyOptions {
                     when: nsh_core::keymap::When::NotEditing,
                     repeat: true,
+                    ..Default::default()
                 },
                 move |_| {
                     if busy.get_untracked() {

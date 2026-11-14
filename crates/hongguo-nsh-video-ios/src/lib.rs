@@ -68,6 +68,8 @@ impl NativeComponent for PixelVideo {
             });
         if let Err((code, detail)) = result {
             self.fail(code, detail);
+        } else {
+            self.view.set_clock_active(self.wants_audio);
         }
         if !self.wants_audio
             && let Err(error) = self.audio.release()
@@ -127,6 +129,7 @@ impl PixelVideo {
 
 impl Drop for PixelVideo {
     fn drop(&mut self) {
+        self.view.detach_clock();
         if let Ok(controller) = &self.controller {
             controller.stop();
         }

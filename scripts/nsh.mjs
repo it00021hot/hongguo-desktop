@@ -1,9 +1,20 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildIos } from './nsh-ios.mjs';
 import { buildDesktop } from './nsh-desktop.mjs';
+import { copyMediaNotices, prepareNativeMedia, verifyNshWorkspace } from './nsh-native-media.mjs';
+import { copyAndroidRelinkHost, finishRelink, relinkEnvironment } from './nsh-relink.mjs';
+import { auditAndroidElf, verifyAndroidApk } from './nsh-android-audit.mjs';
+import { buildAndroidRuntime } from './nsh-android-runtime.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const app = join(root, 'crates/hongguo-nsh');
@@ -34,11 +45,15 @@ function distribution() {
     .split(delimiter)
     .map((directory) => join(directory, process.platform === 'win32' ? 'nsh.exe' : 'nsh'))
     .find(existsSync);
-  if (!binary) throw new Error('NSH 0.4.0 is required');
+  if (!binary) throw new Error('NSH 0.5.0 is required');
   return dirname(dirname(realpathSync(binary)));
 }
 
 function android() {
+  const aar = requirePath(
+    join(distribution(), 'embed/android/nsh.aar'),
+    'NSH 0.5.0 Android embedding SDK (install nsh-embed-android.zip from NSH v0.5.0)',
+  );
   const sdk = requirePath(process.env.ANDROID_HOME, 'ANDROID_HOME');
   const ndk = requirePath(process.env.NDK_HOME, 'NDK_HOME');
   const host = { darwin: 'darwin-x86_64', linux: 'linux-x86_64', win32: 'windows-x86_64' }[
@@ -49,9 +64,11 @@ function android() {
     join(ndk, 'toolchains/llvm/prebuilt', host, 'bin'),
     'NDK LLVM toolchain',
   );
-  const suffix = process.platform === 'win32' ? '.cmd' : '';
   const linker = requirePath(
-    join(toolchain, `aarch64-linux-android${ANDROID_MIN_SDK}-clang${suffix}`),
+    join(
+      toolchain,
+      process.platform === 'win32' ? 'clang.exe' : `aarch64-linux-android${ANDROID_MIN_SDK}-clang`,
+    ),
     'Android clang',
   );
   const archiver = requirePath(
@@ -67,21 +84,71 @@ function android() {
     CC_aarch64_linux_android: linker,
     CXX_aarch64_linux_android: join(
       toolchain,
-      `aarch64-linux-android${ANDROID_MIN_SDK}-clang++${suffix}`,
+      process.platform === 'win32'
+        ? 'clang++.exe'
+        : `aarch64-linux-android${ANDROID_MIN_SDK}-clang++`,
     ),
     AR_aarch64_linux_android: archiver,
     BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android: `--sysroot="${join(toolchain, '../sysroot').replaceAll('\\', '/')}" --target=aarch64-linux-android${ANDROID_MIN_SDK}`,
-    SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL: 'always',
-    PKG_CONFIG_ALLOW_CROSS_aarch64_linux_android: '1',
-    PKG_CONFIG_LIBDIR_aarch64_linux_android: '',
-    SYSTEM_DEPS_LIBVVDEC_LIB: 'vvdec c++_static c++abi m dl unwind',
   };
+  const linkerArgs =
+    process.platform === 'win32' ? [`--target=aarch64-linux-android${ANDROID_MIN_SDK}`] : [];
+  if (linkerArgs.length) {
+    environment.CFLAGS_aarch64_linux_android = linkerArgs.join(' ');
+    environment.CXXFLAGS_aarch64_linux_android = linkerArgs.join(' ');
+  }
+  verifyNshWorkspace();
+  const output = join(root, 'target/nsh-android');
+  buildAndroidRuntime(
+    {
+      aar,
+      sdk,
+      output,
+      sourceDirectory: join(root, 'vendor/nsh/crates/nsh-platform-android/java'),
+    },
+    run,
+  );
+  environment.HONGGUO_FFMPEG_PREFIX = prepareNativeMedia('aarch64-linux-android', run);
+  const relink = join(output, 'Relink');
+  Object.assign(
+    environment,
+    relinkEnvironment(
+      'aarch64-linux-android',
+      environment.HONGGUO_FFMPEG_PREFIX,
+      linker,
+      ndk,
+      relink,
+      linkerArgs,
+    ),
+  );
   run(
     'cargo',
     ['build', '-p', 'hongguo-nsh-android', '--target', 'aarch64-linux-android', '--release'],
     environment,
   );
-  const output = join(root, 'target/nsh-android');
+  finishRelink(
+    join(root, 'target/aarch64-linux-android/release/libhongguo_nsh_android.so'),
+    'aarch64-linux-android',
+    relink,
+  );
+  copyMediaNotices(
+    environment.HONGGUO_FFMPEG_PREFIX,
+    'aarch64-linux-android',
+    join(output, 'NativeMedia'),
+  );
+  copyFileSync(
+    join(output, 'runtime-source.json'),
+    join(output, 'NativeMedia/NSH-runtime-source.json'),
+  );
+  const nativeBinary = join(root, 'target/aarch64-linux-android/release/libhongguo_nsh_android.so');
+  const inspection = auditAndroidElf(
+    nativeBinary,
+    join(toolchain, process.platform === 'win32' ? 'llvm-readelf.exe' : 'llvm-readelf'),
+  );
+  writeFileSync(
+    join(output, 'NativeMedia/runtime-inspection.json'),
+    JSON.stringify(inspection, null, 2),
+  );
   const drawable = join(output, 'resources/drawable');
   mkdirSync(drawable, { recursive: true });
   copyFileSync(
@@ -91,16 +158,9 @@ function android() {
   const libraries = join(output, 'jniLibs/arm64-v8a');
   mkdirSync(libraries, { recursive: true });
   copyFileSync(
-    join(root, 'target/aarch64-linux-android/release/libnsh.so'),
+    join(root, 'target/aarch64-linux-android/release/libhongguo_nsh_android.so'),
     join(libraries, 'libnsh.so'),
   );
-  const runtime = join(output, 'nsh-runtime.aar');
-  const unpacked = join(output, 'runtime-java');
-  mkdirSync(unpacked, { recursive: true });
-  const aar = requirePath(join(distribution(), 'embed/android/nsh.aar'), 'NSH Android runtime');
-  const entries = ['classes.jar', 'AndroidManifest.xml', 'R.txt', 'proguard.txt'];
-  run('jar', ['xf', aar, ...entries], {}, unpacked);
-  run('jar', ['cf', runtime, ...entries], {}, unpacked);
   const project = join(root, 'crates/hongguo-nsh-android/android');
   const wrapper = join(project, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
   if (process.platform === 'win32') {
@@ -112,6 +172,7 @@ function android() {
         wrapper,
         `-PappVersion=${version}`,
         `-PappMinSdk=${ANDROID_MIN_SDK}`,
+        'clean',
         'assembleDebug',
       ],
       environment,
@@ -120,11 +181,37 @@ function android() {
   } else {
     run(
       'sh',
-      [wrapper, `-PappVersion=${version}`, `-PappMinSdk=${ANDROID_MIN_SDK}`, 'assembleDebug'],
+      [
+        wrapper,
+        `-PappVersion=${version}`,
+        `-PappMinSdk=${ANDROID_MIN_SDK}`,
+        'clean',
+        'assembleDebug',
+      ],
       environment,
       project,
     );
   }
+  copyAndroidRelinkHost(relink, output);
+  copyFileSync(
+    join(project, 'app/build/outputs/apk/debug/app-debug.apk'),
+    join(output, 'Hongguo.apk'),
+  );
+  verifyAndroidApk(join(output, 'Hongguo.apk'), nativeBinary, sdk, run);
+  const archive = join(root, 'target/Hongguo-android.zip');
+  run('jar', [
+    'cf',
+    archive,
+    '-C',
+    output,
+    'Hongguo.apk',
+    '-C',
+    output,
+    'NativeMedia',
+    '-C',
+    output,
+    'Relink',
+  ]);
 }
 
 function ios() {
@@ -134,6 +221,10 @@ function ios() {
 function preview() {
   const platform = { darwin: 'macos', win32: 'windows' }[process.platform];
   if (!platform) throw new Error('Layout preview currently requires macOS or Windows');
+  const cli = spawnSync('nsh', ['--version'], { encoding: 'utf8' });
+  if (cli.error) throw cli.error;
+  if (cli.status !== 0 || !/^nsh 0\.5\.0\b/.test(cli.stdout.trim()))
+    throw new Error('Preview requires the matching NSH 0.5.0 CLI');
   requirePath(
     join(root, 'target/nsh-layout-fixtures/player-frame.png'),
     'Local layout preview frame',
@@ -144,6 +235,7 @@ function preview() {
 }
 
 try {
+  if (['run', 'check', 'test', 'preview'].includes(action)) verifyNshWorkspace();
   if (action === 'check')
     run('cargo', [
       'check',
@@ -158,10 +250,16 @@ try {
   else if (action === 'test') {
     run(process.execPath, [
       '--test',
+      'scripts/nsh-android.test.mjs',
+      'scripts/nsh-android-audit.test.mjs',
+      'scripts/nsh-android-runtime.test.mjs',
       'scripts/nsh-desktop.test.mjs',
       'scripts/nsh-ios.test.mjs',
       'scripts/nsh-windows-adapters.test.mjs',
       'scripts/nsh-windows-pe.test.mjs',
+      'scripts/native-media.test.mjs',
+      'scripts/native-media-relink.test.mjs',
+      'scripts/nsh-native-media.test.mjs',
     ]);
     run('cargo', ['test', '-p', 'hongguo-nsh', '--lib']);
   } else if (action === 'preview') preview();

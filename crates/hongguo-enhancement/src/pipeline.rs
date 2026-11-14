@@ -32,10 +32,12 @@ pub struct Pipeline {
     queue: Arc<wgpu::Queue>,
     normalized: wgpu::Texture,
     converted: wgpu::ComputePipeline,
+    linearize: wgpu::ComputePipeline,
     sharpen: wgpu::ComputePipeline,
     params: wgpu::Buffer,
     cnn: Option<Model>,
     sharpened: Option<wgpu::Texture>,
+    linearized: Option<wgpu::Texture>,
 }
 
 impl Pipeline {
@@ -61,6 +63,11 @@ impl Pipeline {
                 include_str!("../shaders/sharpen.wgsl"),
                 "video-sharpen",
             );
+            let linearize = compute(
+                &device,
+                include_str!("../shaders/linearize.wgsl"),
+                "video-linearize",
+            );
             let params = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("sharpen-parameters"),
                 size: 16,
@@ -72,10 +79,12 @@ impl Pipeline {
                 queue,
                 normalized,
                 converted,
+                linearize,
                 sharpen,
                 params,
                 cnn: None,
                 sharpened: None,
+                linearized: None,
             })
         })
         .await
@@ -102,6 +111,23 @@ impl Pipeline {
         }
         let scale = if options.anime4k_on { 2 } else { 1 };
         let output_size = (width * scale, height * scale);
+        if options.anime4k_on {
+            if self.linearized.is_none() {
+                self.linearized = Some(
+                    checked(&self.device, || {
+                        Ok(texture(
+                            &self.device,
+                            output_size.0,
+                            output_size.1,
+                            "video-cnn-linear",
+                        ))
+                    })
+                    .await?,
+                );
+            }
+        } else {
+            self.linearized = None;
+        }
         if options.sharpen_on {
             if self
                 .sharpened
@@ -125,7 +151,7 @@ impl Pipeline {
         }
         let values = [
             f32::from(options.strength) / f32::from(MAX_STRENGTH) * MAX_SHARPEN_AMOUNT,
-            0.0,
+            if options.anime4k_on { 1.0 } else { 0.0 },
             0.0,
             0.0,
         ];
@@ -142,11 +168,23 @@ impl Pipeline {
         encoder: &mut wgpu::CommandEncoder,
         input: &wgpu::TextureView,
     ) -> Result<FrameOutput, Error> {
-        self.pass(encoder, &self.converted, input, &self.normalized, false);
+        self.pass(encoder, &self.converted, input, &self.normalized, true);
         let base = self.cnn.as_ref().map_or_else(
             || self.normalized.clone(),
             |model| model.encode(encoder, &self.normalized.create_view(&Default::default())),
         );
+        let base = if let Some(linearized) = &self.linearized {
+            self.pass(
+                encoder,
+                &self.linearize,
+                &base.create_view(&Default::default()),
+                linearized,
+                false,
+            );
+            linearized.clone()
+        } else {
+            base
+        };
         if let Some(target) = &self.sharpened {
             self.pass(
                 encoder,

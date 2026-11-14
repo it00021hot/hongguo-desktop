@@ -1,6 +1,6 @@
 use crate::{
     AudioOutput, ImportedFrame, OutputError,
-    controller::{Layers, Shared, Viewport},
+    controller::{Layers, SeekCommand, Shared, Viewport},
     render::Renderer,
 };
 use hongguo_enhancement::FrameBudget;
@@ -10,11 +10,7 @@ use hongguo_nsh_video_api::{
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_quartz_core::CATransaction;
 use std::{
-    sync::{
-        Arc,
-        atomic::Ordering,
-        mpsc::{Receiver, TryRecvError},
-    },
+    sync::{Arc, atomic::Ordering, mpsc::Receiver},
     time::{Duration, Instant},
 };
 
@@ -33,15 +29,18 @@ struct Worker {
     video: Option<AudioOutput>,
     renderer: Option<Renderer>,
     frame: Option<ImportedFrame>,
-    pending_seek: Option<(Seek, Receiver<bool>, Instant)>,
+    pending_seek: Option<(Seek, Instant)>,
     last_metadata: Option<(Option<u64>, u32, u32)>,
     buffered: bool,
+    video_gap: bool,
     progress_at: Instant,
     dirty: bool,
-    failed: Option<Enhancement>,
+    gpu_rebuilds: u8,
     budget: FrameBudget,
     phase: Option<(EnhancementPhase, Enhancement, Option<ErrorCode>, String)>,
     direct: Option<direct::Direct>,
+    #[cfg(feature = "test-support")]
+    presentation_context: Option<crate::diagnostics::PresentationContext>,
 }
 
 pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, emit: Sink) {
@@ -60,16 +59,28 @@ pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, e
         pending_seek: None,
         last_metadata: None,
         buffered: false,
+        video_gap: false,
         progress_at: Instant::now(),
         dirty: false,
-        failed: None,
+        gpu_rebuilds: 0,
         budget: FrameBudget::default(),
         phase: None,
         direct: None,
+        #[cfg(feature = "test-support")]
+        presentation_context: None,
     };
     while !worker.shared.stop.load(Ordering::Acquire) {
         objc2::rc::autoreleasepool(|_| worker.step());
-        let _ = receiver.recv_timeout(FRAME_TICK);
+        if worker.needs_tick() {
+            let interval = if worker.shared.display_clock_active.load(Ordering::Acquire) {
+                Duration::from_millis(u64::from(worker.props.progress_interval_ms))
+            } else {
+                FRAME_TICK
+            };
+            let _ = receiver.recv_timeout(interval);
+        } else if receiver.recv().is_err() {
+            break;
+        }
     }
     worker.layers.set_visible(false);
     worker.video.take();
@@ -82,6 +93,30 @@ pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, e
 }
 
 impl Worker {
+    fn needs_tick(&self) -> bool {
+        let retiring = self.renderer.as_ref().is_some_and(Renderer::gpu_pending);
+        if !self.props.active {
+            return retiring;
+        }
+        let Some(video) = &self.video else {
+            return false;
+        };
+        if !video.control().frames.is_control_owner().unwrap_or(false) {
+            return retiring;
+        }
+        self.dirty
+            || self.pending_seek.is_some()
+            || (self.frame.is_none() && !self.video_gap)
+            || self
+                .renderer
+                .as_ref()
+                .is_some_and(|renderer| !renderer.idle())
+            || self
+                .direct
+                .as_ref()
+                .is_some_and(|direct| direct.frames.holding().unwrap_or(false))
+            || (!self.props.paused && !video.ended())
+    }
     fn event(&self, event: VideoEvent) {
         if !self.shared.stop.load(Ordering::Acquire) {
             (self.emit)(event);
@@ -138,12 +173,25 @@ impl Worker {
         if let Some(request) = snapshot.3 {
             self.seek(request);
         }
-        if !self.props.active || self.video.is_none() {
+        if !self.props.active
+            || self
+                .video
+                .as_ref()
+                .is_none_or(|video| !video.control().frames.is_control_owner().unwrap_or(false))
+        {
+            // Old consumers cannot publish/control the replacement session,
+            // but their submitted work still needs polling for lease release.
+            if let Some(renderer) = &mut self.renderer {
+                let _ = renderer.poll();
+            }
             return;
         }
         self.confirm_direct_seek();
         self.poll_render();
         self.read_video();
+        if self.video_gap {
+            return;
+        }
         self.prepare_direct();
         if self.dirty && self.frame.is_some() {
             self.draw();
@@ -151,15 +199,12 @@ impl Worker {
     }
 
     fn apply(&mut self, props: VideoProps, viewport: Viewport, revision: u64) {
-        let changed_source = self.source != props.source;
+        let changed_source = self.source != props.source || (self.video.is_none() && props.active);
         let changed_active = self.props.active != props.active;
         let changed_mode = self.props.enhancement.anime4k_on != props.enhancement.anime4k_on
             || self.props.enhancement.sharpen_on != props.enhancement.sharpen_on;
         if changed_mode {
             self.budget = FrameBudget::default();
-        }
-        if self.props.enhancement != props.enhancement || (changed_active && props.active) {
-            self.failed = None;
         }
         self.props = props;
         self.revision = revision;
@@ -179,6 +224,7 @@ impl Worker {
             CATransaction::flush();
         }
         if changed_source {
+            self.shared.preferred_frame_rate.store(0, Ordering::Release);
             self.layers.set_visible(false);
             self.video.take();
             self.renderer.take();
@@ -187,17 +233,20 @@ impl Worker {
             self.direct.take();
             self.source = self.props.source.clone();
             self.last_metadata = None;
+            self.video_gap = false;
             self.phase = None;
-            self.failed = None;
+            self.gpu_rebuilds = 0;
             self.budget = FrameBudget::default();
-            if let Some(source) = &self.source {
+            if let Some(source) = &self.source
+                && self.props.active
+            {
                 self.event(VideoEvent::LoadStart {
                     source_id: source.id.clone(),
                 });
-                match AudioOutput::open_audio(&source.url) {
+                match AudioOutput::open_audio(source.frame_source.as_deref().unwrap_or_default()) {
                     Ok(video) => {
-                        if let Some(url) = &source.frame_source {
-                            match direct::Direct::open(url) {
+                        if source.frame_source.is_some() {
+                            match direct::Direct::open(video.control().frames.clone()) {
                                 Ok(direct) => self.direct = Some(direct),
                                 Err(error) => {
                                     self.event(VideoEvent::Error {
@@ -230,13 +279,31 @@ impl Worker {
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .props
                             .clone();
-                        if current.source == self.source {
+                        if current.source == self.source
+                            && !self.shared.stop.load(Ordering::Acquire)
+                        {
                             control.apply(&current);
                         } else {
                             control.pause();
                         }
                         *target = Some((source.id.clone(), control));
                         drop(target);
+                        if let Some(direct) = &self.direct {
+                            match direct.frames.configure_decoder_if_owner(Some(
+                                crate::native::AppleDevice::lease(),
+                            )) {
+                                Ok(true) => {}
+                                Ok(false) => return,
+                                Err(error) => {
+                                    self.event(VideoEvent::Error {
+                                        source_id: source.id.clone(),
+                                        code: ErrorCode::DecoderFailed,
+                                        detail: error,
+                                    });
+                                    return;
+                                }
+                            }
+                        }
                         self.video = Some(video);
                     }
                     Err(error) => self.event(VideoEvent::Error {
@@ -265,7 +332,8 @@ impl Worker {
         }
     }
 
-    fn seek(&mut self, request: Seek) {
+    fn seek(&mut self, command: SeekCommand) {
+        let request = command.request;
         if self
             .source
             .as_ref()
@@ -275,35 +343,53 @@ impl Worker {
         }
         self.layers.set_visible(false);
         self.frame.take();
+        if self.direct.is_none() {
+            self.event(VideoEvent::Error {
+                source_id: request.source_id,
+                code: ErrorCode::SeekFailed,
+                detail: "native playback session is unavailable".into(),
+            });
+            return;
+        }
         if let Some(direct) = &mut self.direct {
-            if let Err(error) = direct.seek(request.position_ms) {
-                self.direct_failure(OutputError::new(ErrorCode::SeekFailed, error));
-                return;
+            match direct.seek(request.position_ms, command.generation) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    self.direct_failure(OutputError::new(ErrorCode::SeekFailed, error));
+                    return;
+                }
             }
             if let Some(video) = &self.video {
                 video.hold(true);
             }
         }
-        if let Some(video) = &self.video {
-            match video.seek(request.position_ms) {
-                Ok(completion) => self.pending_seek = Some((request, completion, Instant::now())),
-                Err(error) => self.direct_failure(error),
-            }
-        }
+        self.pending_seek = Some((request, Instant::now()));
     }
 
     fn poll_render(&mut self) {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        match renderer.poll() {
+        let completed = renderer.poll();
+        #[cfg(feature = "test-support")]
+        if let Ok(Some(completed)) = &completed {
+            self.observe_presentation(completed);
+        }
+        match completed {
             Ok(Some(completed)) if completed.epoch == self.revision => {
+                if !completed.displayed {
+                    if let Some(direct) = &mut self.direct {
+                        direct.submitted = None;
+                    }
+                    self.dirty = true;
+                    return;
+                }
                 self.present_direct();
                 if self.video.is_none() {
                     return;
                 }
                 if (self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on)
-                    && self.failed != Some(self.props.enhancement)
                     && self.budget.observe(completed.elapsed)
                 {
                     self.fallback(OutputError::new(
@@ -312,16 +398,14 @@ impl Worker {
                     ));
                     return;
                 }
-                if self.failed != Some(self.props.enhancement) {
-                    self.status(
-                        if self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on {
-                            EnhancementPhase::Ready
-                        } else {
-                            EnhancementPhase::Idle
-                        },
-                        None,
-                    );
-                }
+                self.status(
+                    if self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on {
+                        EnhancementPhase::Ready
+                    } else {
+                        EnhancementPhase::Idle
+                    },
+                    None,
+                );
             }
             Ok(_) => {}
             Err(error) => self.fallback(error),
@@ -333,7 +417,31 @@ impl Worker {
             return;
         };
         let source_id = self.source_id();
+        let gap = video.video_gap();
+        if gap {
+            self.layers.set_visible(false);
+            self.frame.take();
+            self.dirty = false;
+            if let Some(direct) = &mut self.direct {
+                direct.blank();
+            }
+            if video.hold(false) {
+                self.shared.reconcile_playback(&source_id);
+            }
+        }
+        self.video_gap = gap;
         let duration_ms = video.duration_ms();
+        if self.last_metadata.is_none()
+            && let Ok(Some(info)) = video.control().frames.info()
+        {
+            self.last_metadata = Some((duration_ms, info.width, info.height));
+            self.event(VideoEvent::Load {
+                source_id: source_id.clone(),
+                duration_ms,
+                width: info.width,
+                height: info.height,
+            });
+        }
         if let Some((previous, width, height)) = self.last_metadata
             && previous != duration_ms
         {
@@ -374,16 +482,33 @@ impl Worker {
                 });
             }
         }
-        self.read_direct();
+        if !gap {
+            self.read_direct();
+        }
     }
 
-    fn enhanced(&self) -> bool {
-        self.props.enhancement.anime4k_on || self.props.enhancement.sharpen_on
+    #[cfg(feature = "test-support")]
+    fn observe_presentation(&mut self, completed: &crate::render::Completed) {
+        let Some(timing) = completed.presentation_timing else {
+            return;
+        };
+        let Some(context) = self.presentation_context.take() else {
+            return;
+        };
+        let observer = self
+            .shared
+            .presentation_observer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(observer) = observer {
+            observer(context.observe(timing, completed.elapsed));
+        }
     }
 
     fn draw(&mut self) {
         // Hidden Metal layers can finish GPU work without displaying the drawable.
-        // Reveal before acquisition; the audio gate still waits for GPU completion.
+        // Reveal before acquisition; the audio gate waits for native presentation.
         self.layers.set_visible(self.props.active);
         let frame = self.frame.as_ref().expect("caller checked current frame");
         let shared = self.shared.clone();
@@ -404,11 +529,7 @@ impl Worker {
                 .draw(
                     frame,
                     self.viewport,
-                    if self.failed == Some(self.props.enhancement) {
-                        Enhancement::default()
-                    } else {
-                        self.props.enhancement
-                    },
+                    self.props.enhancement,
                     self.props.resize_mode,
                     revision,
                     valid,
@@ -416,11 +537,36 @@ impl Worker {
         );
         match result {
             Ok(true) => {
+                #[cfg(feature = "test-support")]
+                {
+                    let metadata = frame.metadata();
+                    let exact = self
+                        .direct
+                        .as_ref()
+                        .and_then(|direct| direct.native.as_ref())
+                        .filter(|native| {
+                            native.generation == metadata.generation
+                                && native.serial == metadata.serial
+                        });
+                    self.presentation_context = Some(crate::diagnostics::PresentationContext {
+                        source_id: self.source_id(),
+                        revision,
+                        generation: Some(metadata.generation),
+                        serial: Some(metadata.serial),
+                        pts_secs: exact.map(|native| native.pts_secs),
+                    });
+                }
                 if let Some(direct) = &mut self.direct {
                     direct.submitted = direct
-                        .pixels
+                        .native
                         .as_ref()
-                        .map(|frame| (frame.generation, frame.serial));
+                        .map(|frame| (frame.generation, frame.serial))
+                        .or_else(|| {
+                            direct
+                                .pixels
+                                .as_ref()
+                                .map(|frame| (frame.generation, frame.serial))
+                        });
                 }
                 self.dirty = false;
             }

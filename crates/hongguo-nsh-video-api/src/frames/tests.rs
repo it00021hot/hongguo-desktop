@@ -5,8 +5,13 @@ use std::sync::atomic::AtomicU64;
 struct Fake {
     closed: AtomicBool,
     generation: AtomicU64,
+    controls: Mutex<Vec<PlaybackControl>>,
 }
 impl FrameSource for Fake {
+    fn control(&self, intent: PlaybackControl) -> Result<(), String> {
+        self.controls.lock().unwrap().push(intent);
+        Ok(())
+    }
     fn info(&self) -> Result<Option<FrameInfo>, String> {
         Ok(Some(FrameInfo {
             width: 2,
@@ -36,6 +41,46 @@ impl FrameSource for Fake {
     fn close(&self) {
         self.closed.store(true, Ordering::Release);
     }
+}
+
+#[test]
+fn retiring_a_consumer_cannot_pause_or_reconfigure_its_replacement() {
+    let provider = Arc::new(Fake::default());
+    let registration = register_frames(&token(), provider.clone()).unwrap();
+    let old = open_frames(registration.url()).unwrap();
+    let replacement = open_frames(registration.url()).unwrap();
+    let initial = PlaybackControl {
+        playing: true,
+        rate: 1.0,
+        volume: 1.0,
+        muted: false,
+    };
+    let latest = PlaybackControl {
+        rate: 3.0,
+        volume: 0.25,
+        muted: true,
+        ..initial
+    };
+    old.control(initial).unwrap();
+    replacement.control(latest).unwrap();
+    assert!(!old.pause_if_owner().unwrap());
+    assert!(!old.control_if_owner(initial).unwrap());
+    assert_eq!(old.seek_if_owner(42).unwrap(), None);
+    assert!(!old.presented_if_owner(0, 1).unwrap());
+    assert_eq!(provider.generation.load(Ordering::Acquire), 0);
+    assert_eq!(replacement.seek_if_owner(42).unwrap(), Some(1));
+    assert_eq!(
+        provider.controls.lock().unwrap().as_slice(),
+        &[initial, latest]
+    );
+    assert!(replacement.pause_if_owner().unwrap());
+    assert_eq!(
+        *provider.controls.lock().unwrap().last().unwrap(),
+        PlaybackControl {
+            playing: false,
+            ..latest
+        }
+    );
 }
 fn token() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);

@@ -5,6 +5,7 @@ use windows::Win32::Media::MediaFoundation::*;
 use hongguo_common::{AppError, AppResult};
 
 use super::mft::hr;
+use super::runtime;
 use super::sample::{sample_to_bytes, type_stride, video_type};
 
 /// 一帧解码输出：连续 NV12 字节 + 自身 stride（别假设等于 width）。
@@ -37,10 +38,7 @@ impl Decoder {
             .chain(std::iter::once(0))
             .collect();
         unsafe {
-            let reader = hr(
-                MFCreateSourceReaderFromURL(windows::core::PCWSTR(wide.as_ptr()), None),
-                "建 SourceReader",
-            )?;
+            let reader = runtime::source_reader(windows::core::PCWSTR(wide.as_ptr()))?;
             let stream = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
             hr(reader.SetStreamSelection(stream, true), "选视频流")?;
             let nv12 = video_type(MFVideoFormat_NV12)?;

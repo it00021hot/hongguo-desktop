@@ -8,25 +8,27 @@
 
 ## 1. 技术基线与已核实事实
 
-- 本机 `nsh --version` 已确认为 `0.4.0 (e626a8d)`。
+- 本机 `nsh --version` 已升级为 `0.5.0 (f4d68f7)`。
 - 实现采用纯 Rust 模式，从 `nsh init --template rust` 生成的工程接入根 workspace。
   Android/iOS 使用本仓库的独立宿主，在挂载 NSH 根组件前提供系统私有目录，
   不加入 TSX 启动层或 QuickJS。
-  NSH 依赖统一使用 0.4.0，与 CLI 对齐；依赖源以生成物和锁文件为准。
+  NSH 依赖统一使用 0.5.0，与 CLI 对齐；统一锁定官方发布提交
+  `f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1`。
   本机另有 NSH 源码目录，但其工作区版本不同且有未提交修改，不将它作为应用依赖源。
 - NSH 原生视频组件在 Apple 平台使用 AVPlayer，Android 使用 MediaPlayer，
   Windows 使用 Media Foundation。
   这些是播放后端，不代表自动支持所有红果流格式。
-- 0.4.0 的 Linux 文档仍明确列出视频倍速不支持，因此 Linux 整个平台延后，
+- 初版 0.4.0 的 Linux 文档列出视频倍速不支持，因此 Linux 整个平台延后，
   本轮不开发 Linux 播放适配或承担其验收。
 - `hongguo-service` 已无 UI 框架依赖，可以复用；现有 `hongguo-player`
   的真实实现仅覆盖 Windows/macOS，且画面挂接服务于既有壳，不能直接当作四端 NSH 播放器。
 - 现有平台转码实现覆盖 Windows/macOS/Android；本轮需补齐 iOS 的媒体能力。
 
-版本依据：[0.4.0 发布记录](https://github.com/longbridge/nsh/releases/tag/v0.4.0)、
-[0.4.0 Rust 模式](https://github.com/longbridge/nsh/blob/v0.4.0/website/docs/rust.md)、
-[0.4.0 视频后端](https://github.com/longbridge/nsh/blob/v0.4.0/website/docs/web-view-and-video.md)、
-[0.4.0 Linux 限制](https://github.com/longbridge/nsh/blob/v0.4.0/website/docs/linux.md)。
+版本依据：[0.5.0 发布记录](https://github.com/longbridge/nsh/releases/tag/v0.5.0)、
+[0.5.0 Rust 模式](https://github.com/longbridge/nsh/blob/v0.5.0/website/docs/rust.md)、
+[0.5.0 视频后端](https://github.com/longbridge/nsh/blob/v0.5.0/website/docs/web-view-and-video.md)。
+Android embedding SDK 已拆为独立发布资产，安装与校验方式见
+[NSH 开发说明](../.agents/skills/hongguo-dev/references/nsh.md)。
 
 ## 2. 分层与目录归属
 

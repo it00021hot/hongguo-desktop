@@ -97,6 +97,7 @@ pub(super) fn body(
                 KeyOptions {
                     when: nsh_core::keymap::When::NotEditing,
                     repeat: true,
+                    ..Default::default()
                 },
                 move |_| keys.step(delta),
             );

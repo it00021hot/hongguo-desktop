@@ -35,7 +35,7 @@ pub(crate) fn install() -> impl IntoElement {
         })
         .on_native_event(move |event: &nsh_core::element::NativeEvent| {
             if event.name.as_ref() == "activated" {
-                nsh_core::element::desktop::order_front();
+                nsh_core::element::desktop::current_window().focus();
                 return;
             }
             if event.name.as_ref() != "result" {

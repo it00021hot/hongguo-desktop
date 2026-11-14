@@ -1,6 +1,7 @@
 use crate::VideoError;
-use hongguo_nsh_video_api::frames::PixelFrame;
+use hongguo_media_types::{FrameDescriptor, PresentationFrame};
 use hongguo_nsh_video_api::{ErrorCode, FrameMetadata, ResizeMode};
+use nsh_platform_windows::{OutputColorInfo, OutputColorMode};
 use windows::{
     Win32::Graphics::{
         Direct2D::{
@@ -10,10 +11,13 @@ use windows::{
         },
         Direct3D11::{
             D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
-            D3D11_USAGE_DEFAULT, ID3D11Device, ID3D11Multithread, ID3D11Texture2D,
+            D3D11_USAGE_DEFAULT, ID3D11Device, ID3D11Multithread, ID3D11RenderTargetView,
+            ID3D11Texture2D,
         },
         Dxgi::{
-            Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
+            Common::{
+                DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC,
+            },
             IDXGISurface,
         },
     },
@@ -44,12 +48,19 @@ pub fn drawing_device(dc: &ID2D1DeviceContext) -> Result<ID3D11Device, VideoErro
 pub struct RawFrame {
     texture: ID3D11Texture2D,
     bitmap: ID2D1Bitmap1,
+    target: ID3D11RenderTargetView,
     size: (u32, u32),
     metadata: Option<FrameMetadata>,
+    working: Option<(ID3D11Texture2D, ID3D11RenderTargetView)>,
 }
 
 impl RawFrame {
-    pub fn new(dc: &ID2D1DeviceContext, width: u32, height: u32) -> Result<Self, VideoError> {
+    pub fn new(
+        dc: &ID2D1DeviceContext,
+        width: u32,
+        height: u32,
+        mode: OutputColorMode,
+    ) -> Result<Self, VideoError> {
         if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
             return Err(error("invalid native raw frame dimensions"));
         }
@@ -59,7 +70,11 @@ impl RawFrame {
             Height: height,
             MipLevels: 1,
             ArraySize: 1,
-            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            Format: if mode == OutputColorMode::ScRgb {
+                DXGI_FORMAT_R16G16B16A16_FLOAT
+            } else {
+                DXGI_FORMAT_B8G8R8A8_UNORM
+            },
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
                 Quality: 0,
@@ -70,7 +85,7 @@ impl RawFrame {
             MiscFlags: 0,
         };
         // SAFETY: The texture and bitmap both belong to the current D2D drawing device.
-        let (texture, bitmap) = unsafe {
+        let (texture, bitmap, target) = unsafe {
             let mut texture = None;
             device
                 .CreateTexture2D(&description, None, Some(&mut texture))
@@ -78,57 +93,91 @@ impl RawFrame {
             let texture: ID3D11Texture2D =
                 texture.ok_or_else(|| error("D3D11 returned no raw video texture"))?;
             let bitmap = bitmap(dc, &texture)?;
-            (texture, bitmap)
+            let mut target = None;
+            device
+                .CreateRenderTargetView(&texture, None, Some(&mut target))
+                .map_err(error)?;
+            (
+                texture,
+                bitmap,
+                target.ok_or_else(|| error("missing FP16 render target"))?,
+            )
         };
         Ok(Self {
             texture,
             bitmap,
+            target,
             size: (width, height),
             metadata: None,
+            working: None,
         })
     }
 
     pub fn texture(&self) -> &ID3D11Texture2D {
-        &self.texture
+        self.working
+            .as_ref()
+            .map_or(&self.texture, |(texture, _)| texture)
     }
     pub fn metadata(&self) -> Option<FrameMetadata> {
         self.metadata
     }
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+    pub fn has_working(&self) -> bool {
+        self.working.is_some()
+    }
 
-    pub fn upload(&mut self, frame: &PixelFrame) -> Result<(), VideoError> {
-        let row = frame
-            .width
-            .checked_mul(4)
-            .ok_or_else(|| error("BGRA row overflow"))?;
-        let length = u64::from(frame.stride) * u64::from(frame.height);
-        if (frame.width, frame.height) != self.size
-            || frame.stride < row
-            || length > frame.pixels.len() as u64
-        {
-            return Err(error("BGRA frame storage does not match the raw texture"));
+    pub(crate) fn convert(
+        &mut self,
+        dc: &ID2D1DeviceContext,
+        conversion: &mut crate::conversion::Conversion,
+        frame: &PresentationFrame,
+        display: OutputColorInfo,
+        enhance: bool,
+    ) -> Result<(), VideoError> {
+        let descriptor = frame.image.descriptor();
+        if frame_dimensions(&descriptor)? != self.size {
+            return Err(error("visible frame dimensions changed"));
         }
-        // SAFETY: Immutable BGRA storage covers every row. The DEFAULT texture and
-        // its immediate context belong to this window's drawing device.
-        unsafe {
-            let context = self
-                .texture
-                .GetDevice()
-                .map_err(error)?
-                .GetImmediateContext()
+        if enhance && self.working.is_none() {
+            let device = drawing_device(dc)?;
+            let mut description = D3D11_TEXTURE2D_DESC::default();
+            unsafe { self.texture.GetDesc(&mut description) };
+            description.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            let (mut texture, mut target) = (None, None);
+            unsafe { device.CreateTexture2D(&description, None, Some(&mut texture)) }
                 .map_err(error)?;
-            context.UpdateSubresource(
-                &self.texture,
-                0,
-                None,
-                frame.pixels.as_ptr().cast(),
-                frame.stride,
-                0,
-            );
+            let texture = texture.ok_or_else(|| error("missing FP16 working texture"))?;
+            unsafe { device.CreateRenderTargetView(&texture, None, Some(&mut target)) }
+                .map_err(error)?;
+            self.working = Some((
+                texture,
+                target.ok_or_else(|| error("missing FP16 working target"))?,
+            ));
+        } else if !enhance {
+            self.working = None;
         }
+        conversion.render(
+            dc,
+            &frame.image,
+            &self.target,
+            self.working.as_ref().map(|(_, target)| target),
+            self.size,
+            display,
+        )?;
         let mut metadata = FrameMetadata::default();
-        metadata.pts_ms = frame.pts_ms;
-        metadata.width = frame.width;
-        metadata.height = frame.height;
+        metadata.generation = frame.generation;
+        metadata.serial = frame.serial;
+        metadata.pts_ms = (frame.pts_secs.max(0.0) * 1000.0).round() as u64;
+        metadata.width = self.size.0;
+        metadata.height = self.size.1;
+        let sar = descriptor.color.sample_aspect_ratio.unwrap_or((1, 1));
+        metadata.sample_aspect_ratio = if descriptor.rotation_degrees.is_multiple_of(180) {
+            sar
+        } else {
+            (sar.1, sar.0)
+        };
         self.metadata = Some(metadata);
         Ok(())
     }
@@ -142,7 +191,14 @@ impl RawFrame {
         if self.metadata.is_none() || size.0 <= 0.0 || size.1 <= 0.0 {
             return Ok(());
         }
-        draw_bitmap(dc, &self.bitmap, self.size, size, mode)
+        draw_bitmap(
+            dc,
+            &self.bitmap,
+            self.size,
+            self.metadata.map_or((1, 1), |m| m.sample_aspect_ratio),
+            size,
+            mode,
+        )
     }
 }
 
@@ -153,11 +209,13 @@ pub(crate) fn bitmap(
     // SAFETY: The shared/native texture was opened on the D2D context's own drawing device.
     unsafe {
         let surface: IDXGISurface = texture.cast().map_err(error)?;
+        let mut descriptor = D3D11_TEXTURE2D_DESC::default();
+        texture.GetDesc(&mut descriptor);
         dc.CreateBitmapFromDxgiSurface(
             &surface,
             Some(&D2D1_BITMAP_PROPERTIES1 {
                 pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    format: descriptor.Format,
                     alphaMode: D2D1_ALPHA_MODE_IGNORE,
                 },
                 dpiX: 96.0,
@@ -174,6 +232,7 @@ pub(crate) fn draw_bitmap(
     dc: &ID2D1DeviceContext,
     image: &ID2D1Bitmap1,
     source: (u32, u32),
+    sar: (u32, u32),
     target: (f32, f32),
     mode: ResizeMode,
 ) -> Result<(), VideoError> {
@@ -183,6 +242,8 @@ pub(crate) fn draw_bitmap(
         || target.1 <= 0.0
         || source.0 == 0
         || source.1 == 0
+        || sar.0 == 0
+        || sar.1 == 0
     {
         return Err(error("invalid video drawing bounds"));
     }
@@ -194,13 +255,15 @@ pub(crate) fn draw_bitmap(
     };
     let mut destination = bounds;
     if mode != ResizeMode::Stretch {
-        let factors = (target.0 / source.0 as f32, target.1 / source.1 as f32);
+        let natural_width = source.0 as f64 * f64::from(sar.0) / f64::from(sar.1);
+        let natural_width = natural_width as f32;
+        let factors = (target.0 / natural_width, target.1 / source.1 as f32);
         let scale = if mode == ResizeMode::Cover {
             factors.0.max(factors.1)
         } else {
             factors.0.min(factors.1)
         };
-        let width = source.0 as f32 * scale;
+        let width = natural_width * scale;
         let height = source.1 as f32 * scale;
         destination = D2D_RECT_F {
             left: (target.0 - width) * 0.5,
@@ -233,6 +296,33 @@ pub(crate) fn draw_bitmap(
         );
     }
     Ok(())
+}
+
+pub(crate) fn frame_dimensions(frame: &FrameDescriptor) -> Result<(u32, u32), VideoError> {
+    let crop = frame.crop;
+    if crop.width == 0
+        || crop.height == 0
+        || crop
+            .x
+            .checked_add(crop.width)
+            .is_none_or(|end| end > frame.width)
+        || crop
+            .y
+            .checked_add(crop.height)
+            .is_none_or(|end| end > frame.height)
+        || !matches!(frame.rotation_degrees, 0 | 90 | 180 | 270)
+    {
+        return Err(error("invalid native visible crop or rotation"));
+    }
+    let size = if frame.rotation_degrees.is_multiple_of(180) {
+        (crop.width, crop.height)
+    } else {
+        (crop.height, crop.width)
+    };
+    Ok((
+        u32::try_from(size.0).map_err(error)?,
+        u32::try_from(size.1).map_err(error)?,
+    ))
 }
 
 fn error(error: impl std::fmt::Display) -> VideoError {

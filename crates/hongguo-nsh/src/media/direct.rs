@@ -1,8 +1,11 @@
 use super::source::Source;
 use hongguo_common::{AppError, AppResult};
-use hongguo_nsh_video_api::frames::{FrameInfo, FrameSource, PixelFrame};
-use hongguo_softdec::{DirectSession, ReadAt};
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use hongguo_media_types::{DecodeDevice, PresentationFrame};
+use hongguo_nsh_video_api::frames::{
+    FrameInfo, FrameSource, PixelFrame, PlaybackControl, PlaybackPosition,
+};
+use hongguo_playback::{PlaybackSession, ReadAt};
+use std::sync::{Arc, atomic::AtomicBool};
 
 impl ReadAt for Source {
     fn length(&self) -> AppResult<u64> {
@@ -25,16 +28,12 @@ impl ReadAt for Source {
 }
 
 pub(super) struct Frames {
-    pub session: Arc<DirectSession>,
-    current: Mutex<Option<Arc<PixelFrame>>>,
+    pub session: Arc<PlaybackSession>,
 }
 
 impl Frames {
-    pub fn new(session: Arc<DirectSession>) -> Self {
-        Self {
-            session,
-            current: Mutex::new(None),
-        }
+    pub fn new(session: Arc<PlaybackSession>) -> Self {
+        Self { session }
     }
 }
 
@@ -51,37 +50,67 @@ impl FrameSource for Frames {
             .map_err(|error| error.to_string())
     }
 
-    fn frame_at(&self, position_ms: u64) -> Result<Option<Arc<PixelFrame>>, String> {
-        let frame = self
-            .session
-            .frame_at(position_ms)
+    fn frame_at(&self, _position_ms: u64) -> Result<Option<Arc<PixelFrame>>, String> {
+        Ok(None)
+    }
+
+    fn native_frame_at(
+        &self,
+        position_secs: f64,
+    ) -> Result<Option<Arc<PresentationFrame>>, String> {
+        self.session
+            .frame_at(position_secs)
+            .map_err(|error| error.to_string())
+    }
+
+    fn configure_decoder(&self, device: Option<Arc<dyn DecodeDevice>>) -> Result<(), String> {
+        self.session
+            .configure_decoder(device)
+            .map_err(|error| error.to_string())
+    }
+
+    fn reject_decoder(&self, detail: &str) -> Result<(), String> {
+        self.session
+            .reject_decoder(detail.to_owned())
+            .map_err(|error| error.to_string())
+    }
+
+    fn recover_presentation(&self, detail: &str) -> Result<(), String> {
+        self.session
+            .recover_presentation(detail.to_owned())
+            .map_err(|error| error.to_string())
+    }
+
+    fn control(&self, control: PlaybackControl) -> Result<(), String> {
+        self.session
+            .set_volume(control.volume, control.muted)
             .map_err(|error| error.to_string())?;
-        let mut current = self
-            .current
-            .lock()
-            .map_err(|_| "frame adapter lock poisoned")?;
-        let Some(frame) = frame else {
-            return Ok(None);
-        };
-        if current.as_ref().is_none_or(|current| {
-            current.serial != frame.serial || current.generation != frame.generation
-        }) {
-            *current = Some(Arc::new(PixelFrame {
-                serial: frame.serial,
-                generation: frame.generation,
-                pts_ms: frame.pts_ms,
-                width: frame.width,
-                height: frame.height,
-                stride: frame.stride,
-                pixels: frame.pixels.clone(),
-            }));
-        }
-        Ok(current.clone())
+        self.session
+            .set_rate(control.rate)
+            .map_err(|error| error.to_string())?;
+        self.session
+            .set_playing(control.playing)
+            .map_err(|error| error.to_string())
+    }
+
+    fn position(&self) -> Result<Option<PlaybackPosition>, String> {
+        self.session
+            .position()
+            .map(|position| {
+                Some(PlaybackPosition {
+                    position_secs: position.position_secs,
+                    duration_secs: position.duration_secs,
+                    ended: position.ended,
+                    buffering: position.buffering,
+                    video_gap: position.video_gap,
+                })
+            })
+            .map_err(|error| error.to_string())
     }
 
     fn seek(&self, position_ms: u64) -> Result<u64, String> {
         self.session
-            .seek(position_ms)
+            .seek(position_ms as f64 / 1000.0)
             .map_err(|error| error.to_string())
     }
 

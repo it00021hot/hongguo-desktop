@@ -50,6 +50,8 @@ pub struct TrackInfo {
     pub media_timescale: u32,
     /// `mdhd` 的媒体时长（单位是 media_timescale）
     pub media_duration: u64,
+    pub movie_timescale: u32,
+    pub edit_list: Vec<timing::EditEntry>,
     /// `edts/elst` 首个非空 edit 的 media_time（秒）：AAC priming 由容器的 edit list 表达，presentation 时间 = 媒体时间 − 本值；没有 elst 或全空 edit 时为 0。
     pub edit_media_start_secs: f64,
     /// 音频轨的 AudioSpecificConfig（`esds` → DecoderSpecificInfo，AAC 解码器的 extradata）；视频轨与非 AAC 音频轨为空。
@@ -61,12 +63,14 @@ pub fn collect_tracks(data: &[u8]) -> AppResult<Vec<TrackInfo>> {
     let moov = find_box(data, 0, data.len(), "moov")
         .ok_or_else(|| AppError::Decrypt("找不到 moov box".into()))?;
 
+    let movie_timescale = timing::movie_timescale(data)?;
     let mut tracks = Vec::new();
     for trak in parse_boxes(data, moov.start, moov.start + moov.size) {
         if !trak.is("trak") {
             continue;
         }
-        if let Some(info) = collect_track(data, trak.start, trak.start + trak.size) {
+        if let Some(mut info) = collect_track(data, trak.start, trak.start + trak.size) {
+            info.movie_timescale = movie_timescale;
             tracks.push(info);
         }
     }

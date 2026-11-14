@@ -6,6 +6,11 @@ public final class PixelDirectGateTest {
         PixelDirectGate gate = new PixelDirectGate();
         require(!gate.mayPlay());
         require(gate.buffering());
+        gate.emptyVideo();
+        require(gate.ready());
+        require(gate.mayPlay());
+        gate.beginSeek();
+        gate.seekCompleted(0);
         gate.audioBuffering(false);
         require(gate.buffering());
         require(gate.accepts(0));
@@ -33,6 +38,13 @@ public final class PixelDirectGateTest {
         require(!gate.accepts(1));
         gate.presented(2);
         require(gate.mayPlay());
+        // Native recovery/device replacement advances the same monotonic epoch
+        // without a Java seek callback. Its first real GPU frame must release audio.
+        gate.holding(true);
+        require(gate.accepts(3));
+        gate.presented(3);
+        require(gate.mayPlay());
+        require(!gate.accepts(2));
         gate.close();
         require(!gate.accepts(2));
         require(!gate.mayPlay());

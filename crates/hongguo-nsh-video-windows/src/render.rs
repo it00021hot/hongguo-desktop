@@ -1,7 +1,11 @@
 //! Background-only GPU pipeline and double-buffered D3D11/D2D publication.
-use crate::{DisplayedFrame, FrameLease, SharedFrames, VideoError, output::OutputSlot};
+use crate::{
+    DisplayedFrame, FrameLease, SharedFrames, VideoError,
+    output::{OutputLease, OutputSlot},
+};
 use hongguo_enhancement::Pipeline;
 use hongguo_nsh_video_api::{Enhancement, ErrorCode, FrameMetadata};
+use hongguo_video_color::{ColorTransform, LUT_HEIGHT, LUT_WIDTH};
 use std::{
     borrow::Cow,
     sync::{
@@ -48,10 +52,28 @@ pub struct GpuRenderer {
     busy: Arc<AtomicBool>,
     completed: Arc<Mutex<Option<CompletedFrame>>>,
     failure: Arc<Mutex<Option<String>>>,
+    color: Option<FinalColor>,
+    output_format: wgpu::TextureFormat,
+}
+
+struct FinalColor {
+    transform: Arc<ColorTransform>,
+    uniform: wgpu::Buffer,
+    lut: wgpu::Texture,
 }
 
 impl GpuRenderer {
-    pub async fn new(decoder: &ID3D11Device, width: u32, height: u32) -> Result<Self, VideoError> {
+    pub async fn new(
+        decoder: &ID3D11Device,
+        width: u32,
+        height: u32,
+        mode: nsh_platform_windows::OutputColorMode,
+    ) -> Result<Self, VideoError> {
+        let output_format = if mode == nsh_platform_windows::OutputColorMode::ScRgb {
+            wgpu::TextureFormat::Rgba16Float
+        } else {
+            wgpu::TextureFormat::Bgra8Unorm
+        };
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::DX12,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -107,11 +129,15 @@ impl GpuRenderer {
         }));
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("video-to-shared-bgra"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("blit.wgsl"))),
+            label: Some("video-to-shared-scrgb"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(format!(
+                "{}\n{}",
+                hongguo_video_color::WGSL,
+                include_str!("blit.wgsl")
+            ))),
         });
         let blit = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("video-to-shared-bgra"),
+            label: Some("video-to-shared-scrgb"),
             layout: None,
             vertex: wgpu::VertexState {
                 module: &module,
@@ -127,7 +153,7 @@ impl GpuRenderer {
                 entry_point: Some("fragment"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Bgra8Unorm,
+                    format: output_format,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -160,6 +186,8 @@ impl GpuRenderer {
             busy: Arc::new(AtomicBool::new(false)),
             completed: Arc::new(Mutex::new(None)),
             failure,
+            color: None,
+            output_format,
         })
     }
 
@@ -180,6 +208,12 @@ impl GpuRenderer {
             .take())
     }
 
+    pub(crate) fn busy(&self) -> bool {
+        self.busy.load(Ordering::Acquire)
+            || self.input.busy()
+            || self.outputs.iter().any(|slot| slot.gpu_busy())
+    }
+
     /// Copy only while holding the raw frame/metadata owner's short lock. Release
     /// that lock before calling asynchronous `render`; no lock spans compilation.
     pub fn capture(
@@ -197,19 +231,44 @@ impl GpuRenderer {
     pub async fn render(
         &mut self,
         input: FrameLease,
+        color: Arc<ColorTransform>,
+        options: Enhancement,
+        epoch: u64,
+        valid: impl Fn() -> bool,
+    ) -> Result<bool, VideoError> {
+        let (mut input, mut output) = (Some(input), None);
+        let result = self
+            .render_frame(&mut input, &mut output, color, options, epoch, valid)
+            .await;
+        // Even preparation/encoding failure must release the imported resources
+        // through an ordered COMMON transition and a completed queue callback.
+        if let Some(output) = output {
+            output.discard(&self.device, &self.queue);
+        }
+        if let Some(input) = input {
+            input.submit(
+                self.device.create_command_encoder(&Default::default()),
+                &self.queue,
+            );
+        }
+        result
+    }
+
+    async fn render_frame(
+        &mut self,
+        input: &mut Option<FrameLease>,
+        output: &mut Option<OutputLease>,
+        color: Arc<ColorTransform>,
         options: Enhancement,
         epoch: u64,
         valid: impl Fn() -> bool,
     ) -> Result<bool, VideoError> {
         self.pipeline.prepare(options).await.map_err(enhancement)?;
+        self.prepare_color(color);
         if !valid() {
-            input.submit(
-                self.device.create_command_encoder(&Default::default()),
-                &self.queue,
-            );
             return Ok(false);
         }
-        let metadata = input.metadata();
+        let metadata = input.as_ref().expect("captured input").metadata();
         let factor = if options.anime4k_on { 2 } else { 1 };
         let size = (
             metadata
@@ -223,32 +282,43 @@ impl GpuRenderer {
         );
         if self.output_size != size {
             self.outputs = vec![
-                OutputSlot::new(self.device.clone(), &self.decoder, size.0, size.1)?,
-                OutputSlot::new(self.device.clone(), &self.decoder, size.0, size.1)?,
+                OutputSlot::new(
+                    self.device.clone(),
+                    &self.decoder,
+                    size.0,
+                    size.1,
+                    self.output_format,
+                )?,
+                OutputSlot::new(
+                    self.device.clone(),
+                    &self.decoder,
+                    size.0,
+                    size.1,
+                    self.output_format,
+                )?,
             ];
             self.output_size = size;
         }
-        let mut output = None;
         for slot in &self.outputs {
             if let Some(lease) = slot.acquire()? {
-                output = Some(lease);
+                *output = Some(lease);
                 break;
             }
         }
-        let Some(output) = output else {
-            input.submit(
-                self.device.create_command_encoder(&Default::default()),
-                &self.queue,
-            );
+        if output.is_none() {
             return Ok(false);
-        };
+        }
         let started = Instant::now();
         let mut encoder = self.device.create_command_encoder(&Default::default());
         let processed = self
             .pipeline
             .encode(
                 &mut encoder,
-                &input.texture().create_view(&Default::default()),
+                &input
+                    .as_ref()
+                    .expect("captured input")
+                    .texture()
+                    .create_view(&Default::default()),
             )
             .map_err(enhancement)?;
         let bindings = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -265,12 +335,36 @@ impl GpuRenderer {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self
+                        .color
+                        .as_ref()
+                        .expect("prepared color")
+                        .uniform
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(
+                        &self
+                            .color
+                            .as_ref()
+                            .expect("prepared color")
+                            .lut
+                            .create_view(&Default::default()),
+                    ),
+                },
             ],
         });
-        let target = output.texture().create_view(&Default::default());
+        let target = output
+            .as_ref()
+            .expect("acquired output")
+            .texture()
+            .create_view(&Default::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("video-to-d2d-bgra"),
+                label: Some("video-to-d2d-scrgb"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &target,
                     depth_slice: None,
@@ -290,27 +384,75 @@ impl GpuRenderer {
             pass.draw(0..3, 0..1);
         }
         if !valid() {
-            output.discard(&self.device, &self.queue);
-            input.submit(
-                self.device.create_command_encoder(&Default::default()),
-                &self.queue,
-            );
             return Ok(false);
         }
         self.busy.store(true, Ordering::Release);
         let busy = self.busy.clone();
         let completed = self.completed.clone();
-        output.submit(input, encoder, &self.queue, move |frame| {
-            *completed
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(CompletedFrame {
-                epoch,
-                elapsed: started.elapsed(),
-                frame,
-            });
-            busy.store(false, Ordering::Release);
-        });
+        output.take().expect("acquired output").submit(
+            input.take().expect("captured input"),
+            metadata,
+            encoder,
+            &self.queue,
+            move |frame| {
+                *completed
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(CompletedFrame {
+                    epoch,
+                    elapsed: started.elapsed(),
+                    frame,
+                });
+                busy.store(false, Ordering::Release);
+            },
+        );
         Ok(true)
+    }
+
+    fn prepare_color(&mut self, transform: Arc<ColorTransform>) {
+        if self
+            .color
+            .as_ref()
+            .is_some_and(|old| Arc::ptr_eq(&old.transform, &transform))
+        {
+            return;
+        }
+        let bytes = transform.params.bytes();
+        let uniform = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("final-video-color"),
+            size: bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.queue.write_buffer(&uniform, 0, &bytes);
+        let lut = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("final-video-color-lut"),
+            size: wgpu::Extent3d {
+                width: LUT_WIDTH,
+                height: LUT_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            lut.as_image_copy(),
+            &transform.lut_bytes(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(LUT_WIDTH * 16),
+                rows_per_image: Some(LUT_HEIGHT),
+            },
+            lut.size(),
+        );
+        self.color = Some(FinalColor {
+            transform,
+            uniform,
+            lut,
+        });
     }
 }
 

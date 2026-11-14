@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { validateWindowsPe } from './nsh-windows-pe.mjs';
+import { readWindowsImports, validateWindowsPe } from './nsh-windows-pe.mjs';
 
 const PE = 0x80;
 const OPTIONAL = PE + 24;
@@ -100,6 +100,28 @@ test('delay-loaded C runtime dependencies also reject the single-executable pack
   image.writeUInt32LE(RVA + 0xc0, RAW + 0x84);
   image.write('VCRUNTIME140.dll', RAW + 0xc0);
   assert.throws(() => validateWindowsPe(image), /dynamic CRT dependency/);
+});
+
+test('both executable and bundled DLL imports reject system codecs and WebView2 loaders', () => {
+  for (const name of ['mf.dll', 'mfplat.dll', 'mfreadwrite.dll', 'evr.dll', 'WebView2Loader.dll']) {
+    for (const dll of [false, true]) {
+      const image = executable(name);
+      if (dll) image.writeUInt16LE(0x2022, PE + 22);
+      assert.throws(() => readWindowsImports(image, { dll }), /system media|WebView2 loader/);
+      const delayed = executable();
+      if (dll) delayed.writeUInt16LE(0x2022, PE + 22);
+      delayed.writeUInt32LE(RVA + 0x80, OPTIONAL + 216);
+      delayed.writeUInt32LE(64, OPTIONAL + 220);
+      delayed.writeUInt32LE(1, RAW + 0x80);
+      delayed.writeUInt32LE(RVA + 0xc0, RAW + 0x84);
+      delayed.write(name, RAW + 0xc0);
+      assert.throws(() => readWindowsImports(delayed, { dll }), /system media|WebView2 loader/);
+    }
+  }
+  const dll = executable('avutil-61.dll');
+  dll.writeUInt16LE(0x2022, PE + 22);
+  assert.deepEqual(readWindowsImports(dll, { dll: true }), ['avutil-61.dll']);
+  assert.throws(() => readWindowsImports(dll), /expected executable image/);
 });
 
 test('missing icons, groups, manifest and broken group references cannot pass packaging', () => {

@@ -29,6 +29,7 @@ is_grandfathered() {
 }
 fail=0
 while IFS= read -r f; do
+  case "$f" in vendor/* | crates/hongguo-vvdec-sys/vendor/*) continue ;; esac
   [ -f "$f" ] || continue
   lines=$(wc -l < "$f" | tr -d ' ')
   if [ "$lines" -gt "$LIMIT" ]; then

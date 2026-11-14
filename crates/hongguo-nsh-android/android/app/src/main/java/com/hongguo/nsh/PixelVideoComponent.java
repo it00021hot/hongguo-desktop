@@ -66,19 +66,45 @@ public final class PixelVideoComponent implements NshComponent {
         if (closed || handle == 0) throw new java.io.IOException("Media controller is closed");
         return handle;
     }
-    public void directPresented(long epoch, long generation, long serial, long pts, int width, int height) {
+    public void directPresented(long epoch, long generation, long serial, long pts, long token, long outputVersion, int width, int height, boolean swapSucceeded) {
         playback.post(() -> {
-            if (!closed && playback.generation == epoch && playback.direct != null) playback.direct.presented(generation, serial, pts, width, height);
+            if (!closed && playback.generation == epoch && playback.direct != null)
+                playback.output.submitted(outputVersion, token, swapSucceeded, () -> {
+                    if (!closed && playback.generation == epoch && playback.direct != null)
+                        playback.direct.presented(generation, serial, pts, width, height);
+                });
         });
+    }
+    public void useSdrOutput(long epoch) {
+        playback.post(() -> { if (!closed && playback.generation == epoch) playback.output.useSdr(); });
+    }
+    public void sourceHdr(long epoch, boolean hdr) {
+        playback.post(() -> { if (!closed && playback.generation == epoch) playback.output.sourceHdr(hdr); });
     }
     public void directHolding(long epoch, boolean holding) {
         playback.post(() -> {
             if (!closed && playback.generation == epoch && playback.direct != null) playback.direct.holding(holding);
         });
     }
-    void viewport(Surface surface, int width, int height) {
-        if (!closed && handle != 0) nativeViewport(handle, surface, width, height);
+    public void directGap(long epoch, int width, int height) {
+        playback.post(() -> {
+            if (!closed && playback.generation == epoch && playback.direct != null) {
+                playback.output.videoWidth = width; playback.output.videoHeight = height;
+                playback.direct.emptyVideo();
+            }
+        });
     }
+    /** Render-worker call: SurfaceTexture must attach to that worker's current EGL context. */
+    public PixelDecodeSurface createDecodeSurface(int texture, int width, int height, boolean p010) throws java.io.IOException {
+        return new PixelDecodeSurface(texture, width, height, p010, this::frameTick);
+    }
+    long viewport(Surface surface, int width, int height) {
+        return viewport(surface, width, height, 0f, false);
+    }
+    long viewport(Surface surface, int width, int height, float hdrPeak, boolean floatingRequested) {
+        return !closed && handle != 0 ? nativeViewport(handle, surface, width, height, hdrPeak, floatingRequested) : -1;
+    }
+    void frameTick() { if (!closed && handle != 0) nativeFrameTick(handle); }
     @Override public void destroy() {
         if (closed) return;
         playback.release();
@@ -91,7 +117,8 @@ public final class PixelVideoComponent implements NshComponent {
     private static native void nativeSetState(long handle, String state);
     private static native String nativeLatestState(long handle, long generation);
     private static native void nativeSeek(long handle, String request);
-    private static native void nativeViewport(long handle, Surface surface, int width, int height);
+    private static native long nativeViewport(long handle, Surface surface, int width, int height, float hdrPeak, boolean floatingRequested);
     private static native void nativeEvent(long handle, long generation, String event);
     private static native void nativeDestroy(long handle);
+    private static native void nativeFrameTick(long handle);
 }

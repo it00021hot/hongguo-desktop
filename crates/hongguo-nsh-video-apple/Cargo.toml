@@ -6,13 +6,34 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+test-support = ["dep:objc2-app-kit"]
+
+[[example]]
+name = "native_present"
+required-features = ["test-support"]
+
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-enhancement = { path = "../hongguo-enhancement" }
+hongguo-media-types = { path = "../hongguo-media-types" }
+hongguo-video-color = { path = "../hongguo-video-color" }
+hongguo-video-gpu = { path = "../hongguo-video-gpu" }
 pollster = "0.4"
 wgpu = { version = "=29.0.4", default-features = false, features = ["metal", "wgsl"] }
 objc2 = "0.6"
+objc2-io-surface = { version = "0.3.2", default-features = false, features = ["IOSurfaceRef", "objc2-core-foundation"] }
+objc2-metal = { version = "0.3.2", default-features = false, features = ["MTLDevice", "MTLTexture", "MTLPixelFormat", "MTLResource", "MTLAllocation", "MTLCommandQueue", "MTLCommandBuffer", "MTLDrawable", "block2", "objc2-core-foundation", "objc2-io-surface"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVPixelBufferIOSurface", "objc2-io-surface"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGColorSpace"] }
 block2 = "0.6"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSDictionary", "NSString", "NSURL", "NSValue", "NSRunLoop", "NSDate"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFCGTypes"] }
-objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CAMetalLayer", "CATransaction"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CAMetalLayer", "CATransaction", "objc2-core-graphics", "objc2-metal"] }
+
+[dev-dependencies]
+hongguo-codec-ffi = { path = "../hongguo-codec-ffi" }
+hongguo-playback = { path = "../hongguo-playback" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, optional = true, features = ["NSApplication", "NSRunningApplication", "NSGraphics", "NSWindow", "NSView", "NSResponder", "NSScreen", "NSEvent", "objc2-quartz-core"] }

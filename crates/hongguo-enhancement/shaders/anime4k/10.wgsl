@@ -6,5 +6,5 @@
 fn main(@location(0) fragUV: vec2<f32>) -> @location(0) vec4<f32> {
     let color_bilinear: vec4f = textureSample(tex_origin, mySampler, fragUV);
     let color_addon: vec4f = textureSample(tex_diff, mySampler, fragUV);
-    return clamp(color_bilinear + color_addon, vec4<f32>(0., 0., 0., 0.), vec4<f32>(1., 1., 1., 1.));
+    return vec4f(color_bilinear.rgb + color_addon.rgb, color_bilinear.a);
 }

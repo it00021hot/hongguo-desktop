@@ -23,6 +23,38 @@ struct PixelVideo {
 }
 
 impl NativeComponent for PixelVideo {
+    #[cfg(feature = "decoder-audit")]
+    fn wants_presentation_feedback(&self) -> bool {
+        if !self.shared.consumer_active.load(Ordering::Acquire) {
+            return false;
+        }
+        self.shared
+            .props
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .source
+            .as_ref()
+            .is_some_and(|source| crate::audit::stats::wants(&source.id))
+    }
+    #[cfg(feature = "decoder-audit")]
+    fn did_present(&self, info: &nsh_platform_windows::NativePresentation) {
+        if let Some((_, serial, enhanced)) = self.controller.borrow().drawn_identity()
+            && let Some(source) = &self
+                .shared
+                .props
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .source
+        {
+            crate::audit::stats::submitted(
+                &source.id,
+                serial,
+                enhanced,
+                info,
+                self.shared.context.output_color_info().ok(),
+            );
+        }
+    }
     fn draw(&self, dc: &ID2D1DeviceContext, size: (f32, f32)) {
         let result = self.controller.borrow_mut().draw(&self.shared, dc, size);
         if let Err(error) = result {
@@ -49,6 +81,7 @@ impl NativeComponent for PixelVideo {
             if *current == props {
                 return Ok(());
             }
+            self.shared.consumer_active.store(true, Ordering::Release);
             self.controller.borrow_mut().set_props(&props)?;
             let source_changed = current.source != props.source;
             *current = props;
@@ -113,6 +146,7 @@ impl NativeComponent for PixelVideo {
             {
                 return Ok(());
             }
+            self.shared.consumer_active.store(true, Ordering::Release);
             self.controller.borrow_mut().seek(request, &props)?;
             self.shared.clear_frames();
             self.shared.context.redraw();
@@ -141,12 +175,16 @@ impl PixelVideo {
             code: error.code(),
             detail: error.detail().to_owned(),
         });
+        self.shared.consumer_active.store(false, Ordering::Release);
+        self.shared.clear_frames();
     }
 }
 
 impl Drop for PixelVideo {
     fn drop(&mut self) {
+        self.controller.get_mut().stop();
         self.shared.stopped.store(true, Ordering::Release);
+        self.shared.wake_gpu.notify_all();
     }
 }
 
@@ -163,22 +201,30 @@ pub fn register(components: &Components) {
                         if worker {
                             crate::gpu_worker::run(state);
                         } else {
-                            while !state.stopped.load(Ordering::Acquire) {
+                            while state.reap() || !state.stopped.load(Ordering::Acquire) {
                                 let props = state
                                     .props
                                     .lock()
                                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                                     .clone();
-                                if props.active && props.source.is_some() {
+                                let active = props.active
+                                    && props.source.is_some()
+                                    && state.consumer_active.load(Ordering::Acquire);
+                                if active {
                                     state.context.redraw();
                                 }
-                                std::thread::sleep(if props.paused {
-                                    Duration::from_millis(u64::from(
-                                        props.progress_interval_ms.min(250),
-                                    ))
-                                } else {
-                                    Duration::from_millis(16)
-                                });
+                                std::thread::sleep(
+                                    if !active
+                                        || props.paused
+                                            && !state.awaiting_presentation.load(Ordering::Acquire)
+                                    {
+                                        Duration::from_millis(u64::from(
+                                            props.progress_interval_ms.min(250),
+                                        ))
+                                    } else {
+                                        Duration::from_millis(16)
+                                    },
+                                );
                             }
                         }
                     })

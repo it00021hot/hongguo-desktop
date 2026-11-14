@@ -22,6 +22,8 @@ android {
     buildTypes.getByName("debug") {
         applicationIdSuffix = providers.gradleProperty("applicationIdSuffix").orNull
     }
+    // Rust already strips and captures this exact binary for standalone relinking.
+    packaging.jniLibs.keepDebugSymbols += "**/libnsh.so"
     sourceSets.getByName("main").jniLibs.directories.add(rootProject.file("../../../target/nsh-android/jniLibs").path)
     sourceSets.getByName("main").res.directories.add(rootProject.file("../../../target/nsh-android/resources").path)
 }
