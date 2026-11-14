@@ -5,15 +5,7 @@ use futures_util::StreamExt;
 use hongguo_common::model::Settings;
 use hongguo_common::{AppError, AppResult};
 
-/// 取一集并解密成明文。
-pub async fn fetch_plain(
-    play: &hongguo_api::play_url::PlayInfo,
-    settings: &Settings,
-) -> AppResult<Vec<u8>> {
-    fetch_plain_with(play, settings, &|_, _, _| {}).await
-}
-
-/// 带进度回调的取流+解密。
+/// 取一集并解密成明文（带进度回调）。
 pub async fn fetch_plain_with(
     play: &hongguo_api::play_url::PlayInfo,
     settings: &Settings,

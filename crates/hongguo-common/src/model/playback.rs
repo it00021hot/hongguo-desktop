@@ -1,7 +1,6 @@
 //! 播放进度模型（断点续播）。
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// 单集的播放位置。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -16,26 +15,8 @@ pub struct PlaybackPosition {
     pub updated_at: i64,
 }
 
-/// 全部剧集的播放进度。
-pub type PlaybackMap = BTreeMap<String, BTreeMap<u32, PlaybackPosition>>;
-
 /// 续播阈值（秒）：看过超过这个数才接上原位，否则视为没看过从头播。用户口径一处定义（前端 utils/resume-entry 同口径，技术栈不同不共享实现）。
 pub const RESUME_THRESHOLD_SECS: f64 = 3.0;
-
-/// 一部剧「最近看到的那一集」，发前端 `seriesProgressSchema`（camelCase）。详情页「继续看第 N 集」的真值来源：本地 playback 表 5 秒一写，比云端观看历史（约 1 分钟一报 + 缓存）新鲜。
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SeriesProgress {
-    pub vid_index: u32,
-    /// 已播放秒数
-    pub current_time: f64,
-    /// 总时长（秒）
-    #[serde(default)]
-    pub duration: f64,
-    /// 最近更新（毫秒时间戳）
-    #[serde(default)]
-    pub updated_at: i64,
-}
 
 impl PlaybackPosition {
     /// 构造位置。

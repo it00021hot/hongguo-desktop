@@ -33,14 +33,4 @@ impl DownloadQueue {
             .find(|t| t.series_id == series_id && t.vid_index == vid_index && t.is_done())
             .map(|t| t.file_path.clone())
     }
-
-    /// 某剧已下载完成的集号（选集完成角标数据源）。
-    pub fn completed_vids(&self, series_id: &str) -> Vec<u32> {
-        self.tasks
-            .read()
-            .iter()
-            .filter(|t| t.series_id == series_id && t.is_done())
-            .map(|t| t.vid_index)
-            .collect()
-    }
 }

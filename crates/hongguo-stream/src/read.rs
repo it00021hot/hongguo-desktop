@@ -63,9 +63,10 @@ pub fn total_len(vid: &str, definition: u32) -> Option<u64> {
     (size > 0).then_some(size)
 }
 
-/// 读一段明文，数据未就绪时阻塞等待（最多 30s）。
-/// seek / 切集路径应改用 [`read_range_cancellable`]，否则旧位置的读取会拖住填充调度。
-pub fn read_range(
+/// 读一段明文，数据未就绪时阻塞等待（最多 30s）；不可取消，仅供本 crate 测试用，
+/// 生产路径一律走 [`read_range_cancellable`]。
+#[cfg(test)]
+pub(crate) fn read_range(
     vid: &str,
     definition: u32,
     start: u64,
@@ -74,8 +75,9 @@ pub fn read_range(
     read_range_inner(vid, definition, start, len, &|| false)
 }
 
-/// [`read_range`] 的可取消变体：等待期间逐片检查 `cancelled`，命中即注销
-/// 读者登记并立即返回 [`StreamReadError::Cancelled`]。
+/// 读一段明文，数据未就绪时阻塞等待（最多 30s）。等待期间逐片检查 `cancelled`，
+/// 命中即注销读者登记并立即返回 [`StreamReadError::Cancelled`]——seek / 切集路径
+/// 必须走这里，否则旧位置的读取会拖住填充调度。
 pub fn read_range_cancellable(
     vid: &str,
     definition: u32,

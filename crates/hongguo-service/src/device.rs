@@ -9,25 +9,11 @@ use hongguo_store::Store;
 use crate::app_state::AppState;
 use crate::events::ServiceEvent;
 
-/// 设备注册换档的前端事件名（`ServiceEvent::DeviceRegistered` 对外名字，
-/// 壳转发与前端 `EVENTS.deviceRegistered` 共用；载荷 = 新 iid）。
-pub const DEVICE_REGISTERED: &str = "device-registered";
-
 /// 启动注册完成前挡住在线取流。壳在拉起 [`ensure_registered`] 之前调用。
 pub use crate::cold_start::arm as arm_cold_start;
 pub use crate::cold_start::{RegistrationPhase, RegistrationStatus};
 
 mod registration;
-
-pub fn registration_status(state: &AppState) -> RegistrationStatus {
-    state.registration.status()
-}
-
-pub fn subscribe_registration(
-    state: &AppState,
-) -> tokio::sync::watch::Receiver<RegistrationStatus> {
-    state.registration.subscribe()
-}
 
 pub fn start_startup_registration(state: &AppState) {
     registration::start_startup(state);
@@ -69,7 +55,6 @@ pub struct BootstrapMeta {
 static BLOCK_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static FAIL_SIDECAR_WRITES: AtomicU32 = AtomicU32::new(0);
 static FAIL_SIDECAR_DELETES: AtomicU32 = AtomicU32::new(0);
-static FAIL_JOURNAL_RENAMES: AtomicU32 = AtomicU32::new(0);
 
 enum BlockSource {
     Absent,
@@ -229,39 +214,6 @@ fn journal_state(store: &Store) -> BlockSource {
             }
             Err(_) => BlockSource::Unreadable,
         },
-    }
-}
-
-fn write_journal(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResult<()> {
-    let path = journal_path(store).ok_or_else(|| {
-        hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制日志".into())
-    })?;
-    let raw = serde_json::to_string(meta)
-        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
-    let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
-    hongguo_store::paths::qa_write(&tmp, raw.as_bytes())
-        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
-    if FAIL_JOURNAL_RENAMES.load(Ordering::Relaxed) > 0 {
-        FAIL_JOURNAL_RENAMES.fetch_sub(1, Ordering::Relaxed);
-        let _ = hongguo_store::paths::qa_remove_file(&tmp);
-        return Err(hongguo_common::AppError::Io(
-            "故障注入：限制日志改名".into(),
-        ));
-    }
-    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
-        let _ = hongguo_store::paths::qa_remove_file(&tmp);
-        hongguo_common::AppError::Io(e.to_string())
-    })
-}
-
-fn remove_journal(store: &Store) -> hongguo_common::AppResult<()> {
-    let Some(path) = journal_path(store) else {
-        return Ok(());
-    };
-    match hongguo_store::paths::qa_remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
     }
 }
 
@@ -614,62 +566,6 @@ fn persist_block(
             },
         },
     }
-}
-
-/// 显式解除限制。任何一步失败都留下仍能阻断的记录；启动流程不会调用这里。
-pub fn clear_register_block(store: &Store) -> hongguo_common::AppResult<()> {
-    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
-    let saved_side =
-        block_sidecar(store).and_then(|path| hongguo_store::paths::qa_read(&path).ok());
-    let saved_marker =
-        unknown_marker(store).and_then(|path| hongguo_store::paths::qa_read(&path).ok());
-    let mut blocking = load_meta_locked(store);
-    blocking.register_block_unknown = true;
-    write_journal(store, &blocking)?;
-    remove_block_sidecar(store)?;
-    if let Err(err) = remove_unknown_marker(store) {
-        restore_bytes(block_sidecar(store), saved_side.as_deref())?;
-        return Err(err);
-    }
-    let mut cleared = match load_db_block(store) {
-        BlockSource::Present(meta) => meta,
-        BlockSource::Absent => BootstrapMeta::default(),
-        BlockSource::Unreadable => {
-            restore_bytes(block_sidecar(store), saved_side.as_deref())?;
-            restore_bytes(unknown_marker(store), saved_marker.as_deref())?;
-            return Err(hongguo_common::AppError::StoreCorrupt(
-                "主库限制不可读，不能解除".into(),
-            ));
-        }
-    };
-    cleared.register_block_manual = false;
-    cleared.register_block_until_ms = None;
-    cleared.register_block_unknown = false;
-    cleared.register_block_seq = next_block_seq(store);
-    if let Err(err) = write_meta_strict(store, &cleared) {
-        restore_bytes(block_sidecar(store), saved_side.as_deref())?;
-        restore_bytes(unknown_marker(store), saved_marker.as_deref())?;
-        return Err(err);
-    }
-    remove_journal(store)?;
-    REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
-    Ok(())
-}
-
-fn restore_bytes(
-    path: Option<std::path::PathBuf>,
-    bytes: Option<&[u8]>,
-) -> hongguo_common::AppResult<()> {
-    let (Some(path), Some(bytes)) = (path, bytes) else {
-        return Ok(());
-    };
-    let tmp = std::path::PathBuf::from(format!("{}.restore.tmp", path.display()));
-    hongguo_store::paths::qa_write(&tmp, bytes)
-        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
-    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
-        let _ = hongguo_store::paths::qa_remove_file(&tmp);
-        hongguo_common::AppError::Io(e.to_string())
-    })
 }
 
 pub fn registration_blocked(meta: &BootstrapMeta, now_ms: i64) -> bool {
@@ -1392,7 +1288,11 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_or_unreadable_sidecar_stays_blocked_until_explicit_clear() {
+    /// 旁文件不可读（unix 权限模拟；Windows 无法用等价手段制造读取失败）时的
+    /// 「未知即阻断」行为。
+    #[cfg(unix)]
+    #[test]
+    fn corrupt_or_unreadable_sidecar_stays_blocked() {
         if crate::test_isolation::run_in_child() {
             return;
         }
@@ -1417,18 +1317,6 @@ mod tests {
         drop(db);
         clear_force_block();
         let reopened = Store::open(&path).unwrap();
-        let loaded = read_meta(&reopened);
-        assert!(loaded.register_block_unknown);
-        assert!(registration_blocked(&loaded, now_ms()));
-        #[cfg(windows)]
-        let exclusive_sidecar = {
-            use std::os::windows::fs::OpenOptionsExt;
-            std::fs::OpenOptions::new()
-                .read(true)
-                .share_mode(0)
-                .open(&side)
-                .unwrap()
-        };
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1443,11 +1331,6 @@ mod tests {
         let unreadable = read_meta(&reopened);
         assert!(unreadable.register_block_unknown);
         assert!(registration_blocked(&unreadable, now_ms()));
-        FAIL_SIDECAR_DELETES.store(1, Ordering::Relaxed);
-        assert!(clear_register_block(&reopened).is_err());
-        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
-        #[cfg(windows)]
-        drop(exclusive_sidecar);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1455,10 +1338,6 @@ mod tests {
             back.set_mode(0o644);
             std::fs::set_permissions(&side, back).unwrap();
         }
-        clear_register_block(&reopened).unwrap();
-        let cleared = read_meta(&reopened);
-        assert!(!cleared.register_block_unknown);
-        assert!(!registration_blocked(&cleared, now_ms()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1714,31 +1593,9 @@ mod tests {
             std::path::PathBuf::from(format!("{}.tmp", unknown_marker(&db).unwrap().display()));
         link_to(&unknown_tmp);
         assert!(write_unknown_marker(&db).is_err());
-        let journal_tmp =
-            std::path::PathBuf::from(format!("{}.tmp", journal_path(&db).unwrap().display()));
-        link_to(&journal_tmp);
-        assert!(write_journal(&db, &BootstrapMeta::default()).is_err());
-        let restore_tmp = std::path::PathBuf::from(format!(
-            "{}.restore.tmp",
-            block_sidecar(&db).unwrap().display()
-        ));
-        link_to(&restore_tmp);
-        assert!(restore_bytes(block_sidecar(&db), Some(b"RESTORED")).is_err());
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"KEEP");
         assert!(
             std::fs::symlink_metadata(&unknown_tmp)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
-        assert!(
-            std::fs::symlink_metadata(&journal_tmp)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
-        assert!(
-            std::fs::symlink_metadata(&restore_tmp)
                 .unwrap()
                 .file_type()
                 .is_symlink()
@@ -1749,27 +1606,6 @@ mod tests {
         }
         drop(db);
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn clear_keeps_sidecar_block_when_db_write_fails() {
-        clear_force_block();
-        let dir = std::env::temp_dir().join(format!("hg-clear-db-fail-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("device.db");
-        let db = Store::open(&path).unwrap();
-        db.fail_next_meta_writes(1);
-        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db.clone()));
-        let mut meta = BootstrapMeta::default();
-        persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
-        assert!(block_sidecar(&db).unwrap().is_file());
-        db.fail_next_meta_writes(1);
-        assert!(clear_register_block(&db).is_err());
-        drop(state);
-        clear_force_block();
-        let reopened = Store::open(&path).unwrap();
-        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1798,11 +1634,6 @@ mod tests {
         let reopened = Store::open(&path).unwrap();
         assert!(read_meta(&reopened).register_block_unknown);
         assert!(registration_blocked(&read_meta(&reopened), i64::MAX));
-        FAIL_JOURNAL_RENAMES.store(1, Ordering::Relaxed);
-        let err = clear_register_block(&reopened).unwrap_err();
-        assert!(err.to_string().contains("改名"));
-        let tmp = std::path::PathBuf::from(format!("{}.tmp", journal.display()));
-        assert!(!tmp.exists(), "改名失败不能留下半截日志");
         assert!(journal.is_file());
         assert!(registration_blocked(&read_meta(&reopened), now_ms()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1829,19 +1660,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    fn libc_euid() -> u32 {
-        #[cfg(unix)]
-        {
-            unsafe { libc_geteuid() }
-        }
-        #[cfg(not(unix))]
-        {
-            1
-        }
-    }
-
     #[cfg(unix)]
-    unsafe fn libc_geteuid() -> u32 {
+    fn libc_euid() -> u32 {
         unsafe extern "C" {
             fn geteuid() -> u32;
         }

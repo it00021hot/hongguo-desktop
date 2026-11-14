@@ -7,31 +7,8 @@ use hongguo_common::AppResult;
 use hongguo_common::model::playback::RESUME_THRESHOLD_SECS;
 use hongguo_store::Store;
 
-/// 片尾保护：续播落点最多到 `duration - ε`，避免 AVPlayer 起播即尾、尾帧不再推进导致 Ended 永不发生。
-const RESUME_TAIL_EPSILON_SECS: f64 = 0.5;
-/// 剩余不足 2s 视为「这一集已经看完」：起点决策直接给出下一集，绝不让播放器起播在尾部。
-/// 片尾前进的唯一真相源是系统播放器的 Ended 事件（两端同为 AVPlayer / MediaEngine）。
-const RESUME_END_GUARD_SECS: f64 = 2.0;
-
 /// 起点决策，返回 `(集号, 起播秒)`；无断点时 `(1, 0.0)`。云端行的 vid_index 0/1 基混杂
-///（早期客户端上报 0 基），按既有口径对 0 钳 1。剩余 < `RESUME_END_GUARD_SECS` 或已看完：
-/// 返回 `(下一集, 0.0)`；末集会返回 `count + 1`，由播放入口按「下一部/下一集」决策跳过。
-pub fn resolve_entry(
-    store: &Store,
-    series_id: &str,
-    history: &[WatchHistoryItem],
-) -> AppResult<(u32, f64)> {
-    let (vid_index, start_secs, duration) = recent_entry(store, series_id, history)?;
-    let finished = history
-        .iter()
-        .find(|h| h.series_id == series_id)
-        .is_some_and(WatchHistoryItem::is_finished);
-    Ok(next_entry_if_tail(
-        vid_index, start_secs, duration, finished,
-    ))
-}
-
-/// Tauri-style entry selection, before native feed-specific tail advancement.
+///（早期客户端上报 0 基），按既有口径对 0 钳 1。
 pub fn resolve_recent_entry(
     store: &Store,
     series_id: &str,
@@ -56,20 +33,7 @@ fn recent_entry(
     Ok(decide_entry(local, cloud))
 }
 
-/// 片尾/已看完 → 下一集 0s；否则原集，并 clamp 到 `duration - ε`。
-fn next_entry_if_tail(
-    vid_index: u32,
-    start_secs: f64,
-    duration: f64,
-    finished: bool,
-) -> (u32, f64) {
-    if finished || (duration > 0.0 && duration - start_secs <= RESUME_END_GUARD_SECS) {
-        return (vid_index.saturating_add(1), 0.0);
-    }
-    (vid_index, clamp_tail(start_secs, duration))
-}
-
-/// 纯决策（`resolve_entry` 的可测内核，`local` = `(集号, 起播秒, 时长, 更新时刻)`）：
+/// 纯决策（`resolve_recent_entry` 的可测内核，`local` = `(集号, 起播秒, 时长, 更新时刻)`）：
 /// 本地与云端都过「看过」闸后比较更新时间取新者；同刻（理论罕见）本地的集内位置更新，归本地。
 fn decide_entry(
     local: Option<(u32, f64, f64, i64)>,
@@ -91,15 +55,6 @@ fn decide_entry(
     }
 }
 
-/// 片尾夹取：duration 未知（0）时原样；已知时最多到 `duration - ε`。
-fn clamp_tail(start_secs: f64, duration: f64) -> f64 {
-    if duration > RESUME_TAIL_EPSILON_SECS {
-        start_secs.clamp(0.0, duration - RESUME_TAIL_EPSILON_SECS)
-    } else {
-        start_secs.max(0.0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,7 +73,6 @@ mod tests {
             resolve_recent_entry(&store, "s", std::slice::from_ref(&newer)).unwrap(),
             (9, 20.0)
         );
-        assert_eq!(resolve_entry(&store, "s", &[newer]).unwrap(), (10, 0.0));
         let latest = hongguo_common::model::PlaybackPosition {
             current_time: 15.0,
             updated_at: 3_000,
@@ -194,29 +148,5 @@ mod tests {
     #[test]
     fn no_entries_falls_back_to_ep1() {
         assert_eq!(decide_entry(None, None), (1, 0.0, 0.0));
-    }
-
-    #[test]
-    fn tail_start_is_clamped_before_player_open() {
-        assert_eq!(clamp_tail(172.6, 172.6), 172.1);
-        assert_eq!(clamp_tail(200.0, 172.6), 172.1);
-        assert_eq!(clamp_tail(172.4, 172.6), 172.1);
-        assert_eq!(clamp_tail(30.0, 172.6), 30.0);
-        assert_eq!(clamp_tail(30.0, 0.0), 30.0, "时长未知不猜");
-    }
-
-    #[test]
-    fn remaining_under_two_seconds_advances_before_player_open() {
-        assert_eq!(next_entry_if_tail(11, 62.5, 63.3, false), (12, 0.0));
-        assert_eq!(
-            next_entry_if_tail(11, 61.0, 63.3, false),
-            (11, 61.0),
-            "还有 2.3s 正常续播"
-        );
-        assert_eq!(
-            next_entry_if_tail(70, 30.0, 172.6, true),
-            (71, 0.0),
-            "已看完直接给下一集，交播放入口做下一部决策"
-        );
     }
 }

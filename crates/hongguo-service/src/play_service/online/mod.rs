@@ -11,9 +11,9 @@ mod prepare;
 mod progress;
 
 pub use fill::resume_fill;
-pub use plain::{fetch_plain, fetch_plain_with};
+pub use plain::fetch_plain_with;
 pub use prepare::{
-    Prepared, ensure_stream_ready, prefetch_stream, prepare, schedule_next_episode_prefetch,
+    Prepared, prefetch_stream, prepare, schedule_next_episode_prefetch,
 };
 pub use progress::{OnlineProgressEvent, ProgressReporter, ProgressSink};
 

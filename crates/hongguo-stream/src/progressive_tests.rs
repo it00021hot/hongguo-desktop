@@ -1,5 +1,6 @@
 use super::*;
-use crate::{StreamCache, read_range, read_range_cancellable, total_len};
+use crate::read::read_range;
+use crate::{StreamCache, read_range_cancellable, total_len};
 use std::sync::atomic::AtomicBool;
 
 fn ready_stream(vid: &str, definition: u32, len: usize) {

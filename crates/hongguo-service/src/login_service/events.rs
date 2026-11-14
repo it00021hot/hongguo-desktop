@@ -5,9 +5,6 @@
 
 use serde::Serialize;
 
-/// MFA 后台轮询状态事件名（前端 `EVENTS.loginMfaState` 镜像）。
-pub const LOGIN_MFA_STATE: &str = "login-mfa-state";
-
 /// MFA 后台轮询状态事件载荷（`login-mfa-state`），三态互斥，前端按 `state` 判别（discriminated union）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "state")]

@@ -10,7 +10,7 @@ pub mod range;
 
 pub use cache::StreamCache;
 pub use progressive::{ProgressiveStream, ReaderDemand};
-pub use read::{StreamChunk, StreamReadError, read_range, read_range_cancellable, total_len};
+pub use read::{StreamChunk, StreamReadError, read_range_cancellable, total_len};
 
 use std::sync::OnceLock;
 

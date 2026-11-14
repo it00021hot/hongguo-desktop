@@ -90,13 +90,11 @@ async fn check_updates_skips_when_logged_out() {
 }
 
 #[tokio::test]
-async fn login_wall_blocks_toggle_list_is_following() {
+async fn login_wall_blocks_toggle_and_list() {
     let state = AppState::default();
     let err = toggle(&state, "100", true).await.expect_err("未登录应挡");
     assert!(matches!(err, hongguo_common::AppError::Auth(_)));
     let err = list(&state, "").await.expect_err("未登录应挡");
-    assert!(matches!(err, hongguo_common::AppError::Auth(_)));
-    let err = is_following(&state, "100").await.expect_err("未登录应挡");
     assert!(matches!(err, hongguo_common::AppError::Auth(_)));
 }
 

@@ -8,8 +8,7 @@ use super::account::{self, account_from_login, complete_login};
 use super::csrf;
 use super::polling;
 use crate::app_state::AppState;
-use hongguo_api::login::{self, LoginOutcome, MfaContext, MfaFlow, PassportUser, UpsmsState};
-use hongguo_common::model::AccountState;
+use hongguo_api::login::{self, LoginOutcome, MfaContext, MfaFlow, PassportUser};
 use hongguo_common::{AppError, AppResult};
 
 /// 手机号形态校验：11 位、1 开头、全数字（不做号段穷举，服务端会再校验）。
@@ -84,55 +83,9 @@ pub async fn submit(
     }
 }
 
-/// MFA 上行短信验证轮询（单次调用；前端 3 秒间隔重发时用）。
-/// 轮询到 `registered` 后**自动重登**换取会话并落库（用户只需回复短信）。
-pub async fn mfa_verify_once(state: &AppState) -> AppResult<LoginResult> {
-    let flow = state
-        .login_mfa
-        .read()
-        .clone()
-        .ok_or_else(|| AppError::Auth("没有进行中的 MFA 验证，请重新登录".into()))?;
-    let env = csrf::with_csrf(state, state.api_env());
-    match login::upsms_verify(&flow.ctx, &env).await? {
-        UpsmsState::Waiting => Ok(LoginResult::MfaWaiting),
-        UpsmsState::Registered { .. } => {
-            match login::mfa_relogin(&env, &flow.mobile, &flow.code, &flow.ctx).await? {
-                LoginOutcome::Success {
-                    cookies,
-                    user,
-                    token,
-                } => {
-                    let account = account_from_login(flow.mobile.clone(), cookies, &user, token);
-                    complete_login(state, account)?;
-                    Ok(LoginResult::Success { user })
-                }
-                LoginOutcome::Mfa(ctx) => {
-                    // 新一轮 MFA（换了一种验证方式）：更新流程继续轮询
-                    *state.login_mfa.write() = Some(MfaFlow {
-                        ctx: (*ctx).clone(),
-                        mobile: flow.mobile.clone(),
-                        code: flow.code.clone(),
-                    });
-                    Ok(mfa_view(&ctx))
-                }
-            }
-        }
-    }
-}
-
 /// 取消进行中的 MFA 验证（后台轮询循环会随流程清空自行退出）。
 pub fn cancel_mfa(state: &AppState) {
     *state.login_mfa.write() = None;
-}
-
-/// 登录状态（含用户信息；未登录为 None）。
-pub fn status(state: &AppState) -> Option<AccountState> {
-    state.settings().account
-}
-
-/// 校验会话有效性并刷新用户信息（会话过期返回错误）。
-pub async fn user_info(state: &AppState) -> AppResult<PassportUser> {
-    account::fetch_and_refresh_user(state).await
 }
 
 /// 退出登录（清空账号设置；纯本地操作）。

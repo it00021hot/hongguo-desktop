@@ -91,20 +91,6 @@ pub fn stop_task(state: &AppState, task_id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 重试单个任务（重置后立即触发调度）。
-pub fn retry_task(state: &AppState, task_id: &str) -> AppResult<DownloadTask> {
-    let task = state
-        .queue()
-        .retry(task_id)
-        .ok_or_else(|| AppError::NotFound(format!("任务 {task_id}")))?;
-    persist_tasks(&state.store, &state.queue(), "Download")?;
-    state
-        .events()
-        .publish(ServiceEvent::DownloadQueueChanged(QueueChangedEvent {}));
-    kick(state.clone());
-    Ok(task)
-}
-
 /// 批量重试（重置后立即触发调度）。
 pub fn retry_tasks(state: &AppState, task_ids: &[String]) -> AppResult<usize> {
     let n = state.queue().retry_many(task_ids);

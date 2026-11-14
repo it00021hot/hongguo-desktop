@@ -44,9 +44,10 @@ pub struct AppStateInner {
 pub type AppState = Arc<AppStateInner>;
 
 impl AppStateInner {
-    /// 用真实文件库构造（应用启动用）。打开失败（建不了库/迁移失败）
-    /// 直接终止启动：带病运行等于让用户在新库上改设置，回头又换回旧库。
-    pub fn with_db(store: Store) -> Self {
+    /// 用真实文件库构造（测试装配用；NSH 启动走 [`Self::with_device`]）。
+    /// 打开失败（建不了库/迁移失败）直接终止启动：带病运行等于让用户在新库上改设置，
+    /// 回头又换回旧库。
+    pub(crate) fn with_db(store: Store) -> Self {
         Self::with_device(
             store,
             hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid()),

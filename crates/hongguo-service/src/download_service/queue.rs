@@ -152,14 +152,6 @@ impl DownloadQueue {
         }
     }
 
-    /// 重置为待运行，返回被重置的任务。
-    pub fn retry(&self, id: &str) -> Option<DownloadTask> {
-        let mut guard = self.tasks.write();
-        let t = guard.iter_mut().find(|t| t.id == id)?;
-        t.reset_for_retry();
-        Some(t.clone())
-    }
-
     /// 批量重置。
     pub fn retry_many(&self, ids: &[String]) -> usize {
         let mut guard = self.tasks.write();
@@ -217,8 +209,8 @@ impl DownloadQueue {
         n
     }
 
-    /// 设置并发上限，保存后立即生效。
-    pub fn set_limit(&self, limit: usize) {
+    /// 设置并发上限，保存后立即生效（测试装配用）。
+    pub(crate) fn set_limit(&self, limit: usize) {
         *self.limit.write() = limit.clamp(1, 10);
     }
 

@@ -68,11 +68,12 @@ fn resume_all_requeues_stopped_and_failed() {
 }
 
 #[test]
-fn retry_resets_single_task() {
+fn retry_many_resets_failed_task() {
     let q = DownloadQueue::new();
     let t = q.enqueue(task(1));
     q.mark_failed(&t.id, "断了");
-    let back = q.retry(&t.id).unwrap();
+    assert_eq!(q.retry_many(std::slice::from_ref(&t.id)), 1);
+    let back = q.all().into_iter().find(|task| task.id == t.id).unwrap();
     assert_eq!(back.status, TaskStatus::Pending);
     assert!(back.error.is_empty());
 }

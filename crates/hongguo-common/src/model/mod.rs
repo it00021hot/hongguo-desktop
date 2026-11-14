@@ -8,14 +8,11 @@ pub mod season;
 pub mod series;
 pub mod settings;
 pub mod task;
-pub mod window;
 
 pub use follow::{FollowNotice, NOTICE_KIND_FOLLOW, NOTICE_KIND_ONLINE};
 pub use history::LocalHistoryItem;
 pub use merge::{MergeCandidate, MergeMode, MergePreflight, MergeStatus, MergeTask};
-pub use playback::{
-    PlayRequest, PlayResponse, PlaybackMap, PlaybackPosition, SeriesProgress, VideoDefinition,
-};
+pub use playback::{PlayRequest, PlayResponse, PlaybackPosition, VideoDefinition};
 // 浏览/搜索的卡片、分类、分页元数据归 sniff 模块所有：只是嗅探结果的传输结构，不是持久化领域模型（不进 data.json）。
 pub use series::{Episode, Series};
 pub use settings::{AccountState, ProxyConfig, ProxyTestResult, Settings};

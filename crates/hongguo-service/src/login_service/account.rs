@@ -3,9 +3,12 @@
 use crate::app_state::AppState;
 use hongguo_api::login::{self, PassportUser};
 use hongguo_common::model::AccountState;
-use hongguo_common::{AppError, AppResult};
+use hongguo_common::AppResult;
 
 /// 登录成功产物 → 账号快照（`login_at` 用 UTC 毫秒时间戳，与全库其它时间字段一致）。
+/// user_id **绝不能**用 user_info 响应里的 user_id 刷新：那是 encode_user_id 加密形态，
+/// 数字 uid 只在 sms_login 响应里——覆盖会让评论 isMine 判定永远不成立。
+/// 存量坏值在登录时从响应的 req_id（伪装字段名的数字 uid）就地自愈。
 pub fn account_from_login(
     mobile: String,
     cookies: String,
@@ -72,30 +75,3 @@ pub fn refresh_profile_after_login(state: AppState) {
     });
 }
 
-/// 校验会话有效性并刷新用户信息（会话过期返回错误）。
-/// user_id **绝不能**用响应里的 user_id 刷新：user_info 返回的是 encode_user_id 加密形态，
-/// 数字 uid 只在 sms_login 响应里——覆盖会让评论 isMine 判定永远不成立。
-/// 存量坏值可从本响应的 req_id（伪装字段名的数字 uid）就地自愈。
-pub async fn fetch_and_refresh_user(state: &AppState) -> AppResult<PassportUser> {
-    if state.settings().account.is_none() {
-        return Err(AppError::Auth("未登录".into()));
-    }
-    let user = login::user_info(&state.api_env()).await?;
-    if let Some(mut acc) = state.settings().account {
-        acc.user_name = user.name.clone();
-        if (acc.user_id.contains('#') || acc.user_id.is_empty())
-            && let Some(numeric) = login::numeric_uid_from_raw(&user.raw)
-        {
-            log::info!("[Login] user_id 数字形态自愈（req_id）: {numeric}");
-            acc.user_id = numeric;
-        }
-        // user_info 偶发不带头像时不清空已有值
-        if !user.avatar_url.is_empty() {
-            acc.avatar_url = user.avatar_url.clone();
-        }
-        // 原文整体落库：红果号/vip_info 等长尾字段按需从 raw_profile 读取。
-        acc.raw_profile = user.raw.clone();
-        persist_account(state, Some(acc))?;
-    }
-    Ok(user)
-}

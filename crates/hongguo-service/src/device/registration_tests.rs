@@ -35,7 +35,7 @@ async fn first_network_failure_returns_before_the_retry_pause() {
             Err(hongguo_common::AppError::Network(_))
         ));
     }
-    let status = registration_status(&state);
+    let status = state.registration.status();
     assert_eq!(status.phase, RegistrationPhase::RetryScheduled);
     assert_eq!(status.attempt, 1);
     assert!(status.next_retry_at.is_some());
@@ -46,7 +46,7 @@ async fn concurrent_manual_retries_share_one_task_and_identity() {
     let state = trusted_state();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let mut changes = subscribe_registration(&state);
+    let mut changes = state.registration.subscribe();
     let joined = tokio::sync::Notify::new();
 
     let server = async {
@@ -85,7 +85,7 @@ async fn concurrent_manual_retries_share_one_task_and_identity() {
         state.device().get("cdid"),
         first.body["header"]["cdid"].as_str().unwrap()
     );
-    assert_eq!(registration_status(&state).attempt, 2);
+    assert_eq!(state.registration.status().attempt, 2);
     crate::cold_start::wait(&state).await.unwrap();
 }
 
@@ -115,10 +115,10 @@ async fn valid_existing_identity_remains_playable_under_manual_registration_bloc
 
     assert_eq!(state.device(), profile);
     assert_eq!(
-        registration_status(&state).phase,
+        state.registration.status().phase,
         RegistrationPhase::Blocked
     );
-    assert!(registration_status(&state).is_manual_block);
+    assert!(state.registration.status().is_manual_block);
     assert!(read_meta(&state.store).register_block_manual);
 }
 
@@ -178,7 +178,7 @@ async fn exhausted_startup_is_not_restarted_by_playback_waits() {
     let state = trusted_state();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let mut changes = subscribe_registration(&state);
+    let mut changes = state.registration.subscribe();
     let server = async {
         for _ in 0..REGISTER_RETRY_MAX {
             respond(&listener, "503 Service Unavailable", "").await;
@@ -197,7 +197,7 @@ async fn exhausted_startup_is_not_restarted_by_playback_waits() {
             ensure_registered(&state).await;
             assert!(crate::cold_start::wait(&state).await.is_err());
         }
-        assert_eq!(registration_status(&state).attempt, REGISTER_RETRY_MAX);
+        assert_eq!(state.registration.status().attempt, REGISTER_RETRY_MAX);
     };
     tokio::time::timeout(Duration::from_secs(5), async {
         tokio::join!(server, requests)

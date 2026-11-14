@@ -94,22 +94,6 @@ pub struct TaskFailureEvent {
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct QueueChangedEvent {}
 
-/// 事件名常量（前端 `lib/ipc/events.ts` 有一一对应的类型）。
-pub mod names {
-    pub const DOWNLOAD_PROGRESS: &str = "download-progress";
-    pub const DOWNLOAD_TASK_ADDED: &str = "download-task-added";
-    pub const DOWNLOAD_COMPLETED: &str = "download-completed";
-    pub const DOWNLOAD_FAILED: &str = "download-failed";
-    pub const DOWNLOAD_STOPPED: &str = "download-stopped";
-    pub const DOWNLOAD_QUEUE_CHANGED: &str = "download-queue-changed";
-    pub const MERGE_PROGRESS: &str = "merge-progress";
-    pub const MERGE_TASK_ADDED: &str = "merge-task-added";
-    pub const MERGE_COMPLETED: &str = "merge-completed";
-    pub const MERGE_FAILED: &str = "merge-failed";
-    /// 在线播放的取流/解密进度
-    pub const ONLINE_PROGRESS: &str = "online-play-progress";
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,11 +139,5 @@ mod tests {
         t.should_send("a", 0.0);
         t.forget("a");
         assert!(t.should_send("a", 0.0), "清除后应重新发送");
-    }
-
-    #[test]
-    fn event_names_are_stable() {
-        assert_eq!(names::DOWNLOAD_PROGRESS, "download-progress");
-        assert_eq!(names::MERGE_PROGRESS, "merge-progress");
     }
 }

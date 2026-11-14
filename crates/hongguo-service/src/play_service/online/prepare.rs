@@ -246,47 +246,6 @@ pub async fn prefetch_stream(
     Ok(())
 }
 
-/// 保证下一集（或任意待播集）的渐进流**已注册**再返回：系统播放器队列预加载只等注册，
-/// 不等整集。注册后切集命中 `prepare` 的 ready 分支，首帧只等解码。
-/// 不调用 `prepare`（那会把 `cache.current` 改成待播集，让当前集填充让位），只走 `prefetch_stream` 并轮询 `total_len`。
-pub async fn ensure_stream_ready(
-    state: &AppState,
-    vid: &str,
-    definition: u32,
-    progress_key: &str,
-    bytes: u64,
-) -> bool {
-    const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-    if hongguo_stream::total_len(vid, definition).is_some() {
-        cache().mark_next(vid, definition);
-        // 预取可能早已在头部预算处收工；标记后立刻续填，别让 loader 在填充前沿空等。
-        resume_fill(state, vid, definition, progress_key);
-        return true;
-    }
-    let c = cache();
-    // 先标记「下一集」：它免于逐出，也免于续填被当成「已切走」而中止；
-    // 缓存内容仍受统一预算约束——非当前集只填开头一段，转正后再续满。
-    c.mark_next(vid, definition);
-    resume_fill(state, vid, definition, progress_key);
-    if !c.exists(vid, definition)
-        && !c.is_fetching(vid, definition)
-        && let Err(error) = prefetch_stream(state, vid, progress_key, bytes).await
-    {
-        log::warn!("[Online] 预注册 {vid}@{definition} 失败: {error}");
-    }
-    let deadline = std::time::Instant::now() + READY_TIMEOUT;
-    while std::time::Instant::now() < deadline {
-        if hongguo_stream::total_len(vid, definition).is_some() {
-            log::info!("[Online] {vid}@{definition} 流已注册（预注册完成）");
-            resume_fill(state, vid, definition, progress_key);
-            return true;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    log::debug!("[Online] {vid}@{definition} 预注册超时，切集后现场取流");
-    false
-}
-
 /// 同剧连播与换剧共用的单集媒体预取入口。
 /// 幂等与礼让全部复用 [`prefetch_stream`]。档案里查不到该集的 vid 就放弃（播到时现场解析）。
 pub fn schedule_next_episode_prefetch(
