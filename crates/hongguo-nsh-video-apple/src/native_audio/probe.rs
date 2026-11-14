@@ -11,7 +11,7 @@ impl Fixture {
     fn new() -> Self {
         let mut data = std::env::var_os("HONGGUO_NATIVE_AUDIO_PROBE_SOURCE").map_or_else(
             || {
-                include_bytes!("../../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4")
+                include_bytes!("../../../hongguo-media/tests/fixtures/hevc-main-136x76-aac.mp4")
                     .to_vec()
             },
             |path| std::fs::read(path).expect("read explicit native audio probe source"),

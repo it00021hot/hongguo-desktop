@@ -44,8 +44,6 @@ members = [
     "crates/hongguo-protocol",
     "crates/hongguo-service",
     "crates/hongguo-signer",
-    # 进程内软解直播放会话（HEVC / ByteVC2），两个壳共用。
-    "crates/hongguo-softdec",
     "crates/hongguo-store",
     "crates/hongguo-stream",
 ]
@@ -114,17 +112,11 @@ debug = "line-tables-only"
 #
 # 它确实只是一条断言：release 不编译它，该段 SIMD 路径又由 `if ok` 守住
 # 会整段跳过。不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
-# 消费者是 HEIC 封面软解（`hongguo-media::heif`）与 HEVC 软解直播放
-# （`hongguo-softdec`）——后者每一帧都过这段滤波，这条配置对它是必需的。
+# 消费者是 HEIC 封面软解（`hongguo-media::heif`）与 HEVC 软解回退
+# （`hongguo-playback` 经 `hongguo-hevc` 的 libde265 路径）——两者逐帧都过这段滤波，
+# 这条配置对它们是必需的。
 [profile.dev.package.rusty_h265-accel]
 debug-assertions = false
-
-# 软解直播放的出帧打包（解码器的 u16 平面 → 8-bit I420）是逐像素循环，1080p 一帧
-# 三百多万次。零优化下它不向量化：macOS dev 构建采样，解码线程约 63% 的时间耗在
-# 这一个循环上，1080p 30fps 的片子 1× 就吃满一个核，2× 直接跟不上（2026-11-11 实测）。
-# workspace 成员默认不吃下面那条 `"*"`，所以单独点名；release 不受影响。
-[profile.dev.package.hongguo-softdec]
-opt-level = 2
 
 # 第三方依赖保留 O2；工作区自身保持可调试与增量编译。
 [profile.dev.package."*"]

@@ -103,7 +103,7 @@ impl PlanePool {
 }
 
 /// 解码帧缓冲池的对外句柄。帧契约是「8-bit I420 + 归还即复用的平面缓冲」，
-/// 与解核无关——`hongguo-softdec` 的 HEVC 解核经它出帧，和 ByteVC2 走同一份契约。
+/// 与解核无关——软解核（`hongguo-playback` 经 `hongguo-hevc`）经它出帧，和 ByteVC2 走同一份契约。
 #[derive(Clone, Default)]
 pub struct FramePool(Arc<PlanePool>);
 

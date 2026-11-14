@@ -12,7 +12,7 @@ fn apple_reads_fragmented_movie_without_doubling_its_duration() {
     std::fs::create_dir_all(&dir).expect("创建独立测试目录");
     let path = dir.join("one-second.mp4");
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../hongguo-softdec/tests/fixtures/hevc-main-64x48-no-audio.mp4");
+        .join("tests/fixtures/hevc-main-64x48-no-audio.mp4");
     let demux = hongguo_media::demux::demux_file(&source).unwrap();
     let video = &demux.video_track().unwrap().info;
     let (sets, length) = hongguo_media::hevc::read_parameter_set_nalus(&source, video).unwrap();

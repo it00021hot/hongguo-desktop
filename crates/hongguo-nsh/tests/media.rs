@@ -3,7 +3,7 @@ use super::MediaServer;
 #[tokio::test]
 async fn native_audio_http_view_preserves_original_samples_and_shares_revocation() {
     let path = std::env::temp_dir().join(format!("hg-audio-view-{}.mp4", uuid::Uuid::new_v4()));
-    let original = include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
+    let original = include_bytes!("../../hongguo-media/tests/fixtures/hevc-main-136x76-aac.mp4");
     std::fs::write(&path, original).unwrap();
     let server = MediaServer::start().await.unwrap();
     let lease = server.playback_file(&path).unwrap();
@@ -55,7 +55,7 @@ async fn h264_is_readable_by_native_video_without_a_frame_session() {
     let path = std::env::temp_dir().join(format!("hg-nsh-rejected-{}.mp4", uuid::Uuid::new_v4()));
     std::fs::write(
         &path,
-        include_bytes!("../../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4"),
+        include_bytes!("../../hongguo-media/tests/fixtures/h264-64x48-aac.mp4"),
     )
     .unwrap();
     let server = MediaServer::start().await.unwrap();
@@ -66,7 +66,7 @@ async fn h264_is_readable_by_native_video_without_a_frame_session() {
     assert_eq!(response.status(), 200);
     assert_eq!(
         response.bytes().await.unwrap().as_ref(),
-        include_bytes!("../../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4")
+        include_bytes!("../../hongguo-media/tests/fixtures/h264-64x48-aac.mp4")
     );
     drop(lease);
     assert!(server.routes.sources.lock().unwrap().is_empty());
@@ -76,7 +76,7 @@ async fn h264_is_readable_by_native_video_without_a_frame_session() {
 #[tokio::test]
 async fn codec_extension_decodes_the_same_http_source_and_retires_its_frame_lease() {
     let path = std::env::temp_dir().join(format!("hg-nsh-direct-{}.mp4", uuid::Uuid::new_v4()));
-    let original = include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
+    let original = include_bytes!("../../hongguo-media/tests/fixtures/hevc-main-136x76-aac.mp4");
     std::fs::write(&path, original).unwrap();
     let server = MediaServer::start().await.unwrap();
     let lease = server.playback_file(&path).unwrap();
@@ -119,7 +119,7 @@ async fn codec_extension_decodes_the_same_http_source_and_retires_its_frame_leas
 #[tokio::test]
 async fn native_hevc_keeps_the_original_tracks_and_does_not_start_a_frame_decoder() {
     let path = std::env::temp_dir().join(format!("hg-nsh-native-{}.mp4", uuid::Uuid::new_v4()));
-    let original = include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
+    let original = include_bytes!("../../hongguo-media/tests/fixtures/hevc-main-136x76-aac.mp4");
     std::fs::write(&path, original).unwrap();
     let server = MediaServer::start().await.unwrap();
     let lease = server.playback_file(&path).unwrap();

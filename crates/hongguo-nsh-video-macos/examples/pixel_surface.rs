@@ -1,4 +1,8 @@
 #[cfg(target_os = "macos")]
+#[path = "pixel_surface/bgra.rs"]
+mod bgra;
+
+#[cfg(target_os = "macos")]
 #[path = "pixel_surface/fixture.rs"]
 mod fixture;
 
@@ -81,6 +85,10 @@ mod probe {
             !self.presented.load(Ordering::Acquire)
         }
         fn close(&self) {}
+    }
+
+    impl super::clocked::Paced for Checker {
+        fn attach_clock(&self, _: Arc<dyn hongguo_native_clock::Clock>) {}
     }
 
     #[component]

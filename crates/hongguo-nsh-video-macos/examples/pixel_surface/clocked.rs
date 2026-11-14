@@ -4,15 +4,20 @@ use hongguo_nsh_video_api::frames::{
 };
 use std::sync::{Arc, Mutex};
 
+/// 夹具层创建的音轨时钟要同时送达内层帧源（playback 会话用它对齐解码节奏）。
+pub(super) trait Paced: FrameSource {
+    fn attach_clock(&self, clock: Arc<dyn Clock>);
+}
+
 /// The fixture uses the same platform audio factory as production playback.
 pub(super) struct Clocked {
-    frames: Arc<dyn FrameSource>,
+    frames: Arc<dyn Paced>,
     audio_url: String,
     state: Mutex<(Control, Option<Arc<dyn Clock>>)>,
 }
 
 impl Clocked {
-    pub(super) fn new(frames: Arc<dyn FrameSource>, audio_url: String) -> Self {
+    pub(super) fn new(frames: Arc<dyn Paced>, audio_url: String) -> Self {
         Self {
             frames,
             audio_url,
@@ -33,6 +38,7 @@ impl FrameSource for Clocked {
         if state.1.is_none() {
             let clock = factory(self.audio_url.clone())?;
             clock.control(state.0)?;
+            self.frames.attach_clock(clock.clone());
             state.1 = Some(clock);
         }
         Ok(())
@@ -72,6 +78,7 @@ impl FrameSource for Clocked {
             volume: control.volume,
             muted: control.muted,
         };
+        self.frames.control(control)?;
         if let Some(clock) = &state.1 {
             clock.control(state.0)?;
         }

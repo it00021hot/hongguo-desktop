@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn actual_main10_sps_preserves_profile_and_both_bit_depths() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../hongguo-softdec/tests/fixtures/hevc-main10-128x72-hev1-aac.mp4");
+            .join("tests/fixtures/hevc-main10-128x72-hev1-aac.mp4");
         let demux = crate::demux::demux_file(&path).unwrap();
         let (sets, _) =
             crate::hevc::read_parameter_set_nalus(&path, &demux.video_track().unwrap().info)

@@ -161,7 +161,7 @@ mod tests {
         let _scope = ScopedDataDir::new(&dir);
         let path = cache_file("old-avc", 1);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let bytes = include_bytes!("../../../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4");
+        let bytes = include_bytes!("../../../hongguo-media/tests/fixtures/h264-64x48-aac.mp4");
         std::fs::write(&path, bytes).unwrap();
         std::fs::write(
             marker_path(&path),

@@ -76,7 +76,7 @@ fn seeking_while_metadata_is_loading_keeps_the_source_read_alive() {
 }
 
 pub(super) const SAMPLE: &[u8] =
-    include_bytes!("../../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
+    include_bytes!("../../../hongguo-media/tests/fixtures/hevc-main-136x76-aac.mp4");
 
 pub(super) struct MemorySource(pub(super) Vec<u8>);
 impl ReadAt for MemorySource {

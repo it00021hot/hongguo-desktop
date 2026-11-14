@@ -2055,7 +2055,7 @@ dependencies = [
  "hongguo-native-clock",
  "hongguo-nsh-video-api",
  "hongguo-nsh-video-apple",
- "hongguo-softdec",
+ "hongguo-playback",
  "log",
  "nsh-core",
  "nsh-platform-macos",
@@ -2147,17 +2147,6 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "sm3",
-]
-
-[[package]]
-name = "hongguo-softdec"
-version = "0.6.6"
-dependencies = [
- "hongguo-bytevc2",
- "hongguo-common",
- "hongguo-media",
- "hongguo-video",
- "rusty_h265",
 ]
 
 [[package]]

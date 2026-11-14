@@ -1,9 +1,9 @@
 use super::*;
 
-const HEVC: &[u8] = include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
+const HEVC: &[u8] = include_bytes!("../../hongguo-media/tests/fixtures/hevc-main-136x76-aac.mp4");
 const SILENT: &[u8] =
-    include_bytes!("../../hongguo-softdec/tests/fixtures/hevc-main-64x48-no-audio.mp4");
-const H264: &[u8] = include_bytes!("../../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4");
+    include_bytes!("../../hongguo-media/tests/fixtures/hevc-main-64x48-no-audio.mp4");
+const H264: &[u8] = include_bytes!("../../hongguo-media/tests/fixtures/h264-64x48-aac.mp4");
 
 fn open(bytes: &[u8]) -> AppResult<IndexedSource> {
     IndexedSource::open(bytes.len() as u64, |offset, length, output| {

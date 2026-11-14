@@ -8,7 +8,7 @@ fn hevc_parameter_sets_produce_hvc1_sample_description() {
     let dir = temp_dir("hevc-transition");
     let output = dir.join("hevc.mp4");
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../hongguo-softdec/tests/fixtures/hevc-main-64x48-no-audio.mp4");
+        .join("tests/fixtures/hevc-main-64x48-no-audio.mp4");
     let demux = crate::demux::demux_file(&source).unwrap();
     let video = demux.video_track().unwrap();
     let (sets, length) = crate::hevc::read_parameter_set_nalus(&source, &video.info).unwrap();

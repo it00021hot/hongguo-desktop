@@ -22,6 +22,6 @@ log = "0.4"
 nsh-core.workspace = true
 env_logger = "0.11"
 hongguo-common = { path = "../hongguo-common" }
-hongguo-softdec = { path = "../hongguo-softdec" }
+hongguo-playback = { path = "../hongguo-playback" }
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-native-clock = { path = "../hongguo-native-clock" }

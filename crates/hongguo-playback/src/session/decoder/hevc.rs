@@ -65,7 +65,7 @@ mod tests {
     fn main10_software_fallback_keeps_sei_on_reordered_frames() {
         let data = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../hongguo-softdec/tests/fixtures/hevc-main10-128x72-hev1-aac.mp4"
+            "/../hongguo-media/tests/fixtures/hevc-main10-128x72-hev1-aac.mp4"
         ));
         let movie = hongguo_media::demux::demux_bytes(data).unwrap();
         let track = &movie.video_track().unwrap().info;

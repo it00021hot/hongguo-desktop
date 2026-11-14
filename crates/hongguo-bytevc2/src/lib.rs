@@ -9,7 +9,7 @@
 //! `HONGGUO_BYTEVC2_DECODER=oxideav` 回退到 oxideav-h266（feature `oxideav`）。
 
 //!
-//! 带索引、可跳转的直播放会话不在本 crate：它不分编码，归 `hongguo-softdec`。
+//! 带索引、可跳转的直播放会话不在本 crate：它不分编码，归 `hongguo-playback`。
 //! 这里只对它公开 ByteVC2 专属的三件事——找轨（[`track_from_moov`]）、
 //! 从任意样本起解（[`decode_track_vvdec`]）——以及两种解核共用的帧与缓冲池。
 

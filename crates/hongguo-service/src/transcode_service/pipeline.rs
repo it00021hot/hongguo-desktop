@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn avc_input_is_rejected_before_cache_or_codec_backend() {
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4");
+            .join("../hongguo-media/tests/fixtures/h264-64x48-aac.mp4");
         let target = std::env::temp_dir().join(format!("hg-reject-avc-{}.mp4", std::process::id()));
         assert!(matches!(
             transcode(&source, &target, None, None),
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn avc_file_cannot_pass_hevc_archive_output_validation() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../hongguo-softdec/tests/fixtures/h264-64x48-aac.mp4");
+            .join("../hongguo-media/tests/fixtures/h264-64x48-aac.mp4");
         assert!(!output_is_hevc_archive(&path));
     }
 
@@ -137,7 +137,7 @@ mod tests {
             "hevc-main10-128x72-hev1-aac.mp4",
         ] {
             let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../hongguo-softdec/tests/fixtures")
+                .join("../hongguo-media/tests/fixtures")
                 .join(name);
             assert!(output_is_hevc_archive(&path));
         }

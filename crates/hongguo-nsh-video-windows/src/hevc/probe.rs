@@ -4,9 +4,9 @@ use std::time::Instant;
 use windows::Win32::{Foundation::HMODULE, Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE};
 
 const MAIN: &[u8] =
-    include_bytes!("../../../hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4");
+    include_bytes!("../../../hongguo-media/tests/fixtures/hevc-main-136x76-aac.mp4");
 const MAIN10: &[u8] =
-    include_bytes!("../../../hongguo-softdec/tests/fixtures/hevc-main10-128x72-hev1-aac.mp4");
+    include_bytes!("../../../hongguo-media/tests/fixtures/hevc-main10-128x72-hev1-aac.mp4");
 
 /// Uses only synthetic samples and an independent GPU device, never an application session.
 pub fn run() -> Result<(), String> {

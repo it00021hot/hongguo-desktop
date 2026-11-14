@@ -4,7 +4,7 @@ use hongguo_media::{demux, hevc, mux};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../hongguo-softdec/tests/fixtures")
+        .join("tests/fixtures")
         .join(name)
 }
 

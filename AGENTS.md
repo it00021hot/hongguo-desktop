@@ -16,7 +16,6 @@ Tauri、GPUI 与 React/WebView 专用代码已移除；历史备份为 `codex/ba
 - `hongguo-media-*`、`hongguo-hevc`、`hongguo-bytevc2`、`hongguo-vvdec-sys`：媒体、GPU 与专用解码核。
 - `hongguo-service`、`hongguo-api`、`hongguo-store`、`hongguo-common`、`hongguo-signer`：业务、接口、持久化与签名。
 - `hongguo-video`、`hongguo-stream`、`hongguo-protocol`：容器、解密、渐进数据与媒体来源标识。
-- `hongguo-softdec`：仍供 NSH 实播夹具使用的解码器及合成样本，不用于正式播放调度。
 - `assets/icons`、`assets/emoji`、`assets/locales`：共用资源。语言文案同步中英文。
 - `vendor/native-codecs`：认证 SDK；默认开发不做原生解码库源码构建。
 - `vendor/nsh` 与 `vendor/wgpu-hal`：固定版本源码与必要补丁，不参与项目格式化。

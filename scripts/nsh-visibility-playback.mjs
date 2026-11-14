@@ -19,7 +19,7 @@ function run(command, args) {
 run('swiftc', ['scripts/nsh-visibility-cover.swift', '-o', 'target/nsh-visibility-cover']);
 run('cargo', ['build', '-p', 'hongguo-nsh', '--example', 'visibility_playback']);
 const media = pathToFileURL(
-  join(root, 'crates/hongguo-softdec/tests/fixtures/hevc-main-136x76-aac.mp4'),
+  join(root, 'crates/hongguo-media/tests/fixtures/hevc-main-136x76-aac.mp4'),
 ).href;
 const composite = ['--nonopaque', '--translucent'];
 const scenarios = [
