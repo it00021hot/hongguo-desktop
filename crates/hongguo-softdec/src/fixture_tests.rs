@@ -184,29 +184,6 @@ fn a_failing_read_surfaces_its_error() {
 }
 
 #[test]
-fn the_audio_view_hides_the_video_track_and_keeps_everything_else_in_place() {
-    let index = open(HEVC_MAIN).expect("建索引");
-    let mut view = HEVC_MAIN.to_vec();
-    index.mask_video_tracks(0, &mut view);
-    assert_eq!(
-        view.len(),
-        HEVC_MAIN.len(),
-        "偏移不能变，音轨样本表还指着原位置"
-    );
-    let changed = view
-        .iter()
-        .zip(HEVC_MAIN)
-        .filter(|(after, before)| after != before)
-        .count();
-    assert!(
-        (1..=4).contains(&changed),
-        "只应改写视频 trak 的四字码，实际改了 {changed} 字节"
-    );
-    let error = open(&view).err().expect("遮掉视频轨后不应再建得出视频索引");
-    assert!(error.to_string().contains("没有视频轨"), "实际 {error}");
-}
-
-#[test]
 fn h264_is_refused_by_name_instead_of_being_handed_elsewhere() {
     let error = open(H264).err().expect("H.264 不在内置解码器范围内");
     assert!(

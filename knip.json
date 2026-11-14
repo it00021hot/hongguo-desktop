@@ -1,5 +1,0 @@
-{
-  "$schema": "./node_modules/knip/schema.json",
-  "ignore": ["src/pages/routeTree.gen.ts", "src/components/ui/**", ".agents/**", "vendor/**"],
-  "ignoreDependencies": []
-}

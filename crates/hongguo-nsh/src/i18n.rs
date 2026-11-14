@@ -2,11 +2,11 @@ use nsh_core::prelude::*;
 use std::sync::LazyLock;
 
 static ZH: LazyLock<serde_json::Value> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../../src/locales/zh-CN.json"))
+    serde_json::from_str(include_str!("../../../assets/locales/zh-CN.json"))
         .expect("validated zh-CN catalog")
 });
 static EN: LazyLock<serde_json::Value> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../../src/locales/en-US.json"))
+    serde_json::from_str(include_str!("../../../assets/locales/en-US.json"))
         .expect("validated en-US catalog")
 });
 

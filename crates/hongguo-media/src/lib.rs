@@ -4,7 +4,6 @@
 //! 聚合在 `crates/hongguo-media-platform`——它依赖本 crate，反向不成立；本 crate 不依赖 tauri。
 
 pub mod backend;
-pub mod bgra;
 pub mod codec_probe;
 pub mod demux;
 pub mod disk_space;

@@ -141,7 +141,7 @@ pub(crate) fn fixture() -> impl IntoElement {
                     attachment.set(Some(Attachment::Local(LocalImage {
                         bytes: include_bytes!(concat!(
                             env!("CARGO_MANIFEST_DIR"),
-                            "/../../src/assets/emoji/e01.webp"
+                            "/../../assets/emoji/e01.webp"
                         ))
                         .to_vec()
                         .into(),

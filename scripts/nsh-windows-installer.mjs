@@ -70,7 +70,7 @@ export function buildWindowsInstaller(bundle) {
       `${option}DBUNDLE_DIR=${literal(bundle)}`,
       `${option}DOUTPUT_FILE=${literal(installer)}`,
       `${option}DPRODUCT_VERSION=${version}`,
-      `${option}DAPP_ICON=${literal(join(root, 'crates/hongguo-tauri-app/icons/icon.ico'))}`,
+      `${option}DAPP_ICON=${literal(join(root, 'assets/icons/icon.ico'))}`,
       `${option}DUNINSTALL_FILES=${literal(manifest)}`,
       join(root, 'scripts/nsh-windows-installer.nsi'),
     ],

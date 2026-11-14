@@ -1,7 +1,4 @@
-//! Range 请求解析与 206 响应构造。
-
-/// 协议响应：`状态码 + 响应头 + 响应体`。
-pub type ProtocolResponse = (u16, Vec<(String, String)>, Vec<u8>);
+//! NSH HTTP 供数使用的 Range 请求解析。
 
 /// 解析后的 Range。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -67,21 +64,6 @@ pub fn parse_range(header: Option<&str>, total: u64) -> RangeSpec {
         return RangeSpec::Unsatisfiable;
     }
     RangeSpec::Closed { start, end }
-}
-
-/// 构造 206 响应头。
-pub fn partial_headers(start: u64, end: u64, total: u64) -> Vec<(String, String)> {
-    vec![
-        ("Content-Type".into(), "video/mp4".into()),
-        ("Accept-Ranges".into(), "bytes".into()),
-        (
-            "Content-Range".into(),
-            format!("bytes {start}-{end}/{total}"),
-        ),
-        ("Content-Length".into(), (end - start + 1).to_string()),
-        // 不许 WebView2 缓存：流内容随时在变，缓存到失败瞬间的坏响应后，同一个 URL 重试也拿坏数据
-        ("Cache-Control".into(), "no-store".into()),
-    ]
 }
 
 #[cfg(test)]
@@ -159,19 +141,5 @@ mod tests {
             parse_range(Some("bytes=0-99,200-299"), 1000),
             RangeSpec::Full
         );
-    }
-
-    #[test]
-    fn headers_are_wellformed() {
-        let h = partial_headers(0, 99, 1000);
-        let get = |k: &str| {
-            h.iter()
-                .find(|(a, _)| a == k)
-                .map(|(_, b)| b.clone())
-                .unwrap()
-        };
-        assert_eq!(get("Content-Range"), "bytes 0-99/1000");
-        assert_eq!(get("Content-Length"), "100");
-        assert_eq!(get("Accept-Ranges"), "bytes");
     }
 }

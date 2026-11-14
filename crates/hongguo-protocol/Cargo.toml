@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-protocol"
-description = "红果桌面版自定义 URI 协议：hongguo-local / hongguo-stream / hongguo-cover 的供数逻辑"
+description = "媒体来源标识的 URL 与本地路径编解码"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,24 +8,5 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-# 共用底座：scheme 常量与 hex 工具。
 hongguo-common = { path = "../hongguo-common" }
-# 流数据面：Range 应答（serve）与线格式（ProtocolResponse / RangeSpec）。
-hongguo-stream = { path = "../hongguo-stream" }
-# 封面纯软解级（HEIF → JPEG，封面阶梯最后一级）。
-hongguo-media = { path = "../hongguo-media" }
-# 封面平台级（WIC）与 ffmpeg 执行（封面转码阶梯前两级）。
-hongguo-media-platform = { path = "../hongguo-media-platform" }
-# 封面缓存目录约定（paths::cover_cache_dir）。
-hongguo-store = { path = "../hongguo-store" }
 base64 = "0.23"
-sha2 = "0.11"
-log = "0.4"
-# 封面卡片档缩放（转码产物按显示尺寸缩小后落盘：列表卡只需 320 长边）。
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-# 封面原图下载（worker 线程上无 runtime，内联 current_thread runtime 跑一段 async）。
-reqwest = { version = "0.13", default-features = false, features = [
-    "rustls",
-    "gzip",
-] }
-tokio = { version = "1", features = ["rt"] }

@@ -144,10 +144,7 @@ function macos(binary, output, prefix, triple) {
     if (path.includes('/native-media/'))
       run('install_name_tool', ['-delete_rpath', path, executable]);
   }
-  copyFileSync(
-    join(root, 'crates/hongguo-tauri-app/icons/icon.icns'),
-    join(contents, 'Resources/AppIcon.icns'),
-  );
+  copyFileSync(join(root, 'assets/icons/icon.icns'), join(contents, 'Resources/AppIcon.icns'));
   const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const plist = join(contents, 'Info.plist');
   writeFileSync(

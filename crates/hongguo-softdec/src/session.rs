@@ -7,7 +7,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::JoinHandle,
-    time::Duration,
 };
 
 #[cfg(test)]
@@ -18,7 +17,6 @@ mod worker;
 
 const QUEUE_DEPTH: usize = 4;
 const DUE_AHEAD_MS: u64 = 8;
-const MASK_CANCEL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub trait ReadAt: Send + Sync + 'static {
     fn length(&self) -> AppResult<u64>;
@@ -198,40 +196,6 @@ impl DirectSession {
     pub fn holding(&self) -> bool {
         let state = self.shared.lock();
         !state.closed && state.holding
-    }
-
-    /// Audio reads call this on their IO worker after source registration.
-    pub fn mask_video_tracks(&self, offset: u64, bytes: &mut [u8]) -> AppResult<()> {
-        self.mask_video_tracks_cancellable(offset, bytes, || false)
-    }
-
-    pub fn mask_video_tracks_cancellable(
-        &self,
-        offset: u64,
-        bytes: &mut [u8],
-        cancelled: impl Fn() -> bool,
-    ) -> AppResult<()> {
-        let index = loop {
-            if cancelled() {
-                return Err(AppError::Cancelled);
-            }
-            let state = self.shared.lock();
-            state.check()?;
-            if let Some(index) = &state.index {
-                break index.clone();
-            }
-            drop(
-                self.shared
-                    .changed
-                    .wait_timeout(state, MASK_CANCEL_INTERVAL)
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-            );
-        };
-        index.mask_video_tracks(offset, bytes);
-        if cancelled() {
-            return Err(AppError::Cancelled);
-        }
-        self.shared.lock().check()
     }
 
     pub fn close(&self) {

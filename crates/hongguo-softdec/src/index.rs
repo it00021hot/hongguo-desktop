@@ -59,7 +59,6 @@ fn open_track(moov: &[u8]) -> AppResult<Track> {
 
 pub struct IndexedVideo {
     video: Track,
-    video_atom_types: Vec<u64>,
     pts: Vec<f64>,
     last_pts: f64,
 }
@@ -70,11 +69,10 @@ impl IndexedVideo {
         length: u64,
         read: impl FnMut(u64, u64, &mut Vec<u8>) -> AppResult<()>,
     ) -> AppResult<Self> {
-        let (offset, data) = read_moov_at(length, read)?;
+        let (_, data) = read_moov_at(length, read)?;
         let video = open_track(&data)?;
         let moov = find_box(&data, 0, data.len(), "moov")
             .ok_or_else(|| AppError::Media("找不到 moov box".into()))?;
-        let mut video_atom_types = Vec::new();
         let mut has_aac = false;
         for atom in parse_boxes(&data, moov.start, moov.start + moov.size) {
             if !atom.is("trak") {
@@ -83,9 +81,7 @@ impl IndexedVideo {
             let Some(track) = collect_track(&data, atom.start, atom.start + atom.size) else {
                 continue;
             };
-            if track.is_video {
-                video_atom_types.push(offset + (atom.start - atom.header_size + 4) as u64);
-            } else if track.codec == "mp4a" {
+            if !track.is_video && track.codec == "mp4a" {
                 has_aac = true;
             }
         }
@@ -100,7 +96,6 @@ impl IndexedVideo {
             .ok_or_else(|| AppError::Media("视频轨缺少显示时间轴".into()))?;
         Ok(Self {
             video,
-            video_atom_types,
             pts,
             last_pts,
         })
@@ -123,13 +118,6 @@ impl IndexedVideo {
         match &self.video {
             Track::Hevc(track) => track.color,
             Track::Bytevc2(track) => FrameColor::assumed(track.info.height as usize, false),
-        }
-    }
-
-    /// 把视频轨的 trak 标记换成 free，保留原音轨、edit list 与绝对样本偏移。
-    pub fn mask_video_tracks(&self, offset: u64, bytes: &mut [u8]) {
-        for &atom_type in &self.video_atom_types {
-            mask_atom_type(atom_type, offset, bytes);
         }
     }
 
@@ -158,16 +146,6 @@ impl IndexedVideo {
         match &self.video {
             Track::Hevc(track) => decode_track_hevc(track, start, read, &mut emit),
             Track::Bytevc2(track) => decode_track_vvdec(track, start, read, &mut emit),
-        }
-    }
-}
-
-fn mask_atom_type(atom_type: u64, offset: u64, bytes: &mut [u8]) {
-    for (relative, replacement) in b"free".iter().enumerate() {
-        if let Some(index) = (atom_type + relative as u64).checked_sub(offset)
-            && let Some(byte) = bytes.get_mut(index as usize)
-        {
-            *byte = *replacement;
         }
     }
 }
@@ -216,15 +194,5 @@ mod tests {
         assert_eq!(seek_sample(&track, &pts, 4.0), 4);
         track.stss = None;
         assert_eq!(seek_sample(&track, &pts, 3.0), 3);
-    }
-
-    #[test]
-    fn audio_view_patches_only_the_overlap_with_a_range() {
-        let mut before = *b"_tr";
-        let mut after = *b"ak_";
-        mask_atom_type(10, 9, &mut before);
-        mask_atom_type(10, 12, &mut after);
-        assert_eq!(&before, b"_fr");
-        assert_eq!(&after, b"ee_");
     }
 }

@@ -60,6 +60,11 @@ export function copyMediaNotices(prefix, triple, destination) {
     join(notices, 'SIMDe-COPYING'),
   );
   copyFileSync(join(root, 'vendor/nsh/LICENSE-APACHE'), join(destination, 'NSH-LICENSE-APACHE'));
+  copyFileSync(
+    join(root, 'crates/hongguo-nsh/src/ui/icons/LICENSE'),
+    join(destination, 'Lucide-LICENSE'),
+  );
+  copyFileSync(join(root, 'THIRD-PARTY-NOTICES.md'), join(destination, 'THIRD-PARTY-NOTICES.md'));
   const anime4k = join(destination, 'anime4k');
   mkdirSync(anime4k, { recursive: true });
   for (const name of ['LICENSE.md', 'graph.json'])

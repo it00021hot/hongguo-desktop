@@ -9,7 +9,6 @@ dist-ssr/
 
 # Rust（workspace 化后 target 落在仓库根）
 target/
-crates/hongguo-tauri-app/gen/schemas/
 
 # TypeScript 增量编译缓存
 *.tsbuildinfo
@@ -48,7 +47,6 @@ skills-lock.json
 .venv-capture/
 
 
-src-tauri
 **/.nsh/
 crates/hongguo-nsh-android/android/.gradle/
 crates/hongguo-nsh-android/android/**/build/

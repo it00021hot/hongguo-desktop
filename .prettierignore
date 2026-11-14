@@ -8,7 +8,6 @@ pnpm-lock.yaml
 
 # 构建产物
 dist/
-crates/hongguo-tauri-app/gen/
 target/
 **/.nsh/
 

@@ -237,15 +237,12 @@ fn decoding_to_eof_keeps_the_displayed_frame_and_can_seek_again() {
 }
 
 #[test]
-fn close_wakes_both_the_pending_read_and_an_audio_mask_waiter() {
+fn close_wakes_the_pending_read_and_rejects_later_controls() {
     let (source, entered, cancelled) = blocked();
     let session = Arc::new(DirectSession::open(source).unwrap());
     entered.recv_timeout(TEST_TIMEOUT).unwrap();
-    let waiter = session.clone();
-    let mask = std::thread::spawn(move || waiter.mask_video_tracks(0, &mut [0; 4]));
     session.close();
     cancelled.recv_timeout(TEST_TIMEOUT).unwrap();
-    assert!(matches!(mask.join().unwrap(), Err(AppError::Cancelled)));
     assert!(session.info().is_err());
     assert!(session.frame_at(0).is_err());
     assert!(session.seek(0).is_err());
@@ -253,52 +250,7 @@ fn close_wakes_both_the_pending_read_and_an_audio_mask_waiter() {
 }
 
 #[test]
-fn cancelling_one_audio_mask_waiter_does_not_close_the_shared_decoder() {
-    let (source, entered, decoder_cancelled) = blocked();
-    let session = Arc::new(DirectSession::open(source).unwrap());
-    entered.recv_timeout(TEST_TIMEOUT).unwrap();
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let caller_cancelled = cancelled.clone();
-    let waiter = session.clone();
-    let (send, receive) = mpsc::sync_channel(1);
-    let mask = std::thread::spawn(move || {
-        let result = waiter.mask_video_tracks_cancellable(0, &mut [0; 4], || {
-            caller_cancelled.load(Ordering::Acquire)
-        });
-        send.send(result).unwrap();
-    });
-    cancelled.store(true, Ordering::Release);
-    let result = receive.recv_timeout(Duration::from_millis(500));
-    if result.is_err() {
-        session.close();
-    }
-    assert!(
-        matches!(result, Ok(Err(AppError::Cancelled))),
-        "only the cancelled HTTP consumer should return"
-    );
-    mask.join().unwrap();
-    assert!(session.info().unwrap().is_none());
-    assert!(decoder_cancelled.try_recv().is_err());
-    let generation = session.seek(1_000).unwrap();
-    decoder_cancelled.recv_timeout(TEST_TIMEOUT).unwrap();
-    assert_eq!(picture(&session, 0).generation, generation);
-}
-
-#[test]
-fn audio_mask_removes_only_video_tracks_and_leaves_the_original_source_unchanged() {
-    let session = DirectSession::open(Arc::new(Memory::movie())).unwrap();
-    let mut audio = MOVIE.to_vec();
-    session.mask_video_tracks(0, &mut audio).unwrap();
-    let tracks = hongguo_video::sample_table::collect_tracks(&audio).unwrap();
-    assert!(!tracks.iter().any(|track| track.is_video));
-    assert!(tracks.iter().any(|track| track.codec == "mp4a"));
-    assert_ne!(audio, MOVIE);
-    let frame = picture(&session, 0);
-    assert_eq!((frame.width, frame.height), (136, 76));
-}
-
-#[test]
-fn decoder_errors_are_reported_to_frames_and_audio_waiters() {
+fn decoder_errors_are_reported_to_frames_and_seeks() {
     let source = Arc::new(Memory {
         bytes: b"not an mp4",
         threads: Mutex::default(),
@@ -306,6 +258,5 @@ fn decoder_errors_are_reported_to_frames_and_audio_waiters() {
     let session = DirectSession::open(source).unwrap();
     wait(|| session.info().err());
     assert!(session.frame_at(0).is_err());
-    assert!(session.mask_video_tracks(0, &mut [0; 4]).is_err());
     assert!(session.seek(0).is_err());
 }

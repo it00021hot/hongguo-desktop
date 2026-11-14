@@ -3,7 +3,7 @@ use std::{env, fmt::Write, fs, path::PathBuf};
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("crate root"));
     windows_resources(&root);
-    let source = root.join("../../src/utils/danmaku-emoji-files.generated.ts");
+    let source = root.join("../../assets/emoji/catalog.txt");
     println!("cargo:rerun-if-changed={}", source.display());
     let table = fs::read_to_string(&source).expect("read shared emoji catalog");
     let mut generated = String::from("pub const SYSTEM: &[SystemEmoji] = &[\n");
@@ -22,7 +22,7 @@ fn main() {
             file.ends_with(".webp") && !file.contains(['/', '\\']),
             "emoji filename"
         );
-        let path = root.join("../../src/assets/emoji").join(file);
+        let path = root.join("../../assets/emoji").join(file);
         println!("cargo:rerun-if-changed={}", path.display());
         let bytes = fs::read(path).expect("read shared emoji asset");
         let mut uri = String::from("data:image/webp,");
@@ -49,7 +49,7 @@ fn windows_resources(root: &std::path::Path) {
     for path in [
         root.join("windows.rc"),
         root.join("windows.manifest"),
-        root.join("../hongguo-tauri-app/icons/icon.ico"),
+        root.join("../../assets/icons/icon.ico"),
     ] {
         println!("cargo:rerun-if-changed={}", path.display());
     }

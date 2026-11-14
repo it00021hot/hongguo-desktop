@@ -4,10 +4,7 @@
 # Rust 侧在仓库根执行（workspace 根 manifest），--workspace 覆盖全部成员 crate。
 # 启用：git config core.hooksPath .githooks
 #
-# dev 分支推送也跑 CI（2026-10-13 教训：gpui 壳 21 个编译不过的提交全推在
-# dev 上，CI 只盯 main 等于没有；本地 hook 在未启用的克隆里也是哑的）。
-# macOS 腿在原生 runner 上有完整 SDK，--workspace 含 hongguo-gpui 照常编译
-# （本地交叉才需要排除它）；mf 等 Windows-only cfg 由 Windows 腿覆盖。
+# dev/main 与 PR 均验证 NSH 及共享工作区，平台代码由对应原生 runner 覆盖。
 # 新增文件超 800 行由 scripts/check-file-size.sh 拒绝（单一职责的机械闸）。
 name: CI
 
@@ -63,14 +60,11 @@ jobs:
           workspaces: .
           key: ${{ matrix.rust_target }}
 
-      - name: Install frontend deps
+      - name: Install tooling dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Type check and build frontend
-        run: pnpm build
-
-      - name: ESLint
-        run: pnpm exec eslint . --max-warnings=0
+      - name: Packaging script tests
+        run: pnpm test
 
       - name: Set up verified native SDKs (macOS host and check target)
         if: runner.os == 'macOS'
@@ -99,6 +93,30 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           Join-Path $env:GITHUB_WORKSPACE "target\native-media\$hostTarget\libde265-1.1.3\bin" >> $env:GITHUB_PATH
+
+      - name: Install pinned NSH CLI for preview declarations
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset=$(node -p "process.platform === 'win32' ? 'nsh-windows-x86_64.zip' : 'nsh-macos-' + (process.arch === 'arm64' ? 'arm64' : 'x86_64') + '.tar.gz'")
+          destination="$RUNNER_TEMP/nsh-cli"
+          mkdir -p "$destination"
+          gh release download v0.5.0 --repo longbridge/nsh --pattern "$asset" --pattern "$asset.sha256" --dir "$destination"
+          node --input-type=module -e 'import{readFileSync}from"node:fs";import{createHash}from"node:crypto";const path=process.argv[1];const expected=readFileSync(path+".sha256","utf8").trim().split(/\s+/)[0];if(createHash("sha256").update(readFileSync(path)).digest("hex")!==expected)throw Error("NSH CLI checksum mismatch");' "$destination/$asset"
+          tar -xf "$destination/$asset" -C "$destination"
+          echo "$destination/nsh/bin" >> "$GITHUB_PATH"
+
+      - name: Generate and check native preview declarations
+        shell: bash
+        run: |
+          set -euo pipefail
+          compiler=$(node -p "require('path').resolve('node_modules/.bin/tsc6' + (process.platform === 'win32' ? '.cmd' : ''))")
+          nsh check crates/hongguo-nsh/preview --tsc "$compiler"
+
+      - name: ESLint
+        run: pnpm lint
 
       - name: Preserve verified native SDKs and corresponding source
         if: always()

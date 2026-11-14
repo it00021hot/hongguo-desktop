@@ -7,6 +7,3 @@ pub const LOCAL: &str = "hongguo-local";
 
 /// 在线播放的内存渐进流（同样支持 Range）。
 pub const STREAM: &str = "hongguo-stream";
-
-/// HEIC 封面下载转 JPEG（落盘哈希缓存）。
-pub const COVER: &str = "hongguo-cover";

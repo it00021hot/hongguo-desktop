@@ -1,2 +1,2 @@
-1 ICON "../hongguo-tauri-app/icons/icon.ico"
+1 ICON "../../assets/icons/icon.ico"
 1 24 "windows.manifest"

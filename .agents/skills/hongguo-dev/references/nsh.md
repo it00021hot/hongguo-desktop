@@ -1,5 +1,19 @@
 # NSH 壳开发与验证
 
+主线已移除旧壳、旧播放器与 WebView 前端。资源路径为 `assets/icons`、`assets/emoji`、
+`assets/locales`。旧壳、WebView 调试及发布命令不再适用，完整历史位于备份分支。
+原生预览仍保留 TSX 测试，需要匹配 NSH 0.5.0 CLI 先生成声明：
+
+```sh
+# 配置当前平台的原生 SDK 运行库搜索路径后执行；Windows 编译器路径使用 tsc6.cmd。
+nsh check crates/hongguo-nsh/preview --tsc ./node_modules/.bin/tsc6
+pnpm typecheck
+pnpm lint
+```
+
+CI 从固定 NSH 发布包安装 CLI，校验 SHA-256 后生成声明，不依赖已有的 .nsh 缓存。
+普通 `pnpm nsh` 仍通过 Rust 原生入口启动，不要求安装 NSH CLI。
+
 ## 归属
 
 - `hongguo-nsh`：纯 Rust 共享界面、业务装配、事件/运行时桥、进程内媒体供数。

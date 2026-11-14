@@ -120,10 +120,7 @@ function compileIcon(destination, simulator) {
   const catalog = join(dirname(destination), 'Assets.xcassets');
   const icon = join(catalog, 'AppIcon.appiconset');
   mkdirSync(icon, { recursive: true });
-  copyFileSync(
-    join(root, 'crates/hongguo-tauri-app/icons/1024x1024.png'),
-    join(icon, 'AppIcon.png'),
-  );
+  copyFileSync(join(root, 'assets/icons/1024x1024.png'), join(icon, 'AppIcon.png'));
   writeFileSync(
     join(catalog, 'Contents.json'),
     JSON.stringify({ info: { author: 'xcode', version: 1 } }),

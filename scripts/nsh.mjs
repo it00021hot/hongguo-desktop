@@ -152,10 +152,7 @@ function android() {
   );
   const drawable = join(output, 'resources/drawable');
   mkdirSync(drawable, { recursive: true });
-  copyFileSync(
-    join(root, 'crates/hongguo-tauri-app/icons/512x512.png'),
-    join(drawable, 'hongguo_icon.png'),
-  );
+  copyFileSync(join(root, 'assets/icons/512x512.png'), join(drawable, 'hongguo_icon.png'));
   const libraries = join(output, 'jniLibs/arm64-v8a');
   mkdirSync(libraries, { recursive: true });
   copyFileSync(

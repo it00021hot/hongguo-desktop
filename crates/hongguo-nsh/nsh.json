@@ -1,7 +1,7 @@
 {
   "name": "红果",
   "id": "com.hongguo.nsh",
-  "icon": "../hongguo-tauri-app/icons/1024x1024.png",
+  "icon": "../../assets/icons/1024x1024.png",
   "version": "0.6.6",
   "build": 1,
   "rust": ".",

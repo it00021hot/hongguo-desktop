@@ -4,7 +4,7 @@
 只依赖 ImageMagick（`magick`）与 macOS 自带的 `iconutil`，不需要 Pillow——
 脚本会在缺工具时给出明确报错。
 
-## 图形来源（crates/hongguo-tauri-app/icons/source.png）
+## 图形来源（assets/icons/source.png）
 
 官方 macOS 壳（`/Applications/红果短剧.app`）的 1024 原图——比官网
 `<link rel="icon">` 那张 40px 小图清晰得多（旧脚本把 40px 放大 25 倍，
@@ -12,7 +12,7 @@
 
     iconutil -c iconset -o /tmp/hg.iconset \
       "/Applications/红果短剧.app/Contents/Resources/iconfile.icns"
-    cp /tmp/hg.iconset/icon_512x512@2x.png crates/hongguo-tauri-app/icons/source.png
+    cp /tmp/hg.iconset/icon_512x512@2x.png assets/icons/source.png
 
 source.png 不存在时脚本会自己跑一遍上面的提取（见 extract_reference）。
 
@@ -35,21 +35,17 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ICON_DIR = ROOT / "crates" / "hongguo-tauri-app" / "icons"
+ICON_DIR = ROOT / "assets" / "icons"
 SOURCE = ICON_DIR / "source.png"
-WEB_DIR = ROOT / "public"
 
 CANVAS = 1024
 # macOS 标准网格：图形本体占画布的比例（824/1024，四周各留 100）
 PLATE = 824
 REFERENCE_APP = Path("/Applications/红果短剧.app")
-# Tauri bundle.icon 声明的各档
+# 应用图标的常用分辨率。
 PNG_SIZES = (32, 128, 256, 512, 1024)
 # macOS .icns 的标准档位（每种各带 @2x）
 ICNS_SIZES = (16, 32, 128, 256, 512)
-# 应用内界面（侧边栏等）用的边长。**不带标准留白**：那套留白是给系统
-# Dock/任务栏摆位用的，界面里按图形本体铺满才不会被读成「缩了一圈」。
-WEB_ICON_SIZE = 128
 
 
 def run(args: list[str]) -> None:
@@ -96,7 +92,7 @@ def build_master() -> Path:
 
 
 def write_pngs(master: Path) -> None:
-    """Tauri bundle.icon 声明的各尺寸（Windows 任务栏与 Linux 的包都吃它）。"""
+    """生成原生应用使用的图标尺寸。"""
     for size in PNG_SIZES:
         magick(str(master), "-filter", "Lanczos", "-resize", f"{size}x{size}",
                out=ICON_DIR / f"{size}x{size}.png")
@@ -137,18 +133,6 @@ def write_icns(master: Path) -> None:
     print("wrote icon.icns (16..512 + @2x)")
 
 
-def write_web_icon() -> None:
-    """界面内用的那份：按图形本体裁掉标准留白（见文件头说明）。
-
-    走 public/ 而不是 src/assets：Vite 对 public/ 是原样拷贝，
-    引用时不需要 import 路径哈希。
-    """
-    WEB_DIR.mkdir(parents=True, exist_ok=True)
-    magick(str(SOURCE), "-trim", "+repage", "-filter", "Lanczos", "-resize",
-           f"{WEB_ICON_SIZE}x{WEB_ICON_SIZE}", out=WEB_DIR / "app-icon.png")
-    print(f"wrote public/app-icon.png ({WEB_ICON_SIZE}x{WEB_ICON_SIZE}, 无留白)")
-
-
 def main() -> None:
     require_tools()
     ICON_DIR.mkdir(parents=True, exist_ok=True)
@@ -158,7 +142,6 @@ def main() -> None:
     write_pngs(master)
     write_ico(master)
     write_icns(master)
-    write_web_icon()
 
 
 if __name__ == "__main__":

@@ -1,9 +1,7 @@
 //! 协议 URL 的拼装与解析。scheme 名（前后端契约）定义在 [`hongguo_common::consts::scheme`]，此处按本 crate 旧名再导出。
 
 /// scheme 名（前后端契约），定义在 `hongguo-common::consts::scheme`，此处按旧名再导出。
-pub use hongguo_common::consts::scheme::{
-    COVER as COVER_SCHEME, LOCAL as LOCAL_SCHEME, STREAM as STREAM_SCHEME,
-};
+pub use hongguo_common::consts::scheme::{LOCAL as LOCAL_SCHEME, STREAM as STREAM_SCHEME};
 
 /// 自定义协议对外的 URL 前缀，按平台二选一：Windows/Android 必须给 `http://{scheme}.localhost`
 /// （WebView2 与 Android WebView 不拦非 http scheme），macOS/Linux 必须给 `{scheme}://localhost`（拦真 scheme，http 形态会被当真实 HTTP 请求发往不存在的主机）。

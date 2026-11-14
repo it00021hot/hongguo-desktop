@@ -1,315 +1,33 @@
-# 🎬 红果播放器 · Hongguo Desktop
+# 红果播放器 · Hongguo Desktop
 
-<div align="center">
+基于 NSH 0.5.0 与 Rust 的非官方红果短剧客户端，桌面目标为 Windows 10 1809+ / Windows 11、macOS，另有独立 Android / iOS 宿主。
 
-![平台](https://img.shields.io/badge/平台-Windows%20%2F%20macOS-blue?style=for-the-badge)
-![技术栈](https://img.shields.io/badge/技术栈-Tauri%202%20%2B%20GPUI%20%2B%20Rust-47848F?style=for-the-badge)
-![协议](https://img.shields.io/badge/协议-PolyForm%20Noncommercial%201.0.0-blueviolet?style=for-the-badge)
+[English](README.en.md) · [使用声明](NOTICE) · [第三方组件](THIRD-PARTY-NOTICES.md)
 
-**非官方红果短剧桌面客户端 —— 沉浸浏览 · 排行榜 · 弹幕播放 · 批量下载 · 一键合并**
+仅供非商业学习研究，与官方无关联，不存储或分发影视内容。使用前请阅读 [NOTICE](NOTICE) 与 [LICENSE](LICENSE)。
 
-Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service / api / store · 安装包不捆绑任何外部二进制
+## 开发与打包
 
-[English](./README.en.md) · [声明与免责](./NOTICE) · [第三方组件](./THIRD-PARTY-NOTICES.md)
+安装 Rust 与对应平台 SDK、Node.js、pnpm 后，在仓库根执行：
 
-</div>
-
----
-
-## ⚠️ 免责声明（请先阅读）
-
-> **本项目仅供个人学习、研究和交流，严禁用于任何商业用途。**
-
-- 本项目为**非官方**第三方客户端，与字节跳动、番茄小说、红果短剧官方**没有任何关联**，也未获得任何形式的授权；
-- 本项目**不存储、不分发任何影视内容**——所有内容均由用户设备通过官方接口按用户指令获取，版权归原权利方所有；
-- 使用本项目所产生的一切后果由使用者自行承担，作者不对本项目的功能、稳定性、安全性或合法性作任何担保；
-- 如本项目侵犯您的合法权益，请通过 Issue 联系，我们会第一时间处理。
-
-完整声明见 [NOTICE](./NOTICE)，许可条款见 [LICENSE](./LICENSE)。
-
----
-
-## 📖 简介
-
-红果播放器（Hongguo）是面向**红果短剧**的 Windows / macOS 桌面客户端。
-它有同一套业务内核：[Tauri 2](https://tauri.app) + React 19 WebView 壳、GPUI 原生自绘壳，
-以及开发中的纯 Rust NSH 壳，共用 `hongguo-service`、`hongguo-api`、`hongguo-store`。
-
-它内置字节系短剧 App 的完整协议栈——设备注册、五头请求签名、取流、弹幕、互动、
-观看历史、短信登录——并配有一套 **CENC-AES-CTR 原生流式解密引擎**。解密、解复用、
-封装由纯 Rust 完成；HEVC/ByteVC1/ByteVC2 播放使用内置解码，不转码。
-同规格原流可无损合并；混合素材通过原生平台编码器统一编码为 HEVC 后合并。播放和归档均不依赖 FFmpeg。
-
-- **在线播放不落盘**：自定义协议渐进供数、边下边解，首帧不必等整集
-- **下载直接产出标准 MP4**：流式解密 + 原子落盘，断网断电不留残缺文件
-- **原流播放**：NSH 以原生 Video 为基础，随包补齐缺失的 HEVC/ByteVC1/ByteVC2 解码能力；Tauri/GPUI 保留原有内置软解。旧下载失效时重新获取在线原流
-- **数据落 Turso 内嵌数据库**：纯 Rust、无 C 工具链依赖，带 schema 迁移链与坏档自动恢复
-
----
-
-## ✨ 功能总览
-
-### 🏠 首页 · 发现
-
-- **推荐流**：全屏沉浸式竖滑信息流，推荐 / 漫剧 / 真人三个频道，重复点 tab「换一批」；
-  滚轮或 ↑↓ 切剧，点画面进入连播锁定；进入当前剧时预取下一部的分集与流
-- **找剧**：搜索联想（300ms 防抖，命中剧集的词条直进播放器）+ 官方 8 维筛选面板
-  （体裁 / 主题 / 角色 / 年代 / 排序 / 受众 / 上线时间 / 长度），结果无限滚动
-- **排行榜**：频道 tab（全部 / 真人剧 / 漫剧 / AI剧 / 系列剧）× 子榜 × 筛选面板；
-  前 3 名金色名次、热词与热度；未上线条目行内预约，已上线直接播放
-- **新剧**：按上架时间倒序的封面网格 + **上新日历**（前后一周，含未上线），
-  男频 / 女频频道筛选
-
-### 🎬 剧集详情
-
-- 评分 / 红果热度值 / 追剧数 / 播放量 / 题材标签 / 备案号，简介可展开
-- 三个 tab：**选集**（网格 + 时长角标）、**剧评**（登录后可发评论，显示点赞与回复数）、
-  **相关推荐**（系列作品 + 猜你喜欢）
-- 「继续看第 N 集」（看完 ≥95% 自动指向下一集）、收藏、点赞
-- 未上线剧降级为「即将上线 + 预约」视图
-- `seriesId` 走 URL 参数，详情页可收藏、可分享
-
-### ▶️ 播放器
-
-- **在线流式播放**：内存渐进流，边下边解，界面显示「正在缓存 xx%」；
-  流断供自动重试一次，播放位置不丢
-- **清晰度切换**：默认最高档，切档保持播放点不回跳
-- **弹幕**：开关 + 样式面板（透明度 / 字号 / 密度 / 显示区域），可**发送弹幕**
-  （表情选择器）；暂停冻结、倍速同步、seek 清屏重建
-- **倍速** 0.75×–3×、音量、静音跨切集保持
-- **小窗**：同一窗口原地缩至 480×270 落到工作区右下角，播放零中断；
-  另有窗口**置顶**、画中画（PiP）、全屏
-- **隐身模式**：鼠标离开窗口 → 整窗隐藏 + 自动暂停，鼠标回来 → 原地重现 + 续播
-- **连播与接力**：播完自动下一集；本季完结自动接下一季第 1 集，无下一季则跟随
-  推荐流接力播放
-- **断点续播**：本地 5 秒节流落盘 + 重启恢复；同时上报云端进度
-- **原流播放**：内置解码直接上屏，不生成播放转码文件；解码或呈现失败明确报错
-- **快捷键**：`空格` 播放/暂停 · `←` `→` 快退/快进 5 秒 · `↑` `↓` 切集/切剧
-
-### 👤 账户与互动
-
-- **手机号 + 短信验证码登录**（含「回复短信」MFA 形态，后台自动轮询完成登录）
-- 点赞、收藏（书架）、**追更预约**（已上线 / 待上线两组）、观看历史——云端同源，
-  官方 App 与第三方客户端的记录互通
-- 单集评论（播放器内）与整剧剧评（详情页）
-
-> 无需登录即可使用：浏览、榜单、新剧、搜索、在线播放、下载、合并。
-> 点赞、收藏、预约、弹幕、评论需要登录。
-
-### ⬇️ 下载 · 合并 · 清理
-
-- **下载管理**：并发 1–10（默认 3），五态任务表（等待/下载中/已完成/失败/已停止），
-  批量重试、批量删除、一键暂停/启动；**扫描磁盘**可把手动拷回的文件补登记回任务列表
-- **防损机制**：先写 `.enc.tmp`，解密成功后才改名 `.mp4`，中途断网不留残缺文件
-- **一键合并**：快速合并（同规格原流直拼，无损）/ HEVC 合并（混合素材统一编码）；
-  AAC 音轨沿用原流，合并前校验编码一致性与磁盘空间，后台任务带进度
-- **磁盘清理**：总占用统计、按剧 / 按集删除、**看完自动删除**、一键清空；
-  在线缓存与 HEVC 归档转码缓存（上限 4GB）单独管理；删除文件后保留剧集档案，之后仍可在线播放或重新下载
-- **命名模板** 3 种：`剧名 集号` / `剧名 集号 第N集` / 仅剧名
-
-### ⚙️ 设置
-
-- 账户卡（登录 / MFA / 退出）、下载目录（手填 + 系统选择器）、命名模板、并发数
-- **网络代理**：跟随系统 / 手动指定（含常用端口预设）/ 强制直连，一键测试显示耗时
-- **转码后端徽章**：实时显示当前走的是硬件加速 / 软件加速 / 不可用，支持重新检测
-- 播完自动下一集、看完自动删除开关
-- **主题**：自动 / 浅色 / 深色（默认深色）；**中英双语**界面，跟随系统语言
-- **应用内更新**：检查更新 → 下载（进度显示）→ 安装（minisign 验签，Windows 静默安装）
-
----
-
-## 🛠️ 技术栈
-
-### 内核（Rust）
-
-| 层     | 选型                                                                                                                           |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| 桌面壳 | [Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生壳；共用 `hongguo-service` / `hongguo-api` / `hongguo-store` |
-| 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                                                    |
-| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v7，`SCHEMA_VERSION = 7`）                               |
-| 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                                                         |
-| 编解码 | NSH Video + libde265 / VVdeC 专用补充；旧壳保留 `rusty_h265` / VVdeC；纯 Rust MP4 封装，归档使用原生平台编码器                 |
-
-### 前端（仅 Tauri WebView 壳）
-
-GPUI 壳用 GPUI Kit 自绘，不经过下面这层。
-
-| 层          | 选型                                                  |
-| ----------- | ----------------------------------------------------- |
-| 语言        | TypeScript 6 · React 19                               |
-| 构建        | Vite 8 · Vitest                                       |
-| 路由 / 数据 | TanStack Router（文件路由）· TanStack Query 5         |
-| 状态        | Zustand 5 · zod 4                                     |
-| UI          | shadcn/ui（Radix UI）· Tailwind CSS v4 · lucide-react |
-
----
-
-## 🏗️ 架构亮点
-
-- **自定义 URI 协议**（scheme：`hongguo-stream`、`hongguo-local`、`hongguo-cover`）：
-  macOS 为 `{scheme}://localhost/...`，Windows 为 `http://{scheme}.localhost/...`。
-  `hongguo-stream` 渐进流（首探 256KB → 盒游走定位 moov → 1MB 分块顺序填充，首帧只依赖头 + 尾 + 样本表）；
-  `hongguo-local` 本地文件 Range 播放；`hongguo-cover` 封面代理（HEIC → JPEG，磁盘哈希缓存）
-- **签名栈**：`x-gorgon` / `x-argus` / `x-ladon` / `x-helios` / `x-medusa` 五头签名，
-  黄金向量单测锁定正确性
-- **原生归档编码**：使用 VideoToolbox / Media Foundation / MediaCodec，按实际编码探测显示能力；
-  没有可用 HEVC 编码器时明确报错，播放和同规格无损合并不受影响
-- **可靠性**：单实例锁、协议回调三层 panic 防线、crash.log 取证、数据库坏档自动恢复、
-  任务中断恢复、旧 JSON 存档一次性幂等迁移
-
----
-
-## 📥 安装
-
-从 [GitHub Releases](https://github.com/it00021hot/hongguo-desktop/releases/latest) 下载：
-Windows 双击 `*_x64-setup.exe`；macOS 按芯片选 `*_aarch64.dmg`（Apple Silicon）或 `*_x64.dmg`（Intel）。
-
-> **macOS 首次运行提示「已损坏，无法打开」？** 安装包未做 Apple 公证，浏览器下载的应用
-> 会带系统隔离标记，Gatekeeper 对无证书应用的固定措辞就是「已损坏」——文件本身没有损坏。
-> 任选其一：
->
-> - 终端执行 `xattr -dr com.apple.quarantine /Applications/Hongguo.app` 后打开；
-> - 下载 Release 资产里的 `install-macos.sh`，终端执行 `bash install-macos.sh [tag]`
->   （自动选架构、校验 SHA256、装入 /Applications；终端下载渠道不带隔离标记，不会遇到该弹窗）。
->
-> 通过应用内「检查更新」升级不受此影响。
-
----
-
-## 💻 开发
-
-NSH 第三壳正在开发，首版目标为 Windows、macOS、Android、iOS（纯 Rust，直接复用本地业务内核）。
-桌面启动 `pnpm nsh`（或 `make nsh`），检查与测试用 `pnpm nsh:check`、`pnpm nsh:test`；
-移动端工具链与当前验证范围见 [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md)。
-Linux 与 Web 留待后续迭代。当前 NSH 实现尚未完成全部功能和四端验收。
-
-The NSH shell is in development for Windows, macOS, Android and iOS. It uses Rust throughout
-and shares the existing local business core. Run `make nsh`, `make nsh-check` and `make nsh-test`
-from the repository root. Full feature parity and validation on all four platforms are still in progress.
-Linux and web support are deferred.
-
-```bash
+```sh
 pnpm install --frozen-lockfile
 pnpm nsh
+pnpm nsh:check
+pnpm test
+make nsh-package TARGET=macos
 ```
 
-首次启动自动解包仓库 `vendor/native-codecs/` 的预编译 SDK，校验后缓存。
-不需要下载原生媒体 SDK，也不需要安装 FFmpeg、CMake、NASM、GPG 或 libclang。
-仍需正常 Rust 平台工具链：Windows 的 MSVC C++ Build Tools/Windows SDK，或 macOS 14+ 的 Xcode 工具。
-`pnpm nsh:setup` 可只准备 SDK、不启动窗口；离线开发与源码重建见 [原生库说明](docs/native-media-build.md)。
+Windows 使用 `TARGET=windows`，安装器构建另需 NSIS 3；移动宿主使用 `android`、`ios`、`ios-simulator`。
+普通开发自动校验、解包仓库随附的原生编解码 SDK，无需自行构建 FFmpeg、VVdeC 或 libde265。
+客户安装包内置所需解码库，不安装 WebView2 或 HEVC 商店插件。
 
-The first NSH run unpacks a pinned, hash-verified codec SDK included in the repository. It does
-not download or build native media libraries. Normal Rust platform build tools remain
-required; rebuilding the native SDK is a separate maintainer operation.
+播放以 NSH Video 为基础，缺失编码由 libde265 / VVdeC 补齐，原生播放器提供音轨与时钟。
+Windows 扩展 HEVC 优先 D3D11 VLD，Main10 使用 P010；实际硬解不可用才回退软解，不使用 FFmpeg。
+平台实际验证范围见 [解码验证记录](docs/nsh-decoder-validation.md)。
 
-### 环境要求
+共用图标、表情和语言资源位于 `assets/`；NSH 界面与装配在 `crates/hongguo-nsh`。
+原生 UI 预览的 TypeScript 声明由匹配版本 NSH CLI 生成，详见 [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md)。
 
-- Rust 1.99+（edition 2024）
-- Node.js 20+ / pnpm 10+
-- Windows 10/11 或 macOS 10.15+
-
-### 常用命令
-
-```bash
-make dev            # Vite + Tauri 开发模式（= pnpm tauri:dev）
-make gpui           # 启动 GPUI 原生壳
-make gpui-preview   # GPUI 壳离屏预览矩阵（改界面后验收）
-make release        # 打包 NSIS / DMG（= pnpm tauri:build）
-make test           # vitest 前端单测
-make test-rust      # cargo test
-make lint           # ESLint + Prettier + cargo clippy（任一失败即失败）
-make typecheck      # tsc --noEmit
-make assets         # 重新生成图标 / macOS 名称本地化（离线）
-```
-
-文档索引见 [docs/README.md](./docs/README.md)，使用排查见 [docs/faq.md](./docs/faq.md)。
-
-> **不依赖 FFmpeg**——解密、解复用、无损合并是纯 Rust，HEVC 归档使用原生平台编码器。
-> 没有可用 HEVC 编码器时，统一编码合并明确报错；播放和同规格原流无损合并不受影响。
-
----
-
-## 📂 项目结构
-
-```text
-hongguo-desktop/
-├── crates/
-│   ├── hongguo-common/                 # 共用底座：领域模型 / 统一错误 / 纯工具 / 跨端常量
-│   ├── hongguo-signer/                 # 字节系请求签名 + 设备注册原语（JS 1:1 移植，常量黑盒锁定勿改）
-│   ├── hongguo-video/                    # MP4 解析与 CENC 解密
-│   ├── hongguo-api/                    # 官方 App 接口客户端（模块在 crates/hongguo-api/src/）
-│   ├── hongguo-media/                  # 媒体底座：纯 Rust demux / remux / MP4 封装；rusty_h265 只做 HEIF 封面软解
-│   ├── hongguo-media-platform-api/     # 平台媒体契约（帧载体 / 解码器 trait / 转码请求）
-│   ├── hongguo-media-platform-macos/   # macOS 实现（VideoToolbox 转码链）
-│   ├── hongguo-media-platform-windows/ # Windows 实现（Media Foundation / WIC）
-│   ├── hongguo-media-platform/         # 原生媒体编解码门面与编码能力探测
-│   ├── hongguo-store/                  # Turso 内嵌数据库（entity/ 按聚合拆分 / 迁移链 / 坏档恢复）
-│   ├── hongguo-stream/                 # 在线流契约（渐进流 / 按 (vid, 档位) 分条的缓存 / Range 应答）
-│   ├── hongguo-protocol/               # 自定义 URI 供数（hongguo-local / stream / cover）
-│   ├── hongguo-player-api/             # 回放契约（PlayerEvent / PlaySource / PlayerLike，无 UI、无平台实现）
-│   ├── hongguo-player-macos/           # macOS 系统播放器（AVPlayer）
-│   ├── hongguo-player-windows/         # Windows 系统播放器（Media Foundation Media Engine）
-│   ├── hongguo-player/                 # 系统播放器门面（按目标分派到 macos / windows 实现）
-│   ├── hongguo-service/                # 应用服务：download / play / merge / login / series / settings / storage / transcode / capability / follow / history + device；AppState + 共用运行时/事件总线（无 UI 框架依赖）
-│   ├── hongguo-tauri/                  # Tauri 装配：commands / bootstrap / 协议注册 / 事件转发
-│   ├── hongguo-tauri-app/              # Tauri 应用入口（tauri.conf.json / capabilities / icons / generate_context!）
-│   └── hongguo-gpui/                   # GPUI 完整原生壳（与 Tauri 共用同一套 service，不是桩）
-└── src/
-    ├── pages/           # TanStack 文件路由（薄壳）+ 页面实现就近放置
-    ├── features/        # 复杂能力域（player 播放引擎 / update 自动更新）
-    ├── service/         # IPC 封装（tauri/）+ 命令（commands/）+ 查询（queries/）+ zod 契约（schema/）
-    ├── stores/          # zustand 客户端状态
-    ├── components/      # shadcn/ui + 布局 + 跨页展示件
-    ├── hooks/           # 跨页通用 hooks
-    ├── locales/         # 中英文案资源
-    ├── utils/           # 无业务纯函数（format / range / cover / playback-prefs…）
-    └── styles/          # 全局样式
-```
-
----
-
-## ❓ 常见问题
-
-### 拉不到剧集 / 接口返回空响应
-
-官方 App 接口要求每个请求携带 `x-gorgon` / `x-argus` / `x-ladon` / `x-helios` / `x-medusa`
-五个签名头。**签名缺失或算错时，服务端不报错，而是返回 HTTP 200 + 0 字节**——只看
-状态码会误判。
-
-排查时看**响应体的字节数**而不是状态码；要逐端点的详细信息，用 `RUST_LOG=debug`
-启动应用。
-
-### 播放页黑屏但有声音
-
-HEVC/ByteVC1/ByteVC2 使用内置解码，播放不依赖系统 HEVC 视频扩展，也不会自动转成 H.264。
-检查播放器错误和日志中的解码、GPU 呈现信息；NSH 在窗口不可见时会暂停获取画面。
-Tauri 的 WebView2 运行时问题及排查边界见 [docs/faq.md](./docs/faq.md)。
-
-### 签名魔数能改吗
-
-**不能。** `signer/constants.rs` 里的值是黑盒实测产物，与服务端一一对应。改任何一个，
-签名都会被静默丢弃。
-
-### 哪些功能需要登录
-
-浏览、榜单、新剧、搜索、在线播放、下载、合并均**无需登录**。点赞、收藏、预约、
-发弹幕、发评论需要手机号 + 短信验证码登录（设置页账户卡）。
-
----
-
-## 📄 许可证
-
-本项目以 **PolyForm Noncommercial 1.0.0** 授权，全文见 [LICENSE](./LICENSE)。
-
-- ✅ **允许**：任何非商业目的的使用、修改与再分发——个人学习、研究、私人娱乐、
-  兴趣项目等
-- ❌ **禁止**：一切商业用途（出售、付费分发、商业产品集成、流量变现等）
-- 📋 分发时须附上本协议（或其网址）与 `Required Notice` 版权行
-
-该协议禁止商业使用，因此不属于 OSI 认证开源许可证；它是由
-[Polyform Project](https://polyformproject.org) 起草的规范化许可文本，
-用以精确表达「仅供个人学习交流、禁止商用」的授权意图。
-
-第三方组件各自以其自身许可证授权，声明见
-[THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)；
-项目声明与免责条款见 [NOTICE](./NOTICE)。
+Tauri、GPUI 壳、专用播放器与 WebView 前端已从主线移除，完整旧版保存在
+[`codex/backup-tauri-final`](https://github.com/it00021hot/hongguo-desktop/tree/codex/backup-tauri-final)。
