@@ -2,7 +2,7 @@
 
 基于 NSH 0.5.0 的纯 Rust 第三壳，复用现有业务内核，直接调用红果 API。
 首轮目标为 Windows、macOS、Android、iOS；Linux 与 Web 留待后续迭代。
-当前仍在开发和验证中，尚未与 Tauri 功能完全对齐。
+当前仍在开发和验证中，功能面以 `docs/nsh-feature-parity.md` 的进度记录为准。
 
 播放以 NSH Video 为基础，专用 libde265 / VVdeC 补齐原生缺失能力；不依赖 FFmpeg。
 原生播放器承担 AAC、音频输出、倍速和主时钟。客户无需另装解码包或运行库。
@@ -11,7 +11,7 @@ Windows 普通 HEVC 走 MediaEngine；ByteVC2、缺 HEVC 解码器或输出精�
 
 A pure Rust shell using NSH 0.5.0 and the existing business core. Initial targets
 are Windows, macOS, Android and iOS. Linux and Web are deferred. Development and
-platform validation are ongoing; feature parity with Tauri is incomplete.
+platform validation are ongoing; see docs/nsh-feature-parity.md for the progress record.
 
 Playback uses NSH Video and bundled libde265/VVdeC for missing native capabilities.
 Native players own audio, playback rate and timing. Customers install no codec packs or C/C++ runtime.
@@ -42,7 +42,7 @@ Mobile builds use dedicated pure Rust hosts, which configure private storage
 before mounting the shared root. NSH's generic generated hosts omit that setup.
 
 `make nsh-preview` 只打开独立的离线页面预览，复用生产展示组件，不初始化数据库、
-访问官方接口或播放视频。主对照尺寸为 Tauri 默认的 1280×840。
+访问官方接口或播放视频。主对照尺寸为 1280×840（历史布局基线）。
 预览使用 `target/nsh-layout-fixtures/player-frame.png` 的本地测试静帧，截图保存在
 `target/nsh-preview/`；测试画面不随源码分发。字体诊断入口须使用独立构建缓存。
 

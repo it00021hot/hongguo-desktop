@@ -79,5 +79,5 @@ node scripts/nsh-windows-installer.mjs <Windows包目录>
 脚本重新审计 PE 与依赖，拒绝旧 FFmpeg 包，输出同级 `Hongguo-NSH_<版本>_x64-setup.exe`。
 此操作支持 macOS 的 NSIS 编译器，不需要 Wine，不执行 Windows 安装程序。
 安装范围为当前用户、普通 Windows 10 1809+ 与 Windows 11，不安装 WebView2 或 HEVC 商店插件。
-默认安装目录与 Tauri 隔离；卸载使用打包时的逐文件清单，不递归删除安装目录或用户数据。
+默认安装目录 `%LOCALAPPDATA%\Programs\HongguoNSH` 与旧版安装隔离；卸载使用打包时的逐文件清单，不递归删除安装目录或用户数据。
 交叉生成与解包校验仍不代替 Windows 实机安装、卸载和播放验收。

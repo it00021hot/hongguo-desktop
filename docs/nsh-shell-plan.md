@@ -71,9 +71,9 @@ macOS/iOS 共用的 VideoToolbox 管线归 `hongguo-media-videotoolbox`，不复
 3. 订阅既有 `ServiceEvent`，将任务进度、登录和播放准备结果交给本壳状态。
    处理订阅溢出后的状态重读、页面退出、请求取消及旧结果覆盖新页面的问题。
 4. 持久化状态由 service/store 所有，页面临时状态由页面所有；进度事件不驱动整页重建。
-5. 桌面数据目录用独立的 `hongguo-nsh` 根，与另两个壳平级隔离。
+5. 桌面数据目录用独立的 `hongguo-nsh` 根，与其他数据根平级隔离。
    Android/iOS 在任何目录解析、注册缓存或开库之前设置 app 私有绝对数据根。
-6. 沿用 `src/locales/zh-CN.json` 与 `en-US.json`，新增文案同步两份。
+6. 语言文案在 `assets/locales/zh-CN.json` 与 `en-US.json`，新增文案同步两份。
    不复制出第三套翻译；先验证 Rust 侧资源装载和占位符格式，再接入页面。
 
 ## 4. 播放与媒体：先验证整条链路

@@ -18,7 +18,7 @@
 | 归档/封面与服务回归 | 338 项通过，1 项既有平台用例忽略 | target/nsh-codec-archive-final-tests.log |
 | 包装与 SDK 脚本 | 49 项通过；包含增量打包清除旧媒体材料的回归 | target/nsh-codec-all-scripts-final.log |
 | 前端 | TypeScript 与零警告 ESLint 通过 | target/nsh-codec-current-typecheck.log、target/nsh-codec-current-eslint.log |
-| macOS Rust | NSH、专用核、Tauri/GPUI 严格 clippy 通过 | target/nsh-codec-final-macos-clippy.log、target/nsh-codec-timing-final-clippy.log |
+| macOS Rust | NSH、专用核严格 clippy 通过（Tauri/GPUI 当时仍在，历史证据） | target/nsh-codec-final-macos-clippy.log、target/nsh-codec-timing-final-clippy.log |
 | Windows MSVC | NSH 真实目标严格 clippy 与 release 链接通过 | target/nsh-codec-final-windows-clippy.log、target/nsh-codec-windows-current-release.log |
 | Windows PE | EXE 34 个 imports；唯一 libde265 DLL 1 个 import，静态 CRT、系统库、manifest/图标检查通过 | target/nsh-codec-windows-audit/runtime-inspection.json |
 | Android | Rust arm64 严格检查、Java 编译、实际 APK 构建和包内原生依赖检查通过 | target/nsh-codec-final-android-clippy.log、target/nsh-codec-android-current-package.log |

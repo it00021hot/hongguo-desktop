@@ -1,5 +1,9 @@
 # NSH 接入 PR #23 的内置解码路线
 
+> 契约与帧协议仍现行；文中 `hongguo-softdec` / `DirectSession` 章节已过期——该 crate
+> 于 2026-11-15 删除，索引与软解会话统一走 `hongguo-playback`（pixel_surface 夹具改接
+> `PlaybackSession`），换色在示例内完成。
+
 ## 目标
 
 NSH 与 PR #23 统一使用内置视频解码，不保留兼容播放路径。

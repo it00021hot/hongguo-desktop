@@ -35,8 +35,8 @@ lint:
 	pnpm lint
 	pnpm format:check
 	cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
-	cargo clippy -p hongguo-media-platform-api -p hongguo-media-platform -p hongguo-media-platform-macos -p hongguo-media-videotoolbox --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
-	cargo clippy -p hongguo-media-platform-api -p hongguo-media-platform -p hongguo-media-platform-macos -p hongguo-media-videotoolbox --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+	cargo clippy -p hongguo-media-platform-api -p hongguo-media-platform -p hongguo-media-videotoolbox --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+	cargo clippy -p hongguo-media-platform-api -p hongguo-media-platform -p hongguo-media-videotoolbox --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
 fmt:
 	cargo fmt
 typecheck:
@@ -44,4 +44,4 @@ typecheck:
 assets:
 	python3 scripts/make-icons.py
 clean:
-	node -e "for (const p of ['dist', 'target']) require('fs').rmSync(p, { recursive: true, force: true })"
+	node -e "for (const p of ['target']) require('fs').rmSync(p, { recursive: true, force: true })"

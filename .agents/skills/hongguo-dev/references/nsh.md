@@ -71,14 +71,14 @@ VVdeC 默认使用随附的静态库。macOS 产物为 `target/nsh-desktop/macos
 Windows 原生打包另需安装 NSIS 3（`makensis` 在 PATH 中，仅构建工具），
 产物为 `target/nsh-desktop/windows/Hongguo/`、`Hongguo.zip` 和 `Hongguo-NSH_<版本>_x64-setup.exe`；
 安装器为当前用户安装，包含完整原生运行库与来源/许可材料，不下载 WebView2 或解码插件。
-默认目录为 `%LOCALAPPDATA%\Programs\HongguoNSH`，与旧 Tauri 安装隔离。
+默认目录为 `%LOCALAPPDATA%\Programs\HongguoNSH`，与旧版（备份分支壳）安装隔离。
 卸载只删除打包清单内的文件，保留账号、设置、下载与用户额外放入的文件。
 仍需 Windows 宿主实际构建、运行与安装验收。脚本只生成产物，不安装或发布。
 
 macOS 上的真实 Windows MSVC 交叉检查另见 [工具链与可复现命令](../../../../docs/nsh-windows-cross-check.md)。
 锁定的 VVdeC 3.2.1 使用并行安装的 LLVM 19.1.7；保留默认 LLVM、Werror 与 SDK，源码局部兼容改动记录在该解核的 SOURCE.md。
 NSH 0.5.0 使用的 wgpu 29 要求 `gpu-allocator 0.28.0` 的 Windows 绑定与其统一为
-`windows 0.62.2`；锁文件保留 GPUI 旧依赖所需的独立 `windows 0.57.0`，不能全局替换。
+`windows 0.62.2`（旧壳的 `windows 0.57.0` 已随壳移出锁文件）。
 Windows 目标的严格 clippy 会检出两套 COM 类型混用导致的编译失败。
 
 Android 打包只从 NSH AAR 提取 Java 层，原生部分使用本项目 Rust 宿主构建的 libnsh.so，
@@ -146,8 +146,8 @@ CARGO_TARGET_DIR="$PWD/crates/hongguo-nsh/preview/target" nsh test crates/honggu
 ```
 
 首页、详情和设置统一从 `LayoutPreview` 根组件导航，复用生产展示组件。
-使用相同固定数据、主题和窗口尺寸，对比 `target/nsh-preview` 与
-`target/tauri-layout-reference` 的图片；主尺寸跟随 Tauri 的 1280×840。
+使用相同固定数据、主题和窗口尺寸，对比 `target/nsh-preview` 与历史基线
+（旧 Tauri 布局参照，尺寸 1280×840，备份分支可复现）的图片。
 影视画面仅保存在忽略的 target 目录，不随源码提交。
 
 NSH 0.4.0 的不同预览清单若共享 Cargo target，生成的 macOS host 包和可执行文件
@@ -208,5 +208,5 @@ Windows release 已通过实际交叉链接与静态 CRT、系统 DLL、资源/m
 正式整包完整文件流程、系统挂起恢复和屏幕阅读器尚未验收。
 
 榜单、新剧日历、互动、合并/清理、短信登录面板和高级设置已接入；定向行为与明暗原生
-预览逐组记录，不能把某组离线预览或编译通过解释为 Tauri 全部功能、真实账号流程或四端验收完成。
+预览逐组记录，不能把某组离线预览或编译通过解释为旧壳功能面、真实账号流程或四端验收完成。
 逐项状态见 docs/nsh-feature-parity.md。

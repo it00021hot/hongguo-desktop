@@ -8,7 +8,7 @@
 
 | 文档 | 用途 |
 | --- | --- |
-| [faq.md](./faq.md) | Windows HEVC / 杀软等排查（README 链出；WebView2 节已随旧壳失效，待重写） |
+| [faq.md](./faq.md) | Windows HEVC / 杀软等排查（README 链出） |
 
 ## 开发 / 对接（现行）
 
