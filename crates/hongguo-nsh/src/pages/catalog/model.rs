@@ -1,7 +1,6 @@
 use hongguo_api::discover::{FeedItem, FeedPage};
 
 pub(super) const DEFAULT_CHANNEL: &str = "16";
-pub(super) const FOLLOW_CHANNEL: &str = "45";
 pub(super) const CHANNELS: [(&str, &str); 3] = [
     ("16", "home.tabFeed"),
     ("36", "home.tabComic"),

@@ -9,7 +9,7 @@ use crate::{
     ui,
 };
 use hongguo_api::recommend::FeedTabMeta;
-use model::{CHANNELS, Channel, DEFAULT_CHANNEL, FOLLOW_CHANNEL, PREFETCH_REMAINING, Query};
+use model::{CHANNELS, Channel, DEFAULT_CHANNEL, PREFETCH_REMAINING, Query};
 use nsh_core::prelude::*;
 use std::collections::HashMap;
 
@@ -69,7 +69,9 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                         .collect()
                 })
                 .into_iter()
-                .filter(|tab| tab.tab_type != FOLLOW_CHANNEL)
+                // 官方 App 顶栏只渲染已知频道（关注 45 游客无数据面，同样不渲染）；
+                // 服务端下发的其他落地面（如「合集」bookstore tab）直接丢弃。
+                .filter(|tab| CHANNELS.iter().any(|(id, _)| *id == tab.tab_type))
                 .collect::<Vec<_>>()
         })
     });
