@@ -12,7 +12,6 @@ UI 与平台装配遵循 `nsh`、`nsh-design-guides` 及 [NSH 接入说明](refe
 业务调用直接经共享 service，原生组件事件边界使用具名 serde 类型。
 
 接口以 `docs/hongguo-api-endpoints.md` 的请求、响应与实测效果为准；逆向分析参考 `references/reverse.md`。
-开发、测试、打包使用 Makefile 与 NSH 接入说明，不再使用旧 Tauri/GPUI 的命令或目录。
-`references/frontend.md`、`references/gpui.md`、`references/ipc.md` 等旧壳文档仅为历史研究资料。
+开发、测试、打包使用 Makefile 与 NSH 接入说明；旧 Tauri/GPUI 壳的文档与代码只在备份分支 `codex/backup-tauri-final`，不据此恢复。
 运行验证使用自建实例与独立数据目录，不操作用户活跃账号、窗口或数据库。
 修改完成须运行适当的类型检查、严格 lint、构建与行为测试，分别报告真实平台运行与交叉编译结果。
