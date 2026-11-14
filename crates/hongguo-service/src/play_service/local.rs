@@ -119,7 +119,7 @@ fn prepare_local_response(
     path: &str,
     resume_at: f64,
 ) -> AppResult<Option<PlayResponse>> {
-    let result = hongguo_protocol::local::local_play_url(path)
+    let result = hongguo_common::media_url::local_play_url(path)
         .ok_or_else(|| AppError::InvalidArgs("文件路径无效".into()))
         .and_then(|url| local_file_response(path, url, resume_at));
     match result {
@@ -326,7 +326,7 @@ mod tests {
         let plain = dir.join("bytevc2.mp4");
         std::fs::write(&plain, mp4(&[TrackSpec::video(1, b"bvc2", 64, 64)])).unwrap();
         let path = plain.to_string_lossy().to_string();
-        let url = hongguo_protocol::local::local_play_url(&path).expect("url");
+        let url = hongguo_common::media_url::local_play_url(&path).expect("url");
         let resp = super::local_file_response(&path, url, 0.0).unwrap();
         assert_eq!(resp.codec, "bvc2", "必须从合成文件真实探测出视频编码");
         assert!(resp.direct);

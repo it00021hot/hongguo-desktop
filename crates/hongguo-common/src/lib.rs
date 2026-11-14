@@ -4,6 +4,7 @@
 
 pub mod consts;
 pub mod error;
+pub mod media_url;
 pub mod model;
 pub mod offline_qa;
 pub mod utils;

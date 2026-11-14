@@ -50,15 +50,15 @@ pub(super) async fn prepare(
     let source = response.url;
     let lease = if let Some(path) = source.strip_prefix(&format!(
         "{}/f/",
-        hongguo_protocol::scheme_base(hongguo_protocol::LOCAL_SCHEME)
+        hongguo_common::media_url::scheme_base(hongguo_common::media_url::LOCAL_SCHEME)
     )) {
-        let path = hongguo_protocol::local::resolve_path(path)
+        let path = hongguo_common::media_url::resolve_path(path)
             .map_err(|error| AppError::Media(error.into()))?;
         session.media.playback_file(&path)
-    } else if let Some(path) = source.strip_prefix(&hongguo_protocol::scheme_base(
-        hongguo_protocol::STREAM_SCHEME,
+    } else if let Some(path) = source.strip_prefix(&hongguo_common::media_url::scheme_base(
+        hongguo_common::media_url::STREAM_SCHEME,
     )) {
-        let (definition, vid) = hongguo_protocol::parse_stream_path(path)
+        let (definition, vid) = hongguo_common::media_url::parse_stream_path(path)
             .ok_or_else(|| AppError::Media("invalid stream source".into()))?;
         wait_for_stream(vid.to_owned(), definition).await?;
         session.media.online(vid.to_owned(), definition)

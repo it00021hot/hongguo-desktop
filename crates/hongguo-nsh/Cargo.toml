@@ -30,7 +30,6 @@ hongguo-native-clock = { path = "../hongguo-native-clock" }
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-store = { path = "../hongguo-store" }
 hongguo-stream = { path = "../hongguo-stream" }
-hongguo-protocol = { path = "../hongguo-protocol" }
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

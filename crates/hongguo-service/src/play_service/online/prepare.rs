@@ -130,7 +130,7 @@ pub async fn prepare(
     }
     c.set_definitions(vid, want, &play.definitions);
     remember_codec(vid, want, &play.codec);
-    let url = hongguo_protocol::stream_url(vid, want);
+    let url = hongguo_common::media_url::stream_url(vid, want);
     // play 整份 move 进后台填充任务，这里先把要回给调用方的字段取出来
     let result = Prepared {
         url,
@@ -166,7 +166,7 @@ fn prepared(
     automatic_definition: bool,
 ) -> Option<Prepared> {
     c.ready(vid, definition).map(|definitions| Prepared {
-        url: hongguo_protocol::stream_url(vid, definition),
+        url: hongguo_common::media_url::stream_url(vid, definition),
         definition,
         automatic_definition,
         definitions,

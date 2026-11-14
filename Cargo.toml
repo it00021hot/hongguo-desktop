@@ -41,7 +41,6 @@ members = [
     "crates/hongguo-video",
     "crates/hongguo-video-color",
     "crates/hongguo-video-gpu",
-    "crates/hongguo-protocol",
     "crates/hongguo-service",
     "crates/hongguo-signer",
     "crates/hongguo-store",
