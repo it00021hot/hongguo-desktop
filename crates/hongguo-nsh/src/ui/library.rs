@@ -188,8 +188,6 @@ pub(crate) fn task_table_row(header: bool) -> View {
                 64.0
             })
         })
-        .border_b_1()
-        .border_color(move || theme().border)
         .text_color(move || {
             if header {
                 theme().muted_foreground

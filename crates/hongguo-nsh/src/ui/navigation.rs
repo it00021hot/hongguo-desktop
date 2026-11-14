@@ -98,8 +98,6 @@ pub(crate) fn page(nav: Navigation, title: impl IntoReactive<SharedString> + Clo
         .gap_3()
         .px_4()
         .bg(move || theme().color("titlebar").expect("titlebar token"))
-        .border_b_1()
-        .border_color(move || theme().border)
         .child(when(
             move || nav.can_back(),
             move || {
@@ -262,7 +260,7 @@ pub(crate) fn shell_with_theme(
             .child(menu.sheet(preferences));
     }
     crate::native_window::install();
-    let collapsed = signal(false);
+    let collapsed = signal(true);
     let pinned = signal(false);
     let is_pinned = move || {
         crate::window_modes::WindowModes::current()
@@ -282,8 +280,6 @@ pub(crate) fn shell_with_theme(
                 .pr(crate::native_window::trailing_inset)
                 .pl(crate::native_window::leading_inset)
                 .bg(move || theme().color("titlebar").expect("titlebar token"))
-                .border_b_1()
-                .border_color(move || theme().border)
                 .child(
                     view()
                         .flex_row()
@@ -505,7 +501,7 @@ fn sidebar(nav: Navigation, collapsed: Signal<bool>) -> View {
             move || window().width.0 < 768.0 || chrome_hidden(nav) || portrait_mode(nav),
             |style| style.hidden(),
         )
-        .w(move || px(if compact() { 56.0 } else { 224.0 }))
+        .w(move || px(if compact() { 56.0 } else { 192.0 }))
         .h_full()
         .transition_all()
         .duration(move || {
@@ -516,8 +512,6 @@ fn sidebar(nav: Navigation, collapsed: Signal<bool>) -> View {
             }
         })
         .bg(move || theme().color("sidebar").expect("sidebar token"))
-        .border_r_1()
-        .border_color(move || theme().border)
         .child(
             scroll().flex_1().child(
                 view().gap_0p5().p_2().children(
@@ -530,8 +524,6 @@ fn sidebar(nav: Navigation, collapsed: Signal<bool>) -> View {
         .child(
             view()
                 .p_2()
-                .border_t_1()
-                .border_color(move || theme().border)
                 .child(nav_item(
                     nav,
                     "nav.accountFallback",

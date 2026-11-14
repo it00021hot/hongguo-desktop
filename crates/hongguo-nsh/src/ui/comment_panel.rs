@@ -31,14 +31,6 @@ pub(crate) fn comment_panel(
                             .w(move || px(380.0_f32.min(geometry.viewport.get().0 * 0.85)))
                             .h(move || px(geometry.viewport.get().1 * 0.68))
                             .rounded_tl(px(12.0))
-                            .border_t_1()
-                            .border_l_1()
-                            .border_color(move || {
-                                theme()
-                                    .color("video-controls")
-                                    .expect("controls")
-                                    .opacity(0.1)
-                            })
                             .bg(move || theme().color("video-sheet").expect("sheet").opacity(0.95))
                             .text_color(move || theme().color("video-picker-text").expect("text"))
                             .shadow_2xl()
@@ -51,13 +43,6 @@ pub(crate) fn comment_panel(
                                     .flex_row()
                                     .items_center()
                                     .gap_2()
-                                    .border_b_1()
-                                    .border_color(move || {
-                                        theme()
-                                            .color("video-controls")
-                                            .expect("controls")
-                                            .opacity(0.1)
-                                    })
                                     .child(
                                         text(move || tr("player.comments.title"))
                                             .text_sm()
