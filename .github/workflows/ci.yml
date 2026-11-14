@@ -87,6 +87,72 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $pkgconfDir >> $env:GITHUB_PATH
 
+      - name: Build pinned native media (macOS host and check target)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install gnupg nasm
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          node scripts/native-media.mjs build "$host"
+          node scripts/native-media.mjs verify "$host"
+          if [ "$host" != "${{ matrix.rust_target }}" ]; then
+            node scripts/native-media.mjs build "${{ matrix.rust_target }}"
+            node scripts/native-media.mjs verify "${{ matrix.rust_target }}"
+          fi
+          version=$(node --input-type=module -e 'import { source } from "./scripts/native-media-config.mjs"; console.log(source.version)')
+          echo "DYLD_LIBRARY_PATH=$PWD/target/native-media/$host/ffmpeg-$version/lib" >> "$GITHUB_ENV"
+
+      - name: Build pinned native media (Windows MSVC)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msys = 'C:\msys64\usr\bin'
+          $mingw = 'C:\msys64\mingw64\bin'
+          & "$msys\pacman.exe" -Syu --noconfirm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$msys\pacman.exe" -Syu --noconfirm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$msys\pacman.exe" -S --needed --noconfirm make diffutils patch gnupg tar xz mingw-w64-x86_64-nasm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PATH = "$msys;$mingw;$env:PATH"
+          $env:MSYS2_PATH_TYPE = 'inherit'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or !$vs) { throw 'MSVC x64 tools were not found' }
+          $devcmd = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
+          $bootstrap = Join-Path $env:RUNNER_TEMP 'native-media-msvc.cmd'
+          @(
+            '@echo off'
+            ('call "{0}" -no_logo -arch=x64 -host_arch=x64' -f $devcmd)
+            'if errorlevel 1 exit /b %errorlevel%'
+            'set'
+          ) | Set-Content -LiteralPath $bootstrap -Encoding ascii
+          $variables = & $env:ComSpec /d /c $bootstrap
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($line in $variables) {
+            if ($line -match '^([^=]+)=(.*)$') {
+              [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+            }
+          }
+          if ((Get-Command bash.exe).Source -ne "$msys\bash.exe") { throw 'MSYS2 bash must precede Git Bash' }
+          $linker = (Get-Command link.exe).Source
+          if (!$linker.StartsWith($vs, [StringComparison]::OrdinalIgnoreCase)) { throw 'MSVC link.exe must precede MSYS2 link.exe' }
+          node scripts/native-media.mjs build "${{ matrix.rust_target }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/native-media.mjs verify "${{ matrix.rust_target }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (Get-Content scripts/native-media.sources.json -Raw | ConvertFrom-Json).ffmpeg.version
+          Join-Path $env:GITHUB_WORKSPACE "target\native-media\${{ matrix.rust_target }}\ffmpeg-$version\bin" >> $env:GITHUB_PATH
+
+      - name: Preserve native media manifests and corresponding source
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: native-media-${{ matrix.rust_target }}
+          path: target/native-media/*/ffmpeg-*/
+          if-no-files-found: ignore
+
       - name: Rust tests
         # 离线 QA 与故障注入测试会修改进程级状态。
         run: cargo test --workspace --lib -- --test-threads=1
