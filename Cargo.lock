@@ -1845,9 +1845,6 @@ dependencies = [
 [[package]]
 name = "hongguo-media-platform-api"
 version = "0.6.6"
-dependencies = [
- "hongguo-common",
-]
 
 [[package]]
 name = "hongguo-media-platform-windows"
@@ -1898,7 +1895,6 @@ dependencies = [
  "hongguo-api",
  "hongguo-bytevc2",
  "hongguo-common",
- "hongguo-media",
  "hongguo-media-platform",
  "hongguo-media-types",
  "hongguo-native-clock",

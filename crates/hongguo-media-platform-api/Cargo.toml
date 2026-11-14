@@ -7,6 +7,4 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
-[dependencies]
-# 共用底座：统一错误（AppError / AppResult）。
-hongguo-common = { path = "../hongguo-common" }
+# 纯数据契约 crate：无依赖（编码枚举 / 码率标定 / PlatformRequest 全部自足）。

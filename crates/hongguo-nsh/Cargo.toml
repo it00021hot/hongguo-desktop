@@ -21,7 +21,6 @@ hongguo-api = { path = "../hongguo-api" }
 hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false }
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-common = { path = "../hongguo-common" }
-hongguo-media = { path = "../hongguo-media" }
 hongguo-video = { path = "../hongguo-video" }
 hongguo-media-platform = { path = "../hongguo-media-platform" }
 hongguo-service = { path = "../hongguo-service" }
