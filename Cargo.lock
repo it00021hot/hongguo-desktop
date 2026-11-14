@@ -1821,9 +1821,8 @@ dependencies = [
  "hongguo-media",
  "hongguo-media-platform-android",
  "hongguo-media-platform-api",
- "hongguo-media-platform-ios",
- "hongguo-media-platform-macos",
  "hongguo-media-platform-windows",
+ "hongguo-media-videotoolbox",
  "log",
  "parking_lot 0.13.0",
  "serde",
@@ -1848,24 +1847,6 @@ name = "hongguo-media-platform-api"
 version = "0.6.6"
 dependencies = [
  "hongguo-common",
-]
-
-[[package]]
-name = "hongguo-media-platform-ios"
-version = "0.6.6"
-dependencies = [
- "hongguo-common",
- "hongguo-media-platform-api",
- "hongguo-media-videotoolbox",
-]
-
-[[package]]
-name = "hongguo-media-platform-macos"
-version = "0.6.6"
-dependencies = [
- "hongguo-common",
- "hongguo-media-platform-api",
- "hongguo-media-videotoolbox",
 ]
 
 [[package]]

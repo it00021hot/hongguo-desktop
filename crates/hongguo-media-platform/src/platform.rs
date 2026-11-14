@@ -1,15 +1,13 @@
-//! 平台层的统一门面：编译期按目标选择实现（macOS / Windows / Android）。[`cover`] 封面平台级静图解码（Windows WIC；其余平台返回 `None`，调用方无需写平台分支）。
+//! 平台层的统一门面：编译期按目标选择实现（Apple / Windows / Android）。[`cover`] 封面平台级静图解码（Windows WIC；其余平台返回 `None`，调用方无需写平台分支）。
 //! 无状态分发：转码、能力探测、探测缓存清理（同名转发到实现 crate）；调用方只认本模块，不感知具体平台实现与原生 API。
 
 pub mod cover;
 
-#[cfg(target_os = "ios")]
-use hongguo_media_platform_ios as imp;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use hongguo_media_videotoolbox as imp;
 
 #[cfg(target_os = "android")]
 use hongguo_media_platform_android as imp;
-#[cfg(target_os = "macos")]
-use hongguo_media_platform_macos as imp;
 #[cfg(target_os = "windows")]
 use hongguo_media_platform_windows as imp;
 
@@ -136,16 +134,15 @@ pub(crate) fn imp_thread<T: Send>(f: impl FnOnce() -> AppResult<T> + Send) -> Ap
 }
 
 /// 仅测试构建：跑完整平台链路（解码/Annex-B/封装/时间戳），让没有硬编的机器（含 CI）也能验证管线本身。
-/// macOS / Android 生产入口直接走正式路径；Windows 分发到 `_for_tests`（强制 in-box 软编）。
+/// Apple / Android 生产入口直接走正式路径；Windows 分发到 `_for_tests`（强制 in-box 软编）。
 /// e2e 统一从这里走，不直接引用 `vt::`/`mf::`/`mc::`（否则另一平台的测试构建编不过）；门控 `test-support`——跨 crate 后 `pub(crate)` 够不着。
 #[cfg(feature = "test-support")]
 pub fn transcode_hevc_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
-    #[cfg(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "windows",
-        target_os = "android"
-    ))]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        imp::transcode_hevc(req)
+    }
+    #[cfg(any(target_os = "windows", target_os = "android"))]
     {
         imp::transcode_hevc_for_tests(req)
     }
