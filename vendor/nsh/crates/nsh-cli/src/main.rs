@@ -15,6 +15,7 @@ mod dev_port;
 mod entry;
 mod init;
 mod logger;
+mod native_host;
 mod package;
 mod platforms;
 mod play;
@@ -804,6 +805,11 @@ fn run(mut command: Command) -> anyhow::Result<()> {
     // from them, its hosts built with them. A development session ends
     // when its Rust code changes, and starts again with it built anew.
     rust_app::set_current(app.clone());
+    if let Command::Package(options) = &command
+        && crate::native_host::configured(&options.entry)?
+    {
+        return dispatch(command);
+    }
     // Its crates are checked with cargo before anything is described from
     // them: their errors are cargo's own. A Rust app without TypeScript
     // has nothing else to check.

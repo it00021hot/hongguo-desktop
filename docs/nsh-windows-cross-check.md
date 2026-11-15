@@ -10,7 +10,7 @@
 ```sh
 rustup target add x86_64-pc-windows-msvc
 cargo install cargo-xwin --version 0.23.1 --locked
-node scripts/nsh.mjs setup x86_64-pc-windows-msvc
+node scripts/nsh-native-host.mjs setup x86_64-pc-windows-msvc
 mkdir -p target/nsh-cross-tools
 ln -sfn "$PWD/scripts/nsh-windows-rc.cjs" target/nsh-cross-tools/rc.exe
 ```
@@ -33,7 +33,7 @@ cargo xwin clippy -p hongguo-nsh --all-targets --target x86_64-pc-windows-msvc \
 所以交叉命令显式传递完整 Rustflags，不能只依赖 Cargo 的额外 `--config`。
 独立 SDK 缓存包含静态 CRT 的官方 PDB，避免使用旧的不含符号缓存导致 LNK4099。
 
-正常 Windows 打包仍在 Windows 宿主执行 `pnpm nsh:package -- windows` 或
+正常 Windows 打包仍在 Windows 宿主执行 `nsh package crates/hongguo-nsh --target windows` 或
 `make nsh-package TARGET=windows`，使用项目的静态 CRT 配置。
 构建硬要求实际编译 ICO 和 GUI manifest，不沿用过期资源。
 
@@ -61,16 +61,11 @@ LLVM 19 是维护者重建该旧内核时使用的并行工具链，不是新机
 
 ## 生成 Windows 测试安装器
 
-原生 Windows `make nsh-package TARGET=windows` 自动生成 NSIS 安装器；构建机需安装 NSIS 3。
-macOS 上可对上述真实交叉链接 EXE 组装 `Hongguo.exe`、认证 SDK 的 `libde265.dll` 和
-`copyDesktopMedia` 提供的 NativeMedia 来源材料，再执行：
+原生 Windows 打包由固定 NSH CLI 完成；原生宿主接入口只准备 Rust EXE、认证 DLL 和来源材料：
 
 ```sh
-node scripts/nsh-windows-installer.mjs <Windows包目录>
+nsh package crates/hongguo-nsh --target windows
 ```
 
-脚本重新审计 PE 与依赖，拒绝旧 FFmpeg 包，输出同级 `Hongguo-NSH_<版本>_x64-setup.exe`。
-此操作支持 macOS 的 NSIS 编译器，不需要 Wine，不执行 Windows 安装程序。
-安装范围为当前用户、普通 Windows 10 1809+ 与 Windows 11，不安装 WebView2 或 HEVC 商店插件。
-默认安装目录 `%LOCALAPPDATA%\Programs\HongguoNSH` 与旧版安装隔离；卸载使用打包时的逐文件清单，不递归删除安装目录或用户数据。
+NSH 生成便携目录和 ZIP；检测到 Inno Setup 时生成 `guava-setup.exe`。旧 NSIS 工具和安装脚本已删除，安装与卸载行为由框架维护。媒体依赖审计仍拒绝缺失运行库或旧 FFmpeg 包。不安装 WebView2 或 HEVC 商店插件，Windows N 不在支持范围。
 交叉生成与解包校验仍不代替 Windows 实机安装、卸载和播放验收。

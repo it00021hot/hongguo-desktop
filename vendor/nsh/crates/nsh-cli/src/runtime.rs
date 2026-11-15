@@ -187,6 +187,11 @@ pub(crate) fn cli_exe() -> std::io::Result<PathBuf> {
 /// with development support or not; a Rust app's library is built for
 /// `abis` (empty: every ABI of the prebuilt runtime).
 pub(crate) fn android(dev: bool, abis: &[String]) -> anyhow::Result<PathBuf> {
+    if let Some(app) = crate::rust_app::current() {
+        if let Some(runtime) = app.native_android(dev, abis)? {
+            return Ok(runtime);
+        }
+    }
     let prebuilt = prebuilt_android(dev)?;
     match crate::rust_app::current() {
         // The app's own library with the prebuilt Java runtime.

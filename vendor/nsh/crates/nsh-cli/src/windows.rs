@@ -90,6 +90,12 @@ pub(crate) fn package(
         set_icon(&exe, &images)
             .with_context(|| format!("embed {} in {}", icon.display(), exe.display()))?;
     }
+    crate::native_host::stage(
+        options.entry,
+        "windows",
+        &dir,
+        &format!("{}.exe", file_stem(name)),
+    )?;
     let archive = options.out.join(format!("{name}.zip"));
     zip_dir(&dir, name, &archive).with_context(|| format!("create {}", archive.display()))?;
     crate::updater::copy_archive(config, name, &update_platform(), &archive, options.out)?;

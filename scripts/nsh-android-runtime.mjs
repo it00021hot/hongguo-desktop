@@ -73,6 +73,7 @@ export function buildAndroidRuntime({ aar, sdk, output, sourceDirectory }, run) 
       {
         schemaVersion: 1,
         compileSdk: COMPILE_SDK,
+        androidJarPath: platform,
         embeddingSdkSha256: digest(aar),
         androidJarSha256: digest(platform),
         runtimeSha256: digest(runtime),

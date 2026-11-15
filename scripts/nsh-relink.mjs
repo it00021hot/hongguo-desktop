@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -75,21 +75,54 @@ export function finishRelink(binary, triple, destination) {
       'Omit --hevc to use the included original archive. A modified prefix must provide lib/libde265.a and a compatible public ABI.\n' +
       'Every captured original object/archive is checked before linking; substituting your modified HEVC prefix is intentionally permitted.\n\n' +
       (ios
-        ? 'Copy the supplied app bundle to your working directory. Simulator:\n\n```sh\nnode resign-ios.mjs --app <Hongguo.app> --binary <new-binary> --identity -\n```\n\nFor a device, use your authorized signing identity and provisioning profile:\n\n```sh\nnode resign-ios.mjs --app <Hongguo.app> --binary <new-binary> --identity <identity> --profile <profile.mobileprovision>\n```\n\nThe helper validates the app identifier/profile, replaces only its executable, then signs and verifies the bundle.\n'
-        : "To build an APK with your modified library, set --output to AndroidSource/target/nsh-android/jniLibs/arm64-v8a/libnsh.so, then use the included standalone Android host:\n\n```sh\ncd AndroidSource/crates/hongguo-nsh-android/android\n./gradlew -PappVersion=<original-version> -PappMinSdk=28 clean assembleDebug\n```\n\nOn Windows use gradlew.bat. Gradle uses the developer machine's own debug signing key; no private signing key is distributed. For your production identity, configure Android's standard release signing in this copied host project.\n"),
+        ? 'Copy the supplied app bundle to your working directory. Simulator:\n\n```sh\nnode resign-ios.mjs --app <guava.app> --binary <new-binary> --identity -\n```\n\nFor a device, use your authorized signing identity and provisioning profile:\n\n```sh\nnode resign-ios.mjs --app <guava.app> --binary <new-binary> --identity <identity> --profile <profile.mobileprovision>\n```\n\nThe helper validates the app identifier/profile, replaces only its executable, then signs and verifies the bundle.\n'
+        : 'Set --output to AndroidSource/target/native-runtime/lib/arm64-v8a/libnsh.so. The included source carries the patched NSH CLI and original Java runtime. Build the CLI, then package your replacement without recompiling it:\n\n```sh\ncd AndroidSource\ncargo build --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli\ntarget/nsh-cli/debug/nsh package crates/hongguo-nsh --target android --abi arm64-v8a\n```\n\nOn Windows use nsh.exe. NSH defaults to the developer debug key; use --keystore and --key-alias with NSH_KEYSTORE_PASSWORD for production signing. No private key is distributed.\n'),
   );
 }
 
 export function copyAndroidRelinkHost(destination, output) {
   const snapshot = join(destination, 'AndroidSource');
   rmSync(snapshot, { recursive: true, force: true });
-  const project = join(root, 'crates/hongguo-nsh-android/android');
-  cpSync(project, join(snapshot, 'crates/hongguo-nsh-android/android'), {
-    recursive: true,
-    filter: (path) => !['.gradle', 'build', 'local.properties'].includes(basename(path)),
-  });
-  const artifacts = join(snapshot, 'target/nsh-android');
-  mkdirSync(artifacts, { recursive: true });
-  for (const name of ['jniLibs', 'resources', 'nsh-runtime.aar', 'runtime-source.json'])
-    cpSync(join(output, name), join(artifacts, name), { recursive: true });
+  const inventory = spawnSync(
+    'git',
+    [
+      'ls-files',
+      '-z',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '--',
+      'Cargo.toml',
+      'Cargo.lock',
+      'crates',
+      'assets',
+      'scripts',
+      'vendor/nsh',
+      'vendor/wgpu-hal',
+    ],
+    { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+  );
+  if (inventory.error) throw inventory.error;
+  if (inventory.status !== 0) throw new Error('Cannot inventory relinking build sources');
+  for (const file of inventory.stdout.split('\0').filter(Boolean)) {
+    const from = join(root, file);
+    if (!existsSync(from)) continue;
+    const to = join(snapshot, file);
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(from, to);
+  }
+  cpSync(join(output, 'runtime'), join(snapshot, 'target/native-runtime'), { recursive: true });
+  const manifest = join(snapshot, 'crates/hongguo-nsh/nsh.json');
+  const config = JSON.parse(readFileSync(manifest, 'utf8'));
+  config.nativeHost = {
+    displayNames: config.nativeHost.displayNames,
+    build: ['node', '../../reuse-runtime.mjs'],
+    stage: ['node', '../../reuse-runtime.mjs'],
+    hosts: { android: '../../target/native-runtime' },
+  };
+  writeFileSync(manifest, JSON.stringify(config, null, 2));
+  writeFileSync(
+    join(snapshot, 'reuse-runtime.mjs'),
+    "import {accessSync} from 'node:fs'; accessSync(new URL('./target/native-runtime/lib/arm64-v8a/libnsh.so', import.meta.url));\n",
+  );
 }

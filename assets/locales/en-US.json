@@ -15,9 +15,6 @@
     "windowModeUnavailable": "This window mode is unavailable on this platform",
     "playbackFailed": "Video playback failed. Please try again."
   },
-  "app": {
-    "name": "Hongguo"
-  },
   "nav": {
     "home": {
       "title": "Discover"
@@ -373,7 +370,6 @@
     "autoRetrying": "Automatic retry scheduled (attempt {attempt}) — resumes when available",
     "incognito": "Incognito (hides when mouse leaves, reappears when it returns)",
     "exitIncognito": "Exit incognito",
-    "miniTitle": "Hongguo",
     "miniWindow": "Mini screen",
     "exitMiniScreen": "Exit mini screen",
     "pause": "Pause",
@@ -439,7 +435,6 @@
     "deleteFilesOf": "Delete local files of {title}"
   },
   "update": {
-    "appTitle": "Hongguo",
     "versionLine": "Version {version}",
     "upToDate": "Up to date",
     "upToDateDesc": "Version {version} is the latest — no update needed.",

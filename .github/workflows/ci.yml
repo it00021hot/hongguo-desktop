@@ -1,120 +1,172 @@
-# 提交前置检查：Rust 三目标零警告（Windows 宿主 + macOS aarch64/x86_64 交叉）、
-# 忽略标签禁令（-D clippy::allow_attributes，#[allow] 直接拒；确需断言用
-# #[expect(reason)]，lint 不再触发时编译失败）与格式检查。
-# Rust 侧在仓库根执行（workspace 根 manifest），--workspace 覆盖全部成员 crate。
-# 启用：git config core.hooksPath .githooks
-#
-# dev/main 与 PR 均验证 NSH 及共享工作区，平台代码由对应原生 runner 覆盖。
-# 新增文件超 800 行由 scripts/check-file-size.sh 拒绝（单一职责的机械闸）。
 name: CI
 
 on:
   push:
     branches: [main, dev]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 26.13.0
+          cache: npm
+          cache-dependency-path: tools/package-lock.json
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: rustfmt
+      - run: npm ci --prefix tools --ignore-scripts
+      - run: npm exec --prefix tools -- prettier --check .
+      - run: cargo fmt -- --check
+
+  check:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-latest
-            rust_target: x86_64-pc-windows-msvc
-            clippy_args: --all-targets
-          - platform: macos-latest
-            rust_target: aarch64-apple-darwin
-            clippy_args: --all-targets --target aarch64-apple-darwin
-          - platform: macos-latest
-            rust_target: x86_64-apple-darwin
-            clippy_args: --all-targets --target x86_64-apple-darwin
-
-    runs-on: ${{ matrix.platform }}
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+          - os: macos-latest
+            triple: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-
-      - uses: pnpm/action-setup@v6.1.1
-        with:
-          version: 12.18.0
-
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: 26.13.0
-          cache: pnpm
-
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
-          targets: ${{ matrix.rust_target }}
-          # 钉死版本装的是 minimal profile（rustc+cargo+std）——@stable 时代
-          # 靠 runner 预装组件混过去，钉版本后 clippy 必须显式声明
+          targets: ${{ matrix.triple }}
           components: clippy
-
       - uses: swatinem/rust-cache@v2.9.3
         with:
-          workspaces: .
-          key: ${{ matrix.rust_target }}
-
-      - name: Install tooling dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Set up verified native SDKs (macOS host and check target)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          host=$(rustc -vV | sed -n 's/^host: //p')
-          node scripts/nsh.mjs setup "$host"
-          if [ "$host" != "${{ matrix.rust_target }}" ]; then
-            node scripts/nsh.mjs setup "${{ matrix.rust_target }}"
-          fi
-          echo "DYLD_LIBRARY_PATH=$PWD/target/native-media/$host/libde265-1.1.3/lib" >> "$GITHUB_ENV"
-
-      - name: Set up verified native SDKs (Windows host and check target)
-        if: runner.os == 'Windows'
+          key: check-${{ matrix.triple }}
+      - name: Prepare authenticated media SDK
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $compiler = rustc -vV
+          node scripts/nsh-native-host.mjs setup '${{ matrix.triple }}'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $hostTarget = ($compiler | Select-String '^host: (.+)$').Matches.Groups[1].Value.Trim()
-          if (!$hostTarget) { throw 'Rust host target was not found' }
-          node scripts/nsh.mjs setup $hostTarget
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($hostTarget -ne '${{ matrix.rust_target }}') {
-            node scripts/nsh.mjs setup '${{ matrix.rust_target }}'
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($IsWindows) {
+            "$PWD/target/native-media/${{ matrix.triple }}/libde265-1.1.3/bin" >> $env:GITHUB_PATH
+          } else {
+            "DYLD_LIBRARY_PATH=$PWD/target/native-media/${{ matrix.triple }}/libde265-1.1.3/lib" >> $env:GITHUB_ENV
           }
-          Join-Path $env:GITHUB_WORKSPACE "target\native-media\$hostTarget\libde265-1.1.3\bin" >> $env:GITHUB_PATH
+      - run: cargo build --workspace --target ${{ matrix.triple }}
+      - run: cargo clippy --workspace --target ${{ matrix.triple }} --all-targets -- -D warnings -D clippy::allow_attributes
+      - name: File size gate
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            scripts/check-file-size.sh "origin/$BASE_REF"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            scripts/check-file-size.sh "$BEFORE"
+          fi
 
-      - name: Prettier
-        run: pnpm format:check
-
-      - name: Preserve verified native SDKs and corresponding source
-        if: always()
-        uses: actions/upload-artifact@v7.0.2
+  package:
+    needs: [format, check]
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            triple: x86_64-pc-windows-msvc
+            args: ''
+          - os: macos-latest
+            target: macos
+            triple: aarch64-apple-darwin
+            args: '--arch arm64'
+          - os: macos-latest
+            target: macos
+            triple: x86_64-apple-darwin
+            args: '--arch x86_64'
+          - os: macos-latest
+            target: ios-simulator
+            triple: aarch64-apple-ios-sim
+            args: ''
+          - os: ubuntu-latest
+            target: android
+            triple: aarch64-linux-android
+            args: '--abi arm64-v8a'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
-          name: native-sdk-${{ matrix.rust_target }}
-          path: |
-            target/native-media/*/sdk.json
-            target/native-media/*/libde265-*/
-            target/native-media/*/vvdec-*/
-          if-no-files-found: ignore
-
-      - name: Rust clippy（零警告 + 忽略标签禁令）
-        run: cargo clippy --workspace ${{ matrix.clippy_args }} -- -D warnings -D clippy::allow_attributes
-
-      - name: File size gate（新增文件行数上限）
+          node-version: 26.13.0
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: swatinem/rust-cache@v2.9.3
+        with:
+          key: nsh-package-${{ matrix.triple }}
+      - name: Build the pinned NSH CLI with native-host support
+        shell: pwsh
+        run: |
+          cargo build --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$PWD/target/nsh-cli/debug" >> $env:GITHUB_PATH
+      - name: Prepare Android SDK and embedding runtime
+        if: matrix.target == 'android'
         shell: bash
         run: |
-          if [ -n "${{ github.base_ref }}" ]; then
-            scripts/check-file-size.sh "origin/${{ github.base_ref }}"
-          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            scripts/check-file-size.sh "${{ github.event.before }}"
-          else
-            echo "无可用 base（首推/新分支），跳过文件规模闸门"
-          fi
+          sdkmanager 'platforms;android-37.0' 'build-tools;36.1.0' 'ndk;30.0.16248370'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+          echo "NSH_DISTRIBUTION=$RUNNER_TEMP/nsh-sdk" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/nsh-sdk/embed/android"
+          cd "$RUNNER_TEMP"
+          curl -fL --retry 3 -O https://github.com/longbridge/nsh/releases/download/v0.5.1/nsh-embed-android.zip
+          curl -fL --retry 3 -O https://github.com/longbridge/nsh/releases/download/v0.5.1/nsh-embed-android.zip.sha256
+          sha256sum -c nsh-embed-android.zip.sha256
+          unzip -q nsh-embed-android.zip -d nsh-embed
+          cp nsh-embed/nsh-embed-android/nsh.aar nsh-sdk/embed/android/nsh.aar
+      - name: Require the NSH Windows installer compiler
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          if (!(Get-Command ISCC.exe -ErrorAction SilentlyContinue)) {
+            $compilerDir = 'C:/Program Files (x86)/Inno Setup 6'
+            if (!(Test-Path (Join-Path $compilerDir 'ISCC.exe'))) { throw 'Inno Setup 6 is required for Windows installer CI' }
+            $compilerDir >> $env:GITHUB_PATH
+          }
+      - name: Package and sign through NSH
+        shell: pwsh
+        env:
+          NSH_KEYSTORE_PASSWORD: ${{ secrets.NSH_KEYSTORE_PASSWORD }}
+          NSH_ANDROID_KEYSTORE_BASE64: ${{ secrets.NSH_ANDROID_KEYSTORE_BASE64 }}
+          NSH_ANDROID_KEY_ALIAS: ${{ secrets.NSH_ANDROID_KEY_ALIAS }}
+        run: |
+          $packageArgs = @('package', 'crates/hongguo-nsh', '--target', '${{ matrix.target }}', '--out', 'target/packages/${{ matrix.triple }}')
+          if ('${{ matrix.args }}') { $packageArgs += '${{ matrix.args }}'.Split(' ') }
+          if ('${{ matrix.target }}' -eq 'android' -and $env:NSH_ANDROID_KEYSTORE_BASE64) {
+            $keystore = Join-Path $env:RUNNER_TEMP 'guava-release.jks'
+            [IO.File]::WriteAllBytes($keystore, [Convert]::FromBase64String($env:NSH_ANDROID_KEYSTORE_BASE64))
+            $packageArgs += @('--keystore', $keystore, '--key-alias', $env:NSH_ANDROID_KEY_ALIAS)
+          }
+          nsh @packageArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ('${{ matrix.target }}' -eq 'windows' -and !(Test-Path 'target/packages/${{ matrix.triple }}/guava-setup.exe')) { throw 'NSH did not produce the Windows installer' }
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: guava-${{ matrix.triple }}
+          path: target/packages/${{ matrix.triple }}/
+          if-no-files-found: error

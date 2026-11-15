@@ -1,7 +1,7 @@
 use crate::i18n::tr;
 use nsh_core::{prelude::*, storage::Storage};
 
-const COLLAPSED_KEY: &str = "hongguo.browseFiltersCollapsed";
+const COLLAPSED_KEY: &str = "guava.browseFiltersCollapsed";
 
 pub(super) fn expanded() -> Signal<bool> {
     signal(

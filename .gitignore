@@ -48,6 +48,7 @@ skills-lock.json
 
 
 **/.nsh/
+
+# 迁移前的本地 Gradle 缓存不属于源码。
 crates/hongguo-nsh-android/android/.gradle/
 crates/hongguo-nsh-android/android/**/build/
-crates/hongguo-nsh-android/android/local.properties

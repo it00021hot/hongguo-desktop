@@ -42,6 +42,7 @@ export function copyMediaNotices(prefix, triple, destination) {
   const manifest = JSON.parse(readFileSync(join(prefix, 'manifest.json'), 'utf8'));
   rmSync(destination, { recursive: true, force: true });
   mkdirSync(destination, { recursive: true });
+  for (const name of ['LICENSE', 'NOTICE']) copyFileSync(join(root, name), join(destination, name));
   for (const directory of ['licenses', 'sources', 'build-info'])
     cpSync(join(prefix, directory), join(destination, 'libde265', directory), { recursive: true });
   copyFileSync(join(prefix, 'manifest.json'), join(destination, 'libde265/source-manifest.json'));
@@ -73,8 +74,9 @@ export function copyMediaNotices(prefix, triple, destination) {
       join(anime4k, name),
     );
   if (triple.includes('android')) {
-    const ndk = process.env.NDK_HOME ?? process.env.ANDROID_NDK_ROOT;
-    if (!ndk) throw new Error('Android packaging requires NDK_HOME or ANDROID_NDK_ROOT');
+    const ndk =
+      process.env.ANDROID_NDK_HOME ?? process.env.NDK_HOME ?? process.env.ANDROID_NDK_ROOT;
+    if (!ndk) throw new Error('Android packaging requires ANDROID_NDK_HOME');
     const runtime = join(destination, 'android-runtime');
     mkdirSync(runtime, { recursive: true });
     for (const name of ['NOTICE', 'NOTICE.toolchain', 'source.properties'])
@@ -149,7 +151,10 @@ export function auditWindowsBundle(destination) {
   for (const name of images) {
     const bytes = readFileSync(join(destination, name));
     const dll = /\.dll$/i.test(name);
-    const imports = dll ? readWindowsImports(bytes, { dll }) : validateWindowsPe(bytes).imports;
+    const app = JSON.parse(readFileSync(join(root, 'crates/hongguo-nsh/nsh.json'), 'utf8'));
+    const imports = dll
+      ? readWindowsImports(bytes, { dll })
+      : validateWindowsPe(bytes, app.id).imports;
     for (const dependency of imports) {
       const normalized = dependency.toLowerCase();
       if (
@@ -170,7 +175,7 @@ export function auditWindowsBundle(destination) {
 
 export function auditMacosBundle(destination, run) {
   const frameworks = join(destination, 'Contents/Frameworks');
-  const executable = join(destination, 'Contents/MacOS/hongguo-nsh');
+  const executable = join(destination, 'Contents/MacOS/guava');
   const libraries = [
     ...new Set(readdirSync(frameworks).map((name) => realpathSync(join(frameworks, name)))),
   ];
@@ -215,4 +220,14 @@ export function verifyNshWorkspace() {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`Cargo source verification failed: ${result.stderr}`);
   validateNshSource(JSON.parse(result.stdout));
+  const graph = spawnSync(
+    'cargo',
+    ['tree', '-p', 'hongguo-nsh', '--edges', 'normal', '--prefix', 'none'],
+    { cwd: root, encoding: 'utf8' },
+  );
+  if (graph.error) throw graph.error;
+  if (graph.status !== 0)
+    throw new Error(`Cannot inspect production dependencies: ${graph.stderr}`);
+  if (/^(?:nsh-js|quickjs[^ ]*) v/m.test(graph.stdout))
+    throw new Error('The pure Rust host must not include QuickJS');
 }

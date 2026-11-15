@@ -12,6 +12,7 @@ source-build = ["hongguo-playback/source-build"]
 
 [build-dependencies]
 embed-resource = "=3.0.12"
+serde_json = "1"
 
 [dependencies]
 nsh-core.workspace = true

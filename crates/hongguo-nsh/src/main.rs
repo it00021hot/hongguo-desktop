@@ -16,16 +16,18 @@ fn main() -> impl std::process::Termination {
     platform::set_components(hongguo_nsh::__nsh_native_components_windows);
     platform::run_app(
         platform::AppSource::Rust(
-            platform::Root::of::<hongguo_nsh::App>().app_id("com.hongguo.nsh"),
+            platform::Root::of::<hongguo_nsh::App>().app_id(&hongguo_nsh::metadata().id),
         ),
         platform::AppOptions {
-            title: "红果".to_owned(),
-            data_dir: std::env::var_os("HONGGUO_DATA_DIR").map(std::path::PathBuf::from),
-            #[cfg(target_os = "windows")]
-            app_id: "com.hongguo.nsh".to_owned(),
+            title: hongguo_nsh::metadata().name.clone(),
+            data_dir: std::env::var_os("GUAVA_DATA_DIR").map(std::path::PathBuf::from),
+            app_id: hongguo_nsh::metadata().id.clone(),
             #[cfg(target_os = "windows")]
             output_color_mode: platform::OutputColorMode::Auto,
-            size: (1280, 840),
+            size: (
+                hongguo_nsh::metadata().window.default_size.width,
+                hongguo_nsh::metadata().window.default_size.height,
+            ),
             ..Default::default()
         },
     )

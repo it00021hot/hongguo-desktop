@@ -39,8 +39,10 @@ Tauri、GPUI 与 React/WebView 专用代码已移除；历史备份为 `codex/ba
 
 ## 命令
 
-`pnpm nsh` 启动，`pnpm nsh:check` 检查，`pnpm format:check` 检查格式。
-`make nsh-package TARGET=macos|windows|android|ios|ios-simulator` 打包。
+使用仓库固定 NSH CLI：`nsh run crates/hongguo-nsh` 启动，`nsh check crates/hongguo-nsh` 检查。
+`nsh package crates/hongguo-nsh --target macos|windows|android|ios|ios-simulator` 打包；Android 限定 `--abi arm64-v8a`。
+应用元数据与平台打包配置统一在 `crates/hongguo-nsh/nsh.json`；`nativeHost` 补丁仅接入框架尚未覆盖的独立宿主与媒体分发材料。使用前按 NSH 开发说明构建固定 CLI。
+格式工具位于 `tools/`：`npm ci --prefix tools --ignore-scripts` 后执行 `npm exec --prefix tools -- prettier --check .`，不使用 pnpm。
 `cargo build --workspace` 与
 `cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes` 验证 Rust；使用当前宿主 SDK 的动态库搜索路径。
 仓库自有测试、离线预览、探针示例及测试专用接口已移除；第三方 vendor 源码保持原样。

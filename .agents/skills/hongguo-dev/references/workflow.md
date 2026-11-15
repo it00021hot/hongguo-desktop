@@ -4,16 +4,16 @@ NSH 单壳的流程参考；接入与验证的技术细节以 `references/nsh.md
 
 ## 环境准备
 
-- Node ≥ 22（pnpm）+ Rust toolchain（MSRV 1.99，edition 2024）。依赖：`pnpm install`。
-- 桌面数据根 `%APPDATA%/hongguo-nsh`（经 `paths::set_shell_data_root("hongguo-nsh")` 钉到
+- Node ≥ 22 + Rust toolchain（MSRV 1.99，edition 2024）及仓库固定 NSH CLI。格式工具依赖单独执行 `npm ci --prefix tools --ignore-scripts`。
+- 桌面数据根 `%APPDATA%/guava`（经 `paths::set_shell_data_root("guava")` 钉到
   与其他数据根平级的独立目录，互不嵌套）；移动端用 app 私有目录
   （`set_absolute_data_root`，漏掉这步开库即退）。
 - 自动化一律用自建实例与独立数据目录，不碰用户活跃实例（dev-habits『不碰用户活跃环境』）。
-- 原生编解码 SDK 由 `scripts/nsh.mjs` 从 `vendor/native-codecs/` 自动解包校验，默认不源码构建。
+- 原生编解码 SDK 由 `scripts/nsh-native-host.mjs` 从 `vendor/native-codecs/` 自动解包校验，默认不源码构建。
 
 ## 日常命令
 
-Makefile 是入口（`make help` 看全量）；对应 `pnpm nsh` / `pnpm nsh:check` 不要求 Make。
+直接执行 `nsh run/check/package crates/hongguo-nsh`；Makefile 仅作可选转发（`make help`）。
 
 | 命令                     | 作用                                                       |
 | ------------------------ | ---------------------------------------------------------- |
@@ -39,7 +39,7 @@ Rust 日志：`RUST_LOG=debug`（env_logger）。验证细节与预览/真机验
 - VVdeC 的 CI 与 Release 都需设置 `SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL=always`，Intel Mac 交叉构建还需
   `PKG_CONFIG_ALLOW_CROSS_x86_64_apple_darwin=1`；Windows 必须先安装 pkgconf。本机装有 libvvdec
   不代表干净 runner 可构建。
-- 门禁命令必须**裸跑**确认退出码——管道（`pnpm x | tail`）会吞掉失败。
+- 门禁命令必须**裸跑**确认退出码——管道（`command | tail`）会吞掉失败。
 
 ## 提交纪律
 
@@ -55,7 +55,7 @@ Rust 日志：`RUST_LOG=debug`（env_logger）。验证细节与预览/真机验
 
 ## 打包
 
-桌面在对应宿主执行 `make nsh-package TARGET=macos|windows`（Windows 需 NSIS 3；
+桌面在对应宿主执行 `nsh package crates/hongguo-nsh --target macos|windows`（Windows 安装器可选使用 Inno Setup；
 产物与校验见 nsh.md「命令」节）。Android/iOS 走独立宿主入口（`make nsh-package
 TARGET=android|ios`），前置与签名见 nsh.md；不发 updater、不发应用内更新。
 

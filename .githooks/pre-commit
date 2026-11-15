@@ -39,6 +39,6 @@ CC_x86_64_apple_darwin=$LLVM/clang.exe CXX_x86_64_apple_darwin=$LLVM/clang++.exe
   cargo clippy $MAC_CROSS --target x86_64-apple-darwin --all-targets -- $STRICT
 
 echo '[pre-commit] prettier'
-pnpm format:check
+npm exec --prefix tools -- prettier --check .
 
 echo '[pre-commit] 全部通过'

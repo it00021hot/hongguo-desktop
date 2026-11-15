@@ -2206,6 +2206,21 @@ opt-level = \"s\"
         release: bool,
         triple: Option<&str>,
     ) -> anyhow::Result<PathBuf> {
+        let target = match platform {
+            Platform::Windows => "windows",
+            Platform::MacOs => "macos",
+            Platform::IphoneOs => "ios",
+            Platform::IphoneSimulator => "ios-simulator",
+            _ => "unsupported",
+        };
+        let directory = self
+            .workspace
+            .parent()
+            .and_then(Path::parent)
+            .context("nativeHost app directory")?;
+        if let Some(path) = crate::native_host::runtime(directory, target, release, triple)? {
+            return Ok(path);
+        }
         let dir = match platform {
             Platform::Linux => "rust-linux",
             Platform::MacOs => "rust-macos",
@@ -2266,6 +2281,29 @@ opt-level = \"s\"
     /// The Android runtime of the app: the prebuilt runtime's `classes.dex`
     /// with the app's `libnsh.so` for each of `abis` (empty: each ABI of the
     /// prebuilt runtime).
+    pub(crate) fn native_android(
+        &self,
+        dev: bool,
+        abis: &[String],
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let directory = self
+            .workspace
+            .parent()
+            .and_then(Path::parent)
+            .context("nativeHost app directory")?;
+        let path =
+            crate::native_host::runtime(directory, "android", !dev, Some("aarch64-linux-android"))?;
+        if let Some(path) = &path {
+            for abi in abis {
+                anyhow::ensure!(
+                    path.join("lib").join(abi).join("libnsh.so").is_file(),
+                    "nativeHost does not provide Android ABI {abi}"
+                );
+            }
+        }
+        Ok(path)
+    }
+
     pub(crate) fn android(
         &self,
         prebuilt: &Path,

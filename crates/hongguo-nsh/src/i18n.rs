@@ -10,12 +10,21 @@ static TRANSLATIONS: LazyLock<Translations> = LazyLock::new(|| {
         let catalog = serde_json::from_str(source).expect("validated translation catalog");
         let mut messages = HashMap::new();
         flatten("", catalog, &mut messages);
+        let app = crate::metadata();
+        let name = app
+            .native_host
+            .display_names
+            .get(language)
+            .unwrap_or(&app.name);
+        for key in ["app.name", "player.miniTitle", "update.appTitle"] {
+            messages.insert(key.to_owned(), name.clone());
+        }
         catalogs.insert(language.to_owned(), messages);
     }
     Translations::from_map(catalogs)
 });
 
-const LANGUAGE_KEY: &str = "hongguo.locale";
+const LANGUAGE_KEY: &str = "guava.locale";
 
 pub(crate) fn install() {
     global::<Translations>().set(TRANSLATIONS.clone());

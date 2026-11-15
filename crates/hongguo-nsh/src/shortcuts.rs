@@ -6,7 +6,7 @@ use nsh_core::{
 };
 use std::{collections::HashSet, rc::Rc};
 
-const STORAGE_KEY: &str = "hongguo.nsh.shortcuts";
+const STORAGE_KEY: &str = "guava.shortcuts";
 const ACTION_COUNT: usize = 5;
 const FIRST_VIRTUAL_KEY: u16 = 0x08;
 const LAST_VIRTUAL_KEY: u16 = 0xE2;

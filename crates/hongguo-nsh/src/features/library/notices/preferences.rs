@@ -1,6 +1,6 @@
 use nsh_core::{prelude::*, storage::Storage};
 
-const POPUP_KEY: &str = "hongguo.followPopup";
+const POPUP_KEY: &str = "guava.followPopup";
 
 #[derive(Clone, Copy)]
 pub(crate) struct NoticePreferences {

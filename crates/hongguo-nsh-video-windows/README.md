@@ -17,7 +17,7 @@ Original-precision planes enter the shared color pipeline. Enhancement receives 
 final display mapping follows enhancement. NSH Auto selects supported FP16/scRGB output or
 an explicitly reported SDR mapping. Ordinary Windows 10 1809+ / Windows 11 are the targets.
 
-Codec binaries are included in the repository and unpacked by `pnpm nsh`.
+Codec binaries are included in the repository and prepared by the native host of `nsh run crates/hongguo-nsh`.
 The bundle contains one private libde265 DLL with static CRT; customers need no codec packs
 or HEVC Store extension. See [native codec builds](../../docs/native-media-build.md).
 

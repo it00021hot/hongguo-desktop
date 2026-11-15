@@ -144,6 +144,8 @@ fn macos_update_platforms(arch: Option<Arch>) -> Vec<String> {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppConfig {
+    #[serde(default, rename = "nativeHost")]
+    _native_host: Option<serde_json::Value>,
     /// Display name.
     pub(crate) name: Option<String>,
     /// Bundle identifier (`com.example.app`).
@@ -240,6 +242,9 @@ pub(crate) struct AppConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AndroidConfig {
+    #[serde(default)]
+    pub(crate) abis: Vec<String>,
+    pub(crate) activity: Option<String>,
     /// The API level the app targets (`targetSdkVersion`; default
     /// [`android::DEFAULT_TARGET_SDK`]), which it also compiles against:
     /// the SDK must have its platform.
@@ -1058,6 +1063,16 @@ pub(crate) fn package(options: PackageOptions<'_>) -> anyhow::Result<()> {
     }
     plist::Value::Dictionary(info).to_file_xml(app.join("Info.plist"))?;
 
+    crate::native_host::stage(
+        options.entry,
+        if options.target == PackageTarget::Ios {
+            "ios"
+        } else {
+            "ios-simulator"
+        },
+        &app,
+        &executable,
+    )?;
     match options.target {
         PackageTarget::IosSimulator => {
             // The simulator takes the app's entitlements without a profile.
@@ -1134,6 +1149,10 @@ fn apk_abis(requested: &[String], device: Option<&[String]>) -> anyhow::Result<V
     if !requested.is_empty() {
         let mut abis = Vec::new();
         for abi in requested {
+            anyhow::ensure!(
+                ABIS.contains(&abi.as_str()),
+                "unsupported Android ABI {abi}"
+            );
             if !abis.contains(abi) {
                 abis.push(abi.clone());
             }
@@ -1179,7 +1198,12 @@ fn package_android(
         Some(serial) => Some(android::device_abis(&sdk, serial)?),
         None => None,
     };
-    let abis = apk_abis(options.abis, device.as_deref())?;
+    let requested = if options.abis.is_empty() {
+        &config.android.abis
+    } else {
+        options.abis
+    };
+    let abis = apk_abis(requested, device.as_deref())?;
     let runtime = runtime::android(false, &abis)?;
     // A Rust app has no bundle: `AppActivity` runs its root (the
     // manifest's `com.longbridge.nsh.RUST`).
@@ -1204,6 +1228,7 @@ fn package_android(
         let bytes = fs::read(&asset.source).with_context(|| format!("read {}", asset.path))?;
         assets.push((format!("nsh/assets/{}", asset.path), bytes));
     }
+    assets.extend(crate::native_host::assets(&runtime)?);
     let signing = match options.keystore {
         Some((path, alias, password)) => Signing::Keystore {
             path: path.to_path_buf(),
@@ -1230,7 +1255,11 @@ fn package_android(
             version_name: version,
             version_code: config.build.unwrap_or(1),
             target_sdk,
-            activity: "com.longbridge.nsh.AppActivity",
+            activity: config
+                .android
+                .activity
+                .as_deref()
+                .unwrap_or("com.longbridge.nsh.AppActivity"),
             dev: options.development,
             cleartext: config.android.uses_cleartext_traffic,
             notifications: config.notifications(),
@@ -1247,6 +1276,12 @@ fn package_android(
         },
         options.format,
         &apk_path,
+    )?;
+    crate::native_host::stage(
+        options.entry,
+        "android",
+        options.out,
+        &format!("{name}.{}", options.format.extension()),
     )?;
     step.done(format!(
         "packaged {} {}",
@@ -1268,7 +1303,14 @@ fn package_android(
                 "am",
                 "start",
                 "-n",
-                &format!("{id}/com.longbridge.nsh.AppActivity"),
+                &format!(
+                    "{id}/{}",
+                    config
+                        .android
+                        .activity
+                        .as_deref()
+                        .unwrap_or("com.longbridge.nsh.AppActivity")
+                ),
             ],
         )?;
         step.done(format!("launched {id} on {serial}"));
@@ -1458,6 +1500,8 @@ fn package_macos(
             ));
         }
     }
+    crate::native_host::stage(options.entry, "macos", &app, executable)?;
+    sign_native_libraries(&app, "-")?;
     let mut codesign = Command::new("codesign");
     codesign.args(["--force", "--sign", "-", "--timestamp=none"]);
     if !entitlements.is_empty() {
@@ -1915,6 +1959,9 @@ fn compile_icon(
 }
 
 fn codesign(app: &Path, identity: &str, entitlements: Option<&Path>) -> anyhow::Result<()> {
+    if app.is_dir() {
+        sign_native_libraries(app, identity)?;
+    }
     let mut cmd = Command::new("codesign");
     cmd.args(["--force", "--sign", identity]);
     if identity == "-" {
@@ -2004,6 +2051,22 @@ fn profile_allows(app_id: &str, id: &str) -> bool {
 }
 
 /// `Payload/<App>.app` zipped, keeping permissions and symlinks.
+fn sign_native_libraries(directory: &Path, identity: &str) -> anyhow::Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            sign_native_libraries(&path, identity)?;
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "dylib")
+        {
+            codesign(&path, identity, None)?;
+        }
+    }
+    Ok(())
+}
+
 fn make_ipa(app: &Path, ipa: &Path) -> anyhow::Result<()> {
     let staging = ipa.with_extension("payload");
     let payload = staging.join("Payload");

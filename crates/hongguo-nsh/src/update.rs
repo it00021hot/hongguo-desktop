@@ -71,7 +71,7 @@ pub(crate) fn card() -> View {
             .child(crate::features::settings::presentation::form_hint(
                 move || {
                     let version =
-                        tr("update.versionLine").replace("{version}", env!("CARGO_PKG_VERSION"));
+                        tr("update.versionLine").replace("{version}", &crate::metadata().version);
                     if let Some(available) = available.get() {
                         format!(
                             "{version} · {}",
@@ -104,7 +104,7 @@ async fn check() -> Result<Option<String>, String> {
     if response.status() != 200 {
         return Err(format!("HTTP {}", response.status()));
     }
-    newer_version(&response.text(), env!("CARGO_PKG_VERSION"))
+    newer_version(&response.text(), &crate::metadata().version)
 }
 
 fn newer_version(manifest: &str, current: &str) -> Result<Option<String>, String> {

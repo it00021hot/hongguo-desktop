@@ -1,11 +1,42 @@
 {
-  "name": "红果",
-  "id": "com.hongguo.nsh",
+  "name": "guava",
+  "id": "com.guava.app",
   "icon": "../../assets/icons/1024x1024.png",
   "version": "0.6.6",
   "build": 1,
   "rust": ".",
   "root": "App",
   "theme": "theme.json",
-  "appearance": "system"
+  "appearance": "system",
+  "window": { "defaultSize": { "width": 1280, "height": 840 } },
+  "android": { "targetSdk": 37, "activity": "com.hongguo.nsh.MainActivity", "abis": ["arm64-v8a"] },
+  "ios": {
+    "infoPlist": {
+      "MinimumOSVersion": "16.0",
+      "NSAppTransportSecurity": {
+        "NSExceptionDomains": { "127.0.0.1": { "NSExceptionAllowsInsecureHTTPLoads": true } }
+      }
+    }
+  },
+  "macos": {
+    "infoPlist": {
+      "LSMinimumSystemVersion": "14.0",
+      "LSApplicationCategoryType": "public.app-category.video",
+      "NSAppTransportSecurity": {
+        "NSExceptionDomains": { "127.0.0.1": { "NSExceptionAllowsInsecureHTTPLoads": true } }
+      }
+    }
+  },
+  "nativeHost": {
+    "displayNames": { "zh-CN": "番果" },
+    "build": ["node", "../../scripts/nsh-native-host.mjs", "build"],
+    "stage": ["node", "../../scripts/nsh-native-host.mjs", "stage"],
+    "hosts": {
+      "windows": "../../target/nsh-native/windows/{profile}/host.exe",
+      "macos": "../../target/nsh-native/macos/{profile}/host",
+      "ios": "../../target/nsh-native/ios/{profile}/host",
+      "ios-simulator": "../../target/nsh-native/ios-simulator/{profile}/host",
+      "android": "../../target/nsh-native/android/runtime"
+    }
+  }
 }

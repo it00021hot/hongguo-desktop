@@ -1,157 +1,68 @@
 # NSH 壳开发与验证
 
-主线已移除旧壳、旧播放器与 WebView 前端。资源路径为 `assets/icons`、`assets/emoji`、
-`assets/locales`。旧壳、WebView 调试及发布命令不再适用，完整历史位于备份分支。
-仓库自有测试、TSX 离线预览与探针示例已移除，构建不再依赖 NSH CLI 或 TypeScript 声明：
+当前使用 NSH 0.5.1 固定源码 `vendor/nsh`，上游发布提交为 `224d9a795c7ac9d10d75750de9351adac5549675`。启动、检查、打包统一使用 NSH CLI。旧 Tauri、GPUI 和 WebView 流程仅保存在备份分支，不能恢复。
+
+## 工具与入口
+
+在仓库根构建带原生宿主补丁的固定 CLI，将 `target/nsh-cli/debug` 加入当前终端 PATH：
 
 ```sh
-pnpm nsh:check
+cargo build --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
+nsh run crates/hongguo-nsh
+nsh check crates/hongguo-nsh
+nsh package crates/hongguo-nsh --target windows
+nsh package crates/hongguo-nsh --target macos --arch arm64
+nsh package crates/hongguo-nsh --target android --abi arm64-v8a
+nsh package crates/hongguo-nsh --target ios-simulator
+nsh package crates/hongguo-nsh --target ios --sign '<identity>' --profile '<profile.mobileprovision>'
+```
+
+Makefile 只转发到这些命令。名称、ID、版本、图标、平台 plist、窗口参数与 `nativeHost` 接入配置统一位于 `crates/hongguo-nsh/nsh.json`，不从 npm manifest 读取应用元数据。运行客户端不需要 pnpm 或安装 npm 工具依赖。
+
+`nativeHost` 是本项目为固定 CLI 增加的通用原生宿主接入口，尚非上游 0.5.1 标准能力，必须使用仓库构建的 CLI。它通过参数数组启动构建与资源装配命令，失败即中止。项目脚本只准备 SDK、独立宿主、媒体依赖和重链接材料；NSH 自己生成安装器、APK/AAB、Apple 包和签名。补丁范围见 `vendor/nsh/UPSTREAM.md`。
+
+`tools/package.json` 仅管理 Prettier 和增强着色器维护工具。格式门禁：
+
+```sh
+npm ci --prefix tools --ignore-scripts
+npm exec --prefix tools -- prettier --check .
+cargo fmt -- --check
 cargo build --workspace
 cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
-pnpm format:check
 ```
 
-`pnpm nsh` 通过 Rust 原生入口启动。构建与静态检查不能代替真实播放和平台运行验收。
+## 原生依赖与打包
 
-## 归属
+SDK 从 `vendor/native-codecs` 自动解包、校验，日常不源码重建。单独准备可用 `node scripts/nsh-native-host.mjs setup <Rust triple>`。源码重建见 `docs/native-media-build.md`；VVdeC 源码位于 `crates/hongguo-vvdec-sys/vendor/vvdec`。不得混入 FFmpeg、QuickJS 或旧播放器链。
 
-- `hongguo-nsh`：纯 Rust 共享界面、业务装配、事件/运行时桥、进程内媒体供数。
-- `hongguo-nsh-android`：JNI 启动与 Android Activity；`getFilesDir()` 必须在挂载根组件前传入，Rust 初始化前将 `TMPDIR` 设为 `getCacheDir()`，保证数据库临时排序文件可写。
-- `hongguo-nsh-ios`：UIKit 启动；先配置 app 容器内的 Application Support，再挂载根组件。
-- `hongguo-media-videotoolbox`：macOS/iOS 共用 VT 管线；平台门面分别由两端实现 crate 转出。
-- 编码契约统一在 `hongguo-media-types::encoding`，增强管线在 `hongguo-video-gpu::enhancement`，HEVC 容器解析在 `hongguo-video::hevc`；完整边界见 [项目结构](../../../../docs/project-structure.md)。
+Windows/macOS 在对应宿主打包。NSH 默认输出到调用目录的 `.nsh/out`，可用 `--out` 指定。Windows 生成 `guava/`、`guava.zip`；检测到 Inno Setup 时生成 `guava-setup.exe`，不再使用 NSIS。macOS 生成 `guava.app` 并由 NSH ad hoc 签名；当前分别打包 arm64 与 x86_64，不宣称支持通用媒体库包。安装、卸载与播放仍需真机验收。
 
-NSH 0.5.1，不加入 QuickJS。Cargo 依赖使用 vendor/nsh 受控源码，CLI 与源码对齐发布提交
-`224d9a795c7ac9d10d75750de9351adac5549675`。界面开发先读 `nsh` 与 `nsh-design-guides`，
-设计规范与动效清单在 `crates/hongguo-nsh/DESIGN.md`。页面使用本功能的呈现组件与 `ui` 共享控件，
-不得用 React/shadcn 组件替代 NSH 控件；颜色从 theme.json 的语义令牌读取。
-功能专用呈现归 `features/<功能>/presentation`，窗口与导航装配归 `shell/`；`ui/` 只保存共享控件。
-业务请求及类型契约由 service 提供，NSH 不直接依赖 API 客户端。详见 [项目结构](../../../../docs/project-structure.md)。
+Android 需要 `ANDROID_HOME`、`ANDROID_NDK_HOME`（兼容 `NDK_HOME`）、JDK 和 SDK 37。NDK 必须匹配认证媒体 SDK 的 `30.0.16248370`。应用最低 API 28，`android.abis` 默认 arm64-v8a；未配置的 ABI 明确失败。NSH 负责 AAPT2、zipalign、APK/AAB 和签名，不依赖 Gradle。默认用调试签名；正式签名使用 `--keystore`、`--key-alias` 和环境变量 `NSH_KEYSTORE_PASSWORD`，不将密码放入命令历史或日志。
 
-## 命令
+`NSH_DISTRIBUTION` 必须指向校验后的 embedding SDK 安装目录，其中包含 `embed/android/nsh.aar`。从同版本 [官方发布页](https://github.com/longbridge/nsh/releases/tag/v0.5.1) 下载 `nsh-embed-android.zip` 及 `.sha256`，验证 SHA-256 后提取 AAR。Java 层从 vendor 源码构建，原生库只取本项目宿主的 `libnsh.so`。最终链接拒绝未解析符号，ELF 审计拒绝静态 C++ 运行库残留的动态导入。HTTP 明文只允许回环媒体供数。
 
-所有入口从仓库根执行：
+iOS 需要完整 Xcode，最低 16.0。设备签名通过 NSH `--sign` 与 `--profile`，profile 必须授权 `com.guava.app`；缺少参数时 NSH 保留未签名 `.app` 并警告，不能报告为可安装包。模拟器由 NSH ad hoc 签名。凭证通过安全文件、环境或 CI secrets 注入，不入库。
 
-```sh
-make nsh
-make nsh-check
-make nsh-package TARGET=macos
-make nsh-package TARGET=windows
-make nsh-package TARGET=android
-make nsh-package TARGET=ios-simulator
-make nsh-package TARGET=ios
-```
+移动静态链接包必须保留与最终二进制匹配的 `Relink/` 对象及认证库来源材料。给接收者替换静态库的重链接工具属于分发契约，不是项目生产签名入口。CI artifact 保留整个输出目录，包括包外材料。
 
-日常开发也可用 `pnpm nsh` / `pnpm nsh:check`，不要求 Make 或全局 NSH CLI。
-入口自动解包并校验 `vendor/native-codecs/` 的固定 SDK，默认不源码构建；`pnpm nsh:setup` 只准备依赖。
-VVdeC 的 vendored 源码在 `crates/hongguo-vvdec-sys/vendor/vvdec`，不是根 `vendor/`。
-正常 Rust 平台 SDK 仍需安装。源码重建必须显式 `source-build`，详见 `docs/native-media-build.md`。
-六目标原生编解码归档随仓库提供，不依赖外部 SDK 发布或新机 CMake/libclang。
+## 结构与生命周期
 
-桌面打包仅在对应宿主执行。Android 需要已配置的 ANDROID_HOME、NDK_HOME、JDK 与
-Gradle 9.7.0（仓库内 wrapper 固定版本与 SHA-256）；AGP 沿用现有 Android 工程的 9.3.1。
-当前认证媒体SDK使用NDK `30.0.16248370`，`NDK_HOME`须指向匹配版本，以提供相同的静态libc++ ABI。
-打包链接禁止未解析符号，ELF审计同时拒绝残留的C++动态导入，不能仅凭系统库依赖列表判断可运行。
-本项目宿主与原生编译保留 Android 9/API 28 下限；0.5.1 AAR 的 manifest 声明 API 26，
-不据此扩大尚未验证的本项目支持范围。
-首批 APK 为 arm64-v8a，
-由本地调试签名构建；发布签名尚未接入。NSH_DISTRIBUTION 可指定 NSH 安装目录，
-未设置时从 nsh 可执行文件的真实位置解析。
+CI 分开执行工具格式检查、Windows/macOS 三目标工作区构建与严格 Clippy、NSH 的 Windows/macOS/Android/iOS 模拟器打包。Android 正式签名可配置 `NSH_ANDROID_KEYSTORE_BASE64`、`NSH_ANDROID_KEY_ALIAS` 和 `NSH_KEYSTORE_PASSWORD` secrets；缺省仍是框架调试签名，不能当作商店发布验收。iOS 真机身份与 profile、macOS Developer ID/公证、Windows Authenticode 不凭空创建，均需使用方提供实际凭证并单独验收。本轮不上传或发布应用。
 
-0.5.1 的 CLI 安装包不再附带 embedding SDK，`nsh component add android` 只安装通用
-运行时，不能替代本项目需要的 AAR。Android 构建前从
-[同版本发布页](https://github.com/longbridge/nsh/releases/tag/v0.5.1) 下载
-`nsh-embed-android.zip` 与 `.sha256`，在下载目录执行
-`shasum -a 256 -c nsh-embed-android.zip.sha256`；校验后将压缩包内的
-`nsh-embed-android/nsh.aar` 放到 `${NSH_DISTRIBUTION}/embed/android/nsh.aar`
-（默认 `~/.nsh/embed/android/nsh.aar`）。升级 CLI 后需同步重装同版本 SDK。
-缺失 SDK 时构建入口在启动 Rust 编译前报错。
+共享界面与服务装配归 `hongguo-nsh`。`features/<功能>/presentation` 保存专用呈现，`ui` 保存共享控件，`shell` 保存窗口和导航；业务只通过 service。详见 `docs/project-structure.md` 与 `crates/hongguo-nsh/DESIGN.md`。
 
-桌面包直接构建本项目 `hongguo-nsh` Rust 入口，使用 `scripts/nsh-desktop.mjs` 装包；
-不使用默认启用 QuickJS 的 NSH 通用发布宿主。打包前检查生产依赖图排除 JS 运行时，
-VVdeC 默认使用随附的静态库。macOS 产物为 `target/nsh-desktop/macos/红果.app`
-及 `Hongguo.zip`，使用 ad hoc 签名，签名和系统库依赖校验失败即终止。
-Windows 原生打包另需安装 NSIS 3（`makensis` 在 PATH 中，仅构建工具），
-产物为 `target/nsh-desktop/windows/Hongguo/`、`Hongguo.zip` 和 `Hongguo-NSH_<版本>_x64-setup.exe`；
-安装器为当前用户安装，包含完整原生运行库与来源/许可材料，不下载 WebView2 或解码插件。
-默认目录为 `%LOCALAPPDATA%\Programs\HongguoNSH`，与旧版（备份分支壳）安装隔离。
-卸载只删除打包清单内的文件，保留账号、设置、下载与用户额外放入的文件。
-仍需 Windows 宿主实际构建、运行与安装验收。脚本只生成产物，不安装或发布。
+Android/iOS 仍使用独立宿主，由 `nativeHost` 选择。Android 在 Rust 初始化前将 `TMPDIR` 设为私有缓存目录，并传入 `getFilesDir()`；iOS 使用容器内 `Library/Application Support/guava`。不能绕过初始化直接挂载共享根组件。
 
-macOS 上的真实 Windows MSVC 交叉检查另见 [工具链与可复现命令](../../../../docs/nsh-windows-cross-check.md)。
-锁定的 VVdeC 3.2.1 使用并行安装的 LLVM 19.1.7；保留默认 LLVM、Werror 与 SDK，源码局部兼容改动记录在该解核的 SOURCE.md。
-NSH 0.5.1 使用的 wgpu 29 要求 `gpu-allocator 0.28.0` 的 Windows 绑定与其统一为
-`windows 0.62.2`（旧壳的 `windows 0.57.0` 已随壳移出锁文件）。
-Windows 目标的严格 clippy 会检出两套 COM 类型混用导致的编译失败。
+应用 ID 为 `com.guava.app`。桌面业务数据目录为 `guava`、数据库为 `guava.db`，`GUAVA_DATA_DIR` 显式覆盖；框架 Storage 和图片缓存按新 ID 隔离。默认下载子目录为 `guava/<剧名>`。旧数据不自动迁移或删除。内部 crate、Java/JNI 命名空间和 GitHub 仓库地址保留，官方账号与接口仍使用红果名称。
 
-Android 打包只从 NSH AAR 提取 Java 层，原生部分使用本项目 Rust 宿主构建的 libnsh.so，
-避免把 NSH 预构建的另一份原生库装进应用。HTTP 明文只对 127.0.0.1 媒体供数放行。
+框架已有能力直接使用 NSH：全局快捷键、通知、基础窗口操作、Translations 和 locale。不维护平行注册器、通知队列或语言 signal。快捷键替换保留先注册、成功后注销和保存失败回滚；通知权限只由用户开关触发，Android 转交通知 intent。
 
-Android 的 CMake 入口为 scripts/nsh-android.cmake，固定 arm64 ABI 并读取打包脚本提供的 API 下限。
-VVdeC 默认使用认证 SDK；维护源码构建的 bindgen 显式使用 NDK sysroot。system-deps 7 对 NDK 导出的
-`-l:libunwind.a` 会产生无效 Rust 库名，因此通过其正式 LIB 覆盖配置声明目标链接库；
-C++ 运行库采用静态链接，已用 llvm-readelf 确认 libnsh.so 只依赖系统动态库。
-这不是跳过媒体库或错误放行，最终链接与 APK 安装仍须通过。
+界面组件只执行一次，变化通过绑定与 memo；异步结果隔离 owner 和来源代次。service 后台任务使用 service runtime，锁不跨 await。会触发 signal 更新的回调先克隆 `Stored<Rc<Events>>` 再调用，避免持借用重入；列表展开、回复、pending/error 状态由稳定 owner 保存。手机点击区域必须有实际 44/48 点边界。
 
-iOS 需要完整 Xcode 与对应 SDK，最低 iOS 16.0。设备签名需要 NSH_IOS_SIGN_IDENTITY
-和 NSH_IOS_PROFILE；未配置时保留未签名 .app 并明确报错，不把它报告成可安装产物。
-模拟器包用 ad hoc 签名。当前脚本不执行安装、发布或上传。
+## 播放与验证
 
-移动端必须走上述独立宿主入口。直接对共享 crate 执行 `nsh run --target android/ios`
-会使用 NSH 生成的通用宿主，未接本项目私有目录初始化，不能作为正式移动端启动路径。
+普通媒体使用 NSH Video；ByteVC2 与原生精度缺口由专用帧适配补齐。原生 AVPlayer/MediaEngine/MediaPlayer 提供音轨、倍速与时钟。Windows 扩展 HEVC 优先 D3D11 VLD，Main10 保留 P010，实际失败才软解；Windows N 不在支持范围。
 
-## 数据与生命周期
+保留原流、位深、色彩/HDR、crop、SAR、旋转与时间轴；帧租约持有到 GPU 完成。首帧呈现及原生时钟就绪后解除 hold；旧 seek、控制及呈现回调必须隔离代次。媒体仅通过临时回环 HTTP Range URL 供数，不暴露任意文件/上游代理入口。进度更新不重建舞台，隐藏或进入后台暂停。禁止恢复播放转码、grow/HLS 或 `.play.mp4` 链。
 
-框架已提供的能力直接使用NSH：全局快捷键走 `register_global_shortcut`，通知走
-权限/展示/点击API，窗口基础操作走 `WindowRef` / `WindowAttributes`，翻译走
-`Translations` / `set_locale`。翻译通过框架 lookup 读取应用 locale，缺失 key 原样返回以保留业务错误详情。不维护平行注册器、通知队列、桌面窗口命令桥或语言signal。
-老板键保留先注册新组合、成功后注销旧组合和保存失败回滚；注册归应用owner，离开设置页不注销。
-设置页修改即生效，只合并变化字段，应用owner串行持久化；不恢复集中保存按钮。
-数值输入无效时保留编辑并提示，其他字段可独立更新；数据库失败不改变运行状态。
-通知请求捕获应用owner，权限只由用户开关触发；Android Activity必须向SDK转交通知启动intent。
-语言仍保存 `hongguo.locale`，共用中英文资源与已有占位符；数字、时长与业务插值留在应用层。
-窗口平台补充仅保留完整遮挡检测、窗口外系统光标位置、macOS红绿灯显隐；手机方向与文件导出仍由宿主完成。
-
-桌面使用独立的 hongguo-nsh 数据根；移动端使用自己的 app 私有目录。
-`HONGGUO_DATA_DIR` 可显式覆盖数据根。生产代码已移除离线 QA 开关与路径隔离包装；正式文件 IO 保留同步落盘和符号链接保护。
-自动化验证显式设置独立测试目录，不读取现有壳的账号或数据库。
-异步业务经共用 service runtime 调度，NSH 资源销毁时取消未完成的桥接请求。
-service 事件在 NSH 执行环境更新状态；订阅溢出后重新读取快照。
-
-NSH 使用原生 Video；ByteVC2、缺失 HEVC 解码器和输出精度缺口使用内部专用帧适配。
-libde265 / VVdeC 保留原始位深，原生 AVPlayer/MediaEngine/MediaPlayer 播放不移动样本偏移的音轨视图并提供时钟。
-Windows HEVC 扩展优先直接 D3D11 VLD（Main/NV12、Main10/P010），不经过系统 HEVC MFT，
-仅实际不可用/失败时回退 libde265；硬解探针与无扩展环境验证见 Windows adapter README。
-不保留 FFmpeg、PCM 设备环或外部安装引导。所有媒体 URL 是带临时访问范围的本机 HTTP Range。
-首帧呈现及原生时钟就绪后才解除 hold；代次和 owner 隔离旧 seek、控制及呈现回调。
-FrameLease 保留至 GPU 消费结束，显示映射位于增强之后。
-构建和实际验证范围见 docs/native-media-build.md、docs/nsh-decoder-validation.md。
-
-媒体源只通过注册过的临时 URL 读取，关闭页面即注销。媒体按块读取，
-不得把路径或任意上游 URL 暴露成可由请求方选择的文件/代理入口。
-视频进度不重建视频舞台；隐藏的播放页和进入后台时暂停。
-
-界面事件可能同步触发重绘。需要更新 signal 的回调先从 `Stored<Rc<Events>>` 取出
-拥有所有权的克隆再调用，不能在 `Stored::with` 的借用里调用：评论回复曾因此重入同一
-Events，触发 `RefCell already borrowed`，表现为按钮点不开。虚拟列表的展开、编辑、
-点赞 pending/error 和异步响应归 thread owner 按稳定 ID 保存；回复与主评论共用一个
-滚动列表，不能在回收行里另塞固定高度的回复列表或启动会随行销毁而取消的点赞请求。
-
-手机按钮必须有真实44/48点边界。Android 实测 `hit_slop` 不能跨越父视图的命中边界，
-因此 More 使用真实48点 Button 包住32点视觉胶囊；验收既读 AX bounds，也点击视觉区域
-之外、真实按钮以内的点，不能只根据声明的 slop 或中心点击判断触控区通过。
-
-Headless 的 `screen().texts()` 可能包含虚拟列表停放单元的旧内容，不代表视口内文字
-顺序。判断滚动和回收时，使用公开的 `on_viewable_items_change` 可见范围配合目标项、
-返回后的状态断言及原生截图，不能用第一个匹配作者的文本判定列表有没有滚动。
-
-## 验证记录与边界
-
-2026-11-15 已按要求移除仓库自有测试、夹具、离线预览、探针示例与测试专用接口。
-历史行为与截图记录保留在 `docs/nsh-feature-parity.md`、`docs/nsh-decoder-validation.md`
-和各模块 DESIGN.md，不作为当前版本重新运行通过的证据。
-
-验证当前版本时，运行工作区构建、严格 Clippy、格式检查及对应平台的真实目标检查。
-Windows/macOS、Android/iOS 的编译检查与实际安装、播放、视觉验收分别记录；
-宿主上的条件编译空壳不能作为其他平台通过的证据。
-自动化只针对自建实例与独立数据目录，不操作用户活跃账号、窗口或数据库。
+仓库自有测试、离线预览、探针与测试接口已移除，不恢复。历史记录不等于本轮复验。工作区构建、严格 Clippy、真实目标检查、安装、播放和视觉验收分别报告；条件编译空壳不能代表另一平台通过。自动化只针对自建实例和独立数据目录，不能操作用户活跃账号、窗口或数据库。具体边界见 `docs/nsh-decoder-validation.md`。

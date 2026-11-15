@@ -81,7 +81,7 @@ export function readWindowsImports(buffer, { dll = false } = {}) {
   return inspectWindowsImage(buffer, dll).imports;
 }
 
-export function validateWindowsPe(buffer) {
+export function validateWindowsPe(buffer, appId) {
   const { imports, optional, directory, map } = inspectWindowsImage(buffer, false);
   requirePe(optional.readUInt16LE(68) === WINDOWS_GUI, 'expected Windows GUI subsystem');
   requirePe(optional.readBigUInt64LE(72) >= MIN_STACK_BYTES, 'desktop stack must retain 8 MiB');
@@ -92,7 +92,7 @@ export function validateWindowsPe(buffer) {
   const groups = resourcePayloads(root, RESOURCE_TYPES.groupIcon, map);
   const manifests = resourcePayloads(root, RESOURCE_TYPES.manifest, map);
   validateIconGroups(groups, icons);
-  for (const { bytes } of manifests) validateManifest(bytes.toString('utf8'));
+  for (const { bytes } of manifests) validateManifest(bytes.toString('utf8'), appId);
   return { imports, iconCount: icons.length, manifestCount: manifests.length };
 }
 
@@ -164,10 +164,11 @@ function validateIconGroups(groups, icons) {
   }
 }
 
-function validateManifest(manifest) {
+function validateManifest(manifest, appId) {
   const xml = manifest.replace(/<!--[\s\S]*?-->/g, '');
   requirePe(
-    /<assemblyIdentity\b[^>]*\bname=["']com\.hongguo\.nsh["']/.test(xml),
+    /<assemblyIdentity\b[^>]*\bname=["'][^"']+["']/.test(xml) &&
+      (!appId || xml.match(/<assemblyIdentity\b[^>]*\bname=["']([^"']+)["']/)?.[1] === appId),
     'wrong manifest identity',
   );
   requirePe(

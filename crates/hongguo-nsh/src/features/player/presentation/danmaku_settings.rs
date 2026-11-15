@@ -31,10 +31,10 @@ impl DanmakuField {
     }
     pub fn key(self) -> &'static str {
         match self {
-            Self::Opacity => "hongguo.danmakuOpacity",
-            Self::FontScale => "hongguo.danmakuFontScale",
-            Self::Density => "hongguo.danmakuDensity",
-            Self::Area => "hongguo.danmakuArea",
+            Self::Opacity => "guava.danmakuOpacity",
+            Self::FontScale => "guava.danmakuFontScale",
+            Self::Density => "guava.danmakuDensity",
+            Self::Area => "guava.danmakuArea",
         }
     }
     pub fn label(self) -> &'static str {

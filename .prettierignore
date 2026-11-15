@@ -1,5 +1,5 @@
-# 锁文件是 pnpm 生成的机器产物
-pnpm-lock.yaml
+# 工具依赖锁由 npm 生成
+tools/package-lock.json
 
 # 构建产物
 dist/

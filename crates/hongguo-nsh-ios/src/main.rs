@@ -4,7 +4,7 @@ fn main() {
     let directory = std::path::PathBuf::from(objc2_foundation::NSHomeDirectory().to_string())
         .join("Library")
         .join("Application Support")
-        .join("hongguo-nsh");
+        .join("guava");
     if let Err(error) = hongguo_nsh::configure_mobile_data_root(&directory) {
         panic!("NSH iOS host initialization failed: {error}");
     }
@@ -12,7 +12,7 @@ fn main() {
     nsh_platform_ios::set_components(hongguo_nsh::__nsh_native_components_ios);
     nsh_platform_ios::run_app(
         nsh_platform_ios::AppSource::Rust(
-            nsh_platform_ios::Root::of::<hongguo_nsh::App>().app_id("com.hongguo.nsh"),
+            nsh_platform_ios::Root::of::<hongguo_nsh::App>().app_id(&hongguo_nsh::metadata().id),
         ),
         nsh_platform_ios::AppOptions {
             data_dir: Some(directory),

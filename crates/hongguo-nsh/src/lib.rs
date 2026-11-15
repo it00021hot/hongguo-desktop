@@ -20,6 +20,8 @@ mod view_memory;
 mod window_modes;
 
 pub use bootstrap::configure_mobile_data_root;
+mod metadata;
+pub use metadata::metadata;
 
 use i18n::tr;
 use nsh_base::theme;

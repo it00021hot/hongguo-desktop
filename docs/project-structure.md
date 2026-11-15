@@ -64,7 +64,7 @@ NSH 的序列化 `Enhancement` 契约保持原状，在各平台适配边界转�
 
 生产代码不再包含 `offline_qa`、`HONGGUO_OFFLINE_QA`、测试夹具或 store 的 QA 转发接口。
 `hongguo-common::file_io` 保留同步落盘和拒绝符号链接的正式 IO 能力。
-`HONGGUO_DATA_DIR` 继续作为显式数据目录覆盖，不再附带离线网络开关。
+`GUAVA_DATA_DIR` 作为显式数据目录覆盖，不附带离线网络开关。默认数据目录为 `guava`，数据库为 `guava.db`，不自动迁移旧应用数据。
 
 默认开发使用认证原生 SDK，不恢复测试、离线预览或探针专用入口。
 验证命令见 [NSH 开发说明](../.agents/skills/hongguo-dev/references/nsh.md)。
@@ -101,6 +101,6 @@ The enhancement pipeline lives in `hongguo-video-gpu::enhancement`; platform ada
 Shared color conversion remains in `hongguo-video-color`; enhancement shaders and licenses are preserved under `hongguo-video-gpu/shaders/enhancement/`.
 
 Offline QA switches and fixtures have been removed. Production file IO keeps synchronization and symbolic-link protections.
-An explicit `HONGGUO_DATA_DIR` remains supported. Workspace builds and strict static checks do not replace platform playback and visual acceptance.
+An explicit `GUAVA_DATA_DIR` overrides the default `guava` data directory. The database is `guava.db`; previous application data is not automatically migrated. Workspace builds and strict static checks do not replace platform playback and visual acceptance.
 The UI/service refactor passed the Windows x64 workspace build, strict Clippy, NSH checks and formatting checks, and opened an isolated application window successfully. That window check does not constitute playback acceptance for the subsequent crate merge. Playback, account operations and complete applications on other platforms remain unverified.
 The crate merge also passed the Windows x64 workspace build, strict Clippy and NSH checks, plus cross-target strict Clippy for both macOS archival platform chains and the ARM64 GPU, Apple adapter and playback crates. All 16 enhancement asset hashes are unchanged; asset generation and notice collection use the new paths. The Apple adapter retains the minimal IOSurface feature dependency required by CoreVideo's CoreFoundation return-type contract.

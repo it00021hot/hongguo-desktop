@@ -483,6 +483,11 @@ fn run_rust_app(
                 .into_iter()
                 .find(|abi| android::ABIS.contains(&abi.as_str()))
                 .with_context(|| format!("{serial} runs none of {}", android::ABIS.join(", ")))?;
+            let native_activity = config
+                .android
+                .activity
+                .clone()
+                .unwrap_or_else(|| "com.longbridge.nsh.AppActivity".to_owned());
             package_for_run(
                 &entry,
                 crate::package::PackageTarget::Android,
@@ -493,7 +498,7 @@ fn run_rust_app(
             let apk = out.join(format!("{name}.apk"));
             let step = ui::Step::start(format!("installing {id} on {serial}"));
             android::adb(&sdk, &serial, &["install", "-r", &apk.to_string_lossy()])?;
-            let activity = format!("{id}/com.longbridge.nsh.AppActivity");
+            let activity = format!("{id}/{native_activity}");
             let mut start = vec!["shell", "am", "start", "-S", "-n", activity.as_str()];
             start.extend(env.iter().map(String::as_str));
             android::adb(&sdk, &serial, &start)?;

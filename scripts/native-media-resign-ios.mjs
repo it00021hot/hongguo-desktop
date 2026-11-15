@@ -11,11 +11,7 @@ function run(command, args) {
   return result.stdout;
 }
 
-export function profileEntitlements(
-  { expiresAt, prefix, granted },
-  now = Date.now(),
-  bundleId = 'com.hongguo.nsh',
-) {
+export function profileEntitlements({ expiresAt, prefix, granted }, now = Date.now(), bundleId) {
   const expiration = Date.parse(expiresAt);
   if (!Number.isFinite(expiration))
     throw new Error('The provisioning profile has no valid expiration date');
@@ -47,7 +43,7 @@ function resignIos(app, binary, identity, profile) {
   const executable = info.CFBundleExecutable;
   if (typeof executable !== 'string' || executable.includes('/') || executable.includes('\\'))
     throw new Error('Invalid app executable');
-  const temporary = mkdtempSync(join(tmpdir(), 'hongguo-resign-'));
+  const temporary = mkdtempSync(join(tmpdir(), 'guava-resign-'));
   try {
     const entitlements = join(temporary, 'entitlements.plist');
     const args = ['--force', '--sign', identity, '--timestamp=none'];

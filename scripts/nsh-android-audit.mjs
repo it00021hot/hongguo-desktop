@@ -71,7 +71,7 @@ export function verifyAndroidApk(apk, binary, sdk, run) {
   const signer = join(tools, process.platform === 'win32' ? 'apksigner.bat' : 'apksigner');
   if (process.platform === 'win32') run('cmd.exe', ['/d', '/c', signer, 'verify', apk]);
   else run(signer, ['verify', apk]);
-  const temporary = mkdtempSync(join(tmpdir(), 'hongguo-apk-native-'));
+  const temporary = mkdtempSync(join(tmpdir(), 'guava-apk-native-'));
   try {
     run('jar', ['xf', apk, 'lib/arm64-v8a/libnsh.so'], {}, temporary);
     const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');

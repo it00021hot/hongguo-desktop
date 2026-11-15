@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-const require = createRequire(import.meta.url);
+const require = createRequire(new URL('../tools/package.json', import.meta.url));
 const packageFile = require.resolve('anime4k-webgpu/package.json');
 const packageRoot = path.dirname(packageFile);
 const version = '1.0.0';

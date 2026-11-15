@@ -15,9 +15,6 @@
     "windowModeUnavailable": "此窗口模式不适用于当前平台",
     "playbackFailed": "视频播放失败，请重试"
   },
-  "app": {
-    "name": "红果播放器"
-  },
   "nav": {
     "home": {
       "title": "推荐"
@@ -373,7 +370,6 @@
     "autoRetrying": "即将自动重试（第 {attempt} 次），恢复后自动续播",
     "incognito": "隐身模式（鼠标离开隐藏，回到窗口位置即恢复显示）",
     "exitIncognito": "退出隐身",
-    "miniTitle": "红果播放器",
     "miniWindow": "小屏播放",
     "exitMiniScreen": "退出小屏",
     "pause": "暂停",
@@ -439,7 +435,6 @@
     "deleteFilesOf": "删除《{title}》的本地文件"
   },
   "update": {
-    "appTitle": "红果播放器",
     "versionLine": "版本 {version}",
     "upToDate": "已是最新版本",
     "upToDateDesc": "当前版本 {version} 已是最新，无需更新。",

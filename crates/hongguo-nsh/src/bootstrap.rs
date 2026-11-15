@@ -68,7 +68,7 @@ fn open_state() -> AppResult<AppState> {
         })?;
         hongguo_store::paths::set_absolute_data_root(root);
     } else {
-        hongguo_store::paths::set_shell_data_root("hongguo-nsh");
+        hongguo_store::paths::set_shell_data_root("guava");
     }
     let store = hongguo_service::device::open_application_store(&hongguo_store::paths::db_file())?;
     let settings = match store.settings()? {

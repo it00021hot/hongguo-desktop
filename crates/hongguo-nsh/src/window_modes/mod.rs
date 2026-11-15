@@ -19,7 +19,7 @@ use types::{PHONE_ASPECT, REFIT_DELTA};
 pub(crate) use wire::State;
 use wire::{Action, Request, Response};
 
-const INCOGNITO_KEY: &str = "hongguo.nsh.incognito";
+const INCOGNITO_KEY: &str = "guava.incognito";
 
 #[derive(Clone, Copy)]
 pub(crate) struct WindowModes {

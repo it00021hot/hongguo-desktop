@@ -1,9 +1,9 @@
 ---
 name: hongguo-dev
-description: 红果 NSH 客户端开发规范。修改本仓库前，与用户级 dev-habits 一起阅读。
+description: 番果（guava）NSH 客户端开发规范。修改本仓库前，与用户级 dev-habits 一起阅读。
 ---
 
-# 红果 NSH 开发
+# 番果 NSH 开发
 
 先读用户级 `dev-habits` 及对应门禁文档，再读本项目 `AGENTS.md`。
 结构边界见 `docs/project-structure.md`：功能状态与呈现归 `features/`，共享控件归 `ui/`，窗口与导航装配归 `shell/`。

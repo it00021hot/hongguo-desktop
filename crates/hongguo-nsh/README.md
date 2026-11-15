@@ -1,4 +1,4 @@
-# 红果 NSH 壳 / Hongguo NSH shell
+# 番果 NSH 壳 / guava NSH shell
 
 基于 NSH 0.5.1 的纯 Rust 客户端，通过共享 service 消费业务能力，不直接依赖 API 客户端。
 功能入口与呈现归 `src/features/`，共享控件归 `src/ui/`，窗口与导航装配归 `src/shell/`。
@@ -9,7 +9,7 @@
 播放以 NSH Video 为基础，专用 libde265 / VVdeC 补齐原生缺失能力；不依赖 FFmpeg。
 原生播放器承担 AAC、音频输出、倍速和主时钟。客户无需另装解码包或运行库。
 Windows 普通 HEVC 走 MediaEngine；ByteVC2、缺 HEVC 解码器或输出精度不足时启用内部帧适配。
-`pnpm nsh` 自动解包并验证仓库 `vendor/native-codecs/` 的 SDK，日常开发无需 CMake/libclang。
+在仓库根执行 `nsh run crates/hongguo-nsh`，通过原生宿主接入自动校验 `vendor/native-codecs/` 的 SDK，日常开发无需 CMake/libclang。
 
 A pure Rust shell using NSH 0.5.1 and the existing business core. Initial targets
 are Windows, macOS, Android and iOS. Feature presentation, shared controls and shell composition have separate owners; API requests are service-owned. Linux and Web are deferred. Development and
@@ -30,10 +30,12 @@ make nsh-package TARGET=android
 make nsh-package TARGET=ios-simulator
 ```
 
-Windows 构建机需安装 NSIS 3，并将 `makensis` 加入 PATH；打包同时生成便携 ZIP 与
-当前用户安装器 `Hongguo-NSH_<版本>_x64-setup.exe`，不安装 WebView2。
-Windows packaging requires NSIS 3 (`makensis` on PATH) and produces both a portable ZIP
-and a per-user installer, without WebView2.
+Windows 打包由 NSH 生成便携 ZIP；有 Inno Setup 时生成 `guava-setup.exe`，不安装 WebView2。
+NSH produces the Windows portable ZIP and an Inno Setup installer when its compiler is available.
+
+应用名称为“番果 / guava”，应用 ID 为 `com.guava.app`。业务数据根为系统应用数据目录下的 `guava`，数据库为 `guava.db`；框架自己的存储和图片缓存按新应用 ID 隔离。显式数据根使用 `GUAVA_DATA_DIR`。不自动迁移或删除旧数据。
+
+The app is named 番果 / guava, with identifier `com.guava.app`. Business data uses the system application-data directory's `guava` folder and database `guava.db`; framework storage and image caches use the new application identifier. `GUAVA_DATA_DIR` explicitly overrides the data root. Old data is not automatically migrated or deleted.
 
 移动端使用独立的纯 Rust 宿主：`hongguo-nsh-android` 与 `hongguo-nsh-ios`。
 不要用 NSH 自动生成的通用移动端宿主替代，否则会遗漏私有数据目录初始化。

@@ -1,7 +1,7 @@
 use hongguo_nsh_video_api::{Enhancement, EnhancementPhase};
 use nsh_core::{prelude::*, storage::Storage};
 
-const KEY: &str = "hongguo.enhance";
+const KEY: &str = "guava.enhance";
 const MAX_STRENGTH: u8 = 100;
 
 #[derive(Clone, Copy)]

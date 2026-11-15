@@ -3,21 +3,23 @@
 ## 日常开发
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm nsh
+cargo build --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
+# 将 target/nsh-cli/debug 加入当前终端 PATH
+nsh run crates/hongguo-nsh
 ```
 
-NSH 的运行、检查、测试和打包入口自动解包仓库 `vendor/native-codecs/` 内的固定开发 SDK，
+NSH 原生宿主构建入口自动解包仓库 `vendor/native-codecs/` 内的固定开发 SDK，
 校验归档、目标、配方、组件及每个制品的 SHA-256 后交给 Cargo。无需发布服务器或额外下载原生媒体库。
 普通开发不需要 FFmpeg、MSYS2、GPG、NASM、CMake、bindgen 或 libclang。
 仍需 Rust 与平台常规开发工具：Windows MSVC Build Tools/Windows SDK、macOS Xcode 工具，
 移动端的 NDK/JDK/Android SDK 或完整 Xcode。
 
-`pnpm nsh:setup` 只准备当前目标；`node scripts/nsh.mjs setup <Rust triple>` 准备交叉目标。
+`node scripts/nsh-native-host.mjs setup <Rust triple>` 单独准备当前或交叉目标。
 目标取自 `CARGO_BUILD_TARGET` 或 `rustc -vV`，不按 Node 的架构推测。
 原生库缓存损坏时重新从随仓库归档提取，绝不自动尝试源码编译。
-直接运行 Cargo 前先准备 SDK；Windows 启动通过 `pnpm nsh` 注入子进程的私有 DLL 路径，
-不会修改全局 PATH。macOS 开发 rpath 指向目标 SDK，正式包删除开发 rpath。
+直接运行 Cargo 前先准备 SDK。Windows 原生宿主旁复制认证 DLL，`nsh run` 无需修改全局 PATH；macOS 开发 rpath 指向目标 SDK，正式包删除开发 rpath。
+
+应用元数据、平台配置和原生宿主选择统一在 `crates/hongguo-nsh/nsh.json`。固定 NSH CLI 的 `nativeHost` 补丁保留独立宿主与媒体材料接入，`nsh package` 负责最终装包和签名。旧 NSIS、Gradle 装包与独立平台打包脚本已删除。工具链配置与签名参数见 [NSH 开发说明](../.agents/skills/hongguo-dev/references/nsh.md)。
 
 The normal NSH workflow unpacks authenticated codec binaries already included in the repository.
 It does not download or compile FFmpeg, libde265 or VVdeC. Standard Rust platform tools remain required.
@@ -57,7 +59,7 @@ Packaging rejects undefined link symbols and unresolved C++ imports in the final
 
 ## 分发与打包
 
-`node scripts/nsh.mjs package macos|windows|android|ios|ios-simulator` 使用相同的随附 SDK。
+`nsh package crates/hongguo-nsh --target macos|windows|android|ios|ios-simulator` 使用相同的随附 SDK。Android 加 `--abi arm64-v8a`；输出目录通过 `--out` 指定。NSH 统一生成平台包并签名。
 
 Windows：EXE 旁仅 `libde265.dll` 一个媒体 DLL（609,280 字节），VVdeC 静态链接。
 PE 审计遍历普通和 delay imports，验证 GUI manifest、图标、8 MiB stack、静态 CRT，

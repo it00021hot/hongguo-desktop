@@ -1,9 +1,9 @@
 use nsh_core::prelude::*;
 use nsh_core::storage::Storage;
 
-const RATE_KEY: &str = "hongguo.playbackRate";
-const VOLUME_KEY: &str = "hongguo.volume";
-const MUTED_KEY: &str = "hongguo.muted";
+const RATE_KEY: &str = "guava.playbackRate";
+const VOLUME_KEY: &str = "guava.volume";
+const MUTED_KEY: &str = "guava.muted";
 pub(super) const MIN_RATE: f32 = 0.25;
 pub(super) const MAX_RATE: f32 = 4.0;
 

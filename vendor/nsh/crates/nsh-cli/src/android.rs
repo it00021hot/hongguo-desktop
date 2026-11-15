@@ -56,6 +56,31 @@ impl Sdk {
             .root
             .join(format!("platforms/android-{level}/android.jar"));
         if !jar.exists() {
+            let mut candidates = Vec::new();
+            for entry in fs::read_dir(self.root.join("platforms"))? {
+                let directory = entry?.path();
+                let Ok(properties) = fs::read_to_string(directory.join("source.properties")) else {
+                    continue;
+                };
+                let api = properties
+                    .lines()
+                    .find_map(|line| line.strip_prefix("AndroidVersion.ApiLevel="));
+                let preview = properties.lines().any(|line| {
+                    line.strip_prefix("AndroidVersion.CodeName=")
+                        .is_some_and(|name| !name.is_empty())
+                });
+                if !preview
+                    && api
+                        .is_some_and(|api| api == level.to_string() || api == format!("{level}.0"))
+                    && directory.join("android.jar").is_file()
+                {
+                    candidates.push(directory.join("android.jar"));
+                }
+            }
+            candidates.sort();
+            if let Some(candidate) = candidates.pop() {
+                return Ok(candidate);
+            }
             bail!(
                 "{} missing: install it with `sdkmanager \"platforms;android-{level}\"`",
                 jar.display()
@@ -303,8 +328,24 @@ pub(crate) fn build(sdk: &Sdk, apk: &Apk<'_>, format: Format, out: &Path) -> any
         }
     }
 
+    let additional = apk.runtime.join("res");
+    if additional.is_dir() {
+        let compiled = work.join("native-resources.zip");
+        run(Command::new(sdk.tool("aapt2"))
+            .arg("compile")
+            .arg("--dir")
+            .arg(&additional)
+            .arg("-o")
+            .arg(&compiled))?;
+        flat.push(compiled);
+    }
     let manifest = work.join("AndroidManifest.xml");
-    fs::write(&manifest, manifest_xml(apk))?;
+    let supplied = apk.runtime.join("AndroidManifest.xml");
+    if supplied.is_file() {
+        fs::copy(&supplied, &manifest)?;
+    } else {
+        fs::write(&manifest, manifest_xml(apk))?;
+    }
     let base = work.join("base.apk");
     let mut link = Command::new(sdk.tool("aapt2"));
     link.arg("link")
@@ -314,10 +355,12 @@ pub(crate) fn build(sdk: &Sdk, apk: &Apk<'_>, format: Format, out: &Path) -> any
         .arg(sdk.android_jar(apk.target_sdk)?)
         .arg("--manifest")
         .arg(&manifest)
-        .args(["--min-sdk-version", &MIN_SDK.to_string()])
         .args(["--target-sdk-version", &apk.target_sdk.to_string()])
         .args(["--version-code", &apk.version_code.to_string()])
         .args(["--version-name", apk.version_name]);
+    if !supplied.is_file() {
+        link.args(["--min-sdk-version", &MIN_SDK.to_string()]);
+    }
     if apk.dev {
         link.arg("--debug-mode");
     }

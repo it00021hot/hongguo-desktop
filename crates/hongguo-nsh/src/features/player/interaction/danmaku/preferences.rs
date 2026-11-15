@@ -3,7 +3,7 @@ use crate::features::player::presentation::DanmakuSettingsState;
 use crate::i18n::tr;
 use nsh_core::{prelude::*, storage::Storage};
 
-const ENABLED_KEY: &str = "hongguo.danmaku";
+const ENABLED_KEY: &str = "guava.danmaku";
 
 #[derive(Clone, Copy)]
 pub(crate) struct DanmakuPreferences {

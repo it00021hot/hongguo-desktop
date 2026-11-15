@@ -1,27 +1,30 @@
-# Hongguo Desktop
+# guava · 番果
 
-An unofficial Hongguo client built with NSH 0.5.1 and Rust. Desktop targets are Windows 10 1809+, Windows 11 and macOS; Android and iOS have dedicated hosts.
+guava (番果) is an unofficial Hongguo client built with NSH 0.5.1 and Rust. Desktop targets are Windows 10 1809+, Windows 11 and macOS; Android and iOS have dedicated hosts.
 
 [中文](README.md) · [Notice](NOTICE) · [Third-party notices](THIRD-PARTY-NOTICES.md)
 
 For noncommercial learning and research only. This project is unaffiliated with the official service and does not store or distribute media. Read [NOTICE](NOTICE) and [LICENSE](LICENSE).
 
-Install Rust, platform SDKs, Node.js and pnpm, then run from the repository root:
+Install Rust, platform SDKs and Node.js. Build the pinned NSH CLI with the native-host integration patch, then add `target/nsh-cli/debug` to this terminal's PATH:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm nsh
-pnpm nsh:check
+cargo build --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
+nsh run crates/hongguo-nsh
+nsh check crates/hongguo-nsh
 make lint
-make nsh-package TARGET=macos
+nsh package crates/hongguo-nsh --target macos
 ```
 
-Use `TARGET=windows` on Windows; installer builds also require NSIS 3. Mobile targets are `android`, `ios` and `ios-simulator`.
+Use `--target windows` on Windows; NSH generates an installer when Inno Setup is available. Mobile targets are `android`, `ios` and `ios-simulator`. App metadata and platform packaging options live in `crates/hongguo-nsh/nsh.json`.
+`tools/package.json` contains formatting and shader-maintenance tools only. App execution does not require their npm dependencies; run `npm ci --prefix tools --ignore-scripts` before format checks.
 Normal development verifies and extracts the bundled codec SDKs without building FFmpeg, VVdeC or libde265.
 Customer packages include their codec libraries and do not install WebView2 or HEVC Store extensions.
 
 Playback uses NSH Video, supplemented by libde265/VVdeC and native audio clocks. Extended Windows HEVC prefers D3D11 VLD with P010 for Main10; software decoding is the fallback. No FFmpeg is used.
 See the [validation record](docs/nsh-decoder-validation.md) for actual platform coverage.
+
+The application identifier is `com.guava.app`. Data lives in `%APPDATA%\guava` on Windows and `~/Library/Application Support/guava` on macOS, with database `guava.db`; `GUAVA_DATA_DIR` overrides the data root. Downloads use `guava/<series>` under the selected download root. Mobile hosts use private containers under the new application identifier. Previous data remains untouched and is not automatically migrated or deleted.
 
 Shared icons, emoji and translations live in `assets/`. Feature pages and presentation live in `src/features/`, shared controls in `src/ui/`, and window/navigation composition in `src/shell/` inside `hongguo-nsh`.
 Business requests go through `hongguo-service`; NSH has no direct API-client dependency. ByteVC2 decoding is unchanged.

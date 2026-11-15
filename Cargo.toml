@@ -47,8 +47,8 @@ members = [
 # 上游代码（clippy -D warnings 必挂），cargo test 也会跑它们的用例。
 exclude = ["vendor/nsh", "vendor/wgpu-hal"]
 
-# 各 crate 共享的 package 字段：发版只改这里一处（另需改 package.json 与
-# crates/hongguo-nsh/nsh.json），成员用 `xxx.workspace = true` 继承。
+# 各 crate 共享构建版本；应用元数据独立以 crates/hongguo-nsh/nsh.json 为准。
+# 成员用 `xxx.workspace = true` 继承。
 [workspace.package]
 version = "0.6.6"
 edition = "2024"

@@ -263,10 +263,10 @@ impl Settings {
         u64::from(self.cache_limit_mb) * 1024 * 1024
     }
 
-    /// 某部剧的下载子目录：`<下载根>/红果短剧/<剧名>`。
+    /// 某部剧的下载子目录：`<下载根>/guava/<剧名>`。
     pub fn series_dir(&self, series_title: &str) -> std::path::PathBuf {
         std::path::Path::new(&self.download_dir)
-            .join("红果短剧")
+            .join("guava")
             .join(sanitize_folder_name(series_title))
     }
 

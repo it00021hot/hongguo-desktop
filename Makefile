@@ -16,15 +16,15 @@ help:
 
 dev: nsh
 nsh:
-	node scripts/nsh.mjs run
+	nsh run crates/hongguo-nsh
 nsh-check:
-	node scripts/nsh.mjs check
+	nsh check crates/hongguo-nsh
 nsh-package:
-	node scripts/nsh.mjs package $(TARGET)
+	nsh package crates/hongguo-nsh --target $(TARGET) $(ARGS)
 build:
-	pnpm build
+	cargo build --workspace
 lint:
-	pnpm format:check
+	npm exec --prefix tools -- prettier --check .
 	cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
 	cargo clippy -p hongguo-media-types -p hongguo-media-platform -p hongguo-media-videotoolbox --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
 	cargo clippy -p hongguo-media-types -p hongguo-media-platform -p hongguo-media-videotoolbox --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
