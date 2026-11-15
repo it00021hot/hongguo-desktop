@@ -30,9 +30,13 @@ final class PixelSeeks {
     void prepared() { advance(); }
     void videoComplete() {
         if (inFlight == null) return;
-        playback.handler.removeCallbacks(deadline);
-        try { playback.emit("seeked", "requestId", inFlight.getString("requestId"), "positionMs", playback.direct.status().getLong("positionMs")); }
+        try {
+            JSONObject status = playback.direct.status();
+            if (status == null) return;
+            playback.emit("seeked", "requestId", inFlight.getString("requestId"), "positionMs", status.getLong("positionMs"));
+        }
         catch (Exception error) { playback.error("seekFailed", "Native session could not confirm seek position"); }
+        playback.handler.removeCallbacks(deadline);
         inFlight = null;
         advance();
         if (inFlight == null) playback.reapplyControls();

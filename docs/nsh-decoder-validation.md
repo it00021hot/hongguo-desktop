@@ -92,11 +92,32 @@ target/nsh-native-http-clock-probe.log。macOS 14+ 的单一 127.0.0.1 例外依
 这是该样本的专用核吞吐，未包含原生窗口呈现、网络、GPU 增强和音频同步；
 不能外推 Windows、其他分辨率或所有官方码流，也不能当作零丢帧证明。
 
+## 2026-11-15 Android 真机补验
+
+设备为华为 Mate 20 Pro（LYA_AL00），Android 10/API 29、arm64。
+使用独立包 `com.hongguo.nsh.codexqa` 与独立应用数据，未使用用户活跃账号。
+
+- 已实际安装、启动、完成游客推荐加载；NDK 与认证媒体 SDK 统一为 `30.0.16248370`。
+  原先缺失静态 libc++ 符号导致加载崩溃，现增加 `--no-undefined` 与动态符号审计。
+- Activity 在 Rust 初始化前设置私有缓存目录为 `TMPDIR`，数据库迁移不再因临时目录权限失败。
+- 首集扩展帧路径实际出画面，日志确认 `720x1280` 首帧；进度前进、暂停保持、恢复及拖动到中段已观察。
+  时钟尚未就绪通过 JNI `null` 表示，不再误报解码失败；GLES 按 downlevel limits 申请设备，避免要求 8 个颜色附件而设备仅支持 4 个。
+- 设置修改即时生效并跨重启保留：并发数 6、缓存上限 1024 MB、保留 30 天、关闭自动下一集。
+  缓存统计可换行；数字键盘出现时底栏不再附加键盘高度的空白，修正在 NSH 的旧版安全区与原生 TabBar 两处。
+- **未通过**：切集/切剧后可出现进度继续前进而画面黑屏，尚未定位根因；不能据首集出帧宣称切源验收完成。
+  应用重启后语言也仍有不一致；本轮未覆盖登录、下载/导出、通知、横屏、后台恢复、HDR 和长播音画同步。
+
+本轮构建与检查：实际 Android release 宿主构建、APK 原生依赖/签名检查、Android arm64 release 严格 Clippy、Windows 工作区严格 Clippy、NSH 检查及格式检查通过。
+证据位于 `target/nsh-android/mobile-final-package.log`、`mobile-clippy.log`、`mobile-host-clippy.log` 与 `mobile-17.png`、`mobile-19.png`、`mobile-20.png`、`mobile-24.png`。
+历史验证条目保留原日期，不代表本轮全部复验。
+
+English: Android 10 installation, initial playback, pause/seek and immediate settings persistence were checked on a physical device. Source switching can still produce black video and is not accepted; language consistency and the remaining mobile flows are also not accepted.
+
 ## 尚未验证及实际限制
 
 - Mac 已解锁并通过上述合成样本的真实窗口测试；实际在线多剧长播的丢帧、音画偏差、
   首帧/seek 体感或能耗尚未形成完整测量。
-- 没有 Windows 物理机器运行；没有本轮移动端安装、屏幕实播、后台/设备切换验收。
+- 2026-11-14 编解码重构记录没有 Windows 物理机器运行或移动端屏幕实播；Android 后续补验范围见上节，后台/设备切换仍未验收。
 - iOS 设备 SDK 对象已验证，但正式设备包的身份/profile、签名和安装未验收。
 - 普通 HEVC 使用原生 Video；Windows 的 Main10/HDR 扩展已接直接 D3D11/P010 硬解优先，
   无系统 HEVC 扩展时也能尝试硬解，实际出帧和能耗尚未真机验收。Android 的精度缺口仍走软件帧路径。

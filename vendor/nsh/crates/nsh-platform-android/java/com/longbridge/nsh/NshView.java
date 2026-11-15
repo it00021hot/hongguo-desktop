@@ -808,7 +808,7 @@ public class NshView extends FrameLayout {
             } else {
                 barsTop = insets.getSystemWindowInsetTop();
                 barsRight = insets.getSystemWindowInsetRight();
-                barsBottom = insets.getSystemWindowInsetBottom();
+                barsBottom = Math.min(insets.getSystemWindowInsetBottom(), insets.getStableInsetBottom());
                 barsLeft = insets.getSystemWindowInsetLeft();
             }
             View window = getRootView();

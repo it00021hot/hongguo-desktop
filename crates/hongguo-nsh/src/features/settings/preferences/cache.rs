@@ -33,9 +33,11 @@ pub(super) fn section(
                         |draft| draft.cache_dir.clone(),
                         |draft, value| draft.cache_dir = value,
                     ))
-                    .child(crate::features::settings::presentation::form_description(
-                        move || tr("settings.cacheDirDesc"),
-                    )),
+                    .child(when(is_desktop, || {
+                        crate::features::settings::presentation::form_description(move || {
+                            tr("settings.cacheDirDesc")
+                        })
+                    })),
             )
             .child(
                 text(move || {
@@ -77,6 +79,7 @@ pub(super) fn section(
                                     .unwrap_or_else(|| tr("common.loading").to_string())
                             })
                         })
+                        .max_w(percentage(1.0))
                         .text_sm()
                         .line_height(px(20.0)),
                     )

@@ -91,12 +91,13 @@ function android() {
     AR_aarch64_linux_android: archiver,
     BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android: `--sysroot="${join(toolchain, '../sysroot').replaceAll('\\', '/')}" --target=aarch64-linux-android${ANDROID_MIN_SDK}`,
   };
-  const linkerArgs =
+  const targetArgs =
     process.platform === 'win32' ? [`--target=aarch64-linux-android${ANDROID_MIN_SDK}`] : [];
-  if (linkerArgs.length) {
-    environment.CFLAGS_aarch64_linux_android = linkerArgs.join(' ');
-    environment.CXXFLAGS_aarch64_linux_android = linkerArgs.join(' ');
+  if (targetArgs.length) {
+    environment.CFLAGS_aarch64_linux_android = targetArgs.join(' ');
+    environment.CXXFLAGS_aarch64_linux_android = targetArgs.join(' ');
   }
+  const linkerArgs = [...targetArgs, '-Wl,--no-undefined'];
   verifyNshWorkspace();
   const output = join(root, 'target/nsh-android');
   buildAndroidRuntime(

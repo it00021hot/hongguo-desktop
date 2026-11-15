@@ -155,7 +155,11 @@ impl OutputSurface {
             .await
             .map_err(error)?;
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: wgpu::Limits::downlevel_defaults()
+                    .using_resolution(adapter.limits()),
+                ..Default::default()
+            })
             .await
             .map_err(error)?;
         let failures = Arc::new(Mutex::new(None));

@@ -94,9 +94,14 @@ pub extern "system" fn Java_com_hongguo_nsh_PixelDirect_nativeStatus(
     generation: jlong,
 ) -> jstring {
     io_boundary(&mut env, |env| {
-        env.new_string(video::direct_status(handle, generation)?)
-            .map(JString::into_raw)
-            .map_err(|error| error.to_string())
+        video::direct_status(handle, generation)?
+            .map(|status| {
+                env.new_string(status)
+                    .map(JString::into_raw)
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()
+            .map(|status| status.unwrap_or(std::ptr::null_mut()))
     })
 }
 

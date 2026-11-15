@@ -16,7 +16,7 @@ pnpm format:check
 ## 归属
 
 - `hongguo-nsh`：纯 Rust 共享界面、业务装配、事件/运行时桥、进程内媒体供数。
-- `hongguo-nsh-android`：JNI 启动与 Android Activity；`getFilesDir()` 必须在挂载根组件前传入。
+- `hongguo-nsh-android`：JNI 启动与 Android Activity；`getFilesDir()` 必须在挂载根组件前传入，Rust 初始化前将 `TMPDIR` 设为 `getCacheDir()`，保证数据库临时排序文件可写。
 - `hongguo-nsh-ios`：UIKit 启动；先配置 app 容器内的 Application Support，再挂载根组件。
 - `hongguo-media-videotoolbox`：macOS/iOS 共用 VT 管线；平台门面分别由两端实现 crate 转出。
 - 编码契约统一在 `hongguo-media-types::encoding`，增强管线在 `hongguo-video-gpu::enhancement`，HEVC 容器解析在 `hongguo-video::hevc`；完整边界见 [项目结构](../../../../docs/project-structure.md)。
@@ -50,6 +50,8 @@ VVdeC 的 vendored 源码在 `crates/hongguo-vvdec-sys/vendor/vvdec`，不是根
 
 桌面打包仅在对应宿主执行。Android 需要已配置的 ANDROID_HOME、NDK_HOME、JDK 与
 Gradle 9.7.0（仓库内 wrapper 固定版本与 SHA-256）；AGP 沿用现有 Android 工程的 9.3.1。
+当前认证媒体SDK使用NDK `30.0.16248370`，`NDK_HOME`须指向匹配版本，以提供相同的静态libc++ ABI。
+打包链接禁止未解析符号，ELF审计同时拒绝残留的C++动态导入，不能仅凭系统库依赖列表判断可运行。
 本项目宿主与原生编译保留 Android 9/API 28 下限；0.5.1 AAR 的 manifest 声明 API 26，
 不据此扩大尚未验证的本项目支持范围。
 首批 APK 为 arm64-v8a，
@@ -102,7 +104,7 @@ iOS 需要完整 Xcode 与对应 SDK，最低 iOS 16.0。设备签名需要 NSH_
 
 框架已提供的能力直接使用NSH：全局快捷键走 `register_global_shortcut`，通知走
 权限/展示/点击API，窗口基础操作走 `WindowRef` / `WindowAttributes`，翻译走
-`Translations` / `t!` / `set_locale`。不维护平行注册器、通知队列、桌面窗口命令桥或语言signal。
+`Translations` / `set_locale`。翻译通过框架 lookup 读取应用 locale，缺失 key 原样返回以保留业务错误详情。不维护平行注册器、通知队列、桌面窗口命令桥或语言signal。
 老板键保留先注册新组合、成功后注销旧组合和保存失败回滚；注册归应用owner，离开设置页不注销。
 设置页修改即生效，只合并变化字段，应用owner串行持久化；不恢复集中保存按钮。
 数值输入无效时保留编辑并提示，其他字段可独立更新；数据库失败不改变运行状态。

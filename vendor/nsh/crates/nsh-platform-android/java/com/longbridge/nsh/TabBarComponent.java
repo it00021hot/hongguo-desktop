@@ -213,7 +213,7 @@ final class TabBarComponent implements NshComponent {
             Insets nav = insets.getInsets(WindowInsets.Type.navigationBars());
             return nav.bottom;
         }
-        return insets.getSystemWindowInsetBottom();
+        return Math.min(insets.getSystemWindowInsetBottom(), insets.getStableInsetBottom());
     }
 
     /** The app's appearance changed: the bar follows it. */

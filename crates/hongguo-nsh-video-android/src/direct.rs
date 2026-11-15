@@ -105,10 +105,10 @@ struct PlaybackStatus {
     video_gap: bool,
 }
 
-pub fn direct_status(handle: i64, epoch: i64) -> Result<String, String> {
-    let position = lease(handle, epoch)?
-        .position()?
-        .ok_or("native playback position is not ready")?;
+pub fn direct_status(handle: i64, epoch: i64) -> Result<Option<String>, String> {
+    let Some(position) = lease(handle, epoch)?.position()? else {
+        return Ok(None);
+    };
     let status = PlaybackStatus {
         position_ms: (position.position_secs.max(0.0) * 1000.0).round() as u64,
         duration_ms: (position.duration_secs > 0.0)
@@ -117,7 +117,9 @@ pub fn direct_status(handle: i64, epoch: i64) -> Result<String, String> {
         is_buffering: position.buffering,
         video_gap: position.video_gap,
     };
-    serde_json::to_string(&status).map_err(|error| error.to_string())
+    serde_json::to_string(&status)
+        .map(Some)
+        .map_err(|error| error.to_string())
 }
 
 pub fn direct_is_owner(handle: i64, epoch: i64) -> Result<bool, String> {

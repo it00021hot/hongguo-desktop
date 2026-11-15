@@ -26,7 +26,10 @@ final class PixelDirect {
     boolean needsFrames() { return !ended && (gate.holding() || !gate.ready()); }
     void prepared() { publishLoad(); }
     void control(boolean playing, float volume, boolean muted, double rate, boolean claimOwner) throws IOException { nativeControl(handle, epoch, playing, volume, muted, rate, claimOwner); }
-    JSONObject status() throws Exception { return new JSONObject(nativeStatus(handle, epoch)); }
+    JSONObject status() throws Exception {
+        String status = nativeStatus(handle, epoch);
+        return status == null ? null : new JSONObject(status);
+    }
     boolean isOwner() throws IOException { return nativeIsOwner(handle, epoch); }
     void beginSeek() {
         gate.beginSeek(); ended = false; endEmitted = false;
@@ -63,7 +66,9 @@ final class PixelDirect {
     void audioBuffering(boolean buffering) { gate.audioBuffering(buffering); publishBuffering(); }
     void emptyVideo() {
         try {
-            if (!isOwner() || !status().getBoolean("videoGap")) return;
+            if (!isOwner()) return;
+            JSONObject status = status();
+            if (status == null || !status.getBoolean("videoGap")) return;
             gate.emptyVideo();
             publishBuffering();
             publishLoad();

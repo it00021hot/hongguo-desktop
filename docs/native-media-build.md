@@ -46,6 +46,15 @@ VVdeC 的 macOS 库分别保留 arm64 11.0 / Intel 10.15 的构建下限；NSH �
 Windows 的 SIMD 按独立对象编译并在运行期分派，不通过全局 AVX2 提高 CPU 下限。
 六目标均有实际对象格式、最低系统、平台与构建参数检查，交叉编译不能证明真机播放。
 
+Android认证SDK由NDK `30.0.16248370`构建；宿主的 `NDK_HOME` 使用匹配版本，
+避免旧静态libc++缺少新ABI符号。NDK 28链接当前归档会留下未定义的
+`std::__ndk1::__hash_memory`，Android 10真机在加载原生库时崩溃。
+打包入口使用 `--no-undefined`，ELF审计检查动态符号表中的未解析C++符号。
+
+The Android codec SDK uses NDK 30.0.16248370. Use the matching static libc++ runtime;
+NDK 28 leaves an unresolved `std::__ndk1::__hash_memory` and fails during native library loading.
+Packaging rejects undefined link symbols and unresolved C++ imports in the final ELF.
+
 ## 分发与打包
 
 `node scripts/nsh.mjs package macos|windows|android|ios|ios-simulator` 使用相同的随附 SDK。

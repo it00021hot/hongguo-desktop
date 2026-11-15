@@ -20,3 +20,8 @@ and their descendants are also checked for transforms, partial opacity and
 shader/mask composition; their own rounded button clips remain permitted. Rectangular video surfaces
 stay below the NSH window so sibling controls remain visible. These changes are intended to be
 proposed upstream and removed when an upstream release provides the same API.
+
+On Android API 26–29, the bottom safe-area and native tab-bar insets are capped by the stable system-bar
+inset. The legacy system-window inset also includes the IME during `adjustResize`;
+using it as a safe area gives the native tab bar a keyboard-sized bottom padding.
+The system-resized viewport continues to provide the keyboard space on these APIs.

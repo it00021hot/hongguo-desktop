@@ -73,6 +73,13 @@ const SDI_PREFIX: &[&str] = &[
 ];
 
 thread_local! {
+    #[cfg_attr(
+        target_os = "android",
+        expect(
+            clippy::missing_const_for_thread_local,
+            reason = "Android TLS macro expansion triggers Clippy despite the const initializer"
+        )
+    )]
     static LADON: Cell<u32> = const { Cell::new(0) };
 }
 

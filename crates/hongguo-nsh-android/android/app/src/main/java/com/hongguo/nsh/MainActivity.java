@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
+import android.system.ErrnoException;
+import android.system.Os;
 import com.longbridge.nsh.NshView;
 
 public final class MainActivity extends Activity {
@@ -19,6 +21,11 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+        try {
+            Os.setenv("TMPDIR", getCacheDir().getAbsolutePath(), true);
+        } catch (ErrnoException error) {
+            throw new IllegalStateException("Cannot configure application temporary directory", error);
+        }
         initialize(getFilesDir().getAbsolutePath());
         view = new NshView(this);
         view.registerComponent("hongguo.window-modes", context -> new WindowModeComponent(this, context));

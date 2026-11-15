@@ -128,15 +128,20 @@ final class PixelPlayback {
         if (released || !prepared || direct == null || props == null || !active()) return;
         try {
             JSONObject status = direct.status();
-            emit("progress", "positionMs", status.getLong("positionMs"), "durationMs", status.opt("durationMs"));
-            direct.audioBuffering(status.getBoolean("isBuffering"));
-            if (status.getBoolean("isEnded")) { audio.abandon(); direct.ended(); updateFrames(false); }
+            if (status != null) {
+                emit("progress", "positionMs", status.getLong("positionMs"), "durationMs", status.opt("durationMs"));
+                direct.audioBuffering(status.getBoolean("isBuffering"));
+                if (status.getBoolean("isEnded")) { audio.abandon(); direct.ended(); updateFrames(false); }
+            }
         } catch (Exception error) { error("decoderFailed", "Native PCM position is unavailable"); return; }
         if (framesWanted) handler.postDelayed(progress, interval());
     }
     void emit(String type, Object... fields) { owner.event(PixelJson.event(type, sourceId, fields)); }
     Object duration() {
-        try { return direct == null ? JSONObject.NULL : direct.status().opt("durationMs"); }
+        try {
+            JSONObject status = direct == null ? null : direct.status();
+            return status == null ? JSONObject.NULL : status.opt("durationMs");
+        }
         catch (Exception error) { error("decoderFailed", "Native media duration is unavailable"); return JSONObject.NULL; }
     }
     boolean active() { return props != null && props.optBoolean("active"); }

@@ -30,6 +30,11 @@ function validateAndroidElf(text) {
   for (const name of needed)
     if (!system.has(name))
       throw new Error(`Android runtime is not bundled or an approved system library: ${name}`);
+  const unresolvedCxx = [...text.matchAll(/\bUND\s+(_Z\S+)/g)].map((match) => match[1]);
+  if (unresolvedCxx.length)
+    throw new Error(
+      `Android static C++ runtime has unresolved symbols: ${unresolvedCxx.join(', ')}`,
+    );
   const alignments = [...text.matchAll(/^\s+LOAD\s+.+?\s+(0x[\da-f]+)\s*$/gim)].map((match) =>
     Number(match[1]),
   );
@@ -41,7 +46,7 @@ function validateAndroidElf(text) {
 export function auditAndroidElf(binary, readelf) {
   const result = spawnSync(
     readelf,
-    ['--file-header', '--dynamic', '--program-headers', '--wide', binary],
+    ['--file-header', '--dynamic', '--dyn-syms', '--program-headers', '--wide', binary],
     { encoding: 'utf8' },
   );
   if (result.error) throw result.error;

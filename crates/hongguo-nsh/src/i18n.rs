@@ -136,5 +136,9 @@ pub(crate) fn format_duration(seconds: f64) -> String {
 }
 
 pub(crate) fn tr(key: &str) -> SharedString {
-    nsh_core::t!(key).into()
+    let translations = global::<Translations>().get();
+    let shown = locale();
+    translations
+        .lookup(shown.as_str(), key)
+        .map_or_else(|| key.to_owned().into(), |text| text.into_owned().into())
 }
