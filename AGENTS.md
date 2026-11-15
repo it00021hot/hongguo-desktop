@@ -25,6 +25,7 @@ Tauri、GPUI 与 React/WebView 专用代码已移除；历史备份为 `codex/ba
 
 ## 约束
 
+- 框架已有能力优先使用 NSH 原生接口；全局快捷键、通知、窗口基础操作与翻译不维护平行实现。平台补充只覆盖框架缺口。
 - 普通视频使用 NSH Video，专用 libde265 / VVdeC 补齐编码缺口；不使用 FFmpeg。
 - Windows 仅支持普通 Windows 10 1809+ / Windows 11，不支持 Windows N。扩展 HEVC 优先 D3D11 VLD，Main10 保留 P010；实际硬解失败才回退软件。
 - 保留原流、分辨率、位深、色彩/HDR、crop、SAR、旋转、时间轴；GPU 完成前保留原生帧租约。

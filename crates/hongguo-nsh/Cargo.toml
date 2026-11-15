@@ -40,15 +40,11 @@ uuid = { version = "1", features = ["v4"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 hongguo-nsh-video-macos = { path = "../hongguo-nsh-video-macos" }
 nsh-platform-macos.workspace = true
-global-hotkey = "0.8"
 block2 = "0.6"
-objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 hongguo-nsh-video-windows = { path = "../hongguo-nsh-video-windows" }
 nsh-platform-windows.workspace = true
-global-hotkey = "0.8"
-windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 hongguo-nsh-video-ios = { path = "../hongguo-nsh-video-ios" }
@@ -57,4 +53,3 @@ objc2 = "0.6"
 objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "block2", "UIView", "UIViewController", "UIWindow", "UIWindowScene", "UIWindowSceneGeometry", "UIWindowSceneGeometryPreferences", "UIWindowSceneGeometryPreferencesIOS", "UIOrientation", "UIScene", "UIDocumentPickerViewController"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSString", "NSRunLoop", "NSTimer"] }
 block2 = "0.6"
-objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }

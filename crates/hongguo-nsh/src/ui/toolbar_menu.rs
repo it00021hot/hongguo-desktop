@@ -14,8 +14,8 @@ pub(crate) const THEMES: &[(&str, &str)] = &[
 pub(crate) const LANGUAGES: &[(&str, &str)] =
     &[("zh-CN", "search.langZh"), ("en-US", "search.langEn")];
 
-pub(crate) fn change_language(language: crate::i18n::Language, value: &'static str) {
-    if let Err(error) = language.select(value) {
+pub(crate) fn change_language(value: &'static str) {
+    if let Err(error) = crate::i18n::select_language(value) {
         spawn(async move {
             let answer = nsh_base::alert_dialog()
                 .title(tr("search.langLabel").to_string())

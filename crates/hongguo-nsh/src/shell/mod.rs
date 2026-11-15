@@ -207,12 +207,10 @@ pub(crate) fn shell_with_theme(
     on_theme: impl Fn(nsh_core::platform::Appearance) + 'static,
 ) -> View {
     let theme_busy = theme_busy.into_reactive();
-    let language = crate::i18n::provide_language();
     let toolbar = crate::ui::toolbar::ToolbarSlot::provide();
     if !is_desktop() {
         let menu = mobile_menu::MainMenu::provide(nav);
-        let preferences =
-            mobile_preferences::Preferences::new(theme_busy, theme_value, on_theme, language);
+        let preferences = mobile_preferences::Preferences::new(theme_busy, theme_value, on_theme);
         return view()
             .flex_1()
             .pb(move || {
@@ -340,8 +338,8 @@ pub(crate) fn shell_with_theme(
                         .child(crate::ui::toolbar_menu::menu(
                             toolbar_button(Icon::Languages, "search.langLabel"),
                             crate::ui::toolbar_menu::LANGUAGES,
-                            move || language.value().to_owned(),
-                            move |value| crate::ui::toolbar_menu::change_language(language, value),
+                            move || crate::i18n::language().to_owned(),
+                            crate::ui::toolbar_menu::change_language,
                         ))
                         .child(crate::ui::toolbar_menu::menu(
                             crate::ui::controls::surface(ButtonVariant::Quiet)

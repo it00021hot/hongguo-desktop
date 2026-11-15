@@ -13,7 +13,6 @@ public final class MainActivity extends Activity {
 
     private NshView view;
     private FileExportComponent fileExport;
-    private NotificationComponent notifications;
     private static native void initialize(String dataRoot);
 
     @Override
@@ -27,13 +26,10 @@ public final class MainActivity extends Activity {
             fileExport = new FileExportComponent(this, context);
             return fileExport;
         });
-        view.registerComponent("hongguo.notifications", context -> {
-            notifications = new NotificationComponent(this, context);
-            return notifications;
-        });
         view.registerComponent("hongguo.pixel-video", context -> new PixelVideoComponent(this, context));
         setContentView(view);
         view.runRustApp("nsh");
+        view.handleNotificationIntent(getIntent());
     }
 
     @Override
@@ -46,9 +42,10 @@ public final class MainActivity extends Activity {
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (notifications != null) notifications.onRequestPermissionsResult(requestCode, grantResults);
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (view != null) view.handleNotificationIntent(intent);
     }
 
     @Override

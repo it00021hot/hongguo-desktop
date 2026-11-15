@@ -1,6 +1,13 @@
 use super::Mode;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Observation {
+    pub pointer_inside: Option<bool>,
+    pub exposed: Option<bool>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(
     tag = "kind",

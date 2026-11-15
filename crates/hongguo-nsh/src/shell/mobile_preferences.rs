@@ -1,7 +1,4 @@
-use crate::{
-    i18n::{Language, tr},
-    ui,
-};
+use crate::{i18n::tr, ui};
 use nsh_base::theme;
 use nsh_core::{platform::Appearance, prelude::*};
 
@@ -10,7 +7,6 @@ pub(crate) struct Preferences {
     busy: Memo<bool>,
     value: Memo<String>,
     change: Stored<Box<dyn Fn(Appearance)>>,
-    language: Language,
 }
 
 impl Preferences {
@@ -18,14 +14,12 @@ impl Preferences {
         busy: impl IntoReactive<bool>,
         value: impl Fn() -> String + 'static,
         change: impl Fn(Appearance) + 'static,
-        language: Language,
     ) -> Self {
         let busy = busy.into_reactive();
         Self {
             busy: computed(move || busy.get()),
             value: computed(value),
             change: stored(Box::new(change)),
-            language,
         }
     }
 
@@ -79,7 +73,7 @@ impl Preferences {
                                 .map(|&(value, key)| ui::SelectOption::new(value, tr(key)))
                                 .collect::<Vec<_>>()
                         },
-                        move || Some(SharedString::from(self.language.value())),
+                        move || Some(SharedString::from(crate::i18n::language())),
                     )
                     .flex_1()
                     .min_w_32()
@@ -89,7 +83,7 @@ impl Preferences {
                             Some("en-US") => "en-US",
                             _ => return,
                         };
-                        ui::toolbar_menu::change_language(self.language, next);
+                        ui::toolbar_menu::change_language(next);
                     }),
                 ),
             )

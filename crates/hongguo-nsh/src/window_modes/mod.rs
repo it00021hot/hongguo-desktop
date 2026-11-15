@@ -1,6 +1,7 @@
-mod chrome;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod framework;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod geometry;
 #[cfg(target_os = "macos")]
@@ -31,6 +32,8 @@ pub(crate) struct WindowModes {
     applied_aspect: Stored<f64>,
     windowed_mode: Stored<WindowMode>,
     mini_controls_visible: Signal<bool>,
+    native_controls_hidden: Signal<bool>,
+    observation: Signal<wire::Observation>,
 }
 
 impl WindowModes {
@@ -142,104 +145,101 @@ impl WindowModes {
         self.request.set(Some(Request { serial, action }));
     }
     fn receive(self, event: &nsh_core::element::NativeEvent) {
-        if event.name.as_ref() == "visibility" {
-            if let Some(exposed) = event.data.as_bool() {
-                self.exposed.set(exposed);
-            } else {
-                log::error!("[NSH window] invalid visibility response");
-            }
-            return;
-        }
-        let result = match event.name.as_ref() {
-            "applied" => serde_json::from_value::<Response>(event.data.clone()).map(|response| {
-                if self
-                    .request
-                    .with_untracked(|request| request.as_ref().map(|r| r.serial))
-                    != Some(response.serial)
-                {
-                    return;
+        match event.name.as_ref() {
+            "observation" => {
+                match serde_json::from_value::<wire::Observation>(event.data.clone()) {
+                    Ok(observation) => {
+                        if let Some(exposed) = observation.exposed {
+                            self.exposed.set(exposed);
+                        }
+                        self.observation.set(observation);
+                    }
+                    Err(error) => self.fail(format!("invalid window observation: {error}")),
                 }
-                let success = response.error.is_none();
-                self.pending.set(false);
-                if let Some(error) = response.error {
-                    self.error.set(error.into());
-                } else if let Some(aspect) = self.request.with_untracked(|request| {
-                    request.as_ref().and_then(|request| match request.action {
-                        Action::SetMode { aspect, .. }
-                        | Action::SetPortraitFill { aspect, .. }
-                        | Action::Refit { aspect } => Some(aspect),
-                        _ => None,
-                    })
-                }) {
-                    self.applied_aspect.replace(aspect);
-                }
-                self.accept(response.state);
-                let aspect = self.aspect.get_untracked();
-                if success
-                    && response.state.mode == Mode::Portrait
-                    && (aspect - self.applied_aspect.get()).abs() > REFIT_DELTA
-                {
-                    self.send(Action::Refit { aspect });
-                }
-            }),
-            "state" => {
-                serde_json::from_value::<State>(event.data.clone()).map(|state| self.accept(state))
             }
             "orientation" => {
                 match serde_json::from_value::<wire::MobileResponse>(event.data.clone()) {
                     Ok(response) => {
                         let mut state = self.state.get_untracked();
                         state.landscape = response.landscape;
-                        self.receive(&nsh_core::element::NativeEvent {
-                            name: "applied".into(),
-                            data: serde_json::to_value(Response {
-                                serial: response.serial,
-                                state,
-                                error: response.error,
-                            })
-                            .expect("orientation response"),
+                        self.applied(Response {
+                            serial: response.serial,
+                            state,
+                            error: response.error,
                         });
                     }
-                    Err(error) => {
-                        log::error!("[NSH window] invalid mobile response: {error}");
-                        self.pending.set(false);
-                        self.error.set(error.to_string().into());
-                    }
+                    Err(error) => self.fail(format!("invalid orientation response: {error}")),
                 }
-                return;
             }
-            "exitFullscreen" | "toggleFullscreen" => {
+            "failure" => self.fail(
+                event
+                    .data
+                    .as_str()
+                    .unwrap_or("invalid native window failure")
+                    .to_owned(),
+            ),
+            _ => {}
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn desktop_event(self, event: desktop::Event) {
+        match event {
+            desktop::Event::Applied(response) => self.applied(response),
+            desktop::Event::State(state) => self.accept(state),
+            desktop::Event::Failure(error) => self.fail(error),
+            desktop::Event::Fullscreen { toggle } => {
                 let window = nsh_core::element::desktop::current_window();
                 if let Some(state) = window.state() {
                     if state.mode == WindowMode::FullScreen {
                         window.set_mode(self.windowed_mode.get());
-                    } else if event.name.as_ref() == "toggleFullscreen" {
+                    } else if toggle {
                         self.windowed_mode.replace(state.mode);
                         window.set_mode(WindowMode::FullScreen);
                     }
                 }
-                return;
             }
-            "failure" => {
-                self.pending.set(false);
-                self.error.set(
-                    event
-                        .data
-                        .as_str()
-                        .unwrap_or("invalid native window failure")
-                        .to_owned()
-                        .into(),
-                );
-                return;
-            }
-            _ => return,
-        };
-        if let Err(error) = result {
-            log::error!("[NSH window] invalid native response: {error}");
-            self.pending.set(false);
-            self.error.set(error.to_string().into());
         }
     }
+
+    fn applied(self, response: Response) {
+        if self
+            .request
+            .with_untracked(|request| request.as_ref().map(|request| request.serial))
+            != Some(response.serial)
+        {
+            return;
+        }
+        let success = response.error.is_none();
+        self.pending.set(false);
+        if let Some(error) = response.error {
+            self.error.set(error.into());
+        } else if let Some(aspect) = self.request.with_untracked(|request| {
+            request.as_ref().and_then(|request| match request.action {
+                Action::SetMode { aspect, .. }
+                | Action::SetPortraitFill { aspect, .. }
+                | Action::Refit { aspect } => Some(aspect),
+                _ => None,
+            })
+        }) {
+            self.applied_aspect.replace(aspect);
+        }
+        self.accept(response.state);
+        let aspect = self.aspect.get_untracked();
+        if success
+            && response.state.mode == Mode::Portrait
+            && (aspect - self.applied_aspect.get()).abs() > REFIT_DELTA
+        {
+            self.send(Action::Refit { aspect });
+        }
+    }
+
+    fn fail(self, error: String) {
+        log::error!("[NSH window] {error}");
+        self.pending.set(false);
+        self.error.set(error.into());
+    }
+
     fn accept(self, state: State) {
         let previous = self.state.get_untracked();
         self.state.set(state);
@@ -262,6 +262,8 @@ pub(crate) fn install(observe_visibility: Memo<bool>) -> impl IntoElement {
         applied_aspect: stored(PHONE_ASPECT),
         windowed_mode: stored(WindowMode::Normal),
         mini_controls_visible: signal(true),
+        native_controls_hidden: signal(false),
+        observation: signal(wire::Observation::default()),
     };
     provide_context(state);
     let window = nsh_core::element::desktop::current_window();
@@ -272,7 +274,8 @@ pub(crate) fn install(observe_visibility: Memo<bool>) -> impl IntoElement {
             state.windowed_mode.replace(window.mode);
         }
     });
-    chrome::install(state);
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    framework::install(state);
     let initial = Storage::get_item(INCOGNITO_KEY).as_deref() == Some("true");
     if initial && is_desktop() {
         spawn(async move {
@@ -288,29 +291,19 @@ pub(crate) fn install(observe_visibility: Memo<bool>) -> impl IntoElement {
         .child(
             native("hongguo.window-modes")
                 .size(px(1.0))
-                .prop("miniControlsVisible", move || {
-                    serde_json::Value::Bool(state.mini_controls_visible.get())
+                .prop("controlsHidden", move || {
+                    serde_json::Value::Bool(state.native_controls_hidden.get())
                 })
                 .prop("observeVisibility", move || {
                     serde_json::Value::Bool(observe_visibility.get())
                 })
                 .prop("request", move || {
-                    let request = state.request.get();
-                    if is_desktop() {
-                        serde_json::to_value(request).expect("window request")
-                    } else {
-                        serde_json::to_value(request.map(|request| wire::MobileRequest {
-                            serial: request.serial,
-                            landscape: matches!(
-                                request.action,
-                                Action::SetLandscape { enabled: true }
-                            ),
-                        }))
-                        .expect("mobile window request")
-                    }
-                })
-                .prop("bossHidden", move || {
-                    serde_json::Value::Bool(crate::boss_key::hidden())
+                    let request = state.request.get().filter(|_| !is_desktop());
+                    serde_json::to_value(request.map(|request| wire::MobileRequest {
+                        serial: request.serial,
+                        landscape: matches!(request.action, Action::SetLandscape { enabled: true }),
+                    }))
+                    .expect("mobile window request")
                 })
                 .on_native_event(move |event: &nsh_core::element::NativeEvent| {
                     state.receive(event)

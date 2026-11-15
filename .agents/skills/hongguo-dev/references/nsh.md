@@ -100,6 +100,14 @@ iOS 需要完整 Xcode 与对应 SDK，最低 iOS 16.0。设备签名需要 NSH_
 
 ## 数据与生命周期
 
+框架已提供的能力直接使用NSH：全局快捷键走 `register_global_shortcut`，通知走
+权限/展示/点击API，窗口基础操作走 `WindowRef` / `WindowAttributes`，翻译走
+`Translations` / `t!` / `set_locale`。不维护平行注册器、通知队列、桌面窗口命令桥或语言signal。
+老板键保留先注册新组合、成功后注销旧组合和保存失败回滚；注册归应用owner，离开设置页不注销。
+通知请求捕获应用owner，权限只由用户开关触发；Android Activity必须向SDK转交通知启动intent。
+语言仍保存 `hongguo.locale`，共用中英文资源与已有占位符；数字、时长与业务插值留在应用层。
+窗口平台补充仅保留完整遮挡检测、窗口外系统光标位置、macOS红绿灯显隐；手机方向与文件导出仍由宿主完成。
+
 桌面使用独立的 hongguo-nsh 数据根；移动端使用自己的 app 私有目录。
 `HONGGUO_DATA_DIR` 可显式覆盖数据根。生产代码已移除离线 QA 开关与路径隔离包装；正式文件 IO 保留同步落盘和符号链接保护。
 自动化验证显式设置独立测试目录，不读取现有壳的账号或数据库。

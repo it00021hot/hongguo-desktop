@@ -1,52 +1,68 @@
-use nsh_core::prelude::*;
-use std::sync::LazyLock;
+use nsh_core::{i18n::Translations, platform::Locale, prelude::*};
+use std::{collections::HashMap, sync::LazyLock};
 
-static ZH: LazyLock<serde_json::Value> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../../assets/locales/zh-CN.json"))
-        .expect("validated zh-CN catalog")
-});
-static EN: LazyLock<serde_json::Value> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../../assets/locales/en-US.json"))
-        .expect("validated en-US catalog")
+static TRANSLATIONS: LazyLock<Translations> = LazyLock::new(|| {
+    let mut catalogs = HashMap::new();
+    for (language, source) in [
+        ("zh-CN", include_str!("../../../assets/locales/zh-CN.json")),
+        ("en-US", include_str!("../../../assets/locales/en-US.json")),
+    ] {
+        let catalog = serde_json::from_str(source).expect("validated translation catalog");
+        let mut messages = HashMap::new();
+        flatten("", catalog, &mut messages);
+        catalogs.insert(language.to_owned(), messages);
+    }
+    Translations::from_map(catalogs)
 });
 
 const LANGUAGE_KEY: &str = "hongguo.locale";
-#[derive(Clone, Copy)]
-pub(crate) struct Language(Signal<&'static str>);
 
-pub(crate) fn provide_language() -> Language {
-    if let Some(language) = use_context::<Language>() {
-        return language;
-    }
+pub(crate) fn install() {
+    global::<Translations>().set(TRANSLATIONS.clone());
     let saved = nsh_core::storage::Storage::get_item(LANGUAGE_KEY);
-    let value = match saved.as_deref() {
+    let language = match saved.as_deref() {
         Some("zh-CN") => "zh-CN",
         Some("en-US") => "en-US",
         _ if locale().as_str().starts_with("zh") => "zh-CN",
         _ => "en-US",
     };
-    let language = Language(signal(value));
-    provide_context(language);
-    language
+    set_locale(Some(Locale::parse(language).expect("supported locale")));
 }
 
-impl Language {
-    pub(crate) fn value(self) -> &'static str {
-        self.0.get()
+pub(crate) fn language() -> &'static str {
+    if is_chinese() { "zh-CN" } else { "en-US" }
+}
+
+pub(crate) fn select_language(value: &'static str) -> Result<(), String> {
+    if !matches!(value, "zh-CN" | "en-US") {
+        return Err(format!("Unsupported application language: {value}"));
     }
-    pub(crate) fn select(self, value: &'static str) -> Result<(), String> {
-        nsh_core::storage::Storage::set_item(LANGUAGE_KEY, value)
-            .map_err(|error| error.to_string())?;
-        self.0.set(value);
-        Ok(())
-    }
+    nsh_core::storage::Storage::set_item(LANGUAGE_KEY, value).map_err(|error| error.to_string())?;
+    set_locale(Some(Locale::parse(value).expect("supported locale")));
+    Ok(())
 }
 
 pub(crate) fn is_chinese() -> bool {
-    use_context::<Language>().map_or_else(
-        || locale().as_str().starts_with("zh"),
-        |language| language.value() == "zh-CN",
-    )
+    locale().as_str().starts_with("zh")
+}
+
+fn flatten(prefix: &str, value: serde_json::Value, messages: &mut HashMap<String, String>) {
+    match value {
+        serde_json::Value::String(text) => {
+            messages.insert(prefix.to_owned(), text);
+        }
+        serde_json::Value::Object(children) => {
+            for (key, value) in children {
+                let key = if prefix.is_empty() {
+                    key
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                flatten(&key, value, messages);
+            }
+        }
+        _ => panic!("translation catalog values must be text"),
+    }
 }
 
 pub(crate) fn format_play_count(value: i64) -> String {
@@ -120,12 +136,5 @@ pub(crate) fn format_duration(seconds: f64) -> String {
 }
 
 pub(crate) fn tr(key: &str) -> SharedString {
-    let catalog = if is_chinese() { &*ZH } else { &*EN };
-    lookup(catalog, key).unwrap_or(key).to_owned().into()
-}
-
-fn lookup<'a>(catalog: &'a serde_json::Value, key: &str) -> Option<&'a str> {
-    key.split('.')
-        .try_fold(catalog, |value, part| value.get(part))?
-        .as_str()
+    nsh_core::t!(key).into()
 }

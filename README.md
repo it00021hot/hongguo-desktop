@@ -30,6 +30,7 @@ Windows 扩展 HEVC 优先 D3D11 VLD，Main10 使用 P010；实际硬解不可�
 功能页面与专用呈现归 `src/features/`，共享控件归 `src/ui/`，窗口与导航装配归 `src/shell/`。
 业务请求通过 `hongguo-service`，NSH 不直接依赖 API 客户端；ByteVC2 解码能力保持不变。
 工作区现为 29 个 crate；编码契约归媒体类型层，GPU 增强归视频 GPU 层，HEVC 解析归容器层。
+全局快捷键、系统通知、桌面窗口基础操作与翻译优先使用 NSH 原生接口；平台补充仅保留框架缺失的能力。
 结构边界见 [项目结构](docs/project-structure.md)，命令及环境见 [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md)。
 
 Tauri、GPUI 壳及其旧播放器、WebView 前端已从主线移除，完整旧版保存在

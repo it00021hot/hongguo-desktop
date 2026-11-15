@@ -22,7 +22,6 @@ pub(super) struct Plan {
     pub frame: Rect,
     pub minimum: (f64, f64),
     pub maximized: bool,
-    pub scale: f64,
 }
 
 const MINI_SIZE: (f64, f64) = (480.0, 270.0);
@@ -101,11 +100,6 @@ impl Modes {
                 minimum.1.min(geometry.work.height),
             ),
             maximized,
-            scale: if mode == Mode::Normal {
-                original.scale
-            } else {
-                geometry.scale
-            },
         }))
     }
     pub fn set_fill(
@@ -139,7 +133,6 @@ impl Modes {
                 PORTRAIT_MIN.1.min(geometry.work.height),
             ),
             maximized: false,
-            scale: geometry.scale,
         }))
     }
     pub fn refit(&mut self, geometry: Geometry, aspect: f64) -> Result<Option<Plan>, String> {
@@ -155,7 +148,6 @@ impl Modes {
                 PORTRAIT_MIN.1.min(geometry.work.height),
             ),
             maximized: false,
-            scale: geometry.scale,
         }))
     }
     fn remember(&mut self, frame: Rect) {

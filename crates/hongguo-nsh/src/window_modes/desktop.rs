@@ -4,13 +4,18 @@ use super::{
     privacy::{Effect, Privacy},
     wire::{Action, Request, Response, State},
 };
-use serde_json::Value;
 use std::time::{Duration, Instant};
 
 pub(super) const TICK_SECONDS: f64 = 0.04;
 const CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(3);
-const VISIBILITY_INTERVAL: Duration = Duration::from_millis(250);
-type EventSink = Box<dyn Fn(&str, Value)>;
+pub(super) enum Event {
+    Applied(Response),
+    State(State),
+    Fullscreen { toggle: bool },
+    Failure(String),
+}
+
+type EventSink = Box<dyn Fn(Event)>;
 
 #[derive(Clone)]
 struct Pending {
@@ -28,7 +33,6 @@ pub(super) struct Capture {
 }
 pub(super) trait Window {
     fn attached(&self) -> bool;
-    fn exposed(&self) -> Result<bool, String>;
     fn capture(&self) -> Result<Capture, String>;
     fn apply(&self, plan: Plan) -> Result<(), String>;
     fn controls_hidden(&self, hidden: bool) -> Result<(), String>;
@@ -49,13 +53,10 @@ pub(super) struct Desktop {
     start: Instant,
     pending: Option<Pending>,
     last: Option<State>,
-    observe_visibility: bool,
-    last_visibility: Option<bool>,
-    visibility_checked_at: Option<Instant>,
 }
 
 impl Desktop {
-    pub fn new(window: Box<dyn Window>, emit: impl Fn(&str, Value) + 'static) -> Self {
+    pub fn new(window: Box<dyn Window>, emit: impl Fn(Event) + 'static) -> Self {
         Self {
             window,
             emit: Box::new(emit),
@@ -68,20 +69,6 @@ impl Desktop {
             start: Instant::now(),
             pending: None,
             last: None,
-            observe_visibility: false,
-            last_visibility: None,
-            visibility_checked_at: None,
-        }
-    }
-    pub fn observe_visibility(&mut self, enabled: bool) {
-        if self.observe_visibility == enabled {
-            return;
-        }
-        self.observe_visibility = enabled;
-        log::debug!("[NSH visibility] observing={enabled}");
-        self.visibility_checked_at = None;
-        if !enabled && self.last_visibility.take() == Some(false) {
-            (self.emit)("visibility", Value::Bool(true));
         }
     }
     pub fn set_mini_controls_visible(&mut self, visible: bool) {
@@ -103,25 +90,6 @@ impl Desktop {
         }
         Ok(())
     }
-    fn sample_visibility(&mut self) {
-        if !self.observe_visibility
-            || self
-                .visibility_checked_at
-                .is_some_and(|checked| checked.elapsed() < VISIBILITY_INTERVAL)
-        {
-            return;
-        }
-        self.visibility_checked_at = Some(Instant::now());
-        match self.window.exposed() {
-            Ok(exposed) if self.last_visibility != Some(exposed) => {
-                log::debug!("[NSH visibility] exposed={exposed}");
-                self.last_visibility = Some(exposed);
-                (self.emit)("visibility", Value::Bool(exposed));
-            }
-            Ok(_) => {}
-            Err(error) => self.report(error),
-        }
-    }
     pub fn request(&mut self, request: Request) {
         let result = self.execute(&request);
         match result {
@@ -142,7 +110,7 @@ impl Desktop {
         );
         if needs_windowed && capture.fullscreen {
             self.wait_for_fullscreen(request, false);
-            (self.emit)("exitFullscreen", Value::Null);
+            (self.emit)(Event::Fullscreen { toggle: false });
             return Ok(false);
         }
         let mut next = self.modes.clone();
@@ -174,7 +142,7 @@ impl Desktop {
             }
             Action::ToggleFullscreen => {
                 self.wait_for_fullscreen(request, !capture.fullscreen);
-                (self.emit)("toggleFullscreen", Value::Null);
+                (self.emit)(Event::Fullscreen { toggle: true });
                 return Ok(false);
             }
             _ => {}
@@ -217,7 +185,6 @@ impl Desktop {
                 Some("The system did not confirm the requested window mode".into()),
             );
         }
-        self.sample_visibility();
         let Ok(capture) = self.window.capture() else {
             return;
         };
@@ -308,7 +275,7 @@ impl Desktop {
         let state = self.snapshot();
         if self.last != Some(state) {
             self.last = Some(state);
-            (self.emit)("state", serde_json::to_value(state).expect("window state"));
+            (self.emit)(Event::State(state));
         }
     }
     fn respond(&mut self, serial: u32, error: Option<String>) {
@@ -317,17 +284,13 @@ impl Desktop {
         }
         let state = self.snapshot();
         self.last = Some(state);
-        (self.emit)(
-            "applied",
-            serde_json::to_value(Response {
-                serial,
-                state,
-                error,
-            })
-            .expect("window response"),
-        );
+        (self.emit)(Event::Applied(Response {
+            serial,
+            state,
+            error,
+        }));
     }
     fn report(&self, error: String) {
-        (self.emit)("failure", Value::String(error));
+        (self.emit)(Event::Failure(error));
     }
 }

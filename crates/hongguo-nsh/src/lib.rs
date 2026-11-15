@@ -32,23 +32,18 @@ fn native(registry: &mut Registry) {
 
 #[native_components(macos)]
 fn native_components(components: &nsh_platform_macos::Components) {
-    notifications::register(components);
     hongguo_nsh_video_macos::register(components);
-    boss_key::register(components);
     window_modes::register(components);
 }
 
 #[native_components(windows)]
 fn native_components(components: &nsh_platform_windows::Components) {
-    notifications::register(components);
     hongguo_nsh_video_windows::register(components);
-    boss_key::register(components);
     window_modes::register(components);
 }
 
 #[native_components(ios)]
 fn native_components(components: &nsh_platform_ios::Components) {
-    notifications::register(components);
     hongguo_nsh_video_ios::register(components);
     window_modes::register(components);
     file_access::register(components);
@@ -57,6 +52,7 @@ fn native_components(components: &nsh_platform_ios::Components) {
 #[component]
 /// The Rust application root shared by the desktop and mobile hosts.
 pub fn App() -> impl IntoElement {
+    i18n::install();
     view_memory::provide();
     set_tokens(
         nsh_base::tokens_of(Some(include_str!("../theme.json"))).expect("validated NSH theme"),
@@ -88,10 +84,9 @@ pub fn App() -> impl IntoElement {
         .child(when(
             move || session.with(|session| session.is_some()),
             move || {
-                let notifications = notifications::install();
+                notifications::install();
                 let handle = events::SessionHandle::new(session.get().expect("loaded session"));
-                let boss_key =
-                    boss_key::install(handle.with(|session| session.state.settings().boss_key));
+                boss_key::install(handle.with(|session| session.state.settings().boss_key));
                 let window_modes = window_modes::install(computed(move || {
                     handle.identity();
                     is_desktop()
@@ -146,10 +141,8 @@ pub fn App() -> impl IntoElement {
                     move |appearance| appearance::save(handle, appearance, theme_pending),
                 )
                 .child(account_dialogs)
-                .child(boss_key)
                 .child(window_modes)
                 .child(file_access)
-                .child(notifications)
             },
         ))
 }

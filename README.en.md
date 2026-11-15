@@ -26,6 +26,7 @@ See the [validation record](docs/nsh-decoder-validation.md) for actual platform 
 Shared icons, emoji and translations live in `assets/`. Feature pages and presentation live in `src/features/`, shared controls in `src/ui/`, and window/navigation composition in `src/shell/` inside `hongguo-nsh`.
 Business requests go through `hongguo-service`; NSH has no direct API-client dependency. ByteVC2 decoding is unchanged.
 The workspace contains 29 crates: encoding contracts belong to media types, enhancement to video GPU, and HEVC parsing to the container layer.
+Global shortcuts, system notifications, desktop window operations and translations use native NSH APIs; platform supplements cover capabilities the framework does not expose.
 See [project structure](docs/project-structure.md) and the [NSH development guide](.agents/skills/hongguo-dev/references/nsh.md).
 The Tauri/GPUI shells, their legacy players and the WebView frontend have been removed. Their complete backup is
 [`codex/backup-tauri-final`](https://github.com/it00021hot/hongguo-desktop/tree/codex/backup-tauri-final).

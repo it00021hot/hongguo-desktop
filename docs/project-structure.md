@@ -22,6 +22,17 @@
 
 ## 业务边界
 
+全局快捷键、系统通知、桌面窗口基础操作和翻译使用NSH原生API。
+`boss_key`只保留注册事务与隐藏状态，`notifications`只保留应用owner及业务结果适配；
+`window_modes/framework`执行窗口命令，`desktop`保留形态与隐身决策，平台层仅补充遮挡、
+全局光标位置和macOS红绿灯显隐。移动方向控制与文件导出继续归各自宿主。
+`i18n`装载共用中英文资源至NSH `Translations`，使用框架locale，保留语言偏好落盘及业务格式化。
+
+2026-11-15 框架能力迁移通过Windows工作区构建、严格Clippy、NSH检查及格式检查。
+独立数据目录实例确认实时语言切换和数字格式更新、真实流连续播放、小窗拖动、最大化还原、
+退出小窗、全屏及Esc恢复。通知权限/展示/点击和老板键占用冲突尚未系统实测；
+macOS、Android和iOS未在本轮构建或运行，Windows宿主的移动crate空壳不计作移动验证。
+
 NSH 不直接依赖 `hongguo-api`，不构造 `ApiEnv`。页面只调用 service，service 从应用状态生成请求环境。
 `hongguo-service::contracts` 仅公开 UI 消费的数据类型，不公开底层请求函数。
 
@@ -68,6 +79,14 @@ NSH 的序列化 `Enhancement` 契约保持原状，在各平台适配边界转�
 16 个增强 shader、模型及授权文件哈希保持一致，资源生成脚本与打包授权收集路径均已验证。Apple 适配保留最小 `objc2-io-surface` feature 依赖，为 CoreVideo 的 IOSurface 返回类型启用 CoreFoundation 类型契约。
 
 ## English
+
+Global shortcuts, notifications, desktop window operations and translations use NSH APIs.
+Application modules retain registration transactions, owner binding, window-mode decisions and business formatting.
+Native supplements cover occlusion, the global cursor and macOS traffic lights; mobile hosts retain orientation and file export.
+The framework migration passed the Windows workspace build, strict Clippy, NSH and formatting checks.
+An isolated Windows instance confirmed live locale/number updates, continued playback, mini-window dragging,
+maximize/restore, exit from mini mode, and fullscreen/Esc restoration. Notification delivery, shortcut conflicts,
+macOS and mobile builds/runs remain unverified in this migration.
 
 The NSH root assembles services and the application shell. Each feature owns its page state, interactions and presentation; `ui/` contains shared controls only.
 History, downloads and personal libraries have separate feature entries. Window and navigation composition lives in `shell/`.

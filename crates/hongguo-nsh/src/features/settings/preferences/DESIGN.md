@@ -58,6 +58,12 @@ NSH 使用生产与预览共用的表单。没有启动完整业务 App 或移�
 全局 pending 在任务结束才清除。保存合并最新设置，身份/主题不被旧草稿覆盖；失败保留草稿并显示错误，
 老板键回滚失败同时记录日志和可见提示。手机不挂载只能由桌面键盘操作的两张快捷键卡。
 
+2026-11-15 老板键改用NSH `register_global_shortcut` / `unregister_global_shortcut`。
+保留新组合注册成功才注销旧组合、冲突失败保留原注册、清空注销、保存失败回滚，
+注册回调归应用owner；录制时按下已有老板键仍用于录制，不隐藏窗口。
+别名等价的同一组合不重复注册。上述历史原生用例不是本次框架迁移的运行结果，
+本轮静态检查与真实系统组合键、占用冲突验收分别记录。
+
 截图：`target/nsh-preview/settings-{light,dark}-expanded-1280x840.png`；
 参照：`target/tauri-layout-reference/settings-{light,dark}-expanded-1280x840.png`。
 固定目录、代理与登录入口的预览回调仅报告 `nsh.previewAction`，真实页仍使用系统面板和既有服务。

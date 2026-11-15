@@ -332,16 +332,8 @@ async fn popup(
     preferences: NoticePreferences,
     enabled: bool,
 ) -> Result<Outcome, SharedString> {
-    if enabled {
-        let allowed = notifications
-            .request_permission()
-            .await
-            .map_err(|message| {
-                SharedString::from(tr("follow.notificationFailed").replace("{message}", &message))
-            })?;
-        if !allowed {
-            return Err(tr("follow.notificationDenied"));
-        }
+    if enabled && !notifications.request_permission().await {
+        return Err(tr("follow.notificationDenied"));
     }
     preferences.set(enabled).map_err(|message| {
         SharedString::from(tr("settings.saveFailed").replace("{message}", &message))
