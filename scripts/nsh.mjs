@@ -45,14 +45,14 @@ function distribution() {
     .split(delimiter)
     .map((directory) => join(directory, process.platform === 'win32' ? 'nsh.exe' : 'nsh'))
     .find(existsSync);
-  if (!binary) throw new Error('NSH 0.5.0 is required');
+  if (!binary) throw new Error('NSH 0.5.1 is required');
   return dirname(dirname(realpathSync(binary)));
 }
 
 function android() {
   const aar = requirePath(
     join(distribution(), 'embed/android/nsh.aar'),
-    'NSH 0.5.0 Android embedding SDK (install nsh-embed-android.zip from NSH v0.5.0)',
+    'NSH 0.5.1 Android embedding SDK (install nsh-embed-android.zip from NSH v0.5.1)',
   );
   const sdk = requirePath(process.env.ANDROID_HOME, 'ANDROID_HOME');
   const ndk = requirePath(process.env.NDK_HOME, 'NDK_HOME');
