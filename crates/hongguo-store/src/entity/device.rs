@@ -82,23 +82,6 @@ pub async fn save_device_profile(
     Ok(())
 }
 
-/// 把现役档案复制到备份行。现役不存在时是空操作（返回 false）。
-/// 换档（注册成功 / 阵亡重铺）前调用，「现役 + 备份」双档案形态。
-pub async fn backup_device_profile(db: &Db) -> AppResult<bool> {
-    let touched = db
-        .execute(
-            "INSERT INTO device_profile (id, json)
-             SELECT ?1, json FROM device_profile WHERE id = ?2
-             ON CONFLICT(id) DO UPDATE SET json = excluded.json",
-            [
-                Value::Integer(DEVICE_ROW_BACKUP),
-                Value::Integer(DEVICE_ROW_ACTIVE),
-            ],
-        )
-        .await?;
-    Ok(touched > 0)
-}
-
 /// 读上一代备份档案（回查用；从没换过档返回 None）。
 pub async fn device_profile_backup(
     db: &Db,
@@ -141,16 +124,6 @@ pub async fn device_meta_get(db: &Db) -> AppResult<Option<serde_json::Value>> {
 
 /// 现役、备份、元数据一次提交。中途失败由调用方的事务回滚，不会留下半套档案。
 pub async fn commit_device_swap(db: &Db, profile_json: &str, meta_json: &str) -> AppResult<()> {
-    commit_device_swap_at(db, profile_json, meta_json, None).await
-}
-
-/// `fail_after` 为 1/2/3 时在对应写入后返回错误，供隔离库故障注入。生产路径传 `None`。
-pub async fn commit_device_swap_at(
-    db: &Db,
-    profile_json: &str,
-    meta_json: &str,
-    fail_after: Option<u8>,
-) -> AppResult<()> {
     let profile_json = profile_json.to_string();
     let meta_json = meta_json.to_string();
     db.with_tx(move |conn| {
@@ -168,9 +141,6 @@ pub async fn commit_device_swap_at(
             )
             .await
             .map_err(map_db_err)?;
-            if fail_after == Some(1) {
-                return Err(AppError::StoreCorrupt("故障注入：备份之后".into()));
-            }
             conn.execute(
                 "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
                  ON CONFLICT(id) DO UPDATE SET json = excluded.json",
@@ -178,9 +148,6 @@ pub async fn commit_device_swap_at(
             )
             .await
             .map_err(map_db_err)?;
-            if fail_after == Some(2) {
-                return Err(AppError::StoreCorrupt("故障注入：现役之后".into()));
-            }
             conn.execute(
                 "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
                  ON CONFLICT(id) DO UPDATE SET json = excluded.json",
@@ -188,9 +155,6 @@ pub async fn commit_device_swap_at(
             )
             .await
             .map_err(map_db_err)?;
-            if fail_after == Some(3) {
-                return Err(AppError::StoreCorrupt("故障注入：元数据之后".into()));
-            }
             Ok(())
         }
     })

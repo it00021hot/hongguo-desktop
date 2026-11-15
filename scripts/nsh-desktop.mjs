@@ -86,7 +86,7 @@ export function buildDesktop(target) {
   return installer;
 }
 
-export function desktopExecutable(build) {
+function desktopExecutable(build) {
   const artifacts = build
     .trim()
     .split('\n')
@@ -104,7 +104,7 @@ export function desktopExecutable(build) {
   return executables[0].executable;
 }
 
-export function validateMacosPlatform(commands) {
+function validateMacosPlatform(commands) {
   const platforms = [...commands.matchAll(/cmd LC_BUILD_VERSION[\s\S]*?^\s*platform (\d+)\s*$/gm)];
   if (platforms.length !== 1 || platforms[0][1] !== '1')
     throw new Error('Cargo did not build for the macOS platform');

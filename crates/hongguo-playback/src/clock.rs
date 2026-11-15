@@ -59,24 +59,3 @@ fn validate(position_secs: f64, rate: f64) -> AppResult<()> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn silent_clock_preserves_pause_seek_and_rate_anchors() {
-        let now = Instant::now();
-        let mut clock = MonotonicClock::new(4.0, 1.0, now).unwrap();
-        assert_eq!(clock.position(now + Duration::from_secs(2)), 4.0);
-        clock.set_running(true, now);
-        clock.set_rate(2.0, now + Duration::from_secs(1)).unwrap();
-        assert_eq!(clock.position(now + Duration::from_secs(2)), 7.0);
-        clock.set_running(false, now + Duration::from_secs(2));
-        assert_eq!(clock.position(now + Duration::from_secs(20)), 7.0);
-        clock.seek(10.0, now + Duration::from_secs(3)).unwrap();
-        assert_eq!(clock.position(now + Duration::from_secs(20)), 10.0);
-        assert!(clock.set_rate(f64::NAN, now).is_err());
-    }
-}

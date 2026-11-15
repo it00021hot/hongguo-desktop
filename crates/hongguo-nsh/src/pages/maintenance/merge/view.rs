@@ -59,7 +59,7 @@ pub(super) fn content(model: MergeView, dispatch: impl Fn(Intent) + 'static) -> 
                                 .gap_2()
                                 .child(ui::form_label(move || tr("merge.selectSeries")))
                                 .child(
-                                    view().test_id("merge-series").child(
+                                    view().child(
                                         ui::maintenance_select(
                                             move || tr("merge.selectSeries"),
                                             options,
@@ -93,7 +93,6 @@ pub(super) fn content(model: MergeView, dispatch: impl Fn(Intent) + 'static) -> 
                                 .child(ui::form_label(move || tr("merge.outputName")))
                                 .child(
                                     ui::field(move || tr("merge.outputName"))
-                                        .test_id("merge-output")
                                         .placeholder("")
                                         .value(output)
                                         .on_change(move |value: &str| {

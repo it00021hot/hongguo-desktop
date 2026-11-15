@@ -6,20 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
-[features]
-test-support = ["dep:hongguo-media"]
-
-[[example]]
-name = "hevc_d3d11_probe"
-required-features = ["test-support"]
-
 [target.'cfg(target_os = "windows")'.dependencies]
 hongguo-native-clock = { path = "../hongguo-native-clock" }
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-enhancement = { path = "../hongguo-enhancement" }
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-hevc = { path = "../hongguo-hevc" }
-hongguo-media = { path = "../hongguo-media", optional = true }
 hongguo-video-color = { path = "../hongguo-video-color" }
 nsh-platform-windows.workspace = true
 pollster = "0.4"

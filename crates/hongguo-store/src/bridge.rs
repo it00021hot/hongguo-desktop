@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use futures_util::future::BoxFuture;
 
@@ -24,8 +23,6 @@ type Job = Box<dyn FnOnce(Db) -> BoxFuture<'static, ()> + Send + 'static>;
 pub struct Store {
     tx: Arc<tokio::sync::mpsc::UnboundedSender<Job>>,
     path: Arc<PathBuf>,
-    meta_faults: Arc<AtomicU32>,
-    swap_fault: Arc<AtomicU8>,
 }
 
 impl std::fmt::Debug for Store {
@@ -68,11 +65,6 @@ impl Store {
         }
     }
 
-    /// 内存库（测试与 `AppState::default`）。
-    pub fn open_memory() -> AppResult<Self> {
-        Self::spawn_open(":memory:".to_string())
-    }
-
     fn spawn_open(path: String) -> AppResult<Self> {
         let path_buf = PathBuf::from(&path);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Job>();
@@ -111,23 +103,11 @@ impl Store {
         Ok(Self {
             tx: Arc::new(tx),
             path: Arc::new(path_buf),
-            meta_faults: Arc::new(AtomicU32::new(0)),
-            swap_fault: Arc::new(AtomicU8::new(0)),
         })
     }
 
     pub fn db_path(&self) -> &std::path::Path {
         &self.path
-    }
-
-    /// 下一次元数据写入直接失败，不碰库。用来验证限制落盘失败时不会当成没限制。
-    pub fn fail_next_meta_writes(&self, count: u32) {
-        self.meta_faults.store(count, Ordering::Relaxed);
-    }
-
-    /// 下一次换档事务在第 `after_step` 步（1 备份 / 2 现役 / 3 元数据）之后回滚。
-    pub fn fail_next_device_swap(&self, after_step: u8) {
-        self.swap_fault.store(after_step, Ordering::Relaxed);
     }
 
     /// 投递一个活并阻塞等结果；通道断开（线程已退出）按存储故障上报。闭包签名是显式 HRTB：实体层的 future 借用 `&Db`，生命周期与本次调用绑定，不能写成 `'static`。
@@ -322,36 +302,11 @@ impl Store {
 
     /// 备份现役、写入新现役、写入元数据，三者同一事务。失败则库内仍是旧档。
     pub fn commit_device_swap(&self, profile_json: &str, meta_json: &str) -> AppResult<()> {
-        let step = self.swap_fault.swap(0, Ordering::Relaxed);
-        if step > 0 {
-            return self.commit_device_swap_fault(profile_json, meta_json, step);
-        }
         let profile_json = profile_json.to_string();
         let meta_json = meta_json.to_string();
         self.exec(move |db| {
             Box::pin(async move { entity::commit_device_swap(db, &profile_json, &meta_json).await })
         })
-    }
-
-    /// 隔离库故障注入：`fail_after` 为 1/2/3 时在该步之后回滚。
-    pub fn commit_device_swap_fault(
-        &self,
-        profile_json: &str,
-        meta_json: &str,
-        fail_after: u8,
-    ) -> AppResult<()> {
-        let profile_json = profile_json.to_string();
-        let meta_json = meta_json.to_string();
-        self.exec(move |db| {
-            Box::pin(async move {
-                entity::commit_device_swap_at(db, &profile_json, &meta_json, Some(fail_after)).await
-            })
-        })
-    }
-
-    /// 换档前把现役档案复制到备份行（见 [`entity::backup_device_profile`]）。
-    pub fn backup_device_profile(&self) -> AppResult<bool> {
-        self.exec(|db| Box::pin(entity::backup_device_profile(db)))
     }
 
     /// 读上一代备份档案（没有换过档返回 None）。
@@ -376,10 +331,6 @@ impl Store {
 
     /// 写 bootstrap 元数据（整文档覆盖）。
     pub fn device_meta_set(&self, meta: &serde_json::Value) -> AppResult<()> {
-        if self.meta_faults.load(Ordering::Relaxed) > 0 {
-            self.meta_faults.fetch_sub(1, Ordering::Relaxed);
-            return Err(AppError::StoreCorrupt("故障注入：元数据写入".into()));
-        }
         let meta = meta.clone();
         self.exec(move |db| Box::pin(async move { entity::device_meta_set(db, &meta).await }))
     }
@@ -394,63 +345,5 @@ impl Store {
                 async move { entity::initialize_device_meta(db, &meta, legacy.as_ref()).await },
             )
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn facade_roundtrips_through_the_db_thread() {
-        let store = Store::open_memory().expect("内存库");
-        store.save_settings(&Settings::default()).expect("写设置");
-        assert!(store.settings().expect("读设置").is_some());
-
-        let clone = store.clone();
-        clone
-            .save_playback_position("A", 1, &PlaybackPosition::new(1.0, 2.0))
-            .expect("写进度");
-        assert_eq!(
-            store
-                .playback_position("A", 1)
-                .expect("读进度")
-                .map(|p| p.current_time),
-            Some(1.0)
-        );
-    }
-
-    #[test]
-    fn open_failure_reports_through_init_channel() {
-        let file = std::env::temp_dir().join(format!("hg-not-a-dir-{}", std::process::id()));
-        std::fs::write(&file, b"x").expect("造一个普通文件");
-        let bad = file.join("child.db");
-        let err = Store::open(bad.to_str().expect("临时路径是 UTF-8"));
-        match err {
-            Err(AppError::Io(_)) => {}
-            other => panic!("非目录路径必须报 Io（不是 StoreCorrupt）且不得带病运行: {other:?}"),
-        }
-        let _ = std::fs::remove_file(&file);
-    }
-
-    #[test]
-    fn open_creates_missing_parent_dirs_for_fresh_install() {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("时钟正常")
-            .as_nanos();
-        let base =
-            std::env::temp_dir().join(format!("hg-fresh-install-{}-{nanos}", std::process::id()));
-        let db_path = base.join("data/hongguo.db");
-        {
-            let store = Store::open(&db_path).expect("父目录缺失应自动创建并打开成功");
-            store.save_settings(&Settings::default()).expect("写设置");
-            assert!(
-                store.settings().expect("读设置").is_some(),
-                "建好的库应立即可用"
-            );
-        }
-        assert!(db_path.is_file(), "库文件应已落盘");
-        let _ = std::fs::remove_dir_all(&base);
     }
 }

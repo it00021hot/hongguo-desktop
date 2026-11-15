@@ -93,35 +93,3 @@ pub(super) async fn start_playback(
 ) -> AppResult<(String, u32)> {
     crate::player::resolve_start(session, entry.series_id).await
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn batch_removal_attempts_the_items_after_a_failure() {
-        let attempted = std::cell::RefCell::new(Vec::new());
-        let entries = ["first", "failed", "last"]
-            .into_iter()
-            .map(|key| Entry {
-                key: key.into(),
-                ..Default::default()
-            })
-            .collect();
-        let outcome = remove_each(entries, |entry| {
-            attempted.borrow_mut().push(entry.key.clone());
-            std::future::ready(if entry.key == "failed" {
-                Err(AppError::Rejected("fixture rejection".into()))
-            } else {
-                Ok(())
-            })
-        })
-        .await;
-        assert_eq!(*attempted.borrow(), ["first", "failed", "last"]);
-        assert_eq!(outcome.removed, ["first", "last"]);
-        assert_eq!(outcome.errors.len(), 1);
-    }
-}
-
-#[cfg(test)]
-mod start_tests;

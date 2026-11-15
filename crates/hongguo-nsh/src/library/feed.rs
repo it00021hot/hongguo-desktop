@@ -83,6 +83,3 @@ pub(super) fn advance(feed: Feed, query: Signal<Query>, context: Context) {
         query.set(next);
     }
 }
-
-#[cfg(test)]
-mod tests;

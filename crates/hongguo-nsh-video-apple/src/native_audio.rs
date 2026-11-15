@@ -1,5 +1,3 @@
-#[cfg(all(target_os = "macos", feature = "test-support"))]
-pub(crate) mod probe;
 mod time;
 
 use hongguo_native_clock::{Clock, Control, NativeClock, NativePlayer, Position};

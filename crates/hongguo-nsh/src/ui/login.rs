@@ -41,7 +41,6 @@ pub(crate) fn login_dialog(
                     .child(
                         view().flex_1().items_center().justify_center().p_4().child(
                             view()
-                                .test_id("login-dialog")
                                 .relative()
                                 .w(move || {
                                     px(if window().width.0 >= 640.0 {

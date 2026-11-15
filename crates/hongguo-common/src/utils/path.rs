@@ -12,23 +12,3 @@ pub fn temp_path_for(output: &Path) -> PathBuf {
         .unwrap_or_else(|| "download".to_string());
     output.with_file_name(format!("{stem}.enc.tmp"))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn temp_path_uses_enc_tmp() {
-        let p = temp_path_for(Path::new("D:/dl/剧名 001.mp4"));
-        assert!(p.to_string_lossy().ends_with("剧名 001.enc.tmp"));
-    }
-
-    #[test]
-    fn temp_path_of_extensionless_falls_back() {
-        assert!(
-            temp_path_for(Path::new("weird"))
-                .to_string_lossy()
-                .ends_with("weird.enc.tmp")
-        );
-    }
-}

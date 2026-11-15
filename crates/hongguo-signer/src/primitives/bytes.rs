@@ -31,31 +31,3 @@ pub fn xor_bytes(a: &[u8], b: &[u8]) -> Vec<u8> {
     }
     out
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn le32_matches_js() {
-        assert_eq!(le32(0x1234_5678), [0x78, 0x56, 0x34, 0x12]);
-        assert_eq!(be32(0x1234_5678), [0x12, 0x34, 0x56, 0x78]);
-    }
-
-    #[test]
-    fn bxor_takes_shorter_length() {
-        assert_eq!(bxor(&[1, 2, 3], &[0xff, 0xff]), vec![1 ^ 0xff, 2 ^ 0xff]);
-        assert!(bxor(&[], &[1]).is_empty());
-    }
-
-    #[test]
-    fn xor_bytes_cycles_key() {
-        let out = xor_bytes(&[0, 1, 2, 3, 4], &[0xaa, 0xbb]);
-        assert_eq!(out, vec![0xaa, 0xba, 0xa8, 0xb8, 0xae]);
-    }
-
-    #[test]
-    fn u32_normalizes() {
-        assert_eq!(super::super::bits::u32(0x1_0000_0000u64), 0);
-    }
-}

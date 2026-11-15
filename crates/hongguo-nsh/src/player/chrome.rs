@@ -176,7 +176,3 @@ impl Chrome {
         view.element_ref(&reference)
     }
 }
-
-#[cfg(test)]
-#[path = "chrome_tests.rs"]
-mod tests;

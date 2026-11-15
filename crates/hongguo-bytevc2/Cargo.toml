@@ -25,5 +25,3 @@ hongguo-vvdec-sys = { path = "../hongguo-vvdec-sys", optional = true }
 # 运行时不链接、不调用 ffmpeg / librempeg。0.0.11 是当前 crates.io 最新版（MIT）。
 oxideav-h266 = { version = "=0.0.11", optional = true }
 oxideav-core = { version = "0.1.43", optional = true }
-
-[dev-dependencies]

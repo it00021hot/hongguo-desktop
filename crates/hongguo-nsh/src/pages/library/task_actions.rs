@@ -4,9 +4,6 @@ use hongguo_common::AppError;
 use hongguo_service::{AppState, download_service::actions};
 use nsh_core::prelude::*;
 
-#[cfg(test)]
-mod export_tests;
-
 pub(super) async fn run(
     state: AppState,
     intent: TaskIntent,

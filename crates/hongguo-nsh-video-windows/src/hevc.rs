@@ -1,6 +1,4 @@
 mod pool;
-#[cfg(feature = "test-support")]
-pub(crate) mod probe;
 mod submit;
 
 use hongguo_hevc::syntax::{Parser, Picture, ReferenceKind, ReferenceSurface};

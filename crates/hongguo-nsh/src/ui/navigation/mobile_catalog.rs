@@ -12,7 +12,6 @@ fn control_height() -> Points {
 
 pub(crate) fn mobile_catalog_header(channels: impl IntoElement) -> View {
     let mut header = view()
-        .test_id("mobile-catalog-header")
         .h(control_height())
         .flex_shrink_0()
         .flex_row()
@@ -22,7 +21,6 @@ pub(crate) fn mobile_catalog_header(channels: impl IntoElement) -> View {
         .bg(move || theme().background)
         .child(
             scroll()
-                .test_id("mobile-catalog-channels")
                 .horizontal()
                 .flex_1()
                 .min_w_0()

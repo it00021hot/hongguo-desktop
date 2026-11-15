@@ -1,5 +1,5 @@
 //! 纯 Rust 编解码：**媒体层的公共底座**——容器解析（demux）、MP4 写出（mp4）、HEVC 重封装（mux）、
-//! 流复制拼接（remux）、hvcC 参数集提取、HEIC 封面纯 Rust 解码（heif）、编码一致探测（codec_probe）。
+//! 流复制拼接（remux）、hvcC 参数集提取、编码一致探测（codec_probe）。
 //! 归档编码由原生平台编码器完成，
 //! 聚合在 `crates/hongguo-media-platform`——它依赖本 crate，反向不成立；本 crate 不依赖 tauri。
 
@@ -7,7 +7,6 @@ pub mod backend;
 pub mod codec_probe;
 pub mod demux;
 pub mod disk_space;
-pub mod heif;
 pub mod hevc;
 pub mod mp4;
 pub mod mux;

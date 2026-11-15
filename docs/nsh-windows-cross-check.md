@@ -43,16 +43,9 @@ cargo xwin clippy -p hongguo-nsh --all-targets --target x86_64-pc-windows-msvc \
 不是 FFmpeg 的 D3D11VA/D3D12VA 候选对比。原有 FFmpeg decoder-audit 已删除。
 
 扩展 HEVC 现优先直接 D3D11 VLD（NV12/P010），不加载系统 HEVC MFT；失败回退 libde265。
-真实目标检查加入 `-p hongguo-nsh-video-windows --features hongguo-nsh-video-windows/test-support`，
-会同时编译独立 `hevc_d3d11_probe`。沿用上方交叉环境，以以下 Cargo 命令实际链接该探针：
-
-```sh
-cargo xwin build -p hongguo-nsh-video-windows --features test-support --example hevc_d3d11_probe --release --target x86_64-pc-windows-msvc
-```
-
-探针须在 Windows GPU 上运行，不能在 Mac 上把编译成功记作硬解成功。
-它不使用 HEVC MFT，不降级为软件被测路径；同时对照 libde265 检查完整 Main/Main10 像素、PTS、
-重排/尾帧及表面租约。运行时与主包一样需要随包的 libde265.dll，无额外工具依赖。
+测试专用 `hevc_d3d11_probe` 与 `test-support` feature 已移除。
+沿用上方交叉环境检查正式播放器；Main/Main10 像素、PTS、重排/尾帧及表面租约
+仍需在 Windows GPU 上验收，不能把 Mac 上的编译成功记作硬解成功。
 
 Windows SDK 的 libde265 DLL 使用 x86-64 基线、MSVC ABI 和静态 CRT；
 SIMD 按对象编译并在运行期分派，不使用全局 AVX2。

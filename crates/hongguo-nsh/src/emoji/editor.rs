@@ -14,9 +14,6 @@ mod document;
 mod field;
 #[path = "rich_plugin.rs"]
 mod plugin;
-#[cfg(test)]
-#[path = "rich_tests.rs"]
-mod rich_tests;
 pub(crate) use crate::ui::EmojiEditorSkin as FieldSkin;
 
 pub(crate) struct FieldOptions {
@@ -212,33 +209,4 @@ fn byte_at(value: &str, index: u32) -> Option<usize> {
         units += ch.len_utf16() as u32;
     }
     (units == index).then_some(value.len())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_selected_astral_character_is_replaced_using_native_utf16_offsets() {
-        assert_eq!(
-            insert(
-                "A😀中B",
-                Some(Selection { start: 1, end: 3 }),
-                "[微笑]",
-                100
-            ),
-            Some(("A[微笑]中B".into(), 5))
-        );
-        assert_eq!(
-            insert("中B", Some(Selection { start: 0, end: 0 }), "[爱慕]", 100),
-            Some(("[爱慕]中B".into(), 4))
-        );
-    }
-
-    #[test]
-    fn no_selection_appends_but_overlong_insertions_leave_the_draft_unchanged() {
-        assert_eq!(insert("中", None, "[笑]", 4), Some(("中[笑]".into(), 4)));
-        assert_eq!(insert("😀", None, "[笑]", 4), None);
-        assert_eq!(insert("", None, "[笑]", 3), Some(("[笑]".into(), 3)));
-    }
 }

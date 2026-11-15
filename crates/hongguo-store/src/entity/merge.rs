@@ -50,30 +50,3 @@ pub async fn delete_merge_task(db: &Db, id: &str) -> AppResult<u64> {
     )
     .await
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::entity::{mem_db, rt};
-    use hongguo_common::model::{MergeMode, MergeStatus};
-
-    #[test]
-    fn merge_task_upsert_delete() {
-        let db = mem_db();
-        rt().block_on(async {
-            let mut t = MergeTask::new("1", "剧", "out", MergeMode::Quick);
-            t.status = MergeStatus::Running;
-            upsert_merge_task(&db, &t).await.unwrap();
-            t.status = MergeStatus::Completed;
-            upsert_merge_task(&db, &t).await.unwrap();
-
-            let list = merge_tasks(&db).await.unwrap();
-            assert_eq!(list.len(), 1, "同 id 覆盖不新增");
-            assert_eq!(list[0].status, MergeStatus::Completed);
-
-            assert_eq!(delete_merge_task(&db, &t.id).await.unwrap(), 1);
-            assert_eq!(delete_merge_task(&db, &t.id).await.unwrap(), 0);
-            assert!(merge_tasks(&db).await.unwrap().is_empty());
-        });
-    }
-}

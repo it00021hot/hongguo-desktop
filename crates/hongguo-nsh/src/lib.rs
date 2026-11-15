@@ -15,19 +15,13 @@ mod notifications;
 mod pages;
 mod personal_sources;
 mod player;
-mod preview;
 mod shortcuts;
-mod typography_preview;
 mod ui;
 mod update;
 mod view_memory;
 mod window_modes;
 
 pub use bootstrap::configure_mobile_data_root;
-pub use preview::LayoutPreview;
-pub use preview::UiPreview;
-pub use preview::VisibilityPlaybackProbe;
-pub use typography_preview::TypographyPreview;
 
 use i18n::tr;
 use nsh_base::theme;
@@ -36,9 +30,6 @@ use nsh_core::prelude::*;
 #[native_module("hongguo/native")]
 fn native(registry: &mut Registry) {
     registry.register::<App>();
-    registry.register::<UiPreview>();
-    registry.register::<LayoutPreview>();
-    registry.register::<TypographyPreview>();
 }
 
 #[native_components(macos)]

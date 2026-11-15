@@ -11,7 +11,6 @@ pub(crate) fn enhancement_settings(
     message: Signal<SharedString>,
 ) -> View {
     view()
-        .test_id("enhancement-settings")
         .gap_4()
         .child(
             view()

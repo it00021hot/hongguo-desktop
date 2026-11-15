@@ -221,7 +221,6 @@ pub(super) fn row(state: State, events: Events) -> View {
             },
         ));
     let row = view()
-        .test_id(&format!("comment-{}", item.get_untracked().id()))
         .flex_row()
         .items_start()
         .gap(px(if review {

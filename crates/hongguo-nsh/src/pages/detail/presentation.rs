@@ -107,7 +107,6 @@ pub(super) fn render(state: DetailState) -> View {
         .relative()
         .flex_1()
         .min_h_0()
-        .test_id("detail-scroll")
         .child(when(
             move || tab.get() != "comments",
             move || {
@@ -208,13 +207,15 @@ pub(super) fn render(state: DetailState) -> View {
         .child(when(
             move || tab.get() == "comments",
             move || {
-                view().flex_1().min_h_0().child(match session {
-                    Some(session) => {
-                        crate::player::reviews_with_header(session, nav, id.get(), header())
-                            .into_element()
-                    }
-                    None => crate::player::reviews_preview_with_header(header()).into_element(),
-                })
+                view()
+                    .flex_1()
+                    .min_h_0()
+                    .child(crate::player::reviews_with_header(
+                        session,
+                        nav,
+                        id.get(),
+                        header(),
+                    ))
             },
         ))
         .child(when(

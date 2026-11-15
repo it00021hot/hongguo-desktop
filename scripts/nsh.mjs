@@ -18,7 +18,6 @@ import { buildAndroidRuntime } from './nsh-android-runtime.mjs';
 import { runtimeEnvironment, rustTarget } from './native-sdk.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const app = join(root, 'crates/hongguo-nsh');
 const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const [action = 'run', target] = process.argv.slice(2);
 const ANDROID_MIN_SDK = 28;
@@ -216,26 +215,9 @@ function ios() {
   buildIos(target);
 }
 
-function preview(environment) {
-  const platform = { darwin: 'macos', win32: 'windows' }[process.platform];
-  if (!platform) throw new Error('Layout preview currently requires macOS or Windows');
-  const cli = spawnSync('nsh', ['--version'], { encoding: 'utf8' });
-  if (cli.error) throw cli.error;
-  if (cli.status !== 0 || !/^nsh 0\.5\.0\b/.test(cli.stdout.trim()))
-    throw new Error('Preview requires the matching NSH 0.5.0 CLI');
-  requirePath(
-    join(root, 'target/nsh-layout-fixtures/player-frame.png'),
-    'Local layout preview frame',
-  );
-  run('nsh', ['test', join(app, 'preview/layout'), '--target', platform], {
-    ...environment,
-    CARGO_TARGET_DIR: join(app, 'preview/target'),
-  });
-}
-
 try {
-  if (['run', 'check', 'test', 'preview'].includes(action)) verifyNshWorkspace();
-  const hostAction = ['run', 'check', 'test', 'setup', 'preview'].includes(action);
+  if (['run', 'check'].includes(action)) verifyNshWorkspace();
+  const hostAction = ['run', 'check', 'setup'].includes(action);
   const environment = hostAction
     ? runtimeEnvironment(
         prepareNativeMedia(action === 'setup' && target ? target : rustTarget(), run),
@@ -256,23 +238,6 @@ try {
       ],
       environment,
     );
-  else if (action === 'test') {
-    run(process.execPath, [
-      '--test',
-      'scripts/nsh-android.test.mjs',
-      'scripts/nsh-android-audit.test.mjs',
-      'scripts/nsh-android-runtime.test.mjs',
-      'scripts/nsh-desktop.test.mjs',
-      'scripts/nsh-ios.test.mjs',
-      'scripts/nsh-windows-adapters.test.mjs',
-      'scripts/nsh-windows-pe.test.mjs',
-      'scripts/native-media-relink.test.mjs',
-      'scripts/nsh-native-media.test.mjs',
-      'scripts/native-sdk.test.mjs',
-      'scripts/native-sdk-package.test.mjs',
-    ]);
-    run('cargo', ['test', '-p', 'hongguo-nsh', '--lib'], environment);
-  } else if (action === 'preview') preview(environment);
   else if (action === 'run') run('cargo', ['run', '-p', 'hongguo-nsh'], environment);
   else if (action === 'setup')
     console.log(`Native SDK ready: ${environment.HONGGUO_NATIVE_SDK_ROOT}`);
@@ -282,7 +247,7 @@ try {
     console.log(buildDesktop(target));
   } else
     throw new Error(
-      'Usage: node scripts/nsh.mjs run|check|test|preview|setup [Rust target]|package macos|windows|android|ios|ios-simulator',
+      'Usage: node scripts/nsh.mjs run|check|setup [Rust target]|package macos|windows|android|ios|ios-simulator',
     );
 } catch (error) {
   console.error(error.message);

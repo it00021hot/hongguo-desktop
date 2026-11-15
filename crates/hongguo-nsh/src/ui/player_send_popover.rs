@@ -53,8 +53,6 @@ pub(crate) fn player_send_popover(
                     .rounded(super::radii::card())
                     .shadow_lg()
             })
-            .child(when(open, move || {
-                view().test_id("player-danmaku-send-popup").child(content())
-            })),
+            .child(when(open, move || view().child(content()))),
     )
 }

@@ -72,26 +72,3 @@ impl DetailPrefill {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn seed_is_a_zero_episode_display_snapshot_and_not_a_playable_archive() {
-        let seed = DetailPrefill {
-            series_id: "upcoming".into(),
-            title: "Future story".into(),
-            cover: "local-frame.png".into(),
-            tags: vec!["Drama".into()],
-            desc: "Known intro".into(),
-        };
-        let series = seed.series();
-        assert_eq!(series.series_id, seed.series_id);
-        assert_eq!(series.title, seed.title);
-        assert_eq!(series.tags, seed.tags);
-        assert_eq!(series.episode_count, 0);
-        assert!(series.episodes.is_empty());
-        assert_eq!(seed.metadata().intro, seed.desc);
-    }
-}

@@ -1,20 +1,14 @@
 mod actions;
-#[cfg(test)]
-pub(crate) mod cache_tests;
 mod data;
 mod date;
 mod feed;
 mod fetch;
-mod fixtures;
 mod model;
 mod notices;
 mod posters;
 mod presentation;
 mod rows;
 mod toolbar;
-
-#[cfg(test)]
-mod notices_tests;
 
 use crate::{
     bridge,
@@ -84,10 +78,6 @@ impl Kind {
             Self::Reservations => "reservation.empty",
         }
     }
-}
-
-pub(crate) fn preview(nav: Navigation, kind: Kind) -> Screen {
-    fixtures::page(nav, kind)
 }
 
 pub(crate) fn page(session: SessionHandle, nav: Navigation, kind: Kind) -> Screen {

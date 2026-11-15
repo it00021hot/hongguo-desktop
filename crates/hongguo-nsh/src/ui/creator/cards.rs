@@ -58,7 +58,6 @@ pub(crate) fn creator_grid(
                         .child(card(item, hovered).on_press(move || open(item.get_untracked().id)))
                 },
             )
-            .test_id("creator-works")
             .viewport(nsh_core::ListViewport::Parent)
             .columns(columns)
             .column_gap(px(12.0))
@@ -217,7 +216,6 @@ pub(crate) fn creator_skeleton_grid() -> View {
     let width = signal(0.0_f32);
     let columns = computed(move || columns(window().width.0));
     view()
-        .test_id("creator-works-loading")
         .w_full()
         .mt_3()
         .on_layout(move |bounds: &Bounds<Points>| width.set(bounds.size.width.0))

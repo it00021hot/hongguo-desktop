@@ -91,20 +91,3 @@ impl StorageRow {
             .contains(&query.trim().to_lowercase())
     }
 }
-
-impl StorageSnapshot {
-    pub fn remove(&mut self, id: Option<&str>) -> usize {
-        let mut removed = 0;
-        self.rows.retain(|row| {
-            if id.is_none_or(|id| row.id == id) {
-                self.bytes = self.bytes.saturating_sub(row.bytes);
-                self.files = self.files.saturating_sub(row.files);
-                removed += row.files;
-                false
-            } else {
-                true
-            }
-        });
-        removed
-    }
-}

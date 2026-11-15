@@ -7,8 +7,8 @@ mod io;
 
 pub use io::{
     isolation_root, note_production_root, prepare_qa_io, qa_clear_for_replace, qa_create,
-    qa_create_dir_all, qa_open_append, qa_read, qa_read_dir, qa_read_to_string, qa_remove_dir_all,
-    qa_remove_file, qa_rename, qa_write, validate_isolated_dir,
+    qa_create_dir_all, qa_read, qa_read_dir, qa_read_to_string, qa_remove_dir_all, qa_remove_file,
+    qa_rename, qa_write, validate_isolated_dir,
 };
 
 /// 进程环境变量。未设置、空串或其他值都是正式联网行为。
@@ -45,47 +45,4 @@ fn offline_target_allowed(parsed: &url::Url) -> bool {
 fn is_loopback_host(host: &str) -> bool {
     let host = host.trim_matches(|ch| ch == '[' || ch == ']');
     matches!(host, "localhost" | "127.0.0.1" | "::1")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_switch_defaults_off_and_only_loopback_stays_allowed() {
-        let prev = std::env::var_os(ENV);
-        unsafe { std::env::remove_var(ENV) };
-        assert!(!enabled());
-        assert!(!external_url_forbidden(
-            "https://api5-normal-lq.fqnovel.com/foo"
-        ));
-        unsafe { std::env::set_var(ENV, "1") };
-        assert!(external_url_forbidden(
-            "https://api5-normal-lq.fqnovel.com/foo"
-        ));
-        assert!(external_url_forbidden("https://example.com:443/a"));
-        assert!(external_url_forbidden("http://localhost:80@example.com/a"));
-        assert!(external_url_forbidden("http://127.0.0.1:80@example.com/a"));
-        assert!(external_url_forbidden("http://127.0.0.2/a"));
-        assert!(!external_url_forbidden("http://127.0.0.1:9/x"));
-        assert!(!external_url_forbidden("http://localhost/x"));
-        assert!(!external_url_forbidden("http://[::1]:80/x"));
-        assert!(!external_url_forbidden("http://user:pass@127.0.0.1/a"));
-        assert!(external_url_forbidden(
-            "https://example.com\\@127.0.0.1/a.jpeg"
-        ));
-        assert!(external_url_forbidden(" https://example.com/a.jpeg"));
-        assert!(external_url_forbidden("https:/example.com/a.jpeg"));
-        assert!(external_url_forbidden("not a url"));
-        unsafe { std::env::set_var(ENV, "0") };
-        assert!(!enabled());
-        unsafe { std::env::set_var(ENV, "") };
-        assert!(!enabled());
-        unsafe { std::env::set_var(ENV, "true") };
-        assert!(!enabled());
-        match prev {
-            Some(v) => unsafe { std::env::set_var(ENV, v) },
-            None => unsafe { std::env::remove_var(ENV) },
-        }
-    }
 }

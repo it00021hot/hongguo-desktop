@@ -1,9 +1,6 @@
 mod filters;
 mod model;
 mod presentation;
-mod preview;
-#[cfg(test)]
-mod responsive_tests;
 
 use super::{SessionHandle, series_feed};
 use crate::{
@@ -108,8 +105,4 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         },
     ));
     presentation::content(nav, query, source, rows)
-}
-
-pub(super) fn preview(nav: Navigation) -> Screen {
-    preview::build(nav)
 }

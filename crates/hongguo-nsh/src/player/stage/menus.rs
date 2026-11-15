@@ -44,19 +44,6 @@ pub(crate) struct SeasonState {
     pub(crate) downloaded: Memo<Vec<u32>>,
 }
 
-#[cfg(test)]
-impl SeasonState {
-    pub(super) fn empty() -> Self {
-        Self {
-            items: computed(Vec::new),
-            loading: computed(|| false),
-            error: computed(SharedString::default),
-            reserving: computed(|| false),
-            downloaded: computed(Vec::new),
-        }
-    }
-}
-
 impl MenuState {
     pub(super) fn set_open(self, panel: Panel, open: bool) {
         if open {
@@ -209,7 +196,6 @@ pub(crate) fn volume(
         trigger,
         move || {
             view()
-                .test_id("player-volume-panel")
                 .items_center()
                 .gap_2()
                 .child(

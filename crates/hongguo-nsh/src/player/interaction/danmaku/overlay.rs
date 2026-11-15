@@ -134,7 +134,6 @@ fn caption(
         .absolute()
         .left_0()
         .top(px(flight.lane as f32 * (flight.font_px + 10.0)))
-        .test_id(&format!("danmaku-{}", flight.item.comment_id))
         .on_layout(move |frame: &Bounds<Points>| item_width.set(frame.size.width.0))
         .child(emoji::render(
             flight.item.text,

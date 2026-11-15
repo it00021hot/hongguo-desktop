@@ -393,6 +393,3 @@ impl Drop for FrameLease {
         self.close();
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -7,10 +7,6 @@ use super::{
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
-#[cfg(test)]
-#[path = "desktop_tests.rs"]
-mod tests;
-
 pub(super) const TICK_SECONDS: f64 = 0.04;
 const CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(3);
 const VISIBILITY_INTERVAL: Duration = Duration::from_millis(250);

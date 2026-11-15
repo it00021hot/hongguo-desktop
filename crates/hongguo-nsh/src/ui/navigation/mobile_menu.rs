@@ -72,42 +72,37 @@ impl MainMenu {
             move || tr("nav.mainMenu"),
             move || {
                 let navigation = scroll()
-                    .test_id("mobile-menu-scroll")
                     .flex_1()
                     .min_h_0()
                     .keyboard_taps(KeyboardTaps::Always)
-                    .child(
-                        view().test_id("mobile-main-menu").gap_1().children(
-                            DESKTOP_SECTIONS
-                                .into_iter()
-                                .map(move |(key, glyph, route)| {
-                                    let selected = route.clone();
-                                    let destination = route.clone();
-                                    ui::controls::surface(ui::ButtonVariant::Quiet)
-                                        .accessibility_label(move || tr(key))
-                                        .w_full()
-                                        .min_h(px(48.0))
-                                        .px_3()
-                                        .py_2()
-                                        .flex_row()
-                                        .items_center()
-                                        .justify_start()
-                                        .gap_3()
-                                        .selected(move || self.nav.is_selected(&selected))
-                                        .child(ui::icon(glyph).size_5())
-                                        .child(
-                                            text(move || tr(key))
-                                                .text_base()
-                                                .font_weight(FontWeight::NORMAL),
-                                        )
-                                        .on_press(move || {
-                                            self.restore_focus.replace(false);
-                                            self.open.set(false);
-                                            self.nav.push(destination.clone());
-                                        })
-                                }),
-                        ),
-                    );
+                    .child(view().gap_1().children(DESKTOP_SECTIONS.into_iter().map(
+                        move |(key, glyph, route)| {
+                            let selected = route.clone();
+                            let destination = route.clone();
+                            ui::controls::surface(ui::ButtonVariant::Quiet)
+                                .accessibility_label(move || tr(key))
+                                .w_full()
+                                .min_h(px(48.0))
+                                .px_3()
+                                .py_2()
+                                .flex_row()
+                                .items_center()
+                                .justify_start()
+                                .gap_3()
+                                .selected(move || self.nav.is_selected(&selected))
+                                .child(ui::icon(glyph).size_5())
+                                .child(
+                                    text(move || tr(key))
+                                        .text_base()
+                                        .font_weight(FontWeight::NORMAL),
+                                )
+                                .on_press(move || {
+                                    self.restore_focus.replace(false);
+                                    self.open.set(false);
+                                    self.nav.push(destination.clone());
+                                })
+                        },
+                    )));
                 view()
                     .flex_1()
                     .min_h_0()

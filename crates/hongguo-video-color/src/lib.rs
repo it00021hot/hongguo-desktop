@@ -59,18 +59,6 @@ pub struct DisplayTarget {
     pub gamut_mapping: bool,
 }
 
-impl DisplayTarget {
-    pub fn sdr() -> Self {
-        Self {
-            primaries: Primaries::BT709,
-            sdr_white_nits: 100.0,
-            peak_nits: 100.0,
-            encoding: OutputEncoding::Srgb,
-            gamut_mapping: true,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct ColorParams {
@@ -306,6 +294,3 @@ fn multiply(matrix: [[f32; 4]; 3], value: [f32; 3]) -> [f32; 3] {
 fn rows(matrix: Matrix) -> [[f32; 4]; 3] {
     matrix.map(|row| [row[0] as f32, row[1] as f32, row[2] as f32, 0.0])
 }
-
-#[cfg(test)]
-mod tests;

@@ -27,7 +27,6 @@ pub(crate) fn comment_panel(
                     .on_cancel(close)
                     .child(
                         view()
-                            .test_id("player-comments-panel")
                             .w(move || px(380.0_f32.min(geometry.viewport.get().0 * 0.85)))
                             .h(move || px(geometry.viewport.get().1 * 0.68))
                             .rounded_tl(px(12.0))

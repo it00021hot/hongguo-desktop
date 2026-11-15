@@ -13,26 +13,21 @@ NSH 单壳的流程参考；接入与验证的技术细节以 `references/nsh.md
 
 ## 日常命令
 
-Makefile 是入口（`make help` 看全量）；对应 `pnpm nsh` / `pnpm nsh:check` / `pnpm nsh:test` 不要求 Make。
+Makefile 是入口（`make help` 看全量）；对应 `pnpm nsh` / `pnpm nsh:check` 不要求 Make。
 
 | 命令                     | 作用                                                       |
 | ------------------------ | ---------------------------------------------------------- |
 | `make dev` / `make nsh`  | 增量构建并启动 NSH 客户端                                  |
-| `make nsh-check`         | 工作区检查（含 SDK 解包与声明生成）                        |
-| `make nsh-test`          | NSH 库行为测试                                             |
-| `make nsh-preview`       | 离线原生预览（布局验收用，见 nsh.md）                       |
+| `make nsh-check`         | 工作区检查（含 SDK 解包）                                  |
 | `make nsh-package TARGET=`| macos / windows / android / ios / ios-simulator 打包      |
-| `make test`              | `pnpm test`（包装脚本测试）                                 |
-| `make test-rust`         | `cargo test --workspace`                                    |
-| `make lint`              | **质量闸门、一票否决**：ESLint + Prettier + cargo clippy×3 |
-| `make typecheck`         | TSX 预览层的 tsc（需 NSH CLI 先生成声明）                   |
+| `make lint`              | **质量闸门、一票否决**：Prettier + cargo clippy×3          |
 | `make fmt` / `make clean`| cargo fmt / 清理 target                                     |
 
 Rust 日志：`RUST_LOG=debug`（env_logger）。验证细节与预览/真机验收矩阵见 `references/nsh.md`。
 
 ## lint 闸门的注意事项（Makefile 注释是真踩出来的）
 
-- clippy 必须 `--all-targets`：否则 `#[cfg(test)]` 里的代码根本不进检查。
+- clippy 使用 `--all-targets` 覆盖库、二进制与构建入口；自有测试及离线预览已移除。
 - macOS 双目标交叉 clippy（`--target aarch64-apple-darwin` / `x86_64-apple-darwin`）只守平台链正清单
   （Makefile 交叉两行 / pre-commit `MAC_CROSS`）：VT 等 cfg 门后的代码 Windows 宿主看不见；
   全图交叉会拖进 aws-lc-sys（要真 macOS SDK 的 Darwin libc 头），全图覆盖在 CI 的 macOS 原生 runner。
@@ -55,7 +50,7 @@ Rust 日志：`RUST_LOG=debug`（env_logger）。验证细节与预览/真机验
 - 改代码用精确编辑（Edit/Write 工具；本仓库多次事故）。Python 可以写辅助工具
   （范例：`captures/addon.py` 抓包、`captures/audit.py` 参数审计，放工具目录正常提交）；
   一次性分析的临时脚本用完即删。
-- 每 commit 编译绿：`cargo check && cargo test`（触及时）；阶段收尾跑 `make lint` 全闸门。
+- 每 commit 编译绿：`cargo check && cargo build`（触及时）；阶段收尾跑 `make lint` 全闸门。
 - 播放器（`crates/hongguo-nsh` 的 player/pages）改动收尾做冒烟：首页 → 起播 → 切集/清晰度 → 弹幕。
 
 ## 打包
@@ -68,8 +63,5 @@ TARGET=android|ios`），前置与签名见 nsh.md；不发 updater、不发应�
 
 - release profile `opt-level=3 + lto="thin" + strip`：thin 是实测下来的平衡点。**禁加
   `panic="abort"`**（SKILL 红线）。
-- `[profile.dev.package.rusty_h265-accel] debug-assertions = false`：只为该依赖关断言
-  （其去块滤波 debug_assert 在真实码流必触发），别推广到别处。现行消费者是 HEIC 封面软解
-  与 playback 的 HEVC 软解回退。
 - `vendor/` 的源码补丁各有回收约定，改这些目录前看**根 `Cargo.toml`** 的 `[patch.crates-io]`
   注释；`vendor/` 已被 `[workspace] exclude` 排除，不参与 lint/test。

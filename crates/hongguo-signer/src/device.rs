@@ -71,9 +71,6 @@ pub struct RegisterFingerprint {
     pub rom_version: &'static str,
 }
 
-/// release_build 的时间戳尾巴（注册 JSON 实流形态）
-const REGISTER_BUILD_STAMP: &str = "1701234567";
-
 impl RegisterFingerprint {
     /// 渠道号：官方 App 的**构建渠道** [`BUILD_CHANNEL`]（注册体 / settings query / 取流 query 三处一致；品牌渠道形态是竞品）。
     pub fn channel(&self) -> String {
@@ -98,15 +95,6 @@ impl RegisterFingerprint {
         )
     }
 
-    /// AppLog `custom.web_ua`（WebView 形态）
-    pub fn web_ua(&self) -> String {
-        format!(
-            "Mozilla/5.0 (Linux; Android {}; {} Build/{}; wv) AppleWebKit/537.36 \
-             (KHTML, like Gecko) Version/4.0 Chrome/120.0.0.0 Mobile Safari/537.36",
-            self.os, self.display, self.build
-        )
-    }
-
     /// display_density 按 dpi 档位映射（xxxhdpi 520+ / xxhdpi 400+ / hdpi）
     pub fn display_density(&self) -> &'static str {
         if self.dpi >= 520 {
@@ -125,11 +113,6 @@ impl RegisterFingerprint {
             .split_once('*')
             .unwrap_or((self.resolution, self.resolution));
         format!("{h}x{w}")
-    }
-
-    /// AppLog release_build（Build 号 + 实流时间戳尾巴）
-    pub fn release_build(&self) -> String {
-        format!("{}_{}", self.build, REGISTER_BUILD_STAMP)
     }
 }
 
@@ -301,18 +284,6 @@ fn default_user_agent() -> String {
 }
 
 impl DeviceProfile {
-    /// 从静态键值对构造（测试与静态兜底档案用）。
-    pub fn from_pairs(pairs: &[(&'static str, &'static str)], user_agent: &str) -> Self {
-        Self {
-            fields: pairs
-                .iter()
-                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-                .collect(),
-            user_agent: user_agent.to_string(),
-            ttreq: None,
-        }
-    }
-
     /// 从动态键值对构造（注册指纹的渠道号等字段是运行时拼装的）。
     pub fn from_owned_fields(fields: Vec<(String, String)>, user_agent: String) -> Self {
         Self {
@@ -355,9 +326,6 @@ impl DeviceProfile {
     /// [`REGISTER_FINGERPRINTS`] 池确定性抽取，**不带** device_id/iid（首次注册
     /// query 里不能有空值形态的字段）；cdid/openudid 由调用方生成后填入，注册
     /// 请求与产物档案共用本构造。
-    ///
-    /// 不 `#[cfg(test)]` 门控：下游 crate（`hongguo-api` 的 `register`）的测试要用，
-    /// 而依赖 crate 对下游以非 test 方式编译，门控项会消失。
     pub fn fresh_register_profile(cdid: &str, openudid: &str) -> Self {
         Self::register_profile_with(fingerprint_for_cdid(cdid), cdid, openudid)
     }
@@ -596,275 +564,4 @@ pub fn device_proto(cdid: &str, device_id: &str) -> Vec<u8> {
         (36, FieldValue::Str(fp.brand.to_string()), FieldType::Str),
         (38, FieldValue::SInt(31), FieldType::SInt),
     ])
-}
-
-/// JS 移植时的原始采样（Redmi 真机读数 + Redmi 机型组，除 device_id 外全部固定）：
-/// **不再用于生产**，只供 `assemble_with_proto` 的黄金向量锚——输入与当年 JS 移植时逐字节一致，锚住算法未漂移。
-/// `version_name` 保留但不使用：现版 JS 的 `deviceProto(deviceId, versionName)` 同样收了它却没写进 body。
-pub fn extracted_proto_fixed(device_id: &str) -> Vec<u8> {
-    proto(&[
-        (1, FieldValue::SInt(1), FieldType::SInt),
-        (2, FieldValue::SInt(2), FieldType::SInt),
-        (3, FieldValue::Str(APP_ID.to_string()), FieldType::Str),
-        (4, FieldValue::Str(device_id.to_string()), FieldType::Str),
-        (
-            5,
-            FieldValue::Str("Ai6svO3PyrwDOUSmO6ZcResxu".to_string()),
-            FieldType::Str,
-        ),
-        (6, FieldValue::Str("!noperm!".to_string()), FieldType::Str),
-        (7, FieldValue::SInt(-888_888), FieldType::SInt),
-        (8, FieldValue::SInt(-888_888), FieldType::SInt),
-        (9, FieldValue::SInt(3), FieldType::SInt),
-        (10, FieldValue::SInt(-888_888), FieldType::SInt),
-        (11, FieldValue::Str("!notset!".to_string()), FieldType::Str),
-        (
-            12,
-            FieldValue::Str("Asia/Shanghai,8".to_string()),
-            FieldType::Str,
-        ),
-        (13, FieldValue::Str("zh_CN".to_string()), FieldType::Str),
-        (14, FieldValue::SInt(4), FieldType::SInt),
-        (
-            16,
-            FieldValue::Float(255.249_938_964_843_75),
-            FieldType::Float,
-        ),
-        (
-            17,
-            FieldValue::Float(35.585_990_905_761_72),
-            FieldType::Float,
-        ),
-        (
-            18,
-            FieldValue::Float(3.467_449_188_232_422),
-            FieldType::Float,
-        ),
-        (
-            19,
-            FieldValue::Float(3.467_449_188_232_422),
-            FieldType::Float,
-        ),
-        (
-            20,
-            FieldValue::Float(255.175_491_333_007_8),
-            FieldType::Float,
-        ),
-        (
-            21,
-            FieldValue::Float(42.175_441_741_943_36),
-            FieldType::Float,
-        ),
-        (22, FieldValue::Str("16".to_string()), FieldType::Str),
-        (23, FieldValue::SInt(41), FieldType::SInt),
-        (24, FieldValue::SInt(36), FieldType::SInt),
-        (25, FieldValue::SInt(1_728_388_016_635), FieldType::SInt),
-        (26, FieldValue::SInt(1_728_388_016_635), FieldType::SInt),
-        (27, FieldValue::SInt(1_728_388_016_635), FieldType::SInt),
-        (28, FieldValue::SInt(1_728_388_016_637), FieldType::SInt),
-        (29, FieldValue::SInt(-1), FieldType::SInt),
-        (
-            30,
-            FieldValue::Str("25053RT47C".to_string()),
-            FieldType::Str,
-        ),
-        (31, FieldValue::Str("Redmi".to_string()), FieldType::Str),
-        (
-            32,
-            FieldValue::Str("25053RT47C".to_string()),
-            FieldType::Str,
-        ),
-        (
-            33,
-            FieldValue::Str("25053RT47C".to_string()),
-            FieldType::Str,
-        ),
-        (34, FieldValue::Str("Xiaomi".to_string()), FieldType::Str),
-        (35, FieldValue::Str("Redmi".to_string()), FieldType::Str),
-        (36, FieldValue::Str("Redmi".to_string()), FieldType::Str),
-        (38, FieldValue::SInt(31), FieldType::SInt),
-    ])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn anonymous_profile_has_no_device_identity() {
-        let device = anonymous_profile("0f0f0f0f-0000-4000-8000-000000000000");
-        assert_eq!(device.get("cdid"), "0f0f0f0f-0000-4000-8000-000000000000");
-        assert_eq!(device.get("iid"), "");
-        assert_eq!(device.get("device_id"), "");
-        assert_eq!(device.get("openudid"), "");
-        assert_eq!(device.get("version_name"), APP_VERSION_NAME);
-        assert_eq!(device.get("os_version"), "14");
-        assert!(device.user_agent().contains("Android 14"));
-        assert!(device.user_agent().contains(APP_VERSION_CODE_STR));
-
-        let mut keys: Vec<&str> = device.iter().map(|(key, _)| key).collect();
-        let total = keys.len();
-        keys.sort_unstable();
-        keys.dedup();
-        assert_eq!(keys.len(), total, "设备档案不应出现重复 key");
-    }
-
-    #[test]
-    fn register_and_anonymous_profiles_pin_their_regimes() {
-        let fp = fingerprint_for_cdid("cdid-uuid");
-        let reg = DeviceProfile::fresh_register_profile("cdid-uuid", "openudid-hex");
-        for k in [
-            "version_code",
-            "update_version_code",
-            "manifest_version_code",
-            "pv_player",
-        ] {
-            assert_eq!(reg.get(k), REGISTER_VERSION_CODE_STR, "{k} 应钉注册口径");
-        }
-        assert_eq!(reg.get("version_name"), REGISTER_VERSION_NAME);
-        assert_eq!(reg.user_agent(), fp.register_ua());
-        assert!(
-            reg.user_agent().contains("tt-ok/3.12.13.20")
-                && reg.user_agent().contains("zh_CN_#Hans"),
-            "注册口径 UA 必须是 tt-ok 尾段 + zh_CN_#Hans（2026-11-02 官方注册实流）"
-        );
-        assert_eq!(reg.get("device_brand"), fp.brand);
-        assert_eq!(reg.get("device_type"), fp.model);
-        assert_eq!(reg.get("channel"), fp.channel());
-
-        let anon = anonymous_profile("cdid-uuid");
-        for k in [
-            "version_code",
-            "update_version_code",
-            "manifest_version_code",
-            "pv_player",
-        ] {
-            assert_eq!(anon.get(k), APP_VERSION_CODE_STR, "{k} 应对齐当前客户端");
-        }
-        assert_eq!(anon.get("version_name"), APP_VERSION_NAME);
-        assert_eq!(anon.user_agent(), fp.video_ua());
-        assert!(anon.user_agent().contains("tt-ok/"));
-    }
-
-    #[test]
-    fn fingerprint_pool_is_diverse_and_derivation_is_deterministic() {
-        assert!(REGISTER_FINGERPRINTS.len() >= 8, "池太小就失去池化意义");
-        for (i, a) in REGISTER_FINGERPRINTS.iter().enumerate() {
-            assert!(
-                !a.model.is_empty() && !a.brand.is_empty(),
-                "预设 {i} 字段不全"
-            );
-            for b in REGISTER_FINGERPRINTS.iter().skip(i + 1) {
-                assert_ne!(a.model, b.model, "池内型号代码必须互不相同");
-            }
-        }
-        let a = fingerprint_for_cdid("cdid-one");
-        let b = fingerprint_for_cdid("cdid-one");
-        assert!(std::ptr::eq(a, b), "同一 cdid 派生必须确定");
-        // 分散度判等用 model（池内互异），不用指针——const 引用重物化下指针相等不可靠
-        let hits: std::collections::HashSet<&str> = (0..10)
-            .map(|i| fingerprint_for_cdid(&format!("cdid-{i}")).model)
-            .collect();
-        assert!(
-            hits.len() >= 3,
-            "10 个 cdid 只命中 {} 个预设，分散度不足",
-            hits.len()
-        );
-    }
-
-    #[test]
-    fn fresh_cdid_is_uuid_v4() {
-        let cdid = fresh_cdid();
-        assert_eq!(cdid.len(), 36);
-        assert_eq!(cdid.as_bytes()[14], b'4', "版本号位应为 4");
-    }
-
-    #[test]
-    fn anonymous_cookie_matches_profile_iid() {
-        let cdid = fresh_cdid();
-        let mut device = anonymous_profile(&cdid);
-        device.set("iid", "4175317900247834");
-        let cookie = anonymous_cookie(&device);
-        // install_id 必须与档案 iid 一致，否则服务端判为两个设备
-        assert!(cookie.contains("install_id=4175317900247834"));
-        assert!(
-            cookie.contains("passport_csrf_token=;"),
-            "空值 csrf 字段必须在场（缺失时 send_code 走换绑分支报 1001）"
-        );
-        assert!(cookie.contains("store-region=cn-gd"));
-        // 匿名档案（无 iid）必须零 cookie——带未知 install_id 反而被静默拒
-        let bare = anonymous_profile(&fresh_cdid());
-        assert_eq!(anonymous_cookie(&bare), "");
-    }
-
-    #[test]
-    fn set_overrides_in_place_and_appends_new_keys() {
-        let cdid = fresh_cdid();
-        let mut device = anonymous_profile(&cdid);
-        device.set("iid", "42");
-        let idx = device.iter().position(|(k, _)| k == "iid").unwrap();
-        device.set("iid", "43");
-        assert_eq!(device.iter().nth(idx), Some(("iid", "43")));
-        let cdid_pos = device.iter().position(|(k, _)| k == "cdid").unwrap();
-        device.set("cdid", "abc");
-        assert_eq!(device.iter().nth(cdid_pos), Some(("cdid", "abc")));
-        device.set("openudid", "xyz");
-        assert_eq!(device.iter().last(), Some(("openudid", "xyz")));
-    }
-
-    #[test]
-    fn align_app_version_bumps_only_version_fields() {
-        let mut legacy = DeviceProfile::from_pairs(
-            &[
-                ("iid", "1905892595382586"),
-                ("device_id", "1905892595378490"),
-                ("cdid", "abc-uuid"),
-                ("version_code", "60000"),
-                ("version_name", "6.0.0.0"),
-                ("manifest_version_code", "60000"),
-                ("update_version_code", "60000"),
-            ],
-            "com.phoenix.read/60000 test",
-        );
-        align_app_version(&mut legacy);
-        assert_eq!(legacy.get("version_code"), APP_VERSION_CODE_STR);
-        assert_eq!(legacy.get("version_name"), APP_VERSION_NAME);
-        assert_eq!(legacy.get("manifest_version_code"), APP_VERSION_CODE_STR);
-        assert_eq!(legacy.get("update_version_code"), APP_VERSION_CODE_STR);
-        assert_eq!(legacy.get("iid"), "1905892595382586");
-        assert_eq!(legacy.get("device_id"), "1905892595378490");
-        assert_eq!(legacy.get("cdid"), "abc-uuid");
-        let mut keys: Vec<&str> = legacy.iter().map(|(k, _)| k).collect();
-        keys.truncate(3);
-        assert_eq!(keys, vec!["iid", "device_id", "cdid"]);
-    }
-
-    #[test]
-    fn profile_roundtrips_through_serde() {
-        // 落库往返必须无损，含字段顺序
-        let cdid = fresh_cdid();
-        let device = anonymous_profile(&cdid);
-        let json = serde_json::to_string(&device).unwrap();
-        let back: DeviceProfile = serde_json::from_str(&json).unwrap();
-        assert_eq!(device, back);
-        let order: Vec<String> = back.iter().map(|(k, _)| k.to_string()).collect();
-        let order_before: Vec<String> = device.iter().map(|(k, _)| k.to_string()).collect();
-        assert_eq!(order, order_before);
-    }
-
-    #[test]
-    fn legacy_json_without_user_agent_falls_back() {
-        let json = r#"{"fields":[["aid","8662"]]}"#;
-        let back: DeviceProfile = serde_json::from_str(json).unwrap();
-        assert_eq!(back.user_agent(), video_ua());
-        assert_eq!(back.get("aid"), "8662");
-    }
-
-    #[test]
-    fn device_proto_is_non_empty_and_stable() {
-        let a = device_proto("1905892595378490", "7.1.3.32");
-        let b = device_proto("1905892595378490", "7.1.3.32");
-        assert_eq!(a, b);
-        assert!(!a.is_empty());
-    }
 }

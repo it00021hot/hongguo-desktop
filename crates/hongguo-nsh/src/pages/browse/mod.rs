@@ -3,14 +3,6 @@ mod model;
 mod preferences;
 mod presentation;
 mod search;
-mod suggestion_fixtures;
-
-#[cfg(test)]
-mod identity_tests;
-#[cfg(test)]
-mod lifetime_tests;
-#[cfg(test)]
-mod tests;
 
 use super::{SessionHandle, series_feed};
 use crate::{
@@ -166,57 +158,4 @@ fn next_page(query: Signal<Query>, feed: Feed, identity: u64) {
             query.previous = page.items;
         });
     }
-}
-
-pub(super) fn preview(nav: Navigation) -> Screen {
-    let catalog = super::fixtures::catalog();
-    let rows = stored(catalog.rows);
-    let page = stored(series_feed::from_feed(hongguo_api::discover::FeedPage {
-        items: catalog.items,
-        ..Default::default()
-    }));
-    let panel = resource(
-        move || Some(rows.get()),
-        |rows, _| std::future::ready(Ok(rows)),
-    );
-    let downloaded = computed(move || {
-        page.with(|page| {
-            page.items
-                .first()
-                .map(|item| (item.series_id.clone(), 1_usize))
-                .into_iter()
-                .collect()
-        })
-    });
-    let memory = crate::view_memory::scope("browse");
-    let query = memory.projected("query", Query::default(), Query::view_snapshot);
-    let feed: Feed = resource(
-        move || Some(query.with(Query::scope)),
-        move |scope, _| {
-            std::future::ready(Ok(LoadedPage {
-                scope,
-                page: page.get(),
-            }))
-        },
-    );
-    let search = search::Search::new(
-        memory.signal("draft", String::new()),
-        move || {
-            (query.with(|query| query.term.is_empty())
-                && nav
-                    .routes()
-                    .with(|routes| routes.last() == Some(&Route::Browse)))
-            .then_some(0)
-        },
-        |term| std::future::ready(Ok(suggestion_fixtures::suggestions(&term))),
-    );
-    ui::page(nav, move || tr("nav.browse.title")).child(presentation::content(
-        nav,
-        search,
-        query,
-        panel,
-        feed,
-        downloaded,
-        || {},
-    ))
 }

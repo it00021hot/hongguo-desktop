@@ -22,7 +22,3 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 pollster = "0.4"
 glow = "=0.17.0"
-
-[dev-dependencies]
-hongguo-media-types = { path = "../hongguo-media-types" }
-hongguo-video-color = { path = "../hongguo-video-color" }

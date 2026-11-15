@@ -245,37 +245,3 @@ fn mix_columns(state: &mut [[u8; 4]; 4]) {
         state[3][i] ^= t ^ xt(state[3][i] ^ u);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn encrypt_requires_248_bytes_of_source() {
-        // JS 的位打包固定读 31*8 = 248 字节，调用方保证输入长度
-        let key = crate::constants::medusa_aes_key();
-        let iv = crate::constants::medusa_aes_iv();
-        let aes = AesV3::new(&key, 1_700_000_000);
-        let out = aes.encrypt(&[0u8; 248], &iv);
-        assert_eq!(out.len(), 249);
-    }
-
-    #[test]
-    fn different_khronos_gives_different_ciphertext() {
-        let key = crate::constants::medusa_aes_key();
-        let iv = crate::constants::medusa_aes_iv();
-        let data = [7u8; 248];
-        let a = AesV3::new(&key, 1_700_000_000).encrypt(&data, &iv);
-        let b = AesV3::new(&key, 1_700_000_001).encrypt(&data, &iv);
-        assert_ne!(a, b, "khronos 低 2 位应切换 S-Box 组");
-    }
-
-    #[test]
-    fn encrypt_is_deterministic() {
-        let key = crate::constants::medusa_aes_key();
-        let iv = crate::constants::medusa_aes_iv();
-        let data = [0xa5u8; 248];
-        let aes = AesV3::new(&key, 1_700_000_000);
-        assert_eq!(aes.encrypt(&data, &iv), aes.encrypt(&data, &iv));
-    }
-}

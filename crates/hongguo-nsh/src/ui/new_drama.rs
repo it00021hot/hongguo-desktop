@@ -81,7 +81,6 @@ fn NewDramaGridSurface(
                     },
                 )
                 .key(key)
-                .test_id("new-recommend-grid")
                 .on_load_more(move || {
                     if !finished.get() {
                         cx.emit(NewDramaGridSurfaceEvent::LoadMore);

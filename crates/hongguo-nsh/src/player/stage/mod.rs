@@ -1,28 +1,17 @@
-#[cfg(test)]
-mod binge_tests;
 mod composer;
 mod controls;
 mod episodes;
-mod fixture;
 mod landscape;
-#[cfg(test)]
-mod loading_tests;
 mod menu_model;
 mod menus;
 pub(crate) use menus::{MenuState, Panel, Season, SeasonState};
-#[cfg(test)]
-mod menu_tests;
 mod rail;
-#[cfg(test)]
-mod seek_tests;
 use crate::{i18n::tr, ui};
 pub(crate) use composer::{ComposerEvents, composer};
 pub(crate) use controls::AdvancedControl;
 pub(crate) use controls::AdvancedState;
 pub(crate) use controls::{ControlAction, ControlState, controls};
-pub(crate) use fixture::fixture;
-pub(crate) use fixture::fixture_with_motion;
-pub(crate) use fixture::fixture_with_window_modes;
+
 use nsh_core::prelude::*;
 pub(crate) use rail::{RailAction, RailState, rail};
 
@@ -44,7 +33,6 @@ fn desktop_composer_collapsed(width: f32) -> bool {
 }
 
 /// The production stage has one video plane and independent chrome slots.
-/// A preview supplies a fixed frame in the same video slot; it never opens media.
 pub(crate) fn surface(
     video: impl IntoElement,
     info: impl IntoElement,
@@ -114,7 +102,6 @@ pub(crate) fn surface(
         })
         .relative()
         .overflow_hidden()
-        .test_id("player-stage")
         .child(view().absolute().inset_0().child(video))
         .child(when(
             move || is_desktop() && geometry.is_some(),

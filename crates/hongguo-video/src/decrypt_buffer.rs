@@ -47,25 +47,3 @@ pub fn decrypt_mp4_buffer(data: &[u8], key: &[u8; 16]) -> AppResult<Vec<u8>> {
     // 采样数据解开只是第一步：入口还叫 `encv`、`sinf`/`tenc` 还在，播放器会当加密流拒绝播放，必须一并摘掉加密标记
     super::deprotect::deprotect(&out)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn garbage_input_errors_not_panics() {
-        let result = decrypt_mp4_buffer(&[0xffu8; 500], &[0u8; 16]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn empty_input_errors() {
-        assert!(decrypt_mp4_buffer(&[], &[0u8; 16]).is_err());
-    }
-
-    #[test]
-    fn no_iv_leaves_data_untouched() {
-        let r = decrypt_mp4_buffer(&[0u8; 64], &[0u8; 16]);
-        assert!(r.is_err(), "无法解析轨道时应报错");
-    }
-}

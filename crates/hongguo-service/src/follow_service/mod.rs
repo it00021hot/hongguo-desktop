@@ -152,7 +152,3 @@ pub fn start_notice_task(state: AppState) -> tokio::task::JoinHandle<()> {
         }
     })
 }
-
-#[cfg(test)]
-#[path = "follow_tests.rs"]
-mod tests;

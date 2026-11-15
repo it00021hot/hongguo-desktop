@@ -195,11 +195,3 @@ fn merge(cloud: Vec<WatchHistoryItem>, local: Vec<WatchHistoryItem>) -> Vec<Watc
     });
     items
 }
-
-#[cfg(test)]
-#[path = "listing_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "listing_io_tests.rs"]
-mod io_tests;

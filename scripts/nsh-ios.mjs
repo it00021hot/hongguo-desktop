@@ -15,7 +15,6 @@ import { fileURLToPath } from 'node:url';
 import { copyMediaNotices, prepareNativeMedia, verifyNshWorkspace } from './nsh-native-media.mjs';
 import { finishRelink, relinkEnvironment } from './nsh-relink.mjs';
 import { profileEntitlements } from './native-media-resign-ios.mjs';
-export { profileEntitlements } from './native-media-resign-ios.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const minimumVersion = '16.0';

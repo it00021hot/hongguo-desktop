@@ -14,10 +14,6 @@ pub use mf::transcode_hevc;
 /// 平台**硬编**编码器当前是否可用（含探测缓存）。
 pub use mf::hevc_hw_encoder_available;
 
-/// 仅测试构建 / 门面 test-support：强制软件编码器跑完整平台链路。
-#[cfg(any(test, feature = "test-support"))]
-pub use mf::transcode_hevc_for_tests;
-
 /// 平台编码层当前是否可用（含探测缓存）：硬编或 in-box 软编可建会话即真。
 pub fn encoder_available() -> bool {
     mf::hevc_hw_encoder_available() || mf::hevc_sw_encoder_available()

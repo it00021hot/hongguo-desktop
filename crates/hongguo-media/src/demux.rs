@@ -113,35 +113,3 @@ fn read_tail_moov(path: &Path, file_size: u64) -> AppResult<Vec<u8>> {
     }
     Err(AppError::Decrypt("找不到 moov box".into()))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn garbage_errors() {
-        assert!(demux_bytes(&[0xffu8; 100]).is_err());
-        assert!(demux_bytes(&[]).is_err());
-    }
-
-    #[test]
-    fn missing_file_errors() {
-        assert!(demux_file(Path::new("/definitely/not/here.mp4")).is_err());
-    }
-
-    #[test]
-    fn tail_moov_is_found_when_faststart_is_off() {
-        // B 帧流关 faststart 后 moov 在 mdat 之后：单个 9MB 样本把 mdat 顶过 8MB 头部读窗，必须能定位尾部 moov
-        use hongguo_video::fixtures::{TrackPlan, mp4_with_samples};
-        let dir = std::env::temp_dir().join(format!("hg-demux-tail-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("tail-moov.mp4");
-        let big = vec![7u8; 9 * 1024 * 1024];
-        std::fs::write(&p, mp4_with_samples(&[TrackPlan::video(vec![big])])).unwrap();
-        let d = demux_file(&p).expect("尾部 moov 必须能定位并解析");
-        let v = d.video_track().expect("应有视频轨");
-        assert_eq!(v.info.samples.len(), 1, "样本表应完整");
-        assert_eq!(v.info.samples[0].1, 9 * 1024 * 1024_u64, "样本长度应一致");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}

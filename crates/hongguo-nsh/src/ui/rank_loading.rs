@@ -4,7 +4,7 @@ use nsh_core::prelude::*;
 const ROWS: usize = 8;
 
 pub(crate) fn rank_loading() -> View {
-    view().flex_1().min_h_0().test_id("rank-loading").child(
+    view().flex_1().min_h_0().child(
         scroll().flex_1().child(
             view()
                 .gap_3()

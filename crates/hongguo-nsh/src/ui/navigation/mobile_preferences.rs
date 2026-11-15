@@ -31,7 +31,6 @@ impl Preferences {
 
     pub fn footer(self) -> View {
         view()
-            .test_id("mobile-menu-preferences")
             .flex_shrink_0()
             .pt_3()
             .border_t_1()

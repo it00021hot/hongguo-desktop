@@ -20,7 +20,7 @@ const system = new Set([
   'libc.so',
 ]);
 
-export function validateAndroidElf(text) {
+function validateAndroidElf(text) {
   if (!/Class:\s+ELF64/.test(text) || !/Machine:\s+AArch64/.test(text))
     throw new Error('Android output must be AArch64 ELF64');
   const needed = [...text.matchAll(/\(NEEDED\)\s+Shared library: \[([^\]]+)\]/g)].map(

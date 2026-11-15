@@ -3,21 +3,18 @@ mod attachment;
 mod comment_image;
 mod controller;
 mod editor;
-mod fixture;
 mod model;
 mod own_edits;
 pub(crate) use own_edits::CollectionMemory;
 mod panel;
 mod remote_model;
 mod sendbox;
-#[cfg(test)]
-mod tests;
 pub(crate) use attachment::pick_local;
 pub(crate) use attachment::{Attachment, Scene};
 pub(crate) use comment_image::comment_image;
 pub(crate) use controller::picker;
 pub(crate) use editor::{Editor, FieldOptions, FieldSkin};
-pub(crate) use fixture::fixture;
+
 pub(crate) use model::{SYSTEM, Segment, parse};
 use nsh_core::prelude::*;
 pub(crate) use sendbox::{SendEvents, SendOptions, sendbox};

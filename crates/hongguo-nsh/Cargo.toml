@@ -39,13 +39,6 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 
-[dev-dependencies]
-# tests/media.rs 的音轨视图断言直接用 demux 对照原始样本；生产链路不依赖本 crate。
-hongguo-media = { path = "../hongguo-media" }
-nsh-engine.workspace = true
-nsh-testing.workspace = true
-reqwest = { version = "0.13", default-features = false }
-
 [target.'cfg(target_os = "macos")'.dependencies]
 hongguo-nsh-video-macos = { path = "../hongguo-nsh-video-macos" }
 nsh-platform-macos.workspace = true

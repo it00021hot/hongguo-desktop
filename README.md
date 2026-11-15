@@ -14,7 +14,7 @@
 pnpm install --frozen-lockfile
 pnpm nsh
 pnpm nsh:check
-pnpm test
+make lint
 make nsh-package TARGET=macos
 ```
 

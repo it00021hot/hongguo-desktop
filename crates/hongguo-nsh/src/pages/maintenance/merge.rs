@@ -1,5 +1,5 @@
 use super::{
-    backend, fixtures,
+    backend,
     model::{MergeDraft, MergeSnapshot, output_busy},
 };
 use crate::{
@@ -80,12 +80,6 @@ impl MergeView {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Context {
-    Production(Stored<SessionHandle>),
-    Preview(Signal<MergeSnapshot>),
-}
-
 pub(in crate::pages) fn page(session: SessionHandle, nav: Navigation) -> Screen {
     let draft = MergeDraft::new();
     let completed = super::completed_inputs(session);
@@ -130,9 +124,8 @@ pub(in crate::pages) fn page(session: SessionHandle, nav: Navigation) -> Screen 
         computed(move || candidates.loading()),
         draft,
     );
-    let context = Context::Production(stored(session));
     ui::page(nav, move || tr("merge.title")).child(
-        view::content(model, move |intent| dispatch(context, model, intent)).child(when(
+        view::content(model, move |intent| dispatch(session, model, intent)).child(when(
             move || {
                 candidates.error().is_some()
                     || tasks.error().is_some()
@@ -158,18 +151,4 @@ pub(in crate::pages) fn page(session: SessionHandle, nav: Navigation) -> Screen 
             },
         )),
     )
-}
-
-pub(in crate::pages) fn preview(nav: Navigation) -> Screen {
-    let snapshot = signal(fixtures::merge());
-    let draft = MergeDraft::new();
-    let model = MergeView::new(
-        computed(move || snapshot.get()),
-        computed(move || fixtures::preflight(&draft.selected.get())),
-        computed(|| false),
-        draft,
-    );
-    ui::page(nav, move || tr("merge.title")).child(view::content(model, move |intent| {
-        dispatch(Context::Preview(snapshot), model, intent)
-    }))
 }

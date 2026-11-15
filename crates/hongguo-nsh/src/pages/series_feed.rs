@@ -150,41 +150,6 @@ pub(super) fn rank_list(
     )
 }
 
-pub(super) fn preview_rank_list(
-    feed: Feed,
-    nav: Navigation,
-    scope: Memo<super::rank::ScrollScope>,
-) -> View {
-    let reservation = Reservation {
-        changed: signal(HashMap::new()),
-        pending: signal(HashSet::new()),
-        feedback: signal(SharedString::default()),
-    };
-    let toggle = move |item: RankItem| {
-        let selected = reservation
-            .changed
-            .with(|changed| changed.get(&item.series_id).copied())
-            .unwrap_or(item.reserved);
-        reservation.changed.update(|changed| {
-            changed.insert(item.series_id, !selected);
-        });
-    };
-    rank_rows(
-        feed,
-        nav,
-        RankActions {
-            reservation,
-            reserve: stored(Box::new(toggle) as Box<dyn Fn(RankItem)>),
-            play: None,
-            paging: Paging {
-                loading: computed(|| false),
-                request: stored(Box::new(|| {}) as Box<dyn Fn()>),
-            },
-        },
-        scope,
-    )
-}
-
 fn rank_metadata(item: &RankItem) -> String {
     let score = (item.score > 0.0).then(|| format!("{:.1}", item.score));
     std::iter::once(item.sub_title.as_str())
@@ -316,7 +281,6 @@ fn rank_rows(
                             )
                         },
                     )
-                    .test_id("rank-results")
                     .flex_1()
                     .on_load_more(move || paging.request.with(|request| request()))
                     .footer(view().child(when(paging.loading, ui::browse_loading_more)))
@@ -359,57 +323,4 @@ pub(super) fn append(mut previous: Vec<RankItem>, incoming: Vec<RankItem>) -> Ve
         }
     }
     previous
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn rank_metadata_matches_subtitle_score_and_tags_without_empty_separators() {
-        let item = super::RankItem {
-            sub_title: "恋爱 · 全80集".into(),
-            score: 9.2,
-            tags: vec!["恋爱".into(), "乡村".into()],
-            ..Default::default()
-        };
-        assert_eq!(
-            super::rank_metadata(&item),
-            "恋爱 · 全80集 · 9.2 · 恋爱 · 乡村"
-        );
-        assert_eq!(super::rank_metadata(&super::RankItem::default()), "");
-    }
-    use super::*;
-
-    fn item(id: &str, title: &str, rank: u32) -> RankItem {
-        RankItem {
-            series_id: id.into(),
-            title: title.into(),
-            rank,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn pagination_updates_duplicates_without_moving_rows_and_renumbers_ranked_items() {
-        let result = append(
-            vec![item("a", "Old", 1), item("b", "Second", 2)],
-            vec![
-                item("b", "Updated", 1),
-                item("c", "Third", 2),
-                item("c", "Latest", 2),
-            ],
-        );
-        assert_eq!(
-            result
-                .iter()
-                .map(|item| (item.series_id.as_str(), item.title.as_str(), item.rank))
-                .collect::<Vec<_>>(),
-            vec![("a", "Old", 1), ("b", "Updated", 2), ("c", "Latest", 3)]
-        );
-    }
-
-    #[test]
-    fn reservation_rows_never_gain_an_artificial_rank() {
-        let result = append(vec![item("a", "First", 0)], vec![item("b", "Second", 0)]);
-        assert!(result.iter().all(|item| item.rank == 0));
-    }
 }

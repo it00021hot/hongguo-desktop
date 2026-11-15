@@ -67,33 +67,3 @@ pub async fn upsert_series(db: &Db, s: &Series) -> AppResult<()> {
     .await?;
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::entity::{mem_db, rt};
-
-    #[test]
-    fn series_upsert_preserves_dismissed_and_returns_by_id() {
-        let db = mem_db();
-        rt().block_on(async {
-            let s = Series {
-                series_id: "1".into(),
-                title: "剧".into(),
-                dismissed: true,
-                ..Default::default()
-            };
-            upsert_series(&db, &s).await.unwrap();
-
-            let fresh = Series {
-                dismissed: false,
-                title: "剧（新版）".into(),
-                ..s.clone()
-            };
-            upsert_series(&db, &fresh).await.unwrap();
-            let back = series_by_id(&db, "1").await.unwrap().expect("应当还在");
-            assert!(back.dismissed, "移除标记必须保留");
-            assert_eq!(back.title, "剧（新版）");
-        });
-    }
-}

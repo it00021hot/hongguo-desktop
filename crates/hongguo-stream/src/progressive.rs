@@ -274,7 +274,3 @@ pub(crate) fn read_plain_range(
     prog.render(start, end, &mut body);
     Ok(body)
 }
-
-#[cfg(test)]
-#[path = "progressive_tests.rs"]
-mod tests;

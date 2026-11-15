@@ -2,8 +2,8 @@
 
 use crate::app_state::AppState;
 use hongguo_api::login::{self, PassportUser};
-use hongguo_common::model::AccountState;
 use hongguo_common::AppResult;
+use hongguo_common::model::AccountState;
 
 /// 登录成功产物 → 账号快照（`login_at` 用 UTC 毫秒时间戳，与全库其它时间字段一致）。
 /// user_id **绝不能**用 user_info 响应里的 user_id 刷新：那是 encode_user_id 加密形态，
@@ -74,4 +74,3 @@ pub fn refresh_profile_after_login(state: AppState) {
         }
     });
 }
-

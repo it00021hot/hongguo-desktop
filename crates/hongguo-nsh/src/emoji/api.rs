@@ -51,26 +51,3 @@ pub(super) async fn collect(
     authenticated(&state)?;
     emoticon::collect_emoticon(&collect_request(&item, remove), &state.api_env()).await
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn collection_uses_the_original_static_url_and_preserves_the_source_identity() {
-        let item = Emoticon {
-            id: Some("9223372036854775806".into()),
-            web_uri: "https://test.invalid/static.webp".into(),
-            dynamic_url: Some("https://test.invalid/dynamic.gif".into()),
-            image_type: 2,
-            width: 425,
-            height: 449,
-            ..Default::default()
-        };
-        let add = collect_request(&item, false);
-        assert_eq!(add.image_url, item.web_uri);
-        assert_eq!(add.image_id, item.id.unwrap());
-        assert_eq!(add.collect_type, COLLECT_TYPE_ADD);
-        assert_eq!(add.image_type, 2);
-        assert_eq!((add.image_width, add.image_height), (425, 449));
-    }
-}

@@ -21,7 +21,7 @@ function literal(value) {
     .replaceAll('\r', '$\\r');
 }
 
-export function uninstallFiles(bundle) {
+function uninstallFiles(bundle) {
   const files = [];
   const directories = [];
   function visit(directory, relative) {

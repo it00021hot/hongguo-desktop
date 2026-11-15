@@ -42,7 +42,7 @@ export function profileEntitlements(
   };
 }
 
-export function resignIos(app, binary, identity, profile) {
+function resignIos(app, binary, identity, profile) {
   const info = JSON.parse(run('plutil', ['-convert', 'json', '-o', '-', join(app, 'Info.plist')]));
   const executable = info.CFBundleExecutable;
   if (typeof executable !== 'string' || executable.includes('/') || executable.includes('\\'))

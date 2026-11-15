@@ -15,8 +15,6 @@ pub(crate) struct Completed {
     pub epoch: u64,
     pub elapsed: Duration,
     pub displayed: bool,
-    #[cfg(feature = "test-support")]
-    pub presentation_timing: Option<crate::diagnostics::PresentationTiming>,
 }
 
 pub(crate) struct Renderer {
@@ -31,8 +29,6 @@ pub(crate) struct Renderer {
     failure: Arc<Mutex<Option<String>>>,
     converter: hongguo_video_gpu::YuvConverter,
     pending_conversion: Option<wgpu::CommandBuffer>,
-    #[cfg(feature = "test-support")]
-    presentation_timing: Arc<Mutex<Option<crate::diagnostics::PresentationTiming>>>,
 }
 
 impl Renderer {
@@ -65,8 +61,6 @@ impl Renderer {
             failure,
             converter,
             pending_conversion: None,
-            #[cfg(feature = "test-support")]
-            presentation_timing: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -91,12 +85,6 @@ impl Renderer {
                 .take()
                 .unwrap_or_else(|| started.elapsed()),
             displayed: self.presentation.load(Ordering::Acquire) == 1,
-            #[cfg(feature = "test-support")]
-            presentation_timing: self
-                .presentation_timing
-                .lock()
-                .expect("native presentation timing")
-                .take(),
         }))
     }
     pub fn idle(&self) -> bool {
@@ -213,20 +201,9 @@ impl Renderer {
             completed.store(true, Ordering::Release);
         };
         let presentation = self.presentation.clone();
-        #[cfg(feature = "test-support")]
-        let timing = self.presentation_timing.clone();
         self.surface.present(
             target,
             move |time| {
-                #[cfg(feature = "test-support")]
-                {
-                    let callback_time_secs = crate::diagnostics::current_media_time();
-                    *timing.lock().expect("native presentation timing") =
-                        Some(crate::diagnostics::PresentationTiming {
-                            presented_time_secs: time,
-                            callback_time_secs,
-                        });
-                }
                 presentation.store(if time > 0.0 { 1 } else { 2 }, Ordering::Release);
             },
             on_completed,

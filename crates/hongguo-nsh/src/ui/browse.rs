@@ -212,7 +212,6 @@ fn BrowseGridSurface(
                     })
                 },
             )
-            .test_id("browse-results")
             .viewport(nsh_core::ListViewport::Parent)
             .columns(columns)
             .column_gap(px(16.0))

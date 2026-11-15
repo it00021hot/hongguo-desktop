@@ -11,14 +11,12 @@ pub(super) fn download(
     draft: Signal<Draft>,
     busy: Signal<bool>,
     message: Signal<SharedString>,
-    external: bool,
 ) -> View {
     group("settings.downloadDir").child(directory::field(
         "settings.downloadDir",
         draft,
         busy,
         message,
-        external,
         |draft| draft.download_dir.clone(),
         |draft, value| draft.download_dir = value,
     ))

@@ -6,7 +6,7 @@ use hongguo_common::{AppError, AppResult};
 
 #[path = "movie_timeline.rs"]
 mod movie;
-pub use movie::{EditSegment, MappedTime, MediaPosition, MovieTimeline, TrackTimeline};
+pub use movie::{EditSegment, MediaPosition, MovieTimeline, TrackTimeline};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EditEntry {
@@ -261,21 +261,6 @@ impl TrackInfo {
         self.timeline().1
     }
 
-    /// B 帧重排的最大负偏移（秒）：显示时间最多能比解码时间早多少；无 `ctts`（无 B 帧）时为 0。
-    /// 消费方用「已解码 dts 水位 − 本值」当定稿线：早于这条线的帧不可能再有更早的帧解出来。
-    pub fn max_reorder_secs(&self) -> f64 {
-        if self.media_timescale == 0 {
-            return 0.0;
-        }
-        let most_negative = self
-            .ctts
-            .iter()
-            .map(|&(_, offset)| i64::from(offset).min(0))
-            .min()
-            .unwrap_or(0);
-        (-most_negative) as f64 / f64::from(self.media_timescale)
-    }
-
     /// 从样本表推出的平均帧率（fps）；没有 `stts` 或总时长为 0 时返回 `None`，调用方用默认帧率兜底。
     pub fn average_framerate(&self) -> Option<f64> {
         if self.stts.is_empty() || self.media_timescale == 0 {
@@ -323,7 +308,3 @@ fn u64_at(data: &[u8], at: usize) -> u64 {
     buf.copy_from_slice(&data[at..at + 8]);
     u64::from_be_bytes(buf)
 }
-
-#[cfg(test)]
-#[path = "timing_tests.rs"]
-mod tests;

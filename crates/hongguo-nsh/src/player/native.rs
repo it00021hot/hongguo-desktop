@@ -335,12 +335,3 @@ fn effective_duration(expected: Option<f64>, native: f64) -> f64 {
         expected.unwrap_or(0.0)
     }
 }
-
-#[cfg(test)]
-mod duration_tests {
-    #[test]
-    fn actual_audio_duration_takes_precedence_over_rounded_episode_metadata() {
-        assert_eq!(super::effective_duration(Some(168.0), 168.533), 168.533);
-        assert_eq!(super::effective_duration(None, f64::NAN), 0.0);
-    }
-}

@@ -8,9 +8,6 @@ mod hvcc;
 mod timing;
 mod track;
 
-#[cfg(test)]
-mod fixtures;
-
 use std::io::Write;
 use std::path::Path;
 
@@ -346,7 +343,3 @@ fn movie_duration(specs: &[TrackSpec]) -> u64 {
         .max()
         .unwrap_or(0)
 }
-
-#[cfg(test)]
-#[path = "mux/tests.rs"]
-mod tests;

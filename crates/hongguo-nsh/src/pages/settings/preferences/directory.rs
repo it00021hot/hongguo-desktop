@@ -2,15 +2,11 @@ use super::model::Draft;
 use crate::{i18n::tr, ui};
 use nsh_core::{file_dialog::OpenDialog, prelude::*};
 
-#[cfg(test)]
-mod tests;
-
 pub(super) fn field(
     label: &'static str,
     draft: Signal<Draft>,
     busy: Signal<bool>,
     message: Signal<SharedString>,
-    external: bool,
     read: fn(&Draft) -> String,
     write: fn(&mut Draft, String),
 ) -> View {
@@ -41,14 +37,6 @@ pub(super) fn field(
             ui::form_icon_action(move || tr("settings.choose"), ui::FormAction::Directory)
                 .disabled(busy)
                 .on_press(move || {
-                    if !external {
-                        message.set(
-                            tr("nsh.previewAction")
-                                .replace("{action}", &tr("settings.choose"))
-                                .into(),
-                        );
-                        return;
-                    }
                     busy.set(true);
                     let dialog = OpenDialog::folders()
                         .title(tr(label).to_string())

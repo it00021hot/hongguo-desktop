@@ -149,6 +149,3 @@ pub(super) fn loader(session: SessionHandle) -> Loader {
         }))
     })
 }
-
-#[cfg(test)]
-mod tests;

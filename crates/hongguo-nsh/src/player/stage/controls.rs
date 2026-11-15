@@ -17,18 +17,6 @@ pub(crate) struct AdvancedState {
     pub incognito: Memo<bool>,
 }
 
-impl AdvancedState {
-    #[cfg(test)]
-    pub fn unavailable() -> Self {
-        let unavailable = computed(|| false);
-        Self {
-            enhancement: unavailable,
-            window_modes: unavailable,
-            incognito: unavailable,
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 pub(crate) struct ControlState {
     pub(crate) geometry: ui::PlayerGeometry,

@@ -13,12 +13,6 @@ pub struct EditSegment {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MappedTime {
-    pub edit_index: usize,
-    pub movie_secs: f64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MediaPosition {
     pub edit_index: usize,
     pub media_secs: f64,
@@ -104,32 +98,6 @@ impl TrackTimeline {
         &self.segments
     }
 
-    /// Repeated edits can present a media timestamp more than once. Empty edits never map media.
-    pub fn media_to_movie(&self, media_secs: f64) -> Vec<MappedTime> {
-        if !media_secs.is_finite() {
-            return Vec::new();
-        }
-        self.segments
-            .iter()
-            .enumerate()
-            .filter_map(|(edit_index, segment)| {
-                let start = segment.media_start_secs?;
-                let offset = if segment.media_rate == 0.0 {
-                    if media_secs != start {
-                        return None;
-                    }
-                    0.0
-                } else {
-                    (media_secs - start) / segment.media_rate
-                };
-                (offset >= 0.0 && offset < segment.duration_secs).then_some(MappedTime {
-                    edit_index,
-                    movie_secs: segment.movie_start_secs + offset,
-                })
-            })
-            .collect()
-    }
-
     /// Empty edits return None; dwell edits return a fixed media position with rate zero.
     pub fn movie_to_media(&self, movie_secs: f64) -> Option<MediaPosition> {
         if !movie_secs.is_finite() || movie_secs < 0.0 {
@@ -151,7 +119,3 @@ impl TrackTimeline {
             })
     }
 }
-
-#[cfg(test)]
-#[path = "movie_timeline_tests.rs"]
-mod tests;

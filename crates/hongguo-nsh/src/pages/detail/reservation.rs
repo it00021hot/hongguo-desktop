@@ -168,14 +168,3 @@ pub(super) fn controller<F: std::future::Future<Output = Result<(), bridge::Fail
         }) as Box<dyn Fn()>),
     }
 }
-
-pub(super) fn preview() -> Reservation {
-    let loaded = resource(|| Some(()), |_, _| std::future::ready(Ok(false)));
-    controller(
-        loaded,
-        computed(|| 0),
-        || true,
-        |_| std::future::ready(Ok(())),
-        || {},
-    )
-}

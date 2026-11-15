@@ -1,6 +1,4 @@
 mod platform;
-#[cfg(test)]
-mod tests;
 mod wire;
 
 use nsh_core::prelude::*;

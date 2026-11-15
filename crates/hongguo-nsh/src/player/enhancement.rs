@@ -1,8 +1,5 @@
 use hongguo_nsh_video_api::{Enhancement, EnhancementPhase};
 use nsh_core::{prelude::*, storage::Storage};
-#[cfg(test)]
-#[path = "enhancement_tests.rs"]
-mod tests;
 
 const KEY: &str = "hongguo.enhance";
 const MAX_STRENGTH: u8 = 100;

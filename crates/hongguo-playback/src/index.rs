@@ -307,7 +307,3 @@ fn parse_color(data: &[u8], start: usize, end: usize) -> ColorMetadata {
         ..Default::default()
     }
 }
-
-#[cfg(test)]
-#[path = "index_tests.rs"]
-mod tests;

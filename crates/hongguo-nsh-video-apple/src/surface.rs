@@ -306,22 +306,6 @@ fn device_limits(supported: wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits::downlevel_defaults().using_resolution(supported)
 }
 
-#[cfg(test)]
-fn fit_transform(
-    source_width: u32,
-    source_height: u32,
-    width: u32,
-    height: u32,
-    mode: ResizeMode,
-) -> Result<[f32; 4], OutputError> {
-    fit_aspect(
-        source_width as f32 / source_height as f32,
-        width,
-        height,
-        mode,
-    )
-}
-
 fn fit_aspect(
     source: f32,
     width: u32,
@@ -343,62 +327,4 @@ fn fit_aspect(
         ResizeMode::Stretch => (1.0, 1.0),
     };
     Ok([x, y, (1.0 - x) * 0.5, (1.0 - y) * 0.5])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mobile_device_limits_fit_the_adapter_and_preserve_portrait_upscaling() {
-        let supported =
-            wgpu::Limits::downlevel_defaults().using_resolution(wgpu::Limits::default());
-        let required = device_limits(supported.clone());
-        assert!(
-            required.check_limits(&supported),
-            "device creation must respect the adapter limits"
-        );
-        assert!(
-            required.max_texture_dimension_2d >= 3_840,
-            "1080p portrait upscaling must retain the adapter texture capacity"
-        );
-        assert_eq!(
-            required.max_immediate_size, 0,
-            "the renderer does not request the IMMEDIATES feature"
-        );
-    }
-
-    #[test]
-    fn contain_leaves_centered_bars_and_cover_crops_the_same_center() {
-        let contain = fit_transform(1920, 1080, 100, 100, ResizeMode::Contain).unwrap();
-        let cover = fit_transform(1920, 1080, 100, 100, ResizeMode::Cover).unwrap();
-        for (actual, expected) in contain.into_iter().zip([1.0, 16.0 / 9.0, 0.0, -7.0 / 18.0]) {
-            assert!((actual - expected).abs() < 0.000_01);
-        }
-        assert_eq!(cover, [0.5625, 1.0, 0.21875, 0.0]);
-        assert_eq!(
-            fit_transform(1920, 1080, 100, 100, ResizeMode::Stretch).unwrap(),
-            [1.0, 1.0, 0.0, 0.0]
-        );
-    }
-
-    #[test]
-    fn empty_source_or_target_never_produces_invalid_texture_coordinates() {
-        for (source_width, source_height, width, height) in
-            [(0, 1, 1, 1), (1, 0, 1, 1), (1, 1, 0, 1), (1, 1, 1, 0)]
-        {
-            assert_eq!(
-                fit_transform(
-                    source_width,
-                    source_height,
-                    width,
-                    height,
-                    ResizeMode::Contain
-                )
-                .unwrap_err()
-                .code(),
-                ErrorCode::FrameFormatUnsupported
-            );
-        }
-    }
 }

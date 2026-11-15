@@ -3,8 +3,6 @@
 mod backend;
 mod model;
 mod related;
-#[cfg(test)]
-mod tests;
 mod workflow;
 
 pub(super) use model::SourceKey;

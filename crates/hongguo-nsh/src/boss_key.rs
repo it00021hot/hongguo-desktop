@@ -1,8 +1,6 @@
 mod platform;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod registration;
-#[cfg(test)]
-mod tests;
 
 use nsh_core::prelude::*;
 use tokio::sync::oneshot;

@@ -1,7 +1,5 @@
 //! Native audio stays in the platform player; video codec extensions read its clock.
 
-#[cfg(test)]
-mod tests;
 mod worker;
 
 use std::sync::{

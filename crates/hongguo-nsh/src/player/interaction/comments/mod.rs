@@ -4,18 +4,11 @@ mod composer;
 mod focus;
 mod list_view;
 mod model;
-mod preview;
-pub(crate) use preview::{comments_preview, reviews_preview_with_header};
-#[cfg(test)]
-mod click_tests;
+
 mod review_form;
 mod review_model;
-#[cfg(test)]
-mod review_tests;
 mod row;
 mod row_view;
-#[cfg(test)]
-mod tests;
 mod threads;
 
 use super::Target;
@@ -262,11 +255,6 @@ fn thread_with_header(
             header,
             list_footer,
             empty(),
-            if root_review {
-                "reviews-list"
-            } else {
-                "comments-list"
-            },
             move |entry| {
                 let content = match entry.get_untracked() {
                     threads::Entry::Root(_) => view().child(each(

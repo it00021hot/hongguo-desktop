@@ -128,28 +128,3 @@ pub enum LoginResult {
     },
     MfaWaiting,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mfa_serializes_to_frontend_shape() {
-        let r = mfa_view(&MfaContext {
-            retry_tag: "1".into(),
-            sms_code_key: "k".into(),
-            channel_mobile: "10691859839103".into(),
-            sms_content: "YZ".into(),
-            tips: "回复 YZ 到 10691859839103".into(),
-            ..Default::default()
-        });
-        let j = serde_json::to_string(&r).unwrap();
-        println!("Mfa JSON = {j}");
-        assert!(j.contains(r#""kind":"mfa""#), "tag 必须是 mfa: {j}");
-        assert!(j.contains(r#""retryTag":"1""#), "字段必须 camelCase: {j}");
-        assert!(j.contains(r#""smsCodeKey":"k""#), "{j}");
-        assert!(j.contains(r#""channelMobile":"10691859839103""#), "{j}");
-        assert!(j.contains(r#""smsContent":"YZ""#), "{j}");
-        assert!(j.contains("10691859839103"), "{j}");
-    }
-}

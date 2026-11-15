@@ -63,8 +63,6 @@ pub(crate) struct Shared {
     pub display_clock_active: AtomicBool,
     pub display_deadline: AtomicU64,
     pub preferred_frame_rate: AtomicU32,
-    #[cfg(feature = "test-support")]
-    pub presentation_observer: Mutex<Option<crate::diagnostics::PresentationObserver>>,
 }
 
 impl Shared {
@@ -149,8 +147,6 @@ impl PlayerController {
             display_clock_active: AtomicBool::new(false),
             display_deadline: AtomicU64::new(0),
             preferred_frame_rate: AtomicU32::new(0),
-            #[cfg(feature = "test-support")]
-            presentation_observer: Mutex::new(None),
         });
         let (wake, receiver) = std::sync::mpsc::sync_channel(1);
         let worker = shared.clone();
@@ -163,19 +159,6 @@ impl PlayerController {
             })
             .map_err(|error| OutputError::new(ErrorCode::DecoderUnavailable, error.to_string()))?;
         Ok(Self { shared, wake })
-    }
-
-    #[cfg(feature = "test-support")]
-    /// The observer runs on the video worker and must not block or control this player.
-    pub fn set_presentation_observer(
-        &self,
-        observer: impl Fn(crate::PresentationObservation) + Send + Sync + 'static,
-    ) {
-        *self
-            .shared
-            .presentation_observer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(observer));
     }
 
     pub fn set_props(&self, props: VideoProps) -> Result<(), OutputError> {
@@ -341,10 +324,6 @@ impl PlayerController {
             player.pause();
         }
         let _ = self.wake.try_send(());
-    }
-
-    pub fn is_stopped(&self) -> bool {
-        self.shared.stopped.load(Ordering::Acquire)
     }
 
     pub fn source_is_playing(&self, source_id: &str) -> bool {

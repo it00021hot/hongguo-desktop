@@ -25,7 +25,6 @@ pub(crate) fn follow_notices(
     action: impl Fn(NoticeAction) + Copy + 'static,
 ) -> View {
     view()
-        .test_id("follow-notices-panel")
         .flex_1()
         .min_h(px(0.0))
         .gap_3()
@@ -112,7 +111,6 @@ pub(crate) fn follow_notices(
                     });
                     view()
                         .w_full()
-                        .test_id("follow-notice")
                         .child(
                             surface(ButtonVariant::Quiet)
                                 .accessibility_label(move || {

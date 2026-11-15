@@ -1,4 +1,4 @@
-use super::{backend, fixtures, model::StorageSnapshot};
+use super::{backend, model::StorageSnapshot};
 use crate::{
     bridge,
     events::SessionHandle,
@@ -84,51 +84,6 @@ pub(in crate::pages) fn page(session: SessionHandle, nav: Navigation) -> Screen 
             },
         )),
     )
-}
-
-pub(in crate::pages) fn preview(nav: Navigation) -> Screen {
-    let snapshot = signal(fixtures::storage());
-    let data = computed(move || Some(snapshot.get()));
-    let busy = signal(false);
-    let confirming = signal(false);
-    let message = signal(SharedString::default());
-    ui::page(nav, move || tr("settings.storage")).child(view::content(
-        data,
-        busy,
-        confirming,
-        message,
-        move |intent| {
-            if busy.get_untracked() || confirming.get_untracked() {
-                return;
-            }
-            match &intent {
-                Intent::All => confirming.set(true),
-                Intent::Series(..) => busy.set(true),
-            }
-            spawn(async move {
-                if matches!(&intent, Intent::All) && !confirm_all(confirming, message).await {
-                    return;
-                }
-                let (id, title) = match &intent {
-                    Intent::Series(id, title) => (Some(id.as_str()), Some(title.as_str())),
-                    Intent::All => (None, None),
-                };
-                let removed = snapshot.with(|snapshot| {
-                    snapshot
-                        .rows
-                        .iter()
-                        .filter(|row| id.is_none_or(|id| row.id == id))
-                        .map(|row| row.files)
-                        .sum()
-                });
-                snapshot.update(|snapshot| {
-                    snapshot.remove(id);
-                });
-                message.set(freed(removed, title));
-                busy.set(false);
-            });
-        },
-    ))
 }
 
 async fn confirm_all(confirming: Signal<bool>, message: Signal<SharedString>) -> bool {

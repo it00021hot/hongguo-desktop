@@ -4,8 +4,6 @@ pub(super) fn card() -> View {
     card::build()
 }
 mod model;
-#[cfg(test)]
-mod tests;
 mod view;
 
 use crate::{
@@ -92,37 +90,6 @@ pub(crate) fn dialogs(session: SessionHandle) -> View {
         computed(move || prompt.open()),
         move || prompt.set_open(false),
         move || view::form(state, dispatch),
-    )
-    .child(account_card)
-}
-
-pub(crate) fn preview_dialogs() -> View {
-    super::Tasks::provide();
-    let account_card = card::provide_preview();
-    let prompt = AccountPrompt::provide();
-    let state = State::new(computed(|| None));
-    clock(state, prompt);
-    ui::login_dialog(
-        computed(move || prompt.open()),
-        move || prompt.set_open(false),
-        move || {
-            view::form(state, move |action| match action {
-                Action::Send => {
-                    let now = hongguo_common::utils::time::now_ms();
-                    state.now.set(now);
-                    state.deadlines.update(|deadlines| {
-                        deadlines.record(state.mobile.get_untracked(), 60, now)
-                    });
-                    state.code_focus.update(|version| *version += 1);
-                }
-                Action::Login => state.feedback.set(
-                    crate::i18n::tr("nsh.previewAction")
-                        .replace("{action}", &crate::i18n::tr("settings.loginAction"))
-                        .into(),
-                ),
-                Action::CancelMfa => {}
-            })
-        },
     )
     .child(account_card)
 }

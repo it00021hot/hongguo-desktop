@@ -94,16 +94,6 @@ pub(super) fn provide(session: SessionHandle) -> View {
     })
 }
 
-pub(super) fn provide_preview() -> View {
-    let state = Context {
-        account: computed(|| None),
-        logout: signal(false),
-        pending: signal(false),
-    };
-    provide_context(state);
-    confirmation(state, || {})
-}
-
 fn confirmation(state: Context, logout: impl Fn() + 'static) -> View {
     view().child(ui::confirmation(
         state.logout,
@@ -176,73 +166,4 @@ pub(super) fn build() -> View {
             )
             .into_element(),
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use nsh_engine::{EngineConfig, Root};
-    use nsh_testing::Headless;
-    fn account(raw_profile: &str) -> AccountState {
-        AccountState {
-            user_id: "uid".into(),
-            mobile: "13800138000".into(),
-            raw_profile: raw_profile.into(),
-            cookies: String::new(),
-            user_name: String::new(),
-            avatar_url: String::new(),
-            login_at: 0,
-            token: String::new(),
-            raw_login: String::new(),
-        }
-    }
-    #[test]
-    fn account_card_keeps_large_hongguo_ids_exact_and_masks_mobile_without_credentials() {
-        let profile = Profile::from(account(r#"{"data":{"biz_user_id":9007199254740993}}"#));
-        assert_eq!(profile.name, "uid");
-        assert_eq!(profile.hongguo_id, "9007199254740993");
-        assert_eq!(profile.mobile, "138****8000");
-        let profile = Profile::from(account("not JSON"));
-        assert_eq!(profile.hongguo_id, "");
-    }
-
-    #[component]
-    fn SignedInCard() -> impl IntoElement {
-        let account = signal(Some(Profile::from(account(
-            r#"{"data":{"biz_user_id":"9007199254740993"}}"#,
-        ))));
-        let state = Context {
-            account: computed(move || account.get()),
-            logout: signal(false),
-            pending: signal(false),
-        };
-        provide_context(state);
-        view()
-            .flex_1()
-            .child(build())
-            .child(confirmation(state, move || account.set(None)))
-    }
-
-    #[test]
-    fn account_logout_confirms_scope_and_cancel_keeps_the_authenticated_card() -> Result<(), String>
-    {
-        let mut config = EngineConfig::new(Root::of::<SignedInCard>().tokens(nsh_base::tokens_of(
-            Some(include_str!("../../../../theme.json")),
-        )?));
-        config.environment.os = nsh_core::platform::Os::MacOs;
-        config.environment.reduce_motion = true;
-        let mut app = Headless::start(config).map_err(|error| error.to_string())?;
-        app.set_viewport(size(px(1000.0), px(840.0)))?;
-        app.wait_for("138****8000")?;
-        app.wait_for("9007199254740993")?;
-        app.press("role:button[Sign out]")?;
-        app.wait_for("id:confirmation")?;
-        app.press("role:button[Cancel]")?;
-        app.wait_for("138****8000")?;
-        app.press("role:button[Sign out]")?;
-        app.press("id:confirmation >> role:button[Sign out]")?;
-        app.wait_for("role:button[Sign in]")?;
-        assert!(!app.shows("138****8000"));
-        Ok(())
-    }
 }

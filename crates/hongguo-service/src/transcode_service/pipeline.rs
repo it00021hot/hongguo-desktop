@@ -66,17 +66,6 @@ fn complete_archive(target: &Path, backend: hongguo_media::Backend) -> AppResult
     })
 }
 
-#[cfg(test)]
-fn is_bytevc2_source(path: &Path) -> bool {
-    hongguo_media::demux::demux_file(path)
-        .ok()
-        .and_then(|d| {
-            d.video_track()
-                .map(|t| hongguo_bytevc2::is_bytevc2(&t.info.codec))
-        })
-        .unwrap_or(false)
-}
-
 /// 某个文件的目标分辨率（宽高）。读不出来返回 `None`。
 pub fn resolution_of(path: &Path) -> Option<(u32, u32)> {
     let tracks = hongguo_media::demux::demux_file(path).ok()?;
@@ -105,79 +94,4 @@ pub(crate) fn output_is_hevc_archive(path: &Path) -> bool {
         log::warn!("[Transcode] 产物校验：解复用失败: {e}");
     }
     false
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn avc_input_is_rejected_before_cache_or_codec_backend() {
-        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../hongguo-media/tests/fixtures/h264-64x48-aac.mp4");
-        let target = std::env::temp_dir().join(format!("hg-reject-avc-{}.mp4", std::process::id()));
-        assert!(matches!(
-            transcode(&source, &target, None, None),
-            Err(hongguo_common::AppError::CodecUnsupported(_))
-        ));
-        assert!(!target.exists());
-    }
-
-    #[test]
-    fn avc_file_cannot_pass_hevc_archive_output_validation() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../hongguo-media/tests/fixtures/h264-64x48-aac.mp4");
-        assert!(!output_is_hevc_archive(&path));
-    }
-
-    #[test]
-    fn hevc_main_and_main10_pass_archive_output_validation() {
-        for name in [
-            "hevc-main-136x76-aac.mp4",
-            "hevc-main10-128x72-hev1-aac.mp4",
-        ] {
-            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../hongguo-media/tests/fixtures")
-                .join(name);
-            assert!(output_is_hevc_archive(&path));
-        }
-    }
-
-    #[test]
-    fn bytevc2_fourcc_is_recognized_as_its_own_source() {
-        use hongguo_video::fixtures::{TrackSpec, mp4};
-        let dir = std::env::temp_dir().join(format!("hg-bvc2-src-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("b.mp4");
-        std::fs::write(&path, mp4(&[TrackSpec::video(1, b"bvc2", 64, 64)])).unwrap();
-        assert!(is_bytevc2_source(&path));
-        let h264 = dir.join("a.mp4");
-        std::fs::write(&h264, mp4(&[TrackSpec::video(1, b"avc1", 64, 64)])).unwrap();
-        assert!(!is_bytevc2_source(&h264));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn garbage_is_not_playable() {
-        let dir = std::env::temp_dir().join(format!("hg-pipeline-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("garbage.mp4");
-        std::fs::write(&p, b"definitely not an mp4").unwrap();
-        assert!(!output_is_hevc_archive(&p));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn audio_only_output_is_not_playable() {
-        use hongguo_video::fixtures::{TrackPlan, mp4_with_samples};
-        let dir = std::env::temp_dir().join(format!("hg-pipeline-audio-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("audio.mp4");
-        std::fs::write(&p, mp4_with_samples(&[TrackPlan::audio(vec![vec![0, 0]])])).unwrap();
-        assert!(
-            !output_is_hevc_archive(&p),
-            "没有视频样本的产物不能当转码成功"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }

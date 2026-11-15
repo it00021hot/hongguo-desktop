@@ -35,9 +35,9 @@ Tauri、GPUI 与 React/WebView 专用代码已移除；历史备份为 `codex/ba
 
 ## 命令
 
-`pnpm nsh` 启动，`pnpm nsh:check` 检查，`pnpm test` 验证包装脚本。
+`pnpm nsh` 启动，`pnpm nsh:check` 检查，`pnpm format:check` 检查格式。
 `make nsh-package TARGET=macos|windows|android|ios|ios-simulator` 打包。
-`cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes` 与
-`cargo test --workspace --lib -- --test-threads=1` 验证 Rust；使用当前宿主 SDK 的动态库搜索路径。
-原生 UI 预览及其类型声明需匹配 NSH CLI；未生成 `.nsh` 声明时不能把 TypeScript 检查报成通过。
+`cargo build --workspace` 与
+`cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes` 验证 Rust；使用当前宿主 SDK 的动态库搜索路径。
+仓库自有测试、离线预览、探针示例及测试专用接口已移除；第三方 vendor 源码保持原样。
 历史 Tauri/GPUI 文档只作研究背景；现行流程以 Makefile 与 NSH 开发说明为准。

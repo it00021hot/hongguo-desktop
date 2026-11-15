@@ -1,6 +1,4 @@
 mod segments;
-#[cfg(test)]
-mod tests;
 
 use super::{DanmakuSettingsState, Icon, danmaku_settings_compact, icon, motion::FAST_MS};
 use crate::i18n::tr;
@@ -110,7 +108,6 @@ pub(crate) fn mobile_player_more(
                                         .pr_12()
                                         .pt_2()
                                         .pb_safe_area_plus(px(16.0))
-                                        .test_id("mobile-player-more")
                                         .role(AccessibilityRole::Group)
                                         .label(move || tr("player.playbackRate"))
                                         .child(segments::rates(state, action))

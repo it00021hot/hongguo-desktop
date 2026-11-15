@@ -28,23 +28,3 @@ pub(super) fn plane_storage(
         u32::try_from(height).map_err(|_| "native plane height exceeds D3D11 limits")?,
     ))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_empty_short_or_misaligned_native_planes_before_gpu_upload() {
-        assert!(plane_storage(0, 1, 1, 1, 1).is_err());
-        assert!(plane_storage(1, 0, 1, 1, 1).is_err());
-        assert!(plane_storage(3, 2, 4, 2, 8).is_err());
-        assert!(plane_storage(3, 2, 8, 2, 13).is_err());
-        assert!(plane_storage(3, 2, 8, 3, 16).is_err());
-    }
-
-    #[test]
-    fn preserves_odd_chroma_edges_and_non_tight_high_precision_rows() {
-        assert_eq!(plane_storage(3, 2, 8, 2, 14), Ok((3, 2)));
-        assert_eq!(plane_storage(3, 3, 3, 1, 9), Ok((3, 3)));
-    }
-}

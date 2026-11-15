@@ -30,51 +30,7 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
             nav.routes()
                 .with(|routes| routes.last() == Some(&crate::navigation::Route::Settings))
         }),
-        true,
         move || save(session, draft, busy, message),
-    ))
-}
-
-pub(super) fn preview(nav: Navigation) -> Screen {
-    let latest = signal(hongguo_common::model::Settings {
-        download_dir: "/Users/milo/Movies/Hongguo".into(),
-        max_concurrency: 3,
-        proxy: hongguo_common::model::ProxyConfig {
-            mode: hongguo_common::model::settings::ProxyMode::System,
-            url: String::new(),
-        },
-        cache_limit_mb: 4096,
-        cache_ttl_days: 7,
-        cache_dir: "/Users/milo/Library/Caches/hongguo-downloader".into(),
-        ..Default::default()
-    });
-    let draft = signal(Draft::from(latest.get_untracked()));
-    let busy = signal(false);
-    let message = signal(SharedString::default());
-    let runtime = runtime::Runtime::preview(nav, message);
-    ui::page(nav, move || tr("nav.settings.title")).child(form(
-        draft,
-        busy,
-        message,
-        runtime,
-        computed(move || {
-            nav.routes()
-                .with(|routes| routes.last() == Some(&crate::navigation::Route::Settings))
-        }),
-        false,
-        move || {
-            if let Some(keys) = crate::shortcuts::Shortcuts::current() {
-                keys.cancel_capture();
-            }
-            match validate(draft.get_untracked(), latest.get_untracked(), is_desktop()) {
-                Ok(saved) => {
-                    latest.set(saved.clone());
-                    draft.set(Draft::from(saved));
-                    message.set(tr("settings.saved"));
-                }
-                Err(error) => message.set(error),
-            }
-        },
     ))
 }
 
@@ -84,7 +40,6 @@ fn form(
     message: Signal<SharedString>,
     runtime: runtime::Runtime,
     active: Memo<bool>,
-    external: bool,
     save_action: impl Fn() + 'static,
 ) -> View {
     let tasks = super::Tasks::provide();
@@ -96,15 +51,15 @@ fn form(
             .p_6()
             .gap_4()
             .child(super::account::card())
-            .child(sections::download(draft, busy, message, external))
+            .child(sections::download(draft, busy, message))
             .child(sections::naming(draft, busy))
-            .child(proxy::section(draft, busy, message, external))
+            .child(proxy::section(draft, busy, message))
             .child(ui::form_separator())
             .child(sections::playback(draft, busy, transcode::section(runtime)))
             .child(when(is_desktop, move || keyboard::shortcuts(active)))
             .child(keyboard::boss(draft, busy))
-            .child(cache::section(draft, busy, message, external, runtime))
-            .child(crate::update::card(external))
+            .child(cache::section(draft, busy, message, runtime))
+            .child(crate::update::card())
             .child(
                 ui::form_save(move || tr("settings.save"))
                     .self_end()
@@ -113,7 +68,6 @@ fn form(
             )
             .child(ui::status(message)),
     )
-    .test_id("preferences-form")
 }
 
 fn validate(

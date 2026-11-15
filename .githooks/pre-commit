@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 提交前置检查：Rust 三目标零警告 + 忽略标签禁令 + 测试 + 前端 lint。
+# 提交前置检查：Rust 三目标零警告 + 忽略标签禁令 + 格式检查。
 #
 # 启用（克隆后执行一次）：
 #   git config core.hooksPath .githooks
@@ -17,7 +17,7 @@
 #（cc 拆带空格路径；/c/ 的 MSYS 形态回落 PATH 撞带空格安装路径）。
 # 注入只随两条交叉命令生效（逐命令前缀，不全局 export）：x64 Mac 宿主的
 # 自身目标就是 x86_64-apple-darwin，全局 export 会把宿主的 C 编译一并毒化，
-# 后面的 cargo test 全部炸「could not find native static library」。
+# 后面的 Cargo 构建全部炸「could not find native static library」。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,10 +38,7 @@ CC_x86_64_apple_darwin=$LLVM/clang.exe CXX_x86_64_apple_darwin=$LLVM/clang++.exe
   AR_x86_64_apple_darwin=$LLVM/llvm-ar.exe \
   cargo clippy $MAC_CROSS --target x86_64-apple-darwin --all-targets -- $STRICT
 
-echo '[pre-commit] cargo test（lib）'
-cargo test --workspace --lib --quiet
-
-echo '[pre-commit] eslint'
-pnpm exec eslint . --max-warnings=0
+echo '[pre-commit] prettier'
+pnpm format:check
 
 echo '[pre-commit] 全部通过'

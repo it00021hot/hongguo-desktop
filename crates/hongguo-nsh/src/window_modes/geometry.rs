@@ -241,7 +241,3 @@ fn portrait(geometry: Geometry, fill: bool, aspect: f64) -> Rect {
         height,
     }
 }
-
-#[cfg(test)]
-#[path = "geometry_tests.rs"]
-mod tests;

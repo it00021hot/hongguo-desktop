@@ -99,20 +99,6 @@ fn open_state() -> AppResult<AppState> {
 }
 
 impl Session {
-    #[cfg(test)]
-    pub(crate) async fn for_test(
-        state: AppState,
-        history: Vec<hongguo_api::history::WatchHistoryItem>,
-    ) -> AppResult<Arc<Self>> {
-        Ok(Arc::new(Self {
-            personal: crate::personal_sources::PersonalSources::with_test_history(&state, history),
-            state,
-            media: MediaServer::start().await.map_err(AppError::Internal)?,
-            registration: hongguo_service::runtime::spawn(async {}),
-            follow_notices: OnceLock::new(),
-        }))
-    }
-
     pub(crate) fn start_notice_checks(&self) {
         self.follow_notices
             .get_or_init(|| hongguo_service::follow_service::start_notice_task(self.state.clone()));

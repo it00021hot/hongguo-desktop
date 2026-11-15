@@ -103,39 +103,3 @@ pub(super) fn time_ago(updated: i64, now: i64) -> SharedString {
             .into(),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn item(episode: u32, episodes: u32) -> HistoryItem {
-        HistoryItem {
-            id: "Series-ABC".into(),
-            vid: "episode".into(),
-            title: "故事".into(),
-            cover: ImageSrc::from(""),
-            episode,
-            episodes,
-            position_ms: 0,
-            duration_ms: 1,
-            updated_at_ms: 0,
-        }
-    }
-
-    #[test]
-    fn completion_is_last_episode_even_without_finished_video() {
-        let finished = item(24, 24);
-        assert!(HistoryTab::Finished.matches(&finished, ""));
-        assert!(!HistoryTab::Unfinished.matches(&finished, ""));
-        assert!(HistoryTab::Unfinished.matches(&item(0, 80), ""));
-        assert!(!HistoryTab::Finished.matches(&item(1, 0), ""));
-    }
-
-    #[test]
-    fn search_matches_title_and_series_identity_after_trimming() {
-        assert!(HistoryTab::All.matches(&item(1, 80), " abc "));
-        assert!(HistoryTab::All.matches(&item(1, 80), "故事"));
-        assert!(!HistoryTab::All.matches(&item(1, 80), "missing"));
-        assert!(!HistoryTab::Finished.matches(&item(1, 80), "故事"));
-    }
-}

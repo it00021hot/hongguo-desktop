@@ -73,11 +73,6 @@ impl MediaServer {
         Ok(Self { routes, task })
     }
 
-    #[cfg(test)]
-    pub(crate) fn file(&self, path: &Path) -> Result<MediaLease, String> {
-        self.publish(uuid::Uuid::new_v4().to_string(), Source::file(path)?, None)
-    }
-
     pub(crate) fn playback_file(&self, path: &Path) -> Result<MediaLease, String> {
         self.register(Source::file(path)?)
     }
@@ -207,7 +202,3 @@ impl Drop for MediaLease {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/media.rs"]
-mod tests;

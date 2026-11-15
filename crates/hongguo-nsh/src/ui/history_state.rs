@@ -7,31 +7,23 @@ const LOADING_ROWS: usize = 6;
 
 pub(crate) fn history_loading() -> View {
     view()
-        .test_id("history-loading")
         .role(AccessibilityRole::Group)
         .label(move || tr("common.loading"))
         .flex_1()
         .child(
             scroll()
                 .flex_1()
-                .child(
-                    view()
-                        .p_4()
-                        .gap_3()
-                        .children((0..LOADING_ROWS).map(|index| {
-                            skeleton()
-                                .test_id(&format!("history-skeleton-{index}"))
-                                .h(px(112.0))
-                                .flex_shrink_0()
-                                .rounded(radii::card())
-                        })),
-                ),
+                .child(view().p_4().gap_3().children((0..LOADING_ROWS).map(|_| {
+                    skeleton()
+                        .h(px(112.0))
+                        .flex_shrink_0()
+                        .rounded(radii::card())
+                }))),
         )
 }
 
 pub(crate) fn history_empty() -> View {
     view()
-        .test_id("history-empty")
         .w_full()
         .px(move || {
             px(if window().width.0 >= 768.0 {

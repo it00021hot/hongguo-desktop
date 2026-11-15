@@ -10,11 +10,10 @@ pub(crate) use info::OverlayMeta;
 pub(crate) use interaction::SocialMemory;
 pub(crate) use interaction::danmaku::DanmakuPreferences;
 pub(crate) use interaction::detail_social;
-pub(crate) use interaction::{comments_preview, reviews_preview_with_header, reviews_with_header};
+pub(crate) use interaction::reviews_with_header;
 mod keyboard;
 mod lifecycle;
-mod visibility_preview;
-pub(crate) use visibility_preview::{visibility_playback_probe, visibility_preview};
+
 mod native;
 pub(crate) mod navigation;
 mod preferences;
@@ -30,7 +29,6 @@ mod start_action;
 pub(crate) use start_action::{StartAction, start_action};
 mod transport;
 mod window_controls;
-pub(crate) use stage::fixture;
 pub(crate) use start::resolve_start;
 pub(crate) use start::start_episode;
 
@@ -631,7 +629,7 @@ fn content(
             .child(when(
                 move || source.error().is_some() || !failure.get().is_empty(),
                 move || {
-                    view().test_id("player-error").child(error_state::panel(
+                    view().child(error_state::panel(
                         computed(move || source.error()),
                         failure,
                         retry,

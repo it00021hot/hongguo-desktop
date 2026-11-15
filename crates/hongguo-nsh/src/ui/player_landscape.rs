@@ -93,7 +93,6 @@ pub(crate) fn player_landscape_header(
     exit: impl Fn() + 'static,
 ) -> View {
     view()
-        .test_id("player-landscape-header")
         .absolute()
         .top_0()
         .left_0()
@@ -144,12 +143,7 @@ pub(crate) fn player_landscape_header(
 }
 
 pub(crate) fn player_landscape_row() -> View {
-    view()
-        .test_id("player-landscape-controls")
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .mt_1()
+    view().flex_row().items_center().gap_2().mt_1()
 }
 
 pub(crate) fn player_landscape_label(
@@ -238,7 +232,6 @@ pub(crate) fn player_seek_rail(slider: nsh_base::SliderElement, landscape: Memo<
         .style_when(move || landscape.get(), |style| style.h_4())
         .child(
             view()
-                .test_id("player-seek-rail")
                 .w_full()
                 .focusable(false)
                 .accessible(false)

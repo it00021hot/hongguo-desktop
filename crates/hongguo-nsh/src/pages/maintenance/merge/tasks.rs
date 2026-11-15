@@ -19,7 +19,6 @@ pub(super) fn content(model: MergeView, dispatch: Stored<impl Fn(Intent) + 'stat
                 row(model, task, dispatch)
             },
         )
-        .test_id("merge-tasks")
         .viewport(nsh_core::ListViewport::Parent)
         .row_gap(px(8.0))
         .keys(move || {

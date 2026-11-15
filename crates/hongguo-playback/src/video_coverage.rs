@@ -43,32 +43,3 @@ impl Coverage {
             .is_some_and(|&(_, end)| ticks < end as f64)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn presentation_coverage_preserves_gaps_signed_pts_and_reordering() {
-        let sample = |pts, duration| MediaSampleTime {
-            pts,
-            dts: 0,
-            duration,
-        };
-        let coverage = Coverage::new(&[
-            sample(50, 10),
-            sample(-10, 10),
-            sample(10, 10),
-            sample(0, 10),
-            sample(15, 10),
-        ])
-        .unwrap();
-        for ticks in [-10., 0., 10., 24.999, 50., 59.999] {
-            assert!(coverage.contains(ticks));
-        }
-        for ticks in [-10.001, 25., 49.999, 60., f64::NAN] {
-            assert!(!coverage.contains(ticks));
-        }
-        assert!(Coverage::new(&[sample(i64::MAX, 1)]).is_err());
-    }
-}

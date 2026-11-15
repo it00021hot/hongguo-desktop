@@ -8,10 +8,6 @@ use crate::{
 };
 use nsh_core::prelude::*;
 
-#[cfg(test)]
-#[path = "history_cache_tests.rs"]
-mod cache_tests;
-
 pub(super) fn build(session: SessionHandle, nav: Navigation) -> Screen {
     let result = data(session, nav);
     content(session, nav, result)

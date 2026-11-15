@@ -1734,7 +1734,6 @@ dependencies = [
  "hongguo-bytevc2",
  "hongguo-common",
  "hongguo-signer",
- "hongguo-video",
  "log",
  "parking_lot 0.13.0",
  "rand 0.10.3",
@@ -1779,7 +1778,6 @@ name = "hongguo-enhancement"
 version = "0.6.6"
 dependencies = [
  "hongguo-nsh-video-api",
- "pollster",
  "serde",
  "serde_json",
  "wgpu",
@@ -1790,7 +1788,6 @@ name = "hongguo-hevc"
 version = "0.6.6"
 dependencies = [
  "hongguo-common",
- "hongguo-media",
  "hongguo-media-types",
  "rusty_h265",
  "serde",
@@ -1804,11 +1801,8 @@ version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
- "jpeg-encoder",
  "log",
- "rusty_h265",
  "serde",
- "serde_json",
  "sysinfo",
 ]
 
@@ -1826,7 +1820,6 @@ dependencies = [
  "log",
  "parking_lot 0.13.0",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1895,7 +1888,6 @@ dependencies = [
  "hongguo-api",
  "hongguo-bytevc2",
  "hongguo-common",
- "hongguo-media",
  "hongguo-media-platform",
  "hongguo-media-types",
  "hongguo-native-clock",
@@ -1911,16 +1903,13 @@ dependencies = [
  "log",
  "nsh-base",
  "nsh-core",
- "nsh-engine",
  "nsh-platform-ios",
  "nsh-platform-macos",
  "nsh-platform-windows",
- "nsh-testing",
  "objc2",
  "objc2-foundation",
  "objc2-ui-kit",
  "objc2-user-notifications",
- "reqwest",
  "semver",
  "serde",
  "serde_json",
@@ -1978,7 +1967,6 @@ dependencies = [
  "hongguo-media-types",
  "hongguo-native-clock",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1990,11 +1978,9 @@ dependencies = [
  "hongguo-media-types",
  "hongguo-native-clock",
  "hongguo-nsh-video-api",
- "hongguo-video",
  "hongguo-video-color",
  "hongguo-video-gpu",
  "objc2",
- "objc2-app-kit",
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-core-video",
@@ -2027,15 +2013,9 @@ dependencies = [
 name = "hongguo-nsh-video-macos"
 version = "0.6.6"
 dependencies = [
- "env_logger",
- "hongguo-common",
- "hongguo-media-types",
- "hongguo-native-clock",
  "hongguo-nsh-video-api",
  "hongguo-nsh-video-apple",
- "hongguo-playback",
  "log",
- "nsh-core",
  "nsh-platform-macos",
  "objc2",
  "objc2-quartz-core",
@@ -2048,7 +2028,6 @@ version = "0.6.6"
 dependencies = [
  "hongguo-enhancement",
  "hongguo-hevc",
- "hongguo-media",
  "hongguo-media-types",
  "hongguo-native-clock",
  "hongguo-nsh-video-api",
@@ -2113,7 +2092,6 @@ dependencies = [
  "md-5",
  "rand 0.10.3",
  "serde",
- "serde_json",
  "sha1 0.11.0",
  "sm3",
 ]
@@ -2169,8 +2147,6 @@ version = "0.6.6"
 dependencies = [
  "hongguo-media-types",
  "hongguo-video-color",
- "naga",
- "pollster",
  "wgpu",
 ]
 
@@ -3312,7 +3288,6 @@ dependencies = [
  "imagesize 0.15.0",
  "libc",
  "log",
- "naga",
  "nsh-macros",
  "nsh-updater",
  "ordered-float",
@@ -3473,17 +3448,6 @@ dependencies = [
  "windows",
  "windows-core 0.62.2",
  "windows-numerics",
-]
-
-[[package]]
-name = "nsh-testing"
-version = "0.5.0"
-dependencies = [
- "crossbeam-channel",
- "log",
- "nsh-core",
- "nsh-engine",
- "regex",
 ]
 
 [[package]]

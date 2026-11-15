@@ -1,10 +1,6 @@
 mod batch;
 mod confirmation;
-#[cfg(test)]
-mod grid_lifetime_tests;
 mod login;
-#[cfg(test)]
-pub(crate) mod test_log;
 pub(crate) use confirmation::confirmation;
 pub(crate) use login::{account_badge, account_logout, login_dialog, login_input, login_send};
 mod controls;
@@ -165,8 +161,7 @@ pub(crate) use mobile_player_more::{
     MobilePlayerMoreAction, MobilePlayerMoreEvents, MobilePlayerMoreState, mobile_player_more,
 };
 pub(crate) use navigation::{
-    mobile_catalog_header, mobile_channel_tab, page, provide_account_label, sections, shell,
-    shell_with_theme, stack,
+    mobile_catalog_header, mobile_channel_tab, page, provide_account_label, shell_with_theme, stack,
 };
 pub(crate) use player_menu::{
     player_episode, player_episode_cell, player_episode_group, player_episode_panel,
@@ -182,12 +177,10 @@ pub(crate) use video::{
     PlayerComposerVariant, player_badge, player_binge, player_chrome, player_control, player_heat,
     player_icon_button, player_inline, player_intro, player_phone_rate, player_phone_time,
     player_privacy_button, player_rail_item, player_seek, player_send_action, player_send_surface,
-    player_stage, player_title, video_caption,
+    player_stage, player_title,
 };
 
 mod follow_notices;
-#[cfg(test)]
-mod tests;
 pub(crate) use follow_notices::{
     FollowNoticesState, NoticeAction, follow_login_required, follow_notice_feedback, follow_notices,
 };

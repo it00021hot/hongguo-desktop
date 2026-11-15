@@ -12,7 +12,7 @@ Install Rust, platform SDKs, Node.js and pnpm, then run from the repository root
 pnpm install --frozen-lockfile
 pnpm nsh
 pnpm nsh:check
-pnpm test
+make lint
 make nsh-package TARGET=macos
 ```
 

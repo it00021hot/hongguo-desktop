@@ -40,7 +40,3 @@ windows = { version = "0.62", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Memory",
 ] }
-
-[features]
-# 门面 test-support 转发：跨 crate 的软件 HEVC 编码验证入口。
-test-support = []

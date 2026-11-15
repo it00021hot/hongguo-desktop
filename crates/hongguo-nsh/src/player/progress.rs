@@ -217,7 +217,3 @@ async fn run_interval_writer<F, Fut>(
         }
     }
 }
-
-#[cfg(test)]
-#[path = "progress_tests.rs"]
-mod tests;

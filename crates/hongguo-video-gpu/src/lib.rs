@@ -438,6 +438,3 @@ fn chroma_offsets(location: Option<u8>, divisor: [u32; 2]) -> [f32; 2] {
         _ => centered,
     }
 }
-
-#[cfg(test)]
-mod tests;

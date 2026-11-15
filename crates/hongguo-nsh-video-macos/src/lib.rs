@@ -108,18 +108,6 @@ pub fn register(components: &Components) {
     register_factory(components, |_| {});
 }
 
-#[cfg(feature = "test-support")]
-pub fn register_with_observer(
-    components: &Components,
-    observer: impl Fn(hongguo_nsh_video_apple::PresentationObservation) + Send + Sync + 'static,
-) {
-    let observer = std::sync::Arc::new(observer);
-    register_factory(components, move |controller| {
-        let observer = observer.clone();
-        controller.set_presentation_observer(move |observation| observer(observation));
-    });
-}
-
 fn register_factory(components: &Components, configure: impl Fn(&PlayerController) + 'static) {
     components.register(
         COMPONENT_NAME,

@@ -36,11 +36,3 @@ pub use probe::clear_probe_cache;
 
 /// I420 编成 HEVC。
 pub use yuv_in::{YuvEncoder, with_encoder_thread};
-
-/// 测试通道：与生产同路径（设备上无法强制「只要软编」时与正式入口一致）。
-#[cfg(any(test, feature = "test-support"))]
-pub fn transcode_hevc_for_tests(
-    req: &hongguo_media_platform_api::PlatformRequest<'_>,
-) -> Option<hongguo_common::AppResult<()>> {
-    transcode_hevc(req)
-}

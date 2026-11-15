@@ -10,7 +10,6 @@ pub(super) fn section(
     draft: Signal<Draft>,
     busy: Signal<bool>,
     message: Signal<SharedString>,
-    external: bool,
 ) -> View {
     group("settings.proxy").child(
         view()
@@ -44,14 +43,6 @@ pub(super) fn section(
                     .self_start()
                     .disabled(busy)
                     .on_press(move || {
-                        if !external {
-                            message.set(
-                                tr("nsh.previewAction")
-                                    .replace("{action}", &tr("settings.testProxy"))
-                                    .into(),
-                            );
-                            return;
-                        }
                         let proxy = draft.with_untracked(|draft| draft.proxy.clone());
                         busy.set(true);
                         message.set(tr("settings.testing"));

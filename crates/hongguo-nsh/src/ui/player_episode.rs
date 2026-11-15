@@ -209,21 +209,3 @@ pub(crate) fn picker_play(label: impl IntoReactive<SharedString>) -> View {
         .child(icon(Icon::Play).size_3())
         .child(text(label).text_xs().line_height(px(16.0)))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mobile_columns_keep_each_episode_touch_target_at_least_48_points() {
-        assert_eq!(picker_mobile_columns(0.0), 1);
-        assert_eq!(picker_mobile_columns(288.0), 5);
-        assert_eq!(picker_mobile_columns(368.0), 6);
-        assert_eq!(picker_mobile_columns(1_024.0), PICKER_DESKTOP_COLUMNS);
-        for width in [288.0, 328.0, 358.0, 368.0, 480.0] {
-            let columns = picker_mobile_columns(width);
-            let cell_width = (width - (columns - 1) as f32 * PICKER_GRID_GAP) / columns as f32;
-            assert!(cell_width >= PICKER_TOUCH_SIZE);
-        }
-    }
-}

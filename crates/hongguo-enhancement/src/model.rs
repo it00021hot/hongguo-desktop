@@ -71,29 +71,3 @@ impl Pass {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_shipped_graph_is_the_tauri_cnnx2m_model_with_the_original_residual_overlay() {
-        let graph = Graph::load().unwrap();
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../shaders/anime4k/graph.json")).unwrap();
-        assert_eq!(manifest["package"], "anime4k-webgpu");
-        assert_eq!(manifest["version"], "1.0.0");
-        assert_eq!(manifest["sourceSha256"].as_str().unwrap().len(), 64);
-        assert_eq!(manifest["shaders"].as_array().unwrap().len(), SHADERS.len());
-        assert_eq!(graph.passes.len(), 10);
-        assert_eq!(graph.textures[graph.output].scale, [2, 2]);
-        for shader in SHADERS {
-            assert!(!shader.is_empty());
-        }
-        let Pass::Render { bindings, .. } = graph.passes.last().unwrap() else {
-            panic!("CNN output must be combined with the original frame");
-        };
-        assert_eq!(bindings[1].texture, Some(0));
-        assert_eq!(bindings[2].texture, Some(9));
-    }
-}

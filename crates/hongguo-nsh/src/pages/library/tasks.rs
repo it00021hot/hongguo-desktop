@@ -16,62 +16,10 @@ pub(super) enum TaskIntent {
     Rescan,
 }
 
-#[cfg(test)]
-mod capability_tests {
-    use super::*;
-
-    #[test]
-    fn production_queue_management_uses_available_service_operations() {
-        let capabilities = TaskCapabilities::PRODUCTION;
-        assert!(capabilities.can(&TaskIntent::Remove(vec!["task".into()])));
-        assert!(capabilities.can(&TaskIntent::Rescan));
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct TaskCapabilities {
-    pub queue: bool,
-    pub retry: bool,
-    pub stop: bool,
-    pub folder: bool,
-    pub remove: bool,
-    pub rescan: bool,
-}
-
-impl TaskCapabilities {
-    pub const PREVIEW: Self = Self {
-        queue: true,
-        retry: true,
-        stop: true,
-        folder: true,
-        remove: true,
-        rescan: true,
-    };
-    pub const PRODUCTION: Self = Self {
-        queue: true,
-        retry: true,
-        stop: true,
-        folder: true,
-        remove: true,
-        rescan: true,
-    };
-    pub fn can(self, intent: &TaskIntent) -> bool {
-        match intent {
-            TaskIntent::Resume | TaskIntent::Pause => self.queue,
-            TaskIntent::Retry(_) => self.retry,
-            TaskIntent::Stop(_) => self.stop,
-            TaskIntent::Folder(_) => self.folder,
-            TaskIntent::Remove(_) | TaskIntent::Delete(_, _) => self.remove,
-            TaskIntent::Rescan => self.rescan,
-        }
-    }
-}
-
 pub(super) fn content(
     items: impl IntoReactive<Vec<DownloadTask>>,
     status: impl IntoReactive<QueueStatus>,
     busy: impl IntoReactive<bool>,
-    capabilities: TaskCapabilities,
     dispatch: impl Fn(TaskIntent) + 'static,
 ) -> View {
     let items = items.into_reactive();
@@ -124,7 +72,7 @@ pub(super) fn content(
         })
     };
     let send = move |intent: TaskIntent| {
-        if !busy.get_untracked() && capabilities.can(&intent) {
+        if !busy.get_untracked() {
             if let TaskIntent::Remove(ids) = intent {
                 removing.set(ids);
                 with_files.set(false);
@@ -167,19 +115,17 @@ pub(super) fn content(
                 .gap_2()
                 .child(
                     ui::library_action(move || tr("tasks.startAll"), Some(ui::Icon::Play))
-                        .disabled(move || busy.get() || !capabilities.queue)
+                        .disabled(busy)
                         .on_press(move || send(TaskIntent::Resume)),
                 )
                 .child(
                     ui::library_action(move || tr("tasks.pauseAll"), Some(ui::Icon::Pause))
-                        .disabled(move || busy.get() || !capabilities.queue)
+                        .disabled(busy)
                         .on_press(move || send(TaskIntent::Pause)),
                 )
                 .child(
                     ui::library_action(move || tr("tasks.retryAll"), Some(ui::Icon::Retry))
-                        .disabled(move || {
-                            busy.get() || !capabilities.retry || failed.get().is_empty()
-                        })
+                        .disabled(move || busy.get() || failed.get().is_empty())
                         .on_press(move || send(TaskIntent::Retry(failed.get_untracked()))),
                 )
                 .child(
@@ -205,7 +151,7 @@ pub(super) fn content(
                 )
                 .child(
                     ui::library_action(move || tr("tasks.rescan"), Some(ui::Icon::ScanSearch))
-                        .disabled(move || busy.get() || !capabilities.rescan)
+                        .disabled(busy)
                         .on_press(move || send(TaskIntent::Rescan)),
                 ),
         );
@@ -222,7 +168,6 @@ pub(super) fn content(
             .child(
                 scroll()
                     .horizontal()
-                    .test_id("task-table-horizontal")
                     .h(move || px(list_height.get() + 40.0))
                     .child(
                         view()
@@ -276,17 +221,9 @@ pub(super) fn content(
                                         let item = computed(move || {
                                             items.with(|items| items.get(at.index()).cloned())
                                         });
-                                        super::task_row::build(
-                                            item,
-                                            busy,
-                                            capabilities,
-                                            selected,
-                                            compact,
-                                            send,
-                                        )
+                                        super::task_row::build(item, busy, selected, compact, send)
                                     },
                                 )
-                                .test_id("task-records")
                                 .keys(move || {
                                     items
                                         .get()
@@ -314,7 +251,6 @@ pub(super) fn content(
             move || selected_count.get() > 0,
             move || {
                 ui::task_batch_bar()
-                    .test_id("task-batch-actions")
                     .child(text(move || selected_count.get().to_string()).text_sm())
                     .child(when(
                         move || freeable.get() > 0,
@@ -332,7 +268,7 @@ pub(super) fn content(
                     .child(ui::task_batch_close().on_press(move || selected.set(HashSet::new())))
                     .child(
                         ui::batch_delete(move || tr("common.delete"))
-                            .disabled(move || busy.get() || !capabilities.remove)
+                            .disabled(busy)
                             .on_press(move || {
                                 send(TaskIntent::Remove(
                                     selected

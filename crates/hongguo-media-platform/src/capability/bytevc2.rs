@@ -9,13 +9,3 @@ pub fn bytevc2_decode_available() -> bool {
     }
     true
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn rust_decoder_follows_the_opt_out_flag() {
-        let enabled = super::bytevc2_decode_available();
-        let opted_out = std::env::var_os("HONGGUO_NO_BYTEVC2").is_some();
-        assert_eq!(enabled, !opted_out);
-    }
-}

@@ -447,8 +447,6 @@ fn rail_icon(glyph: Icon) -> Svg {
     }
 }
 
-const CAPTION_WIDTH_RATIO: f32 = 0.85;
-
 pub(crate) fn player_seek(
     value: Signal<f64>,
     maximum: impl IntoReactive<f64>,
@@ -498,32 +496,4 @@ pub(crate) fn player_seek(
                     .expect("video controls token")
             })
         })
-}
-
-pub(crate) fn video_caption(label: impl IntoReactive<SharedString>) -> View {
-    video_caption_content(
-        text(label)
-            .text_base()
-            .number_of_lines(1)
-            .text_color(move || {
-                theme()
-                    .color("video-caption")
-                    .expect("validated video caption foreground")
-            }),
-    )
-}
-
-pub(crate) fn video_caption_content(content: impl IntoElement) -> View {
-    view()
-        .self_start()
-        .max_w(move || px(window().width.0 * CAPTION_WIDTH_RATIO))
-        .px_2()
-        .py_1()
-        .rounded(move || theme().radius)
-        .bg(move || {
-            theme()
-                .color("video-caption-background")
-                .expect("validated video caption background")
-        })
-        .child(content)
 }

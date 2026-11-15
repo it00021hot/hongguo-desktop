@@ -1,6 +1,4 @@
 mod range;
-#[cfg(test)]
-mod tests;
 
 use crate::{
     bridge,
@@ -60,23 +58,6 @@ pub(super) fn sheet(
             }
         });
     })
-}
-
-pub(super) fn fixture(open: Signal<bool>, current: Signal<u32>) -> impl IntoElement {
-    presenter(
-        open,
-        computed(move || {
-            Some(Target {
-                id: "preview".into(),
-                indices: (1..=80).collect(),
-                current: current.get(),
-            })
-        }),
-        move |_, _, busy, _| {
-            busy.set(false);
-            open.set(false);
-        },
-    )
 }
 
 fn presenter(
@@ -165,7 +146,6 @@ fn presenter(
                                     .child(
                                         ui::download_field(move || tr("download.rangePlaceholder"))
                                             .flex_1()
-                                            .test_id("download-range")
                                             .font_family("monospace")
                                             .value(range_text)
                                             .disabled(busy)

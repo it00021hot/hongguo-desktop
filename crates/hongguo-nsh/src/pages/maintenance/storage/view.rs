@@ -93,7 +93,6 @@ pub(super) fn content(
                         .gap_3()
                         .child(
                             ui::field(move || tr("player.seriesSearch"))
-                                .test_id("storage-search")
                                 .value(filter)
                                 .on_change(move |value: &str| filter.set(value.into())),
                         )
@@ -163,7 +162,6 @@ pub(super) fn content(
                                         )
                                 },
                             )
-                            .test_id("storage-rows")
                             .viewport(nsh_core::ListViewport::Parent)
                             .row_gap(px(8.0))
                             .keys(move || {

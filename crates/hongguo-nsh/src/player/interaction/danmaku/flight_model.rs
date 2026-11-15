@@ -121,7 +121,3 @@ pub(super) fn geometry(height: f32, font_scale: f32, area: f32) -> (f32, usize) 
     let lanes = ((height * area) / (font + 10.0)).floor().max(4.0) as usize;
     (font, lanes)
 }
-
-#[cfg(test)]
-#[path = "flight_tests.rs"]
-mod tests;

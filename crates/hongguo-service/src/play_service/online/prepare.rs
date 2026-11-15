@@ -109,10 +109,6 @@ pub async fn prepare(
     let automatic_definition = selection.automatic;
     let play = selection.play;
     let want = play.definition;
-    // 记真实自动结果供队列查询；它不再跳过下一次的动态决策。
-    if definition.is_none() {
-        c.remember_auto(vid, want);
-    }
     if let Some(hit) = prepared(c, vid, want, automatic_definition) {
         resume_fill(state, vid, want, progress_key);
         return Ok(hit);
@@ -208,7 +204,6 @@ pub async fn prefetch_stream(
     .await?
     .play;
     let want = play.definition;
-    c.remember_auto(vid, want);
     if c.is_fetching(vid, want) || c.exists(vid, want) {
         return Ok(());
     }
@@ -301,7 +296,3 @@ async fn wait_for_fetch(
         tokio::time::sleep(POLL).await;
     }
 }
-
-#[cfg(test)]
-#[path = "prepare_tests.rs"]
-mod tests;

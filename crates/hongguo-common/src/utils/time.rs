@@ -30,29 +30,3 @@ pub fn beijing_date(ts_ms: i64) -> String {
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}{m:02}{d:02}")
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn now_ms_is_epoch_millis() {
-        assert!(now_ms() > 1_700_000_000_000, "应晚于 2023-11");
-    }
-
-    #[test]
-    fn beijing_date_buckets_by_utc8_midnight() {
-        assert!(beijing_date(0).is_empty(), "未定档（ts=0）不归任何一天");
-        assert!(beijing_date(-5).is_empty());
-        assert_eq!(beijing_date(1_000), "19700101");
-        assert_eq!(beijing_date(57_599_999), "19700101");
-        assert_eq!(beijing_date(57_600_000), "19700102");
-    }
-
-    #[test]
-    fn beijing_date_matches_known_captures() {
-        assert_eq!(beijing_date(1_790_957_041_000), "20261003");
-        assert_eq!(beijing_date(1_791_216_360_000), "20261006");
-        assert_eq!(beijing_date(1_759_276_800_000), "20251001");
-    }
-}

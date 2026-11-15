@@ -23,7 +23,6 @@ pub(crate) fn download_sheet(
         })
         .child(dynamic(move || {
             view()
-                .test_id("player-download-sheet")
                 .gap_4()
                 .px(move || px(if is_desktop() { 24.0 } else { 16.0 }))
                 .pt_4()

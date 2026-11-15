@@ -211,7 +211,6 @@ pub(super) fn field(
     ui::search_suggestions(
         search.popup(),
         ui::search_field(move || crate::i18n::tr("search.placeholder"))
-            .test_id("browse-query")
             .value(search.draft)
             .on_change(move |next: &str| search.change(next))
             .on_focus(move || search.focus(true))

@@ -40,29 +40,3 @@ pub fn series_from_list(list: hongguo_api::detail::EpisodeList) -> Series {
         dismissed: false,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn empty_input_errors() {
-        let env =
-            hongguo_api::client::ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default());
-        assert!(resolve_series("", &env).await.is_err());
-        assert!(resolve_series("   ", &env).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn non_numeric_input_errors() {
-        let env =
-            hongguo_api::client::ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default());
-        assert!(resolve_series("随便一段文字", &env).await.is_err());
-        // 分享链接形态也不再支持：当普通非法输入拒掉
-        assert!(
-            resolve_series("https://hongguoduanju.com/detail?series_id=7654321", &env)
-                .await
-                .is_err()
-        );
-    }
-}

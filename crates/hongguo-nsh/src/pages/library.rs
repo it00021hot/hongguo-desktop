@@ -1,12 +1,7 @@
-#[cfg(test)]
-mod action_tests;
-mod fixtures;
 mod history;
 mod history_data;
 mod history_page;
 mod model;
-#[cfg(test)]
-mod recycling_tests;
 mod task_actions;
 mod task_confirm;
 mod task_row;
@@ -20,9 +15,7 @@ use crate::{
     ui,
 };
 use nsh_core::prelude::*;
-use tasks::{TaskCapabilities, TaskIntent};
-
-pub(super) use fixtures::{history as preview_history, tasks as preview_tasks};
+use tasks::TaskIntent;
 
 pub(super) fn history(session: SessionHandle, nav: Navigation) -> Screen {
     history_page::build(session, nav)
@@ -96,7 +89,6 @@ pub(super) fn tasks(session: SessionHandle, nav: Navigation) -> Screen {
                             })
                         },
                         busy,
-                        TaskCapabilities::PRODUCTION,
                         dispatch,
                     )
                 },

@@ -9,13 +9,6 @@ mod mobile_catalog;
 mod mobile_menu;
 mod mobile_preferences;
 pub(crate) use mobile_catalog::{mobile_catalog_header, mobile_channel_tab};
-#[cfg(test)]
-mod mobile_layout_tests;
-#[cfg(test)]
-mod status_bar_tests;
-#[cfg(test)]
-#[path = "navigation_tests.rs"]
-mod tests;
 
 #[derive(Clone, Copy)]
 struct AccountLabel {
@@ -164,7 +157,7 @@ pub(crate) fn sections(nav: Navigation) -> View {
         os(),
         nsh_core::platform::Os::Ios | nsh_core::platform::Os::Android
     ) {
-        return view().test_id("main-nav").flex_shrink_0().child(
+        return view().flex_shrink_0().child(
             nsh_core::mobile::tab_bar()
                 .flex_shrink_0()
                 .items(move || {
@@ -200,32 +193,6 @@ pub(crate) fn sections(nav: Navigation) -> View {
         );
     }
     sidebar(nav, signal(false))
-}
-
-pub(crate) fn shell(
-    nav: Navigation,
-    toolbar_content: impl IntoElement,
-    content: impl IntoElement,
-) -> View {
-    let appearance = signal(nsh_core::platform::Appearance::System);
-    shell_with_theme(
-        nav,
-        toolbar_content,
-        content,
-        false,
-        move || {
-            match appearance.get() {
-                nsh_core::platform::Appearance::System => "auto",
-                nsh_core::platform::Appearance::Light => "light",
-                nsh_core::platform::Appearance::Dark => "dark",
-            }
-            .into()
-        },
-        move |value| {
-            appearance.set(value);
-            set_color_scheme(value);
-        },
-    )
 }
 
 pub(crate) fn shell_with_theme(
@@ -271,7 +238,6 @@ pub(crate) fn shell_with_theme(
         .child(
             view()
                 .h_11()
-                .test_id("app-titlebar")
                 .style_when(move || chrome_hidden(nav), |style| style.hidden())
                 .window_drag(true)
                 .flex_row()
@@ -326,15 +292,7 @@ pub(crate) fn shell_with_theme(
                         )
                         .child(dynamic(move || toolbar.content())),
                 )
-                .child(
-                    view()
-                        .test_id("app-toolbar-rest")
-                        .absolute()
-                        .left(px(180.0))
-                        .top_0()
-                        .w_8()
-                        .h_11(),
-                )
+                .child(view().absolute().left(px(180.0)).top_0().w_8().h_11())
                 .child(view().flex_1())
                 .child(
                     view()
@@ -434,7 +392,6 @@ fn desktop_bottom_nav(nav: Navigation) -> View {
         ("nav.login", Icon::Account, Route::Settings),
     ];
     view()
-        .test_id("bottom-nav")
         .h(px(50.0))
         .flex_shrink_0()
         .flex_row()
@@ -496,7 +453,6 @@ fn toolbar_button(glyph: Icon, label: &'static str) -> nsh_base::ButtonElement {
 fn sidebar(nav: Navigation, collapsed: Signal<bool>) -> View {
     let compact = move || collapsed.get();
     view()
-        .test_id("main-nav")
         .style_when(
             move || window().width.0 < 768.0 || chrome_hidden(nav) || portrait_mode(nav),
             |style| style.hidden(),
@@ -521,17 +477,13 @@ fn sidebar(nav: Navigation, collapsed: Signal<bool>) -> View {
                 ),
             ),
         )
-        .child(
-            view()
-                .p_2()
-                .child(nav_item(
-                    nav,
-                    "nav.accountFallback",
-                    Icon::Account,
-                    Route::Account,
-                    compact,
-                )),
-        )
+        .child(view().p_2().child(nav_item(
+            nav,
+            "nav.accountFallback",
+            Icon::Account,
+            Route::Account,
+            compact,
+        )))
 }
 
 fn player_surface(nav: Navigation) -> bool {

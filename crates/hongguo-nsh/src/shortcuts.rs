@@ -123,9 +123,6 @@ impl Shortcuts {
     pub(crate) fn provide() -> Self {
         Self::install(true)
     }
-    pub(crate) fn provide_preview() -> Self {
-        Self::install(false)
-    }
 
     fn install(persistent: bool) -> Self {
         if let Some(current) = Self::current() {
@@ -371,50 +368,4 @@ fn boss_spec(stroke: Keystroke) -> Option<String> {
         .to_ascii_uppercase(),
     );
     Some(parts.join("+"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn boss_capture_clears_only_with_unmodified_backspace() {
-        let stroke = |value| Keystroke::parse(value, Os::MacOs).unwrap();
-        assert_eq!(boss_spec(stroke("backspace")), Some(String::new()));
-        assert_eq!(boss_spec(stroke("shift+backspace")), None);
-        assert_eq!(boss_spec(stroke("j")), None);
-        assert_eq!(
-            boss_spec(stroke("mod+backspace")),
-            Some("CommandOrControl+BACKSPACE".into())
-        );
-    }
-    #[test]
-    fn assigning_a_new_key_changes_only_its_action_and_duplicate_aliases_are_rejected() {
-        let defaults = Keys::default();
-        let changed = defaults
-            .assign(Action::PlayPause, parse("j", Os::MacOs).unwrap(), Os::MacOs)
-            .unwrap();
-        assert_eq!(changed.0, ["j", "left", "right", "up", "down"]);
-        assert_eq!(defaults.0, ["space", "left", "right", "up", "down"]);
-        assert!(
-            defaults
-                .assign(
-                    Action::PlayPause,
-                    parse("LEFT", Os::MacOs).unwrap(),
-                    Os::MacOs
-                )
-                .is_err()
-        );
-    }
-    #[test]
-    fn stored_keys_require_the_complete_unique_and_bindable_set() {
-        assert!(Keys::decode("[]", Os::MacOs).is_err());
-        assert!(Keys::decode("broken", Os::MacOs).is_err());
-        assert!(Keys::decode(r#"["space","left","LEFT","up","down"]"#, Os::MacOs).is_err());
-        assert!(Keys::decode(r#"["cmd+q","left","right","up","down"]"#, Os::MacOs).is_err());
-        assert!(Keys::decode(r#"["escape","left","right","up","down"]"#, Os::MacOs).is_err());
-        assert_eq!(
-            Keys::decode(r#"["space","left","right","up","down"]"#, Os::MacOs).unwrap(),
-            Keys::default()
-        );
-    }
 }

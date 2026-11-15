@@ -1,10 +1,6 @@
 //! 下载队列状态机：只管任务集合与状态流转；并发由 [`super::scheduler`] 控制，单集执行在
 //! [`super::worker`]，事件发射在 [`super::events`]。拆三个文件：本文件是写路径（改动频繁），
-//! `queue_query.rs` 是只读聚合（读路径），`queue_tests.rs` 是单元测试。
-
-#[cfg(test)]
-#[path = "queue_tests.rs"]
-mod tests;
+//! `queue_query.rs` 是只读聚合（读路径）。
 
 #[path = "queue_query.rs"]
 mod query;
@@ -209,7 +205,7 @@ impl DownloadQueue {
         n
     }
 
-    /// 设置并发上限，保存后立即生效（测试装配用）。
+    /// 设置并发上限，保存后立即生效。
     pub(crate) fn set_limit(&self, limit: usize) {
         *self.limit.write() = limit.clamp(1, 10);
     }

@@ -62,8 +62,6 @@ authors = ["hongguo-desktop contributors"]
 [workspace.dependencies]
 nsh-core = { path = "vendor/nsh/crates/nsh-core" }
 nsh-base = { path = "vendor/nsh/crates/nsh-base" }
-nsh-engine = { path = "vendor/nsh/crates/nsh-engine", default-features = false }
-nsh-testing = { path = "vendor/nsh/crates/nsh-testing", default-features = false }
 nsh-platform-macos = { path = "vendor/nsh/crates/nsh-platform-macos", default-features = false }
 nsh-platform-windows = { path = "vendor/nsh/crates/nsh-platform-windows", default-features = false }
 nsh-android-runtime = { package = "nsh-platform-android", path = "vendor/nsh/crates/nsh-platform-android", default-features = false }
@@ -100,20 +98,6 @@ strip = true
 # 代价只是调试器里看不到变量值；release 的 strip=true 不动。
 [profile.dev]
 debug = "line-tables-only"
-
-# 只对这一个依赖关掉 debug 断言，别把自己的代码也一起降级。
-#
-# `rusty_h265-accel` 的去块滤波在帧边界有个过严的 `debug_assert`
-# （deblock.rs:331，水平边要求 x >= 4）。1080p 真实码流第一帧就踩到，
-# 结果 dev 下整个软解必然 panic。
-#
-# 它确实只是一条断言：release 不编译它，该段 SIMD 路径又由 `if ok` 守住
-# 会整段跳过。不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
-# 消费者是 HEIC 封面软解（`hongguo-media::heif`）与 HEVC 软解回退
-# （`hongguo-playback` 经 `hongguo-hevc` 的 libde265 路径）——两者逐帧都过这段滤波，
-# 这条配置对它们是必需的。
-[profile.dev.package.rusty_h265-accel]
-debug-assertions = false
 
 # 第三方依赖保留 O2；工作区自身保持可调试与增量编译。
 [profile.dev.package."*"]

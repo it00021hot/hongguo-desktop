@@ -22,6 +22,3 @@ pub use draw::{RawFrame, drawing_device};
 pub use output::DisplayedFrame;
 pub use render::{CompletedFrame, GpuRenderer};
 pub use shared::{FrameLease, SharedFrames, VideoError};
-
-#[cfg(feature = "test-support")]
-pub use hevc::probe::run as probe_hevc_hardware;

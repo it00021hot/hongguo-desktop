@@ -12,7 +12,6 @@ pub(crate) fn detail_mobile_actions(
     like: impl Fn() + 'static,
 ) -> View {
     view()
-        .test_id("detail-mobile-actions")
         .absolute()
         .left_0()
         .right_0()

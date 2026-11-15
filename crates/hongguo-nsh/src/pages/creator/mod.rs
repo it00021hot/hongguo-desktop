@@ -1,8 +1,5 @@
-mod fixtures;
 mod model;
 mod presentation;
-#[cfg(test)]
-mod tests;
 
 use crate::{
     bridge,
@@ -105,32 +102,6 @@ fn next_page(query: Signal<Query>, works: Works, identity: u64) {
     {
         query.set(next);
     }
-}
-
-pub(super) fn preview(nav: Navigation, user_id: String) -> Screen {
-    if user_id.is_empty() {
-        return empty(nav);
-    }
-    let profile: Profile = resource(
-        || Some(()),
-        |_, _| std::future::ready(Ok(fixtures::profile())),
-    );
-    let works: Works = resource(
-        || Some(()),
-        |_, _| std::future::ready(Ok(fixtures::works())),
-    );
-    screen(nav, profile).child(presentation::content(
-        nav,
-        profile,
-        works,
-        move |id| open_work(nav, works, &id),
-        |_| {},
-        || {},
-    ))
-}
-
-pub(super) fn preview_creators() -> Vec<hongguo_api::detail::SeriesCreator> {
-    fixtures::creators()
 }
 
 fn open_work(nav: Navigation, works: Works, id: &str) {

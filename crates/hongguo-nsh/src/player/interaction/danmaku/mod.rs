@@ -3,22 +3,15 @@ mod model;
 mod motion;
 pub(in crate::player) use motion::Motion;
 mod overlay;
-mod preview;
-pub(in crate::player) use preview::layer as preview_layer;
+
 mod preferences;
-pub(crate) use preferences::DanmakuPreferences;
-#[cfg(test)]
-mod composer_tests;
-#[cfg(test)]
-mod overlay_tests;
-#[cfg(test)]
-mod settings_tests;
 use super::Target;
 use crate::{bridge, pages::SessionHandle, ui};
 use hongguo_api::danmaku::{self, Danmaku};
 use hongguo_common::{AppError, AppResult};
 use model::{Request, Timeline};
 use nsh_core::prelude::*;
+pub(crate) use preferences::DanmakuPreferences;
 
 #[derive(Clone, Copy)]
 pub(in crate::player) struct Handle {

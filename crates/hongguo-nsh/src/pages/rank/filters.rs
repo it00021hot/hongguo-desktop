@@ -59,68 +59,59 @@ pub(super) fn control(
         ui::rank_filter(label, open).disabled(move || rows.with(Vec::is_empty)),
         move || {
             view().min_h(px(0.0)).flex_shrink(1.0).child(
-                ui::rank_filter_scroll()
-                    .test_id(match kind {
-                        Kind::Month => "rank-month-filter",
-                        Kind::Total => "rank-total-filter",
-                    })
-                    .child(
-                        view()
-                            .gap_2()
-                            .child(
+                ui::rank_filter_scroll().child(
+                    view()
+                        .gap_2()
+                        .child(
+                            view()
+                                .flex_row()
+                                .justify_between()
+                                .items_center()
+                                .child(
+                                    text(move || tr("rank.filter.title"))
+                                        .text_sm()
+                                        .line_height(px(20.0))
+                                        .font_weight(FontWeight::MEDIUM),
+                                )
+                                .child(ui::rank_filter_close().on_press(move || open.set(false))),
+                        )
+                        .child(when(
+                            move || !value.get().is_empty(),
+                            move || {
+                                ui::button(
+                                    move || tr("rank.filter.reset"),
+                                    ui::ButtonVariant::Quiet,
+                                )
+                                .self_end()
+                                .on_press(move || pick(String::new()))
+                            },
+                        ))
+                        .child(each(
+                            move || rows.get(),
+                            |row: &RankPanelRow| row.name.clone(),
+                            move |row, _| {
                                 view()
-                                    .flex_row()
-                                    .justify_between()
-                                    .items_center()
+                                    .gap_1p5()
                                     .child(
-                                        text(move || tr("rank.filter.title"))
-                                            .text_sm()
-                                            .line_height(px(20.0))
-                                            .font_weight(FontWeight::MEDIUM),
+                                        text(move || row.get().name)
+                                            .text_xs()
+                                            .font_weight(FontWeight::NORMAL)
+                                            .text_color(move || nsh_base::theme().muted_foreground),
                                     )
-                                    .child(
-                                        ui::rank_filter_close().on_press(move || open.set(false)),
-                                    ),
-                            )
-                            .child(when(
-                                move || !value.get().is_empty(),
-                                move || {
-                                    ui::button(
-                                        move || tr("rank.filter.reset"),
-                                        ui::ButtonVariant::Quiet,
-                                    )
-                                    .self_end()
-                                    .on_press(move || pick(String::new()))
-                                },
-                            ))
-                            .child(each(
-                                move || rows.get(),
-                                |row: &RankPanelRow| row.name.clone(),
-                                move |row, _| {
-                                    view()
-                                        .gap_1p5()
-                                        .child(
-                                            text(move || row.get().name)
-                                                .text_xs()
-                                                .font_weight(FontWeight::NORMAL)
-                                                .text_color(move || {
-                                                    nsh_base::theme().muted_foreground
-                                                }),
-                                        )
-                                        .child(view().flex_row().flex_wrap().gap_1p5().child(each(
-                                            move || row.get().items,
-                                            |item: &RankPanelItem| item.id.clone(),
-                                            move |item, _| {
-                                                ui::rank_filter_option(move || {
-                                                    SharedString::from(item.get().name)
-                                                })
-                                                .selected(move || item.get().id == value.get())
-                                                .on_press(move || pick(item.get_untracked().id))
-                                            },
-                                        )))
-                                },
-                            )),
-                    ),
+                                    .child(view().flex_row().flex_wrap().gap_1p5().child(each(
+                                        move || row.get().items,
+                                        |item: &RankPanelItem| item.id.clone(),
+                                        move |item, _| {
+                                            ui::rank_filter_option(move || {
+                                                SharedString::from(item.get().name)
+                                            })
+                                            .selected(move || item.get().id == value.get())
+                                            .on_press(move || pick(item.get_untracked().id))
+                                        },
+                                    )))
+                            },
+                        )),
+                ),
             )
         },
     )

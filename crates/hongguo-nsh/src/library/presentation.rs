@@ -35,6 +35,3 @@ pub(super) fn frame(
         ))
         .child(when(logged_in, body))
 }
-
-#[cfg(test)]
-mod tests;

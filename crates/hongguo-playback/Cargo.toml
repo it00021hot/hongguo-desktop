@@ -20,6 +20,3 @@ hongguo-native-clock = { path = "../hongguo-native-clock" }
 hongguo-media = { path = "../hongguo-media" }
 parking_lot = "0.13"
 log = "0.4"
-
-[dev-dependencies]
-hongguo-video = { path = "../hongguo-video", features = ["test-support"] }

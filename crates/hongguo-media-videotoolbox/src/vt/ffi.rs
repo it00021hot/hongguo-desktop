@@ -1,12 +1,7 @@
 //! VideoToolbox / CoreMedia / CoreVideo 的最小 FFI 声明，只声明转码链路用到的符号。
 //! VideoToolbox 是纯 C API（CF 对象），不需要 ObjC 运行时，手写声明比引 objc2 系省掉一整套版本依赖；`#[link(kind = "framework")]` 在 Apple 目标上以 `-framework` 链接。
 //! 字段/签名以 macOS SDK 头文件为准（VTCompressionSession.h、VTDecompressionSession.h、CMSampleBuffer.h、CVPixelBuffer.h）。
-#![allow(
-    non_camel_case_types,
-    non_snake_case,
-    non_upper_case_globals,
-    dead_code
-)]
+#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
 use std::os::raw::c_void;
 
@@ -33,11 +28,6 @@ pub type CMBlockBufferRef = *mut c_void;
 pub type CVPixelBufferRef = *mut c_void;
 pub type CVPixelBufferPoolRef = *mut c_void;
 pub type CMItemCount = isize;
-
-/// `kCVReturnSuccess`：CoreVideo 返回码 0。
-pub const kCVReturnSuccess: i32 = 0;
-#[cfg(test)]
-pub const kCVReturnWouldExceedAllocationThreshold: i32 = -6689;
 
 /// `CMSampleTimingInfo`（CMSampleBuffer.h）。
 #[repr(C)]
@@ -93,12 +83,8 @@ pub const kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange: OSType = 0x3432_3076;
 /// `kVTDecodeFrameFlags`：请求异步解码。不设即同步——DecodeFrame 阻塞到
 /// 帧出来，VT 无法流水线化（实测 1080p HEVC 46.5ms/帧），必须设。
 pub const kVTDecodeFrame_EnableAsynchronousDecompression: u32 = 1 << 0;
-/// 兼容名：转码链等离线场景用同步就够（速度无所谓，同步省一轮回调）。
-pub const kVTDecodeFrame_Synchronous: u32 = 0;
 /// `kCFNumberSInt32Type`
 pub const kCFNumberSInt32Type: CFIndex = 3;
-/// `kCFStringEncodingUTF8`
-pub const kCFStringEncodingUTF8: u32 = 0x0800_0100;
 
 // —— CoreFoundation ——
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -114,14 +100,6 @@ unsafe extern "C" {
     pub fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
     pub fn CFArrayGetValueAtIndex(array: CFArrayRef, idx: CFIndex) -> CFTypeRef;
     pub fn CFBooleanGetValue(boolean: CFBooleanRef) -> Boolean;
-    pub fn CFDictionaryCreate(
-        allocator: CFAllocatorRef,
-        keys: *const CFTypeRef,
-        values: *const CFTypeRef,
-        numValues: CFIndex,
-        keyCallBacks: *const c_void,
-        valueCallBacks: *const c_void,
-    ) -> CFDictionaryRef;
     pub fn CFDictionaryCreateMutable(
         allocator: CFAllocatorRef,
         capacity: CFIndex,
@@ -201,7 +179,6 @@ unsafe extern "C" {
     pub fn CMSampleBufferGetFormatDescription(
         sbuf: CMSampleBufferRef,
     ) -> CMVideoFormatDescriptionRef;
-    pub fn CMSampleBufferGetNumSamples(sbuf: CMSampleBufferRef) -> CMItemCount;
     /// 编码器保留了我们传入的显示时间戳，这里原样读回
     pub fn CMSampleBufferGetOutputPresentationTimeStamp(sbuf: CMSampleBufferRef) -> CMTime;
     pub fn CMSampleBufferGetSampleAttachmentsArray(
@@ -219,8 +196,6 @@ unsafe extern "C" {
     pub static kCVPixelBufferIOSurfacePropertiesKey: CFStringRef;
     /// 输出缓冲池的最小缓冲数：解码会话按它预分配 IOSurface，避免每帧新建/回收（VT 默认按需分配，帧率高时分配开销进帧时延）
     pub static kCVPixelBufferPoolMinimumBufferCountKey: CFStringRef;
-    #[cfg(test)]
-    pub static kCVPixelBufferPoolAllocationThresholdKey: CFStringRef;
 
     pub fn CVPixelBufferCreate(
         allocator: CFAllocatorRef,
@@ -231,12 +206,9 @@ unsafe extern "C" {
         pixelBufferOut: *mut CVPixelBufferRef,
     ) -> OSStatus;
     pub fn CVPixelBufferGetWidth(pixelBuffer: CVPixelBufferRef) -> usize;
-    pub fn CVPixelBufferGetPixelFormatType(pixelBuffer: CVPixelBufferRef) -> OSType;
     pub fn CVPixelBufferGetHeight(pixelBuffer: CVPixelBufferRef) -> usize;
     pub fn CVPixelBufferLockBaseAddress(pixelBuffer: CVPixelBufferRef, flags: u32) -> OSStatus;
     pub fn CVPixelBufferUnlockBaseAddress(pixelBuffer: CVPixelBufferRef, flags: u32) -> OSStatus;
-    pub fn CVPixelBufferGetBaseAddress(pixelBuffer: CVPixelBufferRef) -> *mut c_void;
-    pub fn CVPixelBufferGetBytesPerRow(pixelBuffer: CVPixelBufferRef) -> usize;
     // 平面级访问：IOSurface 背板下整块分配不等于「stride×高×1.5」的纸面加和（平面各自对齐），按整块 memset 会越界——探测帧填充必须逐平面
     pub fn CVPixelBufferGetPlaneCount(pixelBuffer: CVPixelBufferRef) -> usize;
     pub fn CVPixelBufferGetBaseAddressOfPlane(
@@ -249,7 +221,6 @@ unsafe extern "C" {
     ) -> usize;
     pub fn CVPixelBufferGetHeightOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize)
     -> usize;
-    pub fn CVPixelBufferGetWidthOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize) -> usize;
     // 输出缓冲池：播放路径按分辨率建一个池反复取 420f 缓冲，避免逐帧新建 IOSurface（分配开销比区间换算本身还大）
     pub fn CVPixelBufferPoolCreate(
         allocator: CFAllocatorRef,
@@ -262,19 +233,11 @@ unsafe extern "C" {
         pixelBufferPool: CVPixelBufferPoolRef,
         pixelBufferOut: *mut CVPixelBufferRef,
     ) -> i32;
-    #[cfg(test)]
-    pub fn CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
-        allocator: CFAllocatorRef,
-        pixelBufferPool: CVPixelBufferPoolRef,
-        auxAttributes: CFDictionaryRef,
-        pixelBufferOut: *mut CVPixelBufferRef,
-    ) -> i32;
 }
 
 // —— VideoToolbox ——
 #[link(name = "VideoToolbox", kind = "framework")]
 unsafe extern "C" {
-    pub static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
     pub static kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: CFStringRef;
     /// 解码侧：显式请求硬件解码器。不传规格（或传 `null`）时 VideoToolbox **可以自由落软解**——实测本机
     /// 1080p HEVC 落软解要 46.8ms/帧（30fps 只需 33ms）解码跟不上实时、音画偏差一直滚大；播放是实时场景，必须点名要走硬解。

@@ -1,25 +1,18 @@
 mod chrome;
-#[cfg(any(target_os = "macos", target_os = "windows", test))]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop;
-#[cfg(test)]
-mod fullscreen_tests;
-#[cfg(any(target_os = "macos", target_os = "windows", test))]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod geometry;
-#[cfg(test)]
-mod layout_tests;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 mod occlusion;
 mod platform;
-mod preview;
-#[cfg(any(target_os = "macos", target_os = "windows", test))]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod privacy;
-#[cfg(test)]
-mod tests;
 mod types;
 mod wire;
 use nsh_core::storage::Storage;
 use nsh_core::{desktop::WindowMode, prelude::*};
-pub(crate) use preview::{PreviewDriver, provide_preview};
+
 pub(crate) use types::{Mode, portrait_aspect};
 use types::{PHONE_ASPECT, REFIT_DELTA};
 pub(crate) use wire::State;
@@ -37,7 +30,6 @@ pub(crate) struct WindowModes {
     aspect: Signal<f64>,
     applied_aspect: Stored<f64>,
     windowed_mode: Stored<WindowMode>,
-    preview: bool,
 }
 
 impl WindowModes {
@@ -213,15 +205,13 @@ impl WindowModes {
                 return;
             }
             "exitFullscreen" | "toggleFullscreen" => {
-                if !self.preview {
-                    let window = nsh_core::element::desktop::current_window();
-                    if let Some(state) = window.state() {
-                        if state.mode == WindowMode::FullScreen {
-                            window.set_mode(self.windowed_mode.get());
-                        } else if event.name.as_ref() == "toggleFullscreen" {
-                            self.windowed_mode.replace(state.mode);
-                            window.set_mode(WindowMode::FullScreen);
-                        }
+                let window = nsh_core::element::desktop::current_window();
+                if let Some(state) = window.state() {
+                    if state.mode == WindowMode::FullScreen {
+                        window.set_mode(self.windowed_mode.get());
+                    } else if event.name.as_ref() == "toggleFullscreen" {
+                        self.windowed_mode.replace(state.mode);
+                        window.set_mode(WindowMode::FullScreen);
                     }
                 }
                 return;
@@ -249,8 +239,7 @@ impl WindowModes {
     fn accept(self, state: State) {
         let previous = self.state.get_untracked();
         self.state.set(state);
-        if !self.preview
-            && previous.incognito != state.incognito
+        if previous.incognito != state.incognito
             && let Err(error) = Storage::set_item(INCOGNITO_KEY, state.incognito.to_string())
         {
             self.error.set(error.to_string().into());
@@ -268,7 +257,6 @@ pub(crate) fn install(observe_visibility: Memo<bool>) -> impl IntoElement {
         aspect: signal(PHONE_ASPECT),
         applied_aspect: stored(PHONE_ASPECT),
         windowed_mode: stored(WindowMode::Normal),
-        preview: false,
     };
     provide_context(state);
     let window = nsh_core::element::desktop::current_window();

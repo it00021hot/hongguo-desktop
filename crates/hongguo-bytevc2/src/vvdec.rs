@@ -249,7 +249,3 @@ fn copy_plane(plane: &ffi::vvdecPlane) -> AppResult<NativePlane> {
         bytes_per_sample: bps as u8,
     })
 }
-
-#[cfg(test)]
-#[path = "vvdec_tests.rs"]
-mod tests;

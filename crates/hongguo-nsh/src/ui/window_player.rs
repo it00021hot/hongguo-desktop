@@ -50,7 +50,6 @@ pub(crate) enum WindowPlayerAction {
 
 pub(crate) fn window_drag_bar() -> View {
     view()
-        .test_id("player-window-drag-bar")
         .absolute()
         .top_0()
         .left_0()
@@ -78,7 +77,6 @@ pub(crate) fn window_player_controls(
         }
     });
     view()
-        .test_id("player-window-controls")
         .absolute()
         .left_0()
         .right_0()
@@ -107,7 +105,7 @@ pub(crate) fn window_player_controls(
             move || caption(state.caption),
         ))
         .child(
-            view().test_id("window-player-seek").child(
+            view().child(
                 player_seek(seek, move || state.position.get().1)
                     .accessibility_label(move || tr("common.progress"))
                     .disabled(move || state.busy.get() || state.position.get().1 <= 0.0)

@@ -154,7 +154,7 @@ function platformOptions(target, env) {
   ];
 }
 
-export function buildHevc(triple) {
+function buildHevc(triple) {
   const target = codecTarget(triple);
   const parent = join(root, 'target/native-codec-build');
   mkdirSync(parent, { recursive: true });

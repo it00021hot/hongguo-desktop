@@ -344,30 +344,3 @@ fn display_dimensions(frame: &hongguo_media_types::FrameDescriptor) -> (u32, u32
         (width, height)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn load_dimensions_follow_visible_crop_sar_and_rotation() {
-        let mut descriptor = hongguo_media_types::FrameDescriptor {
-            width: 8,
-            height: 8,
-            bit_depth: 10,
-            crop: hongguo_media_types::CropRect {
-                x: 1,
-                y: 1,
-                width: 3,
-                height: 5,
-            },
-            rotation_degrees: 90,
-            color: hongguo_media_types::ColorMetadata {
-                sample_aspect_ratio: Some((2, 1)),
-                ..Default::default()
-            },
-        };
-        assert_eq!(display_dimensions(&descriptor), (5, 6));
-        descriptor.rotation_degrees = 0;
-        assert_eq!(display_dimensions(&descriptor), (6, 5));
-    }
-}

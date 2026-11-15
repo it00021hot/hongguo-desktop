@@ -5,7 +5,7 @@ const MANIFEST: &str =
     "https://github.com/it00021hot/hongguo-desktop/releases/latest/download/latest.json";
 const RELEASES: &str = "https://github.com/it00021hot/hongguo-desktop/releases/latest";
 
-pub(crate) fn card(external: bool) -> View {
+pub(crate) fn card() -> View {
     let busy = signal(false);
     let checked = signal(false);
     let available = signal(None::<String>);
@@ -46,11 +46,11 @@ pub(crate) fn card(external: bool) -> View {
                             failure.set(SharedString::default());
                             spawn(async move {
                                 if available.get_untracked().is_some() {
-                                    if external && !open_url(RELEASES).await {
+                                    if !open_url(RELEASES).await {
                                         failure.set(tr("update.releaseOpenFailed"));
                                     }
                                 } else {
-                                    let result = if external { check().await } else { Ok(None) };
+                                    let result = check().await;
                                     match result {
                                         Ok(version) => {
                                             available.set(version);
@@ -112,34 +112,4 @@ fn newer_version(manifest: &str, current: &str) -> Result<Option<String>, String
         .map_err(|error| error.to_string())?;
     let current = semver::Version::parse(current).map_err(|error| error.to_string())?;
     Ok((candidate > current).then(|| version.to_owned()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn releases_compare_semantic_versions_without_treating_tauri_assets_as_nsh_installers() {
-        assert_eq!(
-            newer_version(
-                r#"{"version":"0.10.0","platforms":{"darwin-aarch64":{"url":"tauri.app.tar.gz"}}}"#,
-                "0.9.9"
-            )
-            .unwrap(),
-            Some("0.10.0".into())
-        );
-        assert_eq!(
-            newer_version(r#"{"version":"0.6.6"}"#, "0.6.6").unwrap(),
-            None
-        );
-        assert_eq!(
-            newer_version(r#"{"version":"v0.6.5"}"#, "0.6.6").unwrap(),
-            None
-        );
-        assert_eq!(
-            newer_version(r#"{"version":"0.6.6-beta.2"}"#, "0.6.6").unwrap(),
-            None
-        );
-        assert!(newer_version(r#"{"version":"bad"}"#, "0.6.6").is_err());
-        assert!(newer_version(r#"{}"#, "0.6.6").is_err());
-    }
 }

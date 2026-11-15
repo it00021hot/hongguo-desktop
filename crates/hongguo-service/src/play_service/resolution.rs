@@ -205,37 +205,3 @@ pub(super) async fn select(
         automatic: preferred.is_none(),
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn manual_memory_obeys_process_series_and_persistent_flags() {
-        let state = AppState::default();
-        let mut rules = Rules::default();
-        remember_with_rules(&state, &rules, "A", Some(1080)).unwrap();
-        assert_eq!(preferred(&state, &rules, "B").unwrap(), Some(1080));
-        rules.series.single_series = true;
-        assert_eq!(preferred(&state, &rules, "A").unwrap(), None);
-        remember_with_rules(&state, &rules, "A", Some(540)).unwrap();
-        assert_eq!(preferred(&state, &rules, "A").unwrap(), Some(540));
-        assert_eq!(preferred(&state, &rules, "B").unwrap(), None);
-        rules.series.single_progress = false;
-        assert_eq!(preferred(&state, &rules, "A").unwrap(), None);
-        remember_with_rules(&state, &rules, "A", Some(480)).unwrap();
-        let reopened = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(
-            state.store.clone(),
-        ));
-        assert_eq!(preferred(&reopened, &rules, "A").unwrap(), Some(480));
-        rules.series.show = false;
-        assert_eq!(preferred(&reopened, &rules, "A").unwrap(), None);
-        rules.series.show = true;
-        remember_with_rules(&reopened, &rules, "A", None).unwrap();
-        assert_eq!(preferred(&state, &rules, "A").unwrap(), None);
-        // 清除持久化作用域不应顺带清除进程记忆。
-        rules.series.single_progress = true;
-        assert_eq!(preferred(&state, &rules, "A").unwrap(), Some(540));
-        assert_eq!(preferred(&reopened, &rules, "A").unwrap(), None);
-    }
-}

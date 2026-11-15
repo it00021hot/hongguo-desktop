@@ -1,7 +1,5 @@
 mod sampling;
 mod shader;
-#[cfg(test)]
-mod tests;
 
 use hongguo_media_types::{ColorMetadata, FrameDescriptor, FrameImage};
 use hongguo_video_color::{

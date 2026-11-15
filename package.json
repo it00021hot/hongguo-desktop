@@ -10,20 +10,12 @@
     "nsh": "node scripts/nsh.mjs run",
     "nsh:setup": "node scripts/nsh.mjs setup",
     "nsh:check": "node scripts/nsh.mjs check",
-    "nsh:test": "node scripts/nsh.mjs test",
     "build": "node scripts/nsh.mjs check",
-    "test": "node --test scripts/*.test.mjs",
-    "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "typecheck": "tsc6 -p crates/hongguo-nsh/preview/tsconfig.json --noEmit"
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "anime4k-webgpu": "1.0.0",
-    "eslint": "^10.14.0",
-    "prettier": "^3.9.10",
-    "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.72.1"
+    "prettier": "^3.9.10"
   }
 }

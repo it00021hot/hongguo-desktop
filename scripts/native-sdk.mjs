@@ -18,7 +18,7 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-export function readNativeSdkLock() {
+function readNativeSdkLock() {
   return JSON.parse(readFileSync(join(repository, 'scripts/native-sdk.sources.json'), 'utf8'));
 }
 

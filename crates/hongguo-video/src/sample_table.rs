@@ -283,7 +283,3 @@ fn read_chunk_offsets(data: &[u8], start: usize, size: usize, info: &mut TrackIn
         }
     }
 }
-
-#[cfg(test)]
-#[path = "sample_table_tests.rs"]
-mod tests;

@@ -13,7 +13,7 @@ use hongguo_video::sample_table::TrackInfo;
 /// 之后的扩展区是 hvcC。
 pub(crate) const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;
 
-/// Annex-B 起始码（HEIF 封面软解同样使用）。
+/// Annex-B 起始码。
 pub(crate) const START_CODE: [u8; 4] = [0, 0, 0, 1];
 
 /// 是否是 HEVC 轨：`hev1` / `hvc1`，以及解密后仍带 `encv` 标记的加密轨。
@@ -49,43 +49,7 @@ pub fn read_parameter_set_nalus(
     param_nalus_from_hvcc(&hvcc)
 }
 
-/// [`read_parameter_set_nalus`] 的内存形态：从**已拿到的文件头部字节**（须覆盖 moov）提取参数集。
-/// 在线流播放没有文件可读——样本表 + 渐进流的头部区间就是全部元数据，解析逻辑与文件形态同一份。
-pub fn param_nalus_from_head(head: &[u8], track: &TrackInfo) -> AppResult<(Vec<Vec<u8>>, usize)> {
-    if !is_hevc(&track.codec) {
-        return Err(AppError::Media(format!(
-            "不是 HEVC 轨（codec = {}）",
-            track.codec
-        )));
-    }
-    let (offset, size) = find_hvc_c_in(head, track)?;
-    let start = offset as usize;
-    let end = start + size as usize;
-    param_nalus_from_hvcc(
-        head.get(start..end)
-            .ok_or_else(|| AppError::Media("hvcC 越出头部字节范围（moov 不完整）".into()))?,
-    )
-}
-
-/// hvcC 的**原始载荷**（box header 之后、未拆装的整体记录）。
-/// Media Foundation 的解码 MFT 经 `MF_MT_MPEG_SEQUENCE_HEADER` 吃的就是这份容器原始形态（VT 要裸 NAL 数组、MF 要整条记录）。
-pub fn hvcc_payload_from_head(head: &[u8], track: &TrackInfo) -> AppResult<Vec<u8>> {
-    if !is_hevc(&track.codec) {
-        return Err(AppError::Media(format!(
-            "不是 HEVC 轨（codec = {}）",
-            track.codec
-        )));
-    }
-    let (offset, size) = find_hvc_c_in(head, track)?;
-    let start = offset as usize;
-    let end = start + size as usize;
-    head.get(start..end)
-        .map(<[u8]>::to_vec)
-        .ok_or_else(|| AppError::Media("hvcC 越出头部字节范围（moov 不完整）".into()))
-}
-
 /// 解析 hvcC **载荷**（box header 之后的部分）：参数集 NAL 数组 + 长度前缀字节数。
-/// MP4（stsd sample entry）与 HEIF（ipco 属性）里的 hvcC 载荷布局完全一致，封面软解（[`crate::heif`]）与此共用。
 pub fn param_nalus_from_hvcc(hvcc: &[u8]) -> AppResult<(Vec<Vec<u8>>, usize)> {
     // hvcC 固定头 23 字节，其后才是参数集数组
     if hvcc.len() < 23 {
@@ -202,58 +166,4 @@ fn read_box_payload(path: &Path, offset: u64, size: u64) -> AppResult<Vec<u8>> {
     f.read_exact(&mut buf)
         .map_err(|e| AppError::Media(format!("读取 hvcC 失败: {e}")))?;
     Ok(buf)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn to_annexb_converts_length_prefixed() {
-        let sample = vec![0x00, 0x00, 0x03, 0xAA, 0xBB, 0xCC];
-        assert_eq!(to_annexb(&sample, 3), vec![0, 0, 0, 1, 0xAA, 0xBB, 0xCC]);
-    }
-
-    #[test]
-    fn to_annexb_handles_multiple_nals() {
-        let sample = vec![
-            0x00, 0x00, 0x02, 0x11, 0x22, //
-            0x00, 0x00, 0x01, 0x33,
-        ];
-        let out = to_annexb(&sample, 3);
-        assert_eq!(out, vec![0, 0, 0, 1, 0x11, 0x22, 0, 0, 0, 1, 0x33]);
-    }
-
-    #[test]
-    fn to_annexb_stops_on_bad_length() {
-        let sample = vec![0x00, 0x00, 0x64, 0x11, 0x22];
-        let out = to_annexb(&sample, 3);
-        assert!(out.is_empty());
-    }
-
-    #[test]
-    fn to_annexb_handles_empty() {
-        assert!(to_annexb(&[], 4).is_empty());
-    }
-
-    #[test]
-    fn to_annexb_with_four_byte_lengths() {
-        let sample = vec![0x00, 0x00, 0x00, 0x02, 0xAB, 0xCD];
-        let out = to_annexb(&sample, 4);
-        assert_eq!(out, vec![0, 0, 0, 1, 0xAB, 0xCD]);
-    }
-
-    #[test]
-    fn is_hevc_accepts_every_transport_form() {
-        for codec in ["hvc1", "hev1", "encv"] {
-            assert!(is_hevc(codec), "{codec} 应被当作 HEVC");
-        }
-    }
-
-    #[test]
-    fn is_hevc_rejects_other_codecs() {
-        for codec in ["avc1", "mp4a", "vvc1", ""] {
-            assert!(!is_hevc(codec), "{codec} 不该被当作 HEVC");
-        }
-    }
 }

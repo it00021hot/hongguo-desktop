@@ -1,4 +1,4 @@
-use super::tasks::{TaskCapabilities, TaskIntent};
+use super::tasks::TaskIntent;
 use crate::{
     i18n::{format_bytes as bytes, tr},
     ui,
@@ -11,7 +11,6 @@ use std::collections::HashSet;
 pub(super) fn build(
     item: Memo<Option<DownloadTask>>,
     busy: Memo<bool>,
-    capabilities: TaskCapabilities,
     selected: Signal<HashSet<String>>,
     compact: Memo<bool>,
     send: impl Fn(TaskIntent) + Copy + 'static,
@@ -133,7 +132,7 @@ pub(super) fn build(
                         },
                         move || {
                             ui::library_icon(ui::Icon::Pause, move || tr("tasks.actions.stop"))
-                                .disabled(move || busy.get() || !capabilities.stop)
+                                .disabled(busy)
                                 .on_press(move || {
                                     if let Some(item) = item.get_untracked() {
                                         send(TaskIntent::Stop(item.id));
@@ -149,7 +148,7 @@ pub(super) fn build(
                         },
                         move || {
                             ui::library_icon(ui::Icon::Retry, move || tr("tasks.actions.retry"))
-                                .disabled(move || busy.get() || !capabilities.retry)
+                                .disabled(busy)
                                 .on_press(move || {
                                     if let Some(item) = item.get_untracked() {
                                         send(TaskIntent::Retry(vec![item.id]));
@@ -170,7 +169,7 @@ pub(super) fn build(
                                     "nsh.exportFile"
                                 })
                             })
-                            .disabled(move || busy.get() || !capabilities.folder)
+                            .disabled(busy)
                             .on_press(move || {
                                 if let Some(item) = item.get_untracked() {
                                     send(TaskIntent::Folder(item.id));
@@ -180,7 +179,7 @@ pub(super) fn build(
                     ))
                     .child(
                         ui::library_icon(ui::Icon::Delete, move || tr("tasks.actions.remove"))
-                            .disabled(move || busy.get() || !capabilities.remove)
+                            .disabled(busy)
                             .on_press(move || {
                                 if let Some(item) = item.get_untracked() {
                                     send(TaskIntent::Remove(vec![item.id]));

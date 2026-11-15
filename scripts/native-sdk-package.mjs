@@ -14,11 +14,10 @@ import { sdkTarget, vvdecTarget, validateBuildEvidence } from './native-codec-ev
 import { archiveSdk, digest, inventorySdk, jsonDigest, writeJson } from './native-codec-io.mjs';
 import { stageHevc, stageVvdec, vvdecSource } from './native-codec-export.mjs';
 
-export { archiveSdk, inventorySdk, sdkTarget, vvdecTarget, validateBuildEvidence };
-export const sdkVersion = 'native-codecs-v2-20261114';
+const sdkVersion = 'native-codecs-v2-20261114';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-export function packageSdk(triple, outputDirectory = join(repository, 'vendor/native-codecs')) {
+function packageSdk(triple, outputDirectory = join(repository, 'vendor/native-codecs')) {
   const target = sdkTarget(triple);
   mkdirSync(outputDirectory, { recursive: true });
   const work = mkdtempSync(join(outputDirectory, '.codec-sdk-stage-'));

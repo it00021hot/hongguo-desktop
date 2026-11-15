@@ -63,7 +63,6 @@ impl DanmakuField {
 }
 
 impl DanmakuSettingsState {
-    /// In-memory fixture state; persistence belongs to the session adapter.
     pub fn new() -> Self {
         Self {
             open: signal(false),
@@ -121,48 +120,47 @@ fn settings_layout(state: DanmakuSettingsState, gap: f32) -> View {
                         ),
                 )
                 .child(
-                    view()
-                        .test_id(field.key())
-                        .pointer_events(PointerEvents::BoxNone)
-                        .child(
-                            nsh_base::slider()
-                                .accessibility_label(move || Some(tr(field.label())))
-                                .min(f64::from(min))
-                                .max(f64::from(max))
-                                .step(0.05)
-                                .value(move || Some(SliderValue::from(f64::from(value.get()))))
-                                .on_change(move |event: &SliderValue| {
-                                    let next = event.start() as f32;
-                                    if next.is_finite() {
-                                        value.set(next.clamp(min, max));
-                                    }
+                    view().pointer_events(PointerEvents::BoxNone).child(
+                        nsh_base::slider()
+                            .accessibility_label(move || Some(tr(field.label())))
+                            .min(f64::from(min))
+                            .max(f64::from(max))
+                            .step(0.05)
+                            .value(move || Some(SliderValue::from(f64::from(value.get()))))
+                            .on_change(move |event: &SliderValue| {
+                                let next = event.start() as f32;
+                                if next.is_finite() {
+                                    value.set(next.clamp(min, max));
+                                }
+                            })
+                            .h(move || px(if is_desktop() { 4.0 } else { 48.0 }))
+                            .track_style(|style| {
+                                style
+                                    .h(move || px(if is_desktop() { 4.0 } else { 48.0 }))
+                                    .justify_center()
+                            })
+                            .indicator_style(|style| {
+                                style.h_1().rounded_full().bg(move || {
+                                    theme()
+                                        .color("video-controls")
+                                        .expect("controls")
+                                        .opacity(0.35)
                                 })
-                                .h(move || px(if is_desktop() { 4.0 } else { 48.0 }))
-                                .track_style(|style| {
-                                    style
-                                        .h(move || px(if is_desktop() { 4.0 } else { 48.0 }))
-                                        .justify_center()
-                                })
-                                .indicator_style(|style| {
-                                    style.h_1().rounded_full().bg(move || {
-                                        theme()
-                                            .color("video-controls")
-                                            .expect("controls")
-                                            .opacity(0.35)
-                                    })
-                                })
-                                .range_style(|style| {
-                                    style.h_1().rounded_full().bg(move || {
-                                        theme().color("video-controls").expect("controls")
-                                    })
-                                })
-                                .thumb_style(|style| {
-                                    style.size_3().rounded_full().bg(move || {
-                                        theme().color("video-controls").expect("controls")
-                                    })
-                                })
-                                .thumb_class("focus:outline-2 focus:outline-ring"),
-                        ),
+                            })
+                            .range_style(|style| {
+                                style
+                                    .h_1()
+                                    .rounded_full()
+                                    .bg(move || theme().color("video-controls").expect("controls"))
+                            })
+                            .thumb_style(|style| {
+                                style
+                                    .size_3()
+                                    .rounded_full()
+                                    .bg(move || theme().color("video-controls").expect("controls"))
+                            })
+                            .thumb_class("focus:outline-2 focus:outline-ring"),
+                    ),
                 )
         }))
 }

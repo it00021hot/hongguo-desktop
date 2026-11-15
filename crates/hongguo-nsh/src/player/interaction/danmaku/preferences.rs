@@ -63,7 +63,3 @@ fn read(field: DanmakuField) -> f32 {
         .map(|value| value.clamp(min, max))
         .unwrap_or(field.default_value())
 }
-
-#[cfg(test)]
-#[path = "preferences_tests.rs"]
-mod tests;

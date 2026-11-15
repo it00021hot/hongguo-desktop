@@ -26,7 +26,7 @@ function childPath(parent, path) {
     : child.replaceAll('\\', '/');
 }
 
-export function responseArguments(text) {
+function responseArguments(text) {
   const values = [];
   let value = '',
     quote = '',
@@ -209,7 +209,7 @@ export function captureLink(args, env = process.env) {
   }
 }
 
-export function replayLink(materials, { linker, sdk, prefix, output }) {
+function replayLink(materials, { linker, sdk, prefix, output }) {
   const manifest = JSON.parse(readFileSync(join(materials, 'link.json'), 'utf8'));
   if (manifest.schemaVersion !== 1 || !manifest.files.length)
     throw new Error('Invalid relink manifest');

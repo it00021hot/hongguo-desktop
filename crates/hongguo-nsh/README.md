@@ -1,6 +1,6 @@
 # 红果 NSH 壳 / Hongguo NSH shell
 
-基于 NSH 0.5.0 的纯 Rust 第三壳，复用现有业务内核，直接调用红果 API。
+基于 NSH 0.5.0 的纯 Rust 客户端，复用现有业务内核，直接调用红果 API。
 首轮目标为 Windows、macOS、Android、iOS；Linux 与 Web 留待后续迭代。
 当前仍在开发和验证中，功能面以 `docs/nsh-feature-parity.md` 的进度记录为准。
 
@@ -22,8 +22,6 @@ The repository includes authenticated codec binaries; normal development needs n
 ```sh
 make nsh
 make nsh-check
-make nsh-test
-make nsh-preview
 make nsh-package TARGET=macos
 make nsh-package TARGET=windows
 make nsh-package TARGET=android
@@ -41,14 +39,12 @@ and a per-user installer, without WebView2.
 Mobile builds use dedicated pure Rust hosts, which configure private storage
 before mounting the shared root. NSH's generic generated hosts omit that setup.
 
-`make nsh-preview` 只打开独立的离线页面预览，复用生产展示组件，不初始化数据库、
-访问官方接口或播放视频。主对照尺寸为 1280×840（历史布局基线）。
-预览使用 `target/nsh-layout-fixtures/player-frame.png` 的本地测试静帧，截图保存在
-`target/nsh-preview/`；测试画面不随源码分发。字体诊断入口须使用独立构建缓存。
+仓库自有测试、离线预览与探针示例已移除。验证使用 `cargo build --workspace` 和严格 Clippy；
+实际播放、视觉与移动端交互需在独立数据目录中验收。
 
-The layout preview uses local fixtures and the production presentation components,
-with no database, API calls or media playback. A local test frame is required;
-screenshots are written to `target/nsh-preview/`.
+Repository-owned tests, offline previews and probe examples have been removed.
+Use workspace builds and strict Clippy; validate playback, visuals and mobile interactions
+with an isolated data directory.
 
 开发规范、环境要求与已验证边界见
 [NSH 开发说明](../../.agents/skills/hongguo-dev/references/nsh.md)，

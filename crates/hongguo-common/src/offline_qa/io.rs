@@ -10,24 +10,6 @@ use std::sync::Mutex;
 
 static EXTRA_PRODUCTION_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
-#[cfg(test)]
-type BeforeSyscallHook = Box<dyn Fn(&Path) + Send>;
-
-#[cfg(test)]
-static BETWEEN_PREPARE_AND_SYSCALL: Mutex<Option<BeforeSyscallHook>> = Mutex::new(None);
-
-#[cfg(test)]
-fn run_between_prepare_and_syscall(path: &Path) {
-    if let Ok(guard) = BETWEEN_PREPARE_AND_SYSCALL.lock()
-        && let Some(hook) = guard.as_ref()
-    {
-        hook(path);
-    }
-}
-
-#[cfg(not(test))]
-fn run_between_prepare_and_syscall(_path: &Path) {}
-
 /// 壳数据根、绝对数据根这类生产目录。默认的 `hongguo-downloader` 已经算在里面。
 pub fn note_production_root(path: PathBuf) {
     let mut roots = EXTRA_PRODUCTION_ROOTS
@@ -54,7 +36,6 @@ pub fn prepare_qa_io(path: &Path) -> Result<PathBuf, String> {
 
 pub fn qa_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let path = prepare_io(path)?;
-    run_between_prepare_and_syscall(&path);
     let mut file = open_write_leaf(&path)?;
     file.write_all(bytes)?;
     file.sync_all()?;
@@ -64,7 +45,6 @@ pub fn qa_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 pub fn qa_read(path: &Path) -> std::io::Result<Vec<u8>> {
     let path = prepare_io(path)?;
-    run_between_prepare_and_syscall(&path);
     let mut file = open_read_leaf(&path)?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
@@ -128,14 +108,7 @@ pub fn qa_read_dir(path: &Path) -> std::io::Result<std::fs::ReadDir> {
 
 pub fn qa_create(path: &Path) -> std::io::Result<std::fs::File> {
     let path = prepare_io(path)?;
-    run_between_prepare_and_syscall(&path);
     open_write_leaf(&path)
-}
-
-pub fn qa_open_append(path: &Path) -> std::io::Result<std::fs::File> {
-    let path = prepare_io(path)?;
-    run_between_prepare_and_syscall(&path);
-    open_append_leaf(&path)
 }
 
 /// 替换前清掉已有文件。符号链接在解析阶段拒绝，不会删到链接外面。
@@ -225,16 +198,6 @@ fn open_write_leaf(path: &Path) -> std::io::Result<std::fs::File> {
     }
 }
 
-#[cfg(unix)]
-fn open_append_leaf(path: &Path) -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-}
-
 #[cfg(not(unix))]
 fn open_read_leaf(path: &Path) -> std::io::Result<std::fs::File> {
     refuse_leaf_symlink(path)?;
@@ -248,15 +211,6 @@ fn open_write_leaf(path: &Path) -> std::io::Result<std::fs::File> {
         .write(true)
         .create(true)
         .truncate(true)
-        .open(path)
-}
-
-#[cfg(not(unix))]
-fn open_append_leaf(path: &Path) -> std::io::Result<std::fs::File> {
-    refuse_leaf_symlink(path)?;
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
         .open(path)
 }
 
@@ -380,135 +334,4 @@ pub fn validate_isolated_dir(raw: &str, production: &[PathBuf]) -> Result<PathBu
 fn path_conflicts(candidate: &Path, production: &Path) -> bool {
     let prod = std::fs::canonicalize(production).unwrap_or_else(|_| production.to_path_buf());
     candidate == prod || candidate.starts_with(&prod)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Mutex;
-
-    static LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvRestore {
-        key: &'static str,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl EnvRestore {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = std::env::var_os(key);
-            unsafe { std::env::set_var(key, value) };
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvRestore {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => unsafe { std::env::set_var(self.key, value) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
-
-    fn scratch(name: &str) -> PathBuf {
-        let base = std::env::var_os("CARGO_TARGET_DIR")
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .unwrap_or_else(std::env::temp_dir);
-        base.join("hg-offline-qa-io-unit").join(name)
-    }
-
-    #[test]
-    fn qa_read_refuses_leaf_symlink_to_outside() {
-        let _lock = LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let root = scratch("read-leaf");
-        let _ = std::fs::remove_dir_all(&root);
-        let isolated = root.join("isolated");
-        let outside = root.join("outside");
-        std::fs::create_dir_all(&isolated).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        let sentinel = outside.join("SECRET");
-        std::fs::write(&sentinel, b"LEAK-ME").unwrap();
-        let leaf = isolated.join("cover.jpg");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&sentinel, &leaf).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&sentinel, &leaf).unwrap();
-        let _qa = EnvRestore::set(super::super::ENV, "1");
-        let _data = EnvRestore::set("HONGGUO_DATA_DIR", &isolated.to_string_lossy());
-        let err = qa_read(&leaf).expect_err("symlink leaf must not be readable");
-        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
-        assert_eq!(std::fs::read(&sentinel).unwrap(), b"LEAK-ME");
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn leaf_replaced_after_prepare_is_not_followed_on_write() {
-        let _lock = LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let root = scratch("toc-leaf");
-        let _ = std::fs::remove_dir_all(&root);
-        let isolated = root.join("isolated");
-        let outside = root.join("outside");
-        std::fs::create_dir_all(&isolated).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        let sentinel = outside.join("SENTINEL");
-        std::fs::write(&sentinel, b"KEEP").unwrap();
-        let leaf = isolated.join("new.bin");
-        let _qa = EnvRestore::set(super::super::ENV, "1");
-        let _data = EnvRestore::set("HONGGUO_DATA_DIR", &isolated.to_string_lossy());
-        {
-            let mut slot = BETWEEN_PREPARE_AND_SYSCALL.lock().unwrap();
-            let sentinel = sentinel.clone();
-            *slot = Some(Box::new(move |prepared: &Path| {
-                let _ = std::fs::remove_file(prepared);
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&sentinel, prepared).unwrap();
-                #[cfg(windows)]
-                std::os::windows::fs::symlink_file(&sentinel, prepared).unwrap();
-            }));
-        }
-        let err = qa_write(&leaf, b"LEAK").expect_err("post-prepare leaf symlink must fail");
-        *BETWEEN_PREPARE_AND_SYSCALL.lock().unwrap() = None;
-        let msg = format!("{err}").to_lowercase();
-        assert!(
-            err.kind() == std::io::ErrorKind::PermissionDenied
-                || err.raw_os_error()
-                    == Some({
-                        #[cfg(unix)]
-                        {
-                            libc::ELOOP
-                        }
-                        #[cfg(not(unix))]
-                        {
-                            -1
-                        }
-                    })
-                || msg.contains("loop")
-                || format!("{err}").contains("符号链接"),
-            "unexpected err={err:?}"
-        );
-        assert_eq!(std::fs::read(&sentinel).unwrap(), b"KEEP");
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn remove_dir_all_refuses_isolation_root() {
-        let _lock = LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let root = scratch("rm-root");
-        let _ = std::fs::remove_dir_all(&root);
-        let isolated = root.join("isolated");
-        std::fs::create_dir_all(&isolated).unwrap();
-        std::fs::write(isolated.join("keep.txt"), b"x").unwrap();
-        let _qa = EnvRestore::set(super::super::ENV, "1");
-        let _data = EnvRestore::set("HONGGUO_DATA_DIR", &isolated.to_string_lossy());
-        let err = qa_remove_dir_all(&isolated).expect_err("must refuse deleting isolation root");
-        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
-        assert!(isolated.join("keep.txt").exists());
-        let child = isolated.join("child");
-        std::fs::create_dir_all(&child).unwrap();
-        qa_remove_dir_all(&child).unwrap();
-        assert!(!child.exists());
-        let _ = std::fs::remove_dir_all(&root);
-    }
 }

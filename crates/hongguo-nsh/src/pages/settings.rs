@@ -25,14 +25,10 @@ impl Tasks {
     }
 }
 
-pub(crate) use account::{dialogs as account_dialogs, preview_dialogs as preview_account_dialogs};
+pub(crate) use account::dialogs as account_dialogs;
 
 pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
     preferences::page(session, nav)
-}
-
-pub(super) fn preview(nav: Navigation) -> Screen {
-    preferences::preview(nav)
 }
 
 pub(super) fn account(session: SessionHandle, nav: Navigation) -> Screen {

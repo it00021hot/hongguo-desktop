@@ -115,7 +115,6 @@ pub(crate) fn search_suggestions(
                     })
                     .child(
                         view()
-                            .test_id("browse-suggestions")
                             .role(nsh_core::AccessibilityRole::Listbox)
                             .label(move || crate::i18n::tr("search.placeholder"))
                             .p_1p5()

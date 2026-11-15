@@ -117,7 +117,6 @@ pub(super) fn presentation(state: State, events: Events) -> View {
                         )
                     },
                 )
-                .test_id("new-calendar-list")
                 .flex_1()
                 .content_padding_x(px(16.0))
                 .row_gap(px(8.0))

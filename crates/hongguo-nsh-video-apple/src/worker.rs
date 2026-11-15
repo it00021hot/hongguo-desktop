@@ -39,8 +39,6 @@ struct Worker {
     budget: FrameBudget,
     phase: Option<(EnhancementPhase, Enhancement, Option<ErrorCode>, String)>,
     direct: Option<direct::Direct>,
-    #[cfg(feature = "test-support")]
-    presentation_context: Option<crate::diagnostics::PresentationContext>,
 }
 
 pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, emit: Sink) {
@@ -66,8 +64,6 @@ pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, e
         budget: FrameBudget::default(),
         phase: None,
         direct: None,
-        #[cfg(feature = "test-support")]
-        presentation_context: None,
     };
     while !worker.shared.stop.load(Ordering::Acquire) {
         objc2::rc::autoreleasepool(|_| worker.step());
@@ -372,10 +368,6 @@ impl Worker {
             return;
         };
         let completed = renderer.poll();
-        #[cfg(feature = "test-support")]
-        if let Ok(Some(completed)) = &completed {
-            self.observe_presentation(completed);
-        }
         match completed {
             Ok(Some(completed)) if completed.epoch == self.revision => {
                 if !completed.displayed {
@@ -487,25 +479,6 @@ impl Worker {
         }
     }
 
-    #[cfg(feature = "test-support")]
-    fn observe_presentation(&mut self, completed: &crate::render::Completed) {
-        let Some(timing) = completed.presentation_timing else {
-            return;
-        };
-        let Some(context) = self.presentation_context.take() else {
-            return;
-        };
-        let observer = self
-            .shared
-            .presentation_observer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        if let Some(observer) = observer {
-            observer(context.observe(timing, completed.elapsed));
-        }
-    }
-
     fn draw(&mut self) {
         // Hidden Metal layers can finish GPU work without displaying the drawable.
         // Reveal before acquisition; the audio gate waits for native presentation.
@@ -537,25 +510,6 @@ impl Worker {
         );
         match result {
             Ok(true) => {
-                #[cfg(feature = "test-support")]
-                {
-                    let metadata = frame.metadata();
-                    let exact = self
-                        .direct
-                        .as_ref()
-                        .and_then(|direct| direct.native.as_ref())
-                        .filter(|native| {
-                            native.generation == metadata.generation
-                                && native.serial == metadata.serial
-                        });
-                    self.presentation_context = Some(crate::diagnostics::PresentationContext {
-                        source_id: self.source_id(),
-                        revision,
-                        generation: Some(metadata.generation),
-                        serial: Some(metadata.serial),
-                        pts_secs: exact.map(|native| native.pts_secs),
-                    });
-                }
                 if let Some(direct) = &mut self.direct {
                     direct.submitted = direct
                         .native

@@ -2,17 +2,16 @@
 
 主线已移除旧壳、旧播放器与 WebView 前端。资源路径为 `assets/icons`、`assets/emoji`、
 `assets/locales`。旧壳、WebView 调试及发布命令不再适用，完整历史位于备份分支。
-原生预览仍保留 TSX 测试，需要匹配 NSH 0.5.0 CLI 先生成声明：
+仓库自有测试、TSX 离线预览与探针示例已移除，构建不再依赖 NSH CLI 或 TypeScript 声明：
 
 ```sh
-# 配置当前平台的原生 SDK 运行库搜索路径后执行；Windows 编译器路径使用 tsc6.cmd。
-nsh check crates/hongguo-nsh/preview --tsc ./node_modules/.bin/tsc6
-pnpm typecheck
-pnpm lint
+pnpm nsh:check
+cargo build --workspace
+cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
+pnpm format:check
 ```
 
-CI 从固定 NSH 发布包安装 CLI，校验 SHA-256 后生成声明，不依赖已有的 .nsh 缓存。
-普通 `pnpm nsh` 仍通过 Rust 原生入口启动，不要求安装 NSH CLI。
+`pnpm nsh` 通过 Rust 原生入口启动。构建与静态检查不能代替真实播放和平台运行验收。
 
 ## 归属
 
@@ -33,7 +32,6 @@ NSH 0.5.0，不加入 QuickJS。Cargo 依赖与 CLI 统一锁定发布提交
 ```sh
 make nsh
 make nsh-check
-make nsh-test
 make nsh-package TARGET=macos
 make nsh-package TARGET=windows
 make nsh-package TARGET=android
@@ -41,7 +39,7 @@ make nsh-package TARGET=ios-simulator
 make nsh-package TARGET=ios
 ```
 
-日常开发也可用 `pnpm nsh` / `pnpm nsh:check` / `pnpm nsh:test`，不要求 Make 或全局 NSH CLI。
+日常开发也可用 `pnpm nsh` / `pnpm nsh:check`，不要求 Make 或全局 NSH CLI。
 入口自动解包并校验 `vendor/native-codecs/` 的固定 SDK，默认不源码构建；`pnpm nsh:setup` 只准备依赖。
 VVdeC 的 vendored 源码在 `crates/hongguo-vvdec-sys/vendor/vvdec`，不是根 `vendor/`。
 正常 Rust 平台 SDK 仍需安装。源码重建必须显式 `source-build`，详见 `docs/native-media-build.md`。
@@ -133,80 +131,11 @@ Headless 的 `screen().texts()` 可能包含虚拟列表停放单元的旧内容
 
 ## 验证记录与边界
 
-2026-11-14 升级至 NSH/CLI 0.5.0：330 项 Rust 行为测试、21 项包装脚本测试通过；
-macOS 与真实 Windows MSVC 目标严格 clippy 通过，Android arm64 与 iOS arm64 模拟器
-宿主 release 目标检查通过。macOS 独立控件预览四项通过，已目检明暗、桌面/窄窗及 sheet
-截图（`target/nsh-preview`）。这些结果不代表新正式包、Windows 真机播放或功耗验证完成。
-生成的 debug 预览宿主仍有既有 `__eh_frame` 链接警告；未修改发布配置屏蔽它。
+2026-11-15 已按要求移除仓库自有测试、夹具、离线预览、探针示例与测试专用接口。
+历史行为与截图记录保留在 `docs/nsh-feature-parity.md`、`docs/nsh-decoder-validation.md`
+和各模块 DESIGN.md，不作为当前版本重新运行通过的证据。
 
-布局对齐使用无数据库、无官方 API、无真实视频播放的独立预览；正式客户端播放另有独立数据目录的验收入口，两者证据分别记录：
-
-```sh
-CARGO_TARGET_DIR="$PWD/crates/hongguo-nsh/preview/target" nsh test crates/hongguo-nsh/preview/layout --target macos
-```
-
-首页、详情和设置统一从 `LayoutPreview` 根组件导航，复用生产展示组件。
-使用相同固定数据、主题和窗口尺寸，对比 `target/nsh-preview` 与历史基线
-（旧 Tauri 布局参照，尺寸 1280×840，备份分支可复现）的图片。
-影视画面仅保存在忽略的 target 目录，不随源码提交。
-
-NSH 0.4.0 的不同预览清单若共享 Cargo target，生成的 macOS host 包和可执行文件
-会同名；一次运行可能错误地保留上一个 root 的二进制，造成所有测试打开错页。
-同一缓存只运行同一个 root，诊断入口单独使用自己的 target。误用后只清理对应
-生成 host package 再链接，不清整个依赖缓存，不改 NSH 或用户的源码检出。
-
-已验证：NSH 0.4.0 依赖解析与初始工程检查/测试；本机媒体 Range/HEAD/416、临时地址注销、
-跨源拒绝；桥接任务取消与错误返回；控件角色、输入、禁用与系统返回；
-共享 VideoToolbox 的六项现有回归测试。
-
-原生 macOS 控件预览使用独立的 `crates/hongguo-nsh/preview` 入口，
-不初始化数据库或访问真实网络：
-
-```sh
-mkdir -p target/nsh-preview
-nsh test crates/hongguo-nsh/preview --target macos
-```
-
-明暗主题窄窗口预览与交互已通过，截图在 target/nsh-preview；
-这只能证明共享控件在 macOS 上的效果，不是完整页面或移动端视觉验收。
-NSH 生成的开发宿主链接时有 __eh_frame 大小警告，需在发布构建时继续核实。
-
-macOS 原生软解画面回归使用独立窗口、合成 HEVC 样本和固定 BGRA 帧，不读取账号或数据库：
-
-```sh
-cargo build -p hongguo-nsh-video-macos --example pixel_surface
-HONGGUO_NSH_MACOS_PIXEL_TEST=1 node --test scripts/nsh-macos-pixel.test.mjs
-```
-
-默认跳过 GUI；显式运行时仅按测试进程 PID 截图并清理。测试先完成暂停、暂停时 seek、恢复，
-再校验屏幕像素，不能用 GPU 完成回调代替实际出画。Metal 图层须在获取 drawable 前显示，
-在隐藏层上提交后才解除隐藏会出现声音与进度正常但画面黑屏。
-测试还会在暂停的同一帧上连续切换 224/56 点侧栏，以实际屏幕采样检查视频是否填满更新后的区域。
-Apple 渲染线程没有 Cocoa run loop，更新 Metal 图层尺寸后必须 flush 图层事务；
-仅 commit 显式事务可能留下 WGPU 创建的隐式外层事务，导致布局已变而画面保留旧宽度。
-
-Apple 播放设备使用 WGPU downlevel limits，并保留适配器实际纹理尺寸上限。
-iOS 模拟器 Metal 的 shader variables 上限可能只有15，直接使用 WebGPU 默认16会在
-创建设备时失败；也不能整份要求适配器全部 limits，因为部分上限需要额外 feature。
-回归同时检查设备能力匹配、1080P 竖屏放大所需纹理尺寸与未启用的 IMMEDIATES。
-
-本机环境已补齐 JDK 21、Gradle wrapper、Android SDK 37.0、NDK 30.0.16248370、
-平台工具与 API 37 ARM64 模拟器；Xcode 27.2、iOS SDK 与模拟器运行环境已安装。
-环境变量保存在用户目录的 .config/hongguo/mobile-env.zsh，由 .zshenv 引入。
-现有终端需要重新加载该文件，新终端自动生效；机器路径不写进项目构建配置。
-
-Android 早期 Rust release 原生库及 APK 已构建并安装启动，iOS 早期模拟器 release
-应用包、签名、安装启动已验证；早期结果不能证明后续共享界面与媒体修复在移动端已通过。
-当前完整 Android/iOS 宿主的 release 真实目标检查已通过，分别为
-`aarch64-linux-android` 与 `aarch64-apple-ios-sim`，包含共享界面及最新富文本编辑接线；
-日志为 `target/nsh-android-host-final-check.log` 与 `target/nsh-ios-host-final-check.log`。
-这些检查不包含重新链接打包、安装启动或完整移动客户端运行。
-Windows MSVC 真实目标的共享库与桌面启动程序检查已通过，包含 Windows 平台实现；
-Windows release 已通过实际交叉链接与静态 CRT、系统 DLL、资源/manifest 的 PE 校验，
-系统播放与页面运行尚未验收。宿主上的条件编译空壳检查不计入目标平台通过。
-移动端导出授权已在独立 Android/iOS 系统组件验证取消、保存与字节一致性；
-正式整包完整文件流程、系统挂起恢复和屏幕阅读器尚未验收。
-
-榜单、新剧日历、互动、合并/清理、短信登录面板和高级设置已接入；定向行为与明暗原生
-预览逐组记录，不能把某组离线预览或编译通过解释为旧壳功能面、真实账号流程或四端验收完成。
-逐项状态见 docs/nsh-feature-parity.md。
+验证当前版本时，运行工作区构建、严格 Clippy、格式检查及对应平台的真实目标检查。
+Windows/macOS、Android/iOS 的编译检查与实际安装、播放、视觉验收分别记录；
+宿主上的条件编译空壳不能作为其他平台通过的证据。
+自动化只针对自建实例与独立数据目录，不操作用户活跃账号、窗口或数据库。

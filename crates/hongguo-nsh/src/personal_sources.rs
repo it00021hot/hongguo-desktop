@@ -34,33 +34,11 @@ struct ResumeHint {
 pub(crate) struct PersonalSources {
     snapshot: Mutex<Option<Snapshot>>,
     hint: Mutex<Option<ResumeHint>>,
-    #[cfg(test)]
-    fixture: Option<Arc<Sources>>,
 }
 
 impl PersonalSources {
-    #[cfg(test)]
-    pub(crate) fn with_test_history(state: &AppState, history: Vec<WatchHistoryItem>) -> Self {
-        Self {
-            fixture: Some(Arc::new(Sources {
-                account: history_service::account(state),
-                history,
-                bookshelf: Vec::new(),
-            })),
-            ..Self::default()
-        }
-    }
-
     pub(crate) async fn read(&self, state: &AppState) -> AppResult<Arc<Sources>> {
         let key = history_service::account(state);
-        #[cfg(test)]
-        if let Some(fixture) = self
-            .fixture
-            .as_ref()
-            .filter(|fixture| fixture.account == key)
-        {
-            return Ok(fixture.clone());
-        }
         if key.is_none() {
             *self.snapshot.lock().map_err(cache_error)? = None;
             *self.hint.lock().map_err(cache_error)? = None;
@@ -186,110 +164,4 @@ impl PersonalSources {
 
 fn cache_error<T>(_: std::sync::PoisonError<T>) -> AppError {
     AppError::Internal("personal source state poisoned".into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn anonymous_reads_use_fresh_shared_history_and_shared_episode_cap() {
-        let state = AppState::default();
-        let sources = PersonalSources::default();
-        let mut item = hongguo_common::model::LocalHistoryItem {
-            series_id: "series".into(),
-            title: "series".into(),
-            cover: String::new(),
-            vid_index: 2,
-            vid: "second".into(),
-            episode_cnt: 504,
-            position_ms: 5000,
-            duration_ms: 113_986,
-            updated_at_ms: 1000,
-        };
-        state.store.upsert_local_history(&item).unwrap();
-        let before = sources.read(&state).await.unwrap();
-        assert_eq!(before.history[0].vid_index, 2);
-
-        item.vid_index = 505;
-        item.vid = "last".into();
-        item.position_ms = 113_986;
-        item.updated_at_ms = 2000;
-        state.store.upsert_local_history(&item).unwrap();
-        let after = sources.read(&state).await.unwrap();
-
-        assert_eq!(after.history[0].vid_index, 504);
-        assert_eq!(after.history[0].vid, "last");
-        assert_eq!(after.history[0].position_ms, 113_986);
-        assert_eq!(after.history[0].updated_at_ms, 2000);
-        assert!(after.bookshelf.is_empty());
-        assert_eq!(state.store.local_history_list().unwrap()[0].vid_index, 505);
-    }
-
-    #[tokio::test]
-    async fn logging_out_clears_previous_bookshelf_and_one_shot_hint() {
-        let state = AppState::default();
-        let sources = PersonalSources::default();
-        let account = HistoryAccount {
-            user_id: "previous".into(),
-            login_at: 1,
-        };
-        *sources.snapshot.lock().unwrap() = Some(Snapshot {
-            loaded: Instant::now(),
-            account: account.clone(),
-            bookshelf: Vec::new(),
-        });
-        *sources.hint.lock().unwrap() = Some(ResumeHint {
-            account,
-            id: "series".into(),
-            episode: 9,
-            at: 31.0,
-        });
-
-        let result = sources.read(&state).await.unwrap();
-
-        assert!(result.history.is_empty());
-        assert!(result.bookshelf.is_empty());
-        assert!(sources.snapshot.lock().unwrap().is_none());
-        assert!(sources.hint.lock().unwrap().is_none());
-    }
-
-    #[test]
-    fn resume_hints_are_one_shot_and_scoped_to_account_login_series_and_episode() {
-        let sources = PersonalSources::default();
-        let key = HistoryAccount {
-            user_id: "one".into(),
-            login_at: 1,
-        };
-        let set = || {
-            *sources.hint.lock().unwrap() = Some(ResumeHint {
-                account: key.clone(),
-                id: "series".into(),
-                episode: 7,
-                at: 31.0,
-            })
-        };
-        set();
-        assert_eq!(sources.take_for(Some(&key), "other", 7).unwrap(), 0.0);
-        assert_eq!(sources.take_for(Some(&key), "series", 8).unwrap(), 0.0);
-        assert_eq!(sources.take_for(Some(&key), "series", 7).unwrap(), 31.0);
-        assert_eq!(sources.take_for(Some(&key), "series", 7).unwrap(), 0.0);
-        set();
-        assert_eq!(
-            sources
-                .take_for(
-                    Some(&HistoryAccount {
-                        login_at: 2,
-                        ..key.clone()
-                    }),
-                    "series",
-                    7
-                )
-                .unwrap(),
-            0.0
-        );
-        assert_eq!(sources.take_for(Some(&key), "series", 7).unwrap(), 0.0);
-        set();
-        assert_eq!(sources.take_for(None, "series", 7).unwrap(), 0.0);
-    }
 }

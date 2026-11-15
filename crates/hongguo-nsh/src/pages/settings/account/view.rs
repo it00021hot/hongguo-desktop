@@ -25,7 +25,6 @@ pub(super) fn form(state: State, dispatch: impl Fn(Action) + Copy + 'static) -> 
                             .child(label("settings.loginMobilePlaceholder"))
                             .child(
                                 ui::login_input(move || tr("settings.loginMobilePlaceholder"))
-                                    .test_id("login-mobile")
                                     .auto_focus(true)
                                     .keyboard_type(nsh_core::KeyboardType::Phone)
                                     .auto_fill(nsh_core::AutoFill::Tel)
@@ -52,7 +51,6 @@ pub(super) fn form(state: State, dispatch: impl Fn(Action) + Copy + 'static) -> 
                                             tr("settings.loginCodePlaceholder")
                                         })
                                         .element_ref(&code_ref)
-                                        .test_id("login-code")
                                         .flex_1()
                                         .min_w(px(0.0))
                                         .keyboard_type(nsh_core::KeyboardType::Number)

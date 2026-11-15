@@ -1,10 +1,9 @@
 use super::super::backend;
-use super::{Context, Intent, MergeSnapshot, MergeView, StartRequest};
+use super::{Intent, MergeView, StartRequest};
 use crate::{events::SessionHandle, i18n::tr};
-use hongguo_common::model::MergeTask;
 use nsh_core::prelude::*;
 
-pub(super) fn dispatch(context: Context, model: MergeView, intent: Intent) {
+pub(super) fn dispatch(session: SessionHandle, model: MergeView, intent: Intent) {
     if model.busy.get_untracked() || model.confirming.get_untracked() {
         return;
     }
@@ -27,18 +26,7 @@ pub(super) fn dispatch(context: Context, model: MergeView, intent: Intent) {
         }
         model.busy.set(true);
         model.message.set(SharedString::default());
-        let result = match context {
-            Context::Production(session) => {
-                production(
-                    session.with(|session| *session),
-                    model.files,
-                    intent,
-                    request,
-                )
-                .await
-            }
-            Context::Preview(snapshot) => preview_action(snapshot, intent, request),
-        };
+        let result = production(session, model.files, intent, request).await;
         match result {
             Ok(message) => model.message.set(message),
             Err(error) => model.message.set(error),
@@ -102,45 +90,5 @@ async fn production(
                 .await
                 .map_err(SharedString::from)
         }
-    }
-}
-
-fn preview_action(
-    snapshot: Signal<MergeSnapshot>,
-    intent: Intent,
-    request: Option<StartRequest>,
-) -> Result<SharedString, SharedString> {
-    match intent {
-        Intent::Start => {
-            let request = request.expect("validated preview merge request");
-            let mut task = MergeTask::new(
-                &request.series,
-                &request.output,
-                &request.output,
-                request.mode,
-            );
-            task.id = format!(
-                "offline-started-{}",
-                snapshot.with(|snapshot| snapshot.tasks.len())
-            );
-            task.created_at = 1_794_384_000_000;
-            task.status = hongguo_common::model::MergeStatus::Running;
-            snapshot.update(|snapshot| snapshot.tasks.insert(0, task));
-            Ok(tr("merge.started"))
-        }
-        Intent::Remove(id) => {
-            snapshot.update(|snapshot| snapshot.tasks.retain(|task| task.id != id));
-            Ok(SharedString::default())
-        }
-        Intent::Reveal(_) => Ok(tr("nsh.previewAction")
-            .replace(
-                "{action}",
-                &tr(if is_desktop() {
-                    "merge.actions.openOutput"
-                } else {
-                    "nsh.exportFile"
-                }),
-            )
-            .into()),
     }
 }

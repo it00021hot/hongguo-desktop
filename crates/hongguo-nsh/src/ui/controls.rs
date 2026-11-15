@@ -112,7 +112,6 @@ pub(crate) fn form_with_scroll(content: impl IntoElement, scroller: Scroll) -> V
         .bg(move || theme().background)
         .child(
             scroller
-                .test_id("form-scroll")
                 .flex_1()
                 .bg(move || theme().background)
                 .keyboard_taps(nsh_core::KeyboardTaps::Handled)

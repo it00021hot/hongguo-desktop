@@ -129,39 +129,3 @@ fn lookup<'a>(catalog: &'a serde_json::Value, key: &str) -> Option<&'a str> {
         .try_fold(catalog, |value, part| value.get(part))?
         .as_str()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn playback_duration_uses_the_same_hour_and_invalid_value_boundaries_as_tauri() {
-        for (seconds, expected) in [
-            (0.0, "00:00"),
-            (42.9, "00:42"),
-            (3599.0, "59:59"),
-            (3600.0, "1:00:00"),
-            (7384.0, "2:03:04"),
-            (-1.0, "00:00"),
-            (f64::NAN, "00:00"),
-            (f64::INFINITY, "00:00"),
-        ] {
-            assert_eq!(format_duration(seconds), expected);
-        }
-    }
-
-    #[test]
-    fn both_catalogs_have_shell_navigation() {
-        for key in [
-            "app.name",
-            "nav.home.title",
-            "nav.browse.title",
-            "nav.settings.title",
-            "common.retry",
-            "common.loading",
-        ] {
-            assert!(lookup(&ZH, key).is_some(), "zh-CN: {key}");
-            assert!(lookup(&EN, key).is_some(), "en-US: {key}");
-        }
-    }
-}

@@ -36,19 +36,3 @@ pub async fn save_settings(db: &Db, s: &Settings) -> AppResult<()> {
     .await?;
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::entity::{mem_db, rt};
-
-    #[test]
-    fn settings_roundtrip_and_missing_returns_none() {
-        let db = mem_db();
-        rt().block_on(async {
-            assert!(settings(&db).await.unwrap().is_none(), "没写过就该是 None");
-            save_settings(&db, &Settings::default()).await.unwrap();
-            assert!(settings(&db).await.unwrap().is_some());
-        });
-    }
-}

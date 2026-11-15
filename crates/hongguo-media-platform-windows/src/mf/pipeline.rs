@@ -33,20 +33,6 @@ pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     Some(run_on_mf_thread(|| run(req, &demuxed, &video.info, kind)))
 }
 
-/// 仅测试构建：强制软件编码器跑完整链路（解码/Annex-B/封装/时间戳），
-/// 让没有硬编的 CI 也能验证管线本身。
-#[cfg(any(test, feature = "test-support"))]
-pub fn transcode_hevc_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
-    let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
-    let video = demuxed.video_track()?;
-    if !hongguo_media::hevc::is_hevc(&video.info.codec) {
-        return None;
-    }
-    Some(run_on_mf_thread(|| {
-        run(req, &demuxed, &video.info, EncoderKind::Software)
-    }))
-}
-
 /// 下一帧的显示时间：按升序时间轴逐帧取，重复/回退按半帧顶开。
 fn next_pts(sorted_pts: &[f64], cursor: &mut usize, last: &mut Option<f64>, frame_dur: f64) -> f64 {
     let mut p = sorted_pts

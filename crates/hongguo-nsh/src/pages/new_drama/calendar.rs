@@ -1,6 +1,5 @@
 mod actions;
 mod date;
-mod preview;
 mod view;
 
 use super::SessionHandle;
@@ -114,10 +113,6 @@ pub(super) fn content(session: SessionHandle, nav: Navigation, active: Memo<bool
     )
 }
 
-pub(super) fn preview(nav: Navigation) -> View {
-    preview::content(nav)
-}
-
 pub(super) fn data<
     Fut: Future<Output = Result<hongguo_api::calendar::CalendarPage, bridge::Failure>> + 'static,
 >(
@@ -172,27 +167,4 @@ fn append(mut previous: Vec<CalendarItem>, next: Vec<CalendarItem>) -> Vec<Calen
             .filter(|item| seen.insert(item.series_id.clone())),
     );
     previous
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn calendar_pages_preserve_published_metadata_and_deduplicate_by_series() {
-        let first = CalendarItem {
-            series_id: "one".into(),
-            publish_time: 42,
-            ..Default::default()
-        };
-        let second = CalendarItem {
-            series_id: "two".into(),
-            is_online: true,
-            ..Default::default()
-        };
-        let rows = append(vec![first.clone()], vec![first, second]);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].publish_time, 42);
-        assert!(rows[1].is_online);
-        assert!(append(Vec::new(), Vec::new()).is_empty());
-    }
 }

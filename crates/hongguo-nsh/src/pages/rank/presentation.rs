@@ -100,7 +100,6 @@ pub(super) fn content(
                         .gap_2()
                         .child(
                             view()
-                                .test_id("rank-header")
                                 .h_8()
                                 .flex_shrink_0()
                                 .flex_row()
@@ -150,7 +149,6 @@ fn sub_lists(tabs: Memo<Vec<RankTab>>, query: Signal<Query>, compact: bool) -> S
         } else {
             "sub-lists-vertical"
         })
-        .test_id("rank-sub-lists")
         .element_ref(&scroll_state.node)
         .on_layout(move |bounds: &Bounds<Points>| scroll_state.layout(bounds))
         .on_scroll(move |event: &nsh_core::element::ScrollEvent| scroll_state.moved(event))

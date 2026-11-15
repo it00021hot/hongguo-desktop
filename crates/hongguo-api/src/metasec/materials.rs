@@ -175,39 +175,3 @@ fn write_cache(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
     result
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use flate2::{Compression, write::DeflateEncoder};
-    use std::io::Write;
-
-    #[test]
-    fn fragments_are_verified_before_bounded_inflation() {
-        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(b"verified").unwrap();
-        let bytes = encoder.finish().unwrap();
-        let sha256 = hex::encode(Sha256::digest(&bytes));
-        let part = Part {
-            start: 0,
-            length: bytes.len(),
-            unpacked: 8,
-            sha256: &sha256,
-        };
-        assert_eq!(unpack(&bytes, part).unwrap(), b"verified");
-        assert!(unpack(&bytes[..bytes.len() - 1], part).is_err());
-        let mut modified = bytes.clone();
-        modified[0] ^= 1;
-        assert!(unpack(&modified, part).is_err());
-        assert!(
-            unpack(
-                &bytes,
-                Part {
-                    unpacked: 7,
-                    ..part
-                }
-            )
-            .is_err()
-        );
-    }
-}

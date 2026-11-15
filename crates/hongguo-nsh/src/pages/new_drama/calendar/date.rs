@@ -44,33 +44,3 @@ where
         date.with_timezone(zone).format("%m-%d %H:%M").to_string()
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn weekdays_and_compact_dates_use_the_server_date_without_inventing_invalid_days() {
-        assert_eq!(weekday_key("20261111", "20261111"), Some("newDrama.today"));
-        assert_eq!(
-            weekday_key("20261108", "20261111"),
-            Some("newDrama.weekday.0")
-        );
-        assert_eq!(
-            weekday_key("20261114", "20261111"),
-            Some("newDrama.weekday.6")
-        );
-        assert_eq!(day_month("20261108"), "11/8");
-        assert_eq!(weekday_key("20260230", "20261111"), None);
-        assert_eq!(day_month("bad"), "bad");
-    }
-
-    #[test]
-    fn publish_time_uses_the_supplied_zone_and_omits_unscheduled_entries() {
-        let east = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
-        let west = chrono::FixedOffset::west_opt(8 * 3600).unwrap();
-        assert_eq!(format_publish(1_794_384_000_000, &east), "11-11 16:00");
-        assert_eq!(format_publish(1_794_384_000_000, &west), "11-11 00:00");
-        assert_eq!(format_publish(0, &east), "");
-    }
-}

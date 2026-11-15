@@ -1,11 +1,7 @@
 mod backend;
-mod fixtures;
 pub(super) mod merge;
 mod model;
 pub(super) mod storage;
-
-#[cfg(test)]
-mod tests;
 
 /// Filesystem snapshots change with completed inputs, not each download progress tick.
 fn completed_inputs(

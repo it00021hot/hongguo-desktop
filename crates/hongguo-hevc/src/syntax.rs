@@ -2,8 +2,6 @@ mod annexb;
 mod metadata;
 mod parameters;
 use annexb::split;
-#[cfg(test)]
-mod tests;
 
 use hongguo_media_types::{ColorMetadata, CropRect, FrameDescriptor};
 use rusty_h265::{

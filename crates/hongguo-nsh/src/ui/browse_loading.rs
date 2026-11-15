@@ -8,7 +8,6 @@ pub(crate) fn browse_loading() -> View {
     let width = signal(0.0_f32);
     let columns = computed(move || browse::columns(window().width.0));
     view()
-        .test_id("browse-loading")
         .w_full()
         .on_layout(move |bounds: &Bounds<Points>| width.set(bounds.size.width.0))
         .child(

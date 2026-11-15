@@ -12,7 +12,6 @@ pub(super) fn picker(
 ) -> View {
     let series = signal(false);
     view()
-        .test_id("player-episode-panel")
         .gap_3()
         .child(
             view()
@@ -217,7 +216,6 @@ fn grid(state: MenuState, busy: Memo<bool>, action: impl Fn(MenuAction) + Copy +
                     })
                 },
             )
-            .test_id("player-episode-grid")
             .h(move || {
                 let rows = slice.with(Vec::len).div_ceil(columns.get() as usize);
                 px(rows as f32 * if is_desktop() { 36.0 } else { 48.0 }
@@ -265,7 +263,6 @@ fn season_list(state: MenuState, action: impl Fn(MenuAction) + Copy + 'static) -
                     })
                 },
             )
-            .test_id("player-season-list")
             .h(move || {
                 px((state.seasons.items.with(Vec::len) as f32 * 78.0
                     + state.seasons.items.with(Vec::len).saturating_sub(1) as f32 * 8.0)

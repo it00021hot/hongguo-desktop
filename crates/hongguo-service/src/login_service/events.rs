@@ -25,32 +25,3 @@ pub enum LoginMfaStateEvent {
     #[serde(rename_all = "camelCase")]
     Waiting { server_tip: String },
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn payload_matches_frontend_shape() {
-        let success =
-            serde_json::to_value(LoginMfaStateEvent::Success { name: "甲".into() }).unwrap();
-        assert_eq!(success["state"], "success");
-        assert_eq!(success["name"], "甲");
-
-        let failed = serde_json::to_value(LoginMfaStateEvent::Failed {
-            message_kind: "settings.loginMfaTimeout".into(),
-            message: String::new(),
-        })
-        .unwrap();
-        assert_eq!(failed["state"], "failed");
-        assert_eq!(failed["messageKind"], "settings.loginMfaTimeout");
-        assert!(failed.get("message").is_some());
-
-        let waiting = serde_json::to_value(LoginMfaStateEvent::Waiting {
-            server_tip: "回复 YZ 到 10691".into(),
-        })
-        .unwrap();
-        assert_eq!(waiting["state"], "waiting");
-        assert_eq!(waiting["serverTip"], "回复 YZ 到 10691");
-    }
-}

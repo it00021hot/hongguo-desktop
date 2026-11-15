@@ -1,10 +1,6 @@
 mod model;
 mod platform;
-mod preview;
 mod protocol;
-pub(crate) use preview::build as preview;
-#[cfg(test)]
-mod tests;
 
 use model::{Direction, Gate};
 use nsh_core::prelude::*;

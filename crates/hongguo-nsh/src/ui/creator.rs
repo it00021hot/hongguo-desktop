@@ -45,7 +45,6 @@ pub(crate) fn creator_back() -> nsh_base::ButtonElement {
 
 pub(crate) fn creator_profile(data: Memo<CreatorProfileData>) -> View {
     view()
-        .test_id("creator-profile")
         .mt_4()
         .flex_row()
         .items_center()
@@ -87,7 +86,6 @@ pub(crate) fn creator_profile(data: Memo<CreatorProfileData>) -> View {
 
 pub(crate) fn creator_profile_skeleton() -> View {
     view()
-        .test_id("creator-profile-loading")
         .mt_4()
         .flex_row()
         .items_center()

@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-media"
-description = "红果桌面版媒体公共底座：demux / hevc / remux / HEVC 封装 / 封面 HEIF / 后端标识"
+description = "红果桌面版媒体公共底座：demux / hevc / remux / HEVC 封装 / 后端标识"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,14 +14,5 @@ hongguo-common = { path = "../hongguo-common" }
 hongguo-video = { path = "../hongguo-video" }
 serde = { version = "1", features = ["derive"] }
 log = "0.4"
-# HEVC 解码：HEIC 封面纯 Rust 软解（封面阶梯的最后一级，零外部依赖）
-rusty_h265 = "0.7.1"
-# 封面 HEIC 解码后的 JPEG 编码（纯 Rust、零 unsafe）
-jpeg-encoder = "0.7.1"
 # 合并前校验「输出卷还剩多少字节」，只开 disk
 sysinfo = { version = "0.40", default-features = false, features = ["disk"] }
-
-[dev-dependencies]
-# 本 crate 的测试要造 MP4 样本与比对序列化产物，开启 hongguo-video 的测试辅助模块。
-hongguo-video = { path = "../hongguo-video", features = ["test-support"] }
-serde_json = "1"

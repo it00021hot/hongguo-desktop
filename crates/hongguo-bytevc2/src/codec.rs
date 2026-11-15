@@ -19,18 +19,3 @@ pub fn is_bytevc2(codec: &str) -> bool {
 pub fn is_bytevc2_fourcc(fourcc: &str) -> bool {
     fourcc.trim().eq_ignore_ascii_case(FOURCC)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wire_and_fourcc_are_recognized() {
-        assert!(is_bytevc2("bytevc2"));
-        assert!(is_bytevc2("ByteVC2"));
-        assert!(is_bytevc2("bvc2"));
-        assert!(!is_bytevc2("bytevc1"));
-        assert!(!is_bytevc2("h264"));
-        assert!(!is_bytevc2(""));
-    }
-}

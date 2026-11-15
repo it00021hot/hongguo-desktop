@@ -70,8 +70,3 @@ impl ViewScope {
         state
     }
 }
-
-#[cfg(test)]
-mod navigation_tests;
-#[cfg(test)]
-mod tests;

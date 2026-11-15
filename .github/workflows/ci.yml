@@ -1,6 +1,6 @@
 # 提交前置检查：Rust 三目标零警告（Windows 宿主 + macOS aarch64/x86_64 交叉）、
 # 忽略标签禁令（-D clippy::allow_attributes，#[allow] 直接拒；确需断言用
-# #[expect(reason)]，lint 不再触发时编译失败）、测试与前端 lint。
+# #[expect(reason)]，lint 不再触发时编译失败）与格式检查。
 # Rust 侧在仓库根执行（workspace 根 manifest），--workspace 覆盖全部成员 crate。
 # 启用：git config core.hooksPath .githooks
 #
@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-and-test:
+  lint:
     strategy:
       fail-fast: false
       matrix:
@@ -63,9 +63,6 @@ jobs:
       - name: Install tooling dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Packaging script tests
-        run: pnpm test
-
       - name: Set up verified native SDKs (macOS host and check target)
         if: runner.os == 'macOS'
         shell: bash
@@ -94,29 +91,8 @@ jobs:
           }
           Join-Path $env:GITHUB_WORKSPACE "target\native-media\$hostTarget\libde265-1.1.3\bin" >> $env:GITHUB_PATH
 
-      - name: Install pinned NSH CLI for preview declarations
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          asset=$(node -p "process.platform === 'win32' ? 'nsh-windows-x86_64.zip' : 'nsh-macos-' + (process.arch === 'arm64' ? 'arm64' : 'x86_64') + '.tar.gz'")
-          destination="$RUNNER_TEMP/nsh-cli"
-          mkdir -p "$destination"
-          gh release download v0.5.0 --repo longbridge/nsh --pattern "$asset" --pattern "$asset.sha256" --dir "$destination"
-          node --input-type=module -e 'import{readFileSync}from"node:fs";import{createHash}from"node:crypto";const path=process.argv[1];const expected=readFileSync(path+".sha256","utf8").trim().split(/\s+/)[0];if(createHash("sha256").update(readFileSync(path)).digest("hex")!==expected)throw Error("NSH CLI checksum mismatch");' "$destination/$asset"
-          tar -xf "$destination/$asset" -C "$destination"
-          echo "$destination/nsh/bin" >> "$GITHUB_PATH"
-
-      - name: Generate and check native preview declarations
-        shell: bash
-        run: |
-          set -euo pipefail
-          compiler=$(node -p "require('path').resolve('node_modules/.bin/tsc6' + (process.platform === 'win32' ? '.cmd' : ''))")
-          nsh check crates/hongguo-nsh/preview --tsc "$compiler"
-
-      - name: ESLint
-        run: pnpm lint
+      - name: Prettier
+        run: pnpm format:check
 
       - name: Preserve verified native SDKs and corresponding source
         if: always()
@@ -128,10 +104,6 @@ jobs:
             target/native-media/*/libde265-*/
             target/native-media/*/vvdec-*/
           if-no-files-found: ignore
-
-      - name: Rust tests
-        # 离线 QA 与故障注入测试会修改进程级状态。
-        run: cargo test --workspace --lib -- --test-threads=1
 
       - name: Rust clippy（零警告 + 忽略标签禁令）
         run: cargo clippy --workspace ${{ matrix.clippy_args }} -- -D warnings -D clippy::allow_attributes

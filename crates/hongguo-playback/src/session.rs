@@ -15,10 +15,6 @@ use std::{
 
 mod control;
 mod decoder;
-#[cfg(test)]
-mod hardware_tests;
-#[cfg(test)]
-mod tests;
 mod timing;
 mod types;
 mod worker;

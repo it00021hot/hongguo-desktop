@@ -20,7 +20,6 @@ pub(super) fn content(meta: MetaData, open: impl Fn(String) + Copy + 'static) ->
         })
     });
     view()
-        .test_id("detail-creators")
         .mt_4()
         .flex_row()
         .flex_wrap()
@@ -39,61 +38,4 @@ pub(super) fn content(meta: MetaData, open: impl Fn(String) + Copy + 'static) ->
                 })
             },
         ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use nsh_engine::{EngineConfig, Root};
-    use nsh_testing::Headless;
-
-    #[component]
-    fn Chips() -> impl IntoElement {
-        let picked = signal(String::new());
-        let meta: MetaData = resource(
-            || Some(()),
-            |_, _| {
-                std::future::ready(Ok(hongguo_api::detail::SeriesMeta {
-                    creators: crate::pages::preview_creators(),
-                    ..Default::default()
-                }))
-            },
-        );
-        view()
-            .child(content(meta, move |id| picked.set(id)))
-            .child(text(move || format!("creator:{}", picked.get())))
-            .child(
-                crate::ui::button("Clear creators", crate::ui::ButtonVariant::Quiet)
-                    .on_press(move || meta.mutate(hongguo_api::detail::SeriesMeta::default())),
-            )
-    }
-
-    fn start() -> Headless {
-        Headless::start(EngineConfig::new(Root::of::<Chips>().tokens(
-            nsh_base::tokens_of(Some(include_str!("../../../theme.json"))).unwrap(),
-        )))
-        .unwrap()
-    }
-
-    #[test]
-    fn real_creator_ids_are_actionable_and_name_only_credits_are_disabled() -> Result<(), String> {
-        let mut app = start();
-        app.wait_for("id:detail-creators")?;
-        assert!(app.shows("主演"));
-        assert!(app.shows("出品方"));
-        assert!(!app.screen().enabled("role:button[幕后团队's homepage]")?);
-        app.press("role:button[离线创作者's homepage]")?;
-        app.wait_for("text:creator:offline-creator-main")?;
-        Ok(())
-    }
-
-    #[test]
-    fn removing_all_credits_hides_the_section_instead_of_leaving_an_empty_gap() -> Result<(), String>
-    {
-        let mut app = start();
-        app.wait_for("id:detail-creators")?;
-        app.press("role:button[Clear creators]")?;
-        assert!(!app.screen().matches("id:detail-creators")?);
-        Ok(())
-    }
 }

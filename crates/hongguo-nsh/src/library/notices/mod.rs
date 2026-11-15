@@ -239,7 +239,6 @@ pub(super) fn tabs(active: Signal<bool>, unread: Memo<usize>) -> View {
                     move || unread.get() > 0,
                     move || {
                         view()
-                            .test_id("follow-notices-unread")
                             .ml_1p5()
                             .px_1p5()
                             .py_0p5()

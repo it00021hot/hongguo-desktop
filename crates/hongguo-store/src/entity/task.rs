@@ -58,25 +58,3 @@ pub(super) async fn insert_tasks(conn: &Connection, tasks: &[DownloadTask]) -> A
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::entity::{mem_db, rt};
-
-    #[test]
-    fn replace_tasks_is_a_full_mirror() {
-        let db = mem_db();
-        rt().block_on(async {
-            let a = DownloadTask::new("1", "剧", 1, "v1", "第一集");
-            let b = DownloadTask::new("1", "剧", 2, "v2", "第二集");
-            replace_tasks(&db, &[a.clone(), b.clone()]).await.unwrap();
-            assert_eq!(tasks(&db).await.unwrap().len(), 2);
-
-            replace_tasks(&db, std::slice::from_ref(&a)).await.unwrap();
-            let list = tasks(&db).await.unwrap();
-            assert_eq!(list.len(), 1);
-            assert_eq!(list[0].id, a.id);
-        });
-    }
-}

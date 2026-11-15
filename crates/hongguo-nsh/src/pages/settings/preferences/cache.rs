@@ -14,7 +14,6 @@ pub(super) fn section(
     draft: Signal<Draft>,
     busy: Signal<bool>,
     message: Signal<SharedString>,
-    external: bool,
     runtime: Runtime,
 ) -> View {
     group("settings.storage").child(
@@ -29,7 +28,6 @@ pub(super) fn section(
                         draft,
                         busy,
                         message,
-                        external,
                         |draft| draft.cache_dir.clone(),
                         |draft, value| draft.cache_dir = value,
                     ))

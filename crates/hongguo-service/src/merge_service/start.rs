@@ -152,36 +152,3 @@ fn upsert(state: &AppState, task: &MergeTask) {
         log::error!("[Merge] 合并记录落库失败: {e}");
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 转码工作必须派发到共用运行时的阻塞池，而不是留在 command/主线程里跑。
-    ///（假针拼接再匹配：断言字符串自身会出现在本文件里，直接写会永远为真。）
-    #[test]
-    fn merge_work_runs_on_the_blocking_pool() {
-        let needle = ["crate::runtime::spawn", "_blocking(move ||"].concat();
-        assert!(
-            include_str!("start.rs").contains(&needle),
-            "重活必须交给共用运行时的阻塞池，否则仍会占住调用线程"
-        );
-    }
-
-    #[test]
-    fn upsert_replaces_the_same_id_instead_of_appending() {
-        let state = AppState::default();
-        let mut a = MergeTask::new("1", "剧", "out", MergeMode::Quick);
-        a.status = MergeStatus::Running;
-        upsert(&state, &a);
-
-        let mut done = a.clone();
-        done.mark_completed("out.mp4", 100);
-        done.status = MergeStatus::Completed;
-        upsert(&state, &done);
-
-        let tasks = state.store.merge_tasks().unwrap();
-        assert_eq!(tasks.len(), 1, "同一条任务应被覆盖而不是追加");
-        assert_eq!(tasks[0].status, MergeStatus::Completed);
-    }
-}

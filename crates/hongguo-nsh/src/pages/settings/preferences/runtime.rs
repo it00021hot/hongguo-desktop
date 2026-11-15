@@ -7,7 +7,7 @@ use crate::{
 use hongguo_common::{AppError, AppResult};
 use hongguo_media_platform::capability::probe::{self, DecodeCapability};
 use hongguo_service::{
-    AppState, runtime,
+    runtime,
     storage_service::{cache, usage},
 };
 use nsh_core::prelude::*;
@@ -18,19 +18,12 @@ pub(super) struct Usage {
     pub(super) cache: cache::CacheUsage,
 }
 
-#[derive(Clone)]
-enum Backend {
-    Production(AppState),
-    Preview,
-}
-
 #[derive(Clone, Copy)]
 pub(super) struct Runtime {
     pub(super) usage: Resource<Usage, bridge::Failure>,
     pub(super) capability: Memo<Option<DecodeCapability>>,
     pub(super) probing: Memo<bool>,
     pub(super) clearing: Signal<bool>,
-    backend: Stored<Backend>,
     probe_pending: Signal<bool>,
     probe_value: Signal<Option<DecodeCapability>>,
     revision: Signal<u64>,
@@ -43,18 +36,7 @@ impl Runtime {
         nav: Navigation,
         message: Signal<SharedString>,
     ) -> Self {
-        Self::new(
-            Backend::Production(session.with(|session| session.state.clone())),
-            nav,
-            message,
-        )
-    }
-    pub(super) fn preview(nav: Navigation, message: Signal<SharedString>) -> Self {
-        Self::new(Backend::Preview, nav, message)
-    }
-
-    fn new(backend: Backend, nav: Navigation, message: Signal<SharedString>) -> Self {
-        let backend = stored(backend);
+        let state = stored(session.with(|session| session.state.clone()));
         let revision = signal(0);
         let active = move || {
             nav.routes()
@@ -63,44 +45,24 @@ impl Runtime {
         let usage = resource(
             move || active().then(|| revision.get()),
             move |_, _| {
-                let backend = backend.with(|backend| backend.clone());
+                let state = state.with(|state| state.clone());
                 async move {
-                    match backend {
-                        Backend::Production(state) => {
-                            bridge::request(async move {
-                                blocking(move || {
-                                    Ok(Usage {
-                                        downloads: usage::usage(&state),
-                                        cache: cache::usage(),
-                                    })
-                                })
-                                .await
+                    bridge::request(async move {
+                        blocking(move || {
+                            Ok(Usage {
+                                downloads: usage::usage(&state),
+                                cache: cache::usage(),
                             })
-                            .await
-                        }
-                        Backend::Preview => Ok(Usage {
-                            downloads: usage::StorageUsage { bytes: 0, files: 0 },
-                            cache: cache::CacheUsage::default(),
-                        }),
-                    }
+                        })
+                        .await
+                    })
+                    .await
                 }
             },
         );
         let detected = resource(
             move || active().then_some(()),
-            move |_, _| {
-                let preview = backend.with(|backend| matches!(backend, Backend::Preview));
-                async move {
-                    if preview {
-                        Ok(DecodeCapability {
-                            platform_encoder: true,
-                            platform_hw_encoder: true,
-                        })
-                    } else {
-                        bridge::request(async { blocking(|| Ok(probe::detect())).await }).await
-                    }
-                }
-            },
+            move |_, _| bridge::request(async { blocking(|| Ok(probe::detect())).await }),
         );
         let probe_value = signal(None);
         let probe_pending = signal(false);
@@ -109,7 +71,6 @@ impl Runtime {
             capability: computed(move || probe_value.get().or_else(|| detected.get())),
             probing: computed(move || probe_pending.get() || detected.loading()),
             clearing: signal(false),
-            backend,
             probe_pending,
             probe_value,
             revision,
@@ -122,18 +83,8 @@ impl Runtime {
             return;
         }
         self.probe_pending.set(true);
-        let preview = self
-            .backend
-            .with(|backend| matches!(backend, Backend::Preview));
         spawn(async move {
-            let outcome = if preview {
-                Ok(DecodeCapability {
-                    platform_encoder: true,
-                    platform_hw_encoder: true,
-                })
-            } else {
-                bridge::request(async { blocking(|| Ok(probe::redetect())).await }).await
-            };
+            let outcome = bridge::request(async { blocking(|| Ok(probe::redetect())).await }).await;
             match outcome {
                 Ok(capability) => {
                     self.probe_value.set(Some(capability));
@@ -154,15 +105,8 @@ impl Runtime {
             return;
         }
         self.clearing.set(true);
-        let preview = self
-            .backend
-            .with(|backend| matches!(backend, Backend::Preview));
         spawn(async move {
-            let outcome = if preview {
-                Ok(cache::CacheClearResult { items: 0, bytes: 0 })
-            } else {
-                bridge::request(async { blocking(|| Ok(cache::clear())).await }).await
-            };
+            let outcome = bridge::request(async { blocking(|| Ok(cache::clear())).await }).await;
             match outcome {
                 Ok(result) => {
                     self.revision.update(|value| *value += 1);

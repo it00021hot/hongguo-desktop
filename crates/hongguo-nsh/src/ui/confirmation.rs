@@ -29,7 +29,6 @@ pub(crate) fn confirmation<E: IntoElement>(
             .on_cancel(move || open.set(false))
             .child(
                 view()
-                    .test_id("confirmation")
                     .flex_1()
                     .items_center()
                     .justify_center()

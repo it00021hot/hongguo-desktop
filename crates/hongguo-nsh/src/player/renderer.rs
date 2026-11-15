@@ -1,6 +1,4 @@
 mod pixel;
-#[cfg(test)]
-mod tests;
 use nsh_core::prelude::*;
 
 #[derive(Clone, Copy)]

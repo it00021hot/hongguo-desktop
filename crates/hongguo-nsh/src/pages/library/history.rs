@@ -280,7 +280,6 @@ pub(super) fn content(
                     )
                 }),
             )
-            .test_id("history-records")
             .flex_1()
             .content_padding_x(px(16.0))
             .max_h(move || px((shown.with(Vec::len) as f32 * 130.0 - 8.0).max(0.0)))

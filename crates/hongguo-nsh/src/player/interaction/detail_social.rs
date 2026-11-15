@@ -143,24 +143,6 @@ pub(crate) fn observe(
     )
 }
 
-pub(crate) fn preview() -> DetailSocial {
-    let snapshot = signal(Snapshot::default());
-    let submit = stored(Box::new(move |action| {
-        snapshot.update(|value| {
-            if let Some(before) = value.begin(action) {
-                value.finish(action, before, true);
-            }
-        });
-    }) as Box<dyn Fn(Action)>);
-    state(
-        snapshot,
-        computed(|| false),
-        computed(SharedString::default),
-        submit,
-        stored(Box::new(|| {}) as Box<dyn Fn()>),
-    )
-}
-
 fn state(
     snapshot: Signal<Snapshot>,
     busy: Memo<bool>,
