@@ -577,9 +577,7 @@ impl super::Adapter {
 
         features.set(
             wgt::Features::FLOAT32_FILTERABLE,
-            extensions.contains("GL_ARB_color_buffer_float")
-                || extensions.contains("GL_EXT_color_buffer_float")
-                || extensions.contains("OES_texture_float_linear"),
+            es_ver.is_none() || extensions.contains("GL_OES_texture_float_linear"),
         );
 
         if es_ver.is_none() {

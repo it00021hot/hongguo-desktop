@@ -3,7 +3,7 @@
 Upstream package: `wgpu-hal` **29.0.4**, crates.io release, MIT OR Apache-2.0.
 Repository: <https://github.com/gfx-rs/wgpu/tree/v29.0.4/wgpu-hal>.
 The unmodified package is the matching crates.io `.crate` artifact; all files
-except `src/gles/egl.rs` and this note retain that release's contents.
+except `src/gles/egl.rs`, `src/gles/adapter.rs` and this note retain that release's contents.
 Crate archive SHA-256: `97ace1c17727311c22a46e4e3faf56ea6de81af99dcc839bdfb54857b94d448d`.
 
 The Android-only patch adds `Surface::set_next_presentation_time(token_ns)` and
@@ -52,3 +52,23 @@ gate. Keep the patch when updating WGPU until upstream provides an equivalent
 per-swap timestamp API. Then remove this directory and the root crates.io patch,
 switch the application to the upstream API, and repeat seek/recovery stale-frame
 and compositor-latch tests. Never modify the Cargo registry cache.
+
+## Floating-point texture filtering capability
+
+On GLES, `FLOAT32_FILTERABLE` requires `GL_OES_texture_float_linear`.
+`GL_EXT_color_buffer_float` only supplies framebuffer renderability, not filtering;
+desktop GL retains its core float-filtering support. Correcting this distinction
+lets the existing texture creation path select nearest filtering for unfilterable
+FP32 textures, including the video color LUT. No color conversion, LUT precision,
+decoder selection or explicit sampler behavior changes.
+
+On the Mate 20 Pro's Mali-G76 / GLES 3.2, the renderability extension is present
+but float-linear filtering is absent. Before correction, the nonzero decoded YUV
+planes and correct uniforms produced a black LUT sample and black RGB output;
+nearest-filtering diagnosis restored both LUT values and the actual picture.
+Temporary GPU readback and shader diagnostics are not part of the patch.
+
+References: [float renderability](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_color_buffer_float.txt),
+[float filtering](https://registry.khronos.org/OpenGL/extensions/OES/OES_texture_float_linear.txt).
+Remove this correction when upgrading to an upstream version with equivalent
+capability detection, and repeat native playback across all available qualities.

@@ -113,6 +113,67 @@ target/nsh-native-http-clock-probe.log。macOS 14+ 的单一 127.0.0.1 例外依
 
 English: Android 10 installation, initial playback, pause/seek and immediate settings persistence were checked on a physical device. Source switching can still produce black video and is not accepted; language consistency and the remaining mobile flows are also not accepted.
 
+## 2026-11-15 NSH 原生命令与打包迁移
+
+应用元数据统一到 `crates/hongguo-nsh/nsh.json`。本轮在 Windows 使用仓库固定 CLI 的
+`nsh check`、`nsh package`，不经过 pnpm、Gradle 或项目自建安装器。
+`nativeHost` 是本项目的 CLI 接入补丁，负责调用现有独立宿主及装配媒体材料；最终归档与签名仍由 NSH 执行。
+
+- Windows release 目录包与 ZIP 通过生成及 PE/媒体依赖审计，输出为
+  `target/nsh-standard-windows/guava/` 和 `guava.zip`。
+  本机未安装 Inno Setup，仅生成 `guava.iss`，没有验收安装器编译、安装或卸载；CI 已要求生成实际安装器。
+- Android arm64 release APK 通过原生符号、签名、对齐及包内库一致性检查。
+  AAPT2 确认 ID `com.guava.app`、版本 `0.6.6` / build `1`、最低 API 28、目标 API 37、
+  默认名称 `guava` 与中文名称 `番果`。本轮使用框架调试签名，没有使用正式发布凭证或重新安装到手机。
+- 从随包 `Relink/AndroidSource` 使用已提供的原生库独立执行 `nsh package`，
+  APK 与 AAB 均成功生成，无须重新编译应用 Rust 代码；未将其解释为替换过解码库的实测。
+- 工作区严格 Clippy、NSH 检查、修改后的 CLI 全目标检查、工作区格式与 Prettier 检查通过。
+  macOS/iOS 打包及真实凭证签名、远程 CI 尚未执行；上述 Android 黑屏与语言遗留问题仍按原记录保留。
+- `nsh run crates/hongguo-nsh` 使用隔离的 `GUAVA_DATA_DIR` 成功启动 Windows 原生窗口，
+  窗口标题 `guava`、响应正常并生成 `guava.db`；未操作用户活跃实例，验证后关闭本轮自建实例。
+  该检查只覆盖启动和数据落点，不代表播放与全部界面功能重新验收。
+
+构建证据：`target/nsh-standard-windows.log`、`target/nsh-standard-android.log`、
+`target/nsh-final-clippy.log`、`target/nsh-cli-final-check.log` 与 `target/nsh-check-final.log`。
+独立重封包输出位于 `target/nsh-relink-repackage/`、`target/nsh-relink-aab/`。
+启动记录位于 `target/nsh-cli-run-smoke/stdout.log`、`stderr.log`。
+
+## 2026-11-15 Android 非 1080p 黑屏定位
+
+在 Mate 20 Pro（Android 10、Mali-G76 / GLES 3.2）使用独立包
+`com.guava.app.playbackqa` 复现：720p 进度持续前进，视频区域始终黑色，1080p 原生 Video 正常。
+没有覆盖安装或清除用户应用数据。
+
+临时诊断确认 CPU YUV 与 GPU 平面采样一致、转换参数正确，但 FP32 色彩 LUT
+采样返回黑色，线性 RGB 和最终输出随之全黑。设备有 `GL_EXT_color_buffer_float`，
+没有 `GL_OES_texture_float_linear`；前者只保证浮点缓冲可渲染，不能证明浮点纹理可线性过滤。
+后端原先混淆这两项能力，错误保留了过滤状态。最近邻对照包恢复 LUT 数值及实际画面。
+
+最终修改仅收敛到 `vendor/wgpu-hal/src/gles/adapter.rs` 的 `FLOAT32_FILTERABLE`
+判定，沿用原有不支持过滤时的纹理初始化路径。解码、选流、LUT 精度与 HDR 转换规则不变；
+临时 GPU 读回、着色器探针及 Java 采样日志均已清理。补丁依据及移除条件见
+`vendor/wgpu-hal/UPSTREAM.md`。
+
+定位证据位于 `target/720p-android-qa/logcat-initial.log`、`logcat-color.log`、
+`logcat-nearest.log`、`device-capabilities.txt`、`black-confirm.png`、`nearest-fixed.png`。
+这些临时诊断产物不作为分发包；干净生产包输出为 `target/720p-android-final/`。
+
+干净包真机回归：同一剧第 6 集依次选择 720p、540p、480p、360p、1080p，再切回 720p，
+各档位均有实际画面；在 720p 将进度由约 1:46 拖回 0:56 后恢复出画，随后切到第 7 集仍正常。
+原生帧尺寸依次确认 720×1280、576×1024、480×854、360×640；档位名称仍沿用接口定义。
+证据为 `final-720.png`、`final-540.png`、`final-480.png`、`final-360.png`、`final-1080.png`、
+`final-720-return.png`、`final-seek.png`、`final-episode-switch.png` 和 `logcat-final.log`。
+这覆盖了本次片源的黑屏复现与回归，不代表所有剧、HDR 或长期音画同步验收完成；语言不一致仍保留为已知问题。
+
+干净 release APK 经 NSH 打包、签名、对齐和原生库一致性检查通过；本轮仍使用调试签名。
+Android arm64 release 宿主及 Windows 工作区严格 Clippy、格式检查通过。
+日志为同目录 `build-final.log`、`clippy-android.log`、`clippy-host.log`、`format.log`。
+
+English: On the physical Mate 20 Pro, the clean build renders all five available quality tiers,
+including 1080p to 720p switching, a backward seek, and episode 6 to 7 switching.
+The correction separates FP32 texture filtering from framebuffer renderability; source precision
+and selection remain unchanged. This is not an all-content, HDR or long-run A/V acceptance.
+
 ## 尚未验证及实际限制
 
 - Mac 已解锁并通过上述合成样本的真实窗口测试；实际在线多剧长播的丢帧、音画偏差、
