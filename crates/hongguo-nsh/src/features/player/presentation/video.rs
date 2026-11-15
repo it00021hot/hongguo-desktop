@@ -4,6 +4,18 @@ use crate::ui::icon;
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
+pub(crate) fn player_source_motion(direction: i32) -> Motion {
+    use crate::ui::motion::{PLAYER_ENTER_DISTANCE, PLAYER_ENTER_MS};
+    motion().entering(
+        MotionSpec::new(KeyframeTiming::new(PLAYER_ENTER_MS).easing(Easing::EaseOut))
+            .values(MotionChannel::Opacity, [0.0, 1.0])
+            .values(
+                MotionChannel::TranslateY,
+                [PLAYER_ENTER_DISTANCE * direction as f32, 0.0],
+            ),
+    )
+}
+
 pub(crate) fn player_stage() -> View {
     view()
         .flex_1()

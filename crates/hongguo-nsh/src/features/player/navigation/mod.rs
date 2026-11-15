@@ -1,6 +1,4 @@
 mod model;
-mod platform;
-mod protocol;
 
 use model::{Direction, Gate};
 use nsh_core::prelude::*;
@@ -9,9 +7,6 @@ type StepAction = Stored<Box<dyn Fn(i32)>>;
 type WakeAction = Stored<Option<Box<dyn Fn()>>>;
 type FeedStep = Stored<Box<dyn Fn(i32) -> bool>>;
 type FeedGoto = Stored<Option<Box<dyn Fn(hongguo_common::model::Series, u32)>>>;
-
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-pub(crate) use platform::register;
 
 #[derive(Clone, Copy)]
 pub(crate) struct FeedNavigation {
@@ -23,6 +18,7 @@ pub(crate) struct FeedNavigation {
     revision: Signal<u64>,
     quiet_handoff: super::chrome::QuietHandoff,
     automatic_update: Stored<bool>,
+    direction: Signal<i32>,
 }
 
 impl FeedNavigation {
@@ -36,11 +32,16 @@ impl FeedNavigation {
             revision: signal(0),
             quiet_handoff: super::chrome::QuietHandoff::new(),
             automatic_update: stored(false),
+            direction: signal(1),
         }
     }
 
     pub fn lock_series(self, id: String) {
         self.locked.set(Some(id));
+    }
+
+    pub fn direction(self) -> Signal<i32> {
+        self.direction
     }
 
     pub fn clear_lock(self) {
@@ -79,6 +80,7 @@ impl FeedNavigation {
     }
 
     pub fn advance_feed(self) -> bool {
+        self.direction.set(1);
         self.automatic_update.replace(true);
         let advanced = self.step.with(|step| step(1));
         if advanced {
@@ -96,6 +98,7 @@ pub(crate) struct State {
     pub active: Memo<bool>,
     pub blocked: Memo<bool>,
     pub series: Memo<String>,
+    pub direction: Signal<i32>,
 }
 
 #[derive(Clone, Copy)]
@@ -144,6 +147,10 @@ impl Controller {
         }
     }
 
+    pub fn direction(self) -> i32 {
+        self.state.direction.get_untracked()
+    }
+
     pub fn in_binge(self) -> Memo<bool> {
         computed(move || {
             self.feed
@@ -164,9 +171,7 @@ impl Controller {
     }
 
     pub fn exit_binge(self) {
-        if self.allowed()
-            && let Some(feed) = self.feed
-        {
+        if let Some(feed) = self.feed {
             feed.clear_lock();
         }
     }
@@ -179,6 +184,7 @@ impl Controller {
         if !self.allowed() {
             return;
         }
+        self.state.direction.set(direction.step());
         if let Some(feed) = self.feed
             && feed.locked.get_untracked().as_ref() != Some(&self.state.series.get_untracked())
         {
@@ -211,10 +217,14 @@ impl Controller {
 
     pub fn bind(self, surface: View) -> View {
         let origin = stored(None::<nsh_core::Point<nsh_core::Points>>);
-        let hovered = signal(false);
         surface
-            .on_mouse_enter(move |_: &nsh_core::MouseEvent| hovered.set(true))
-            .on_mouse_leave(move |_: &nsh_core::MouseEvent| hovered.set(false))
+            .on_wheel(move |event: &WheelEvent| {
+                const LINE_POINTS: f32 = 16.0;
+                let delta = event.delta.points(px(LINE_POINTS));
+                if delta.y.0.abs() >= delta.x.0.abs() {
+                    self.wheel(f64::from(delta.y.0));
+                }
+            })
             .claim_touches(TouchClaim::on_move().ask(move |request: &ClaimRequest| {
                 let gesture = request.event.gesture;
                 if self.allowed()
@@ -244,39 +254,5 @@ impl Controller {
             .on_responder_terminate(move |_: &ResponderEvent| {
                 origin.replace(None);
             })
-            .child(when(
-                move || {
-                    matches!(
-                        os(),
-                        nsh_core::platform::Os::MacOs | nsh_core::platform::Os::Windows
-                    )
-                },
-                move || {
-                    native(protocol::COMPONENT)
-                        .absolute()
-                        .inset_0()
-                        .opacity(0.0)
-                        .pointer_events(PointerEvents::None)
-                        .prop(protocol::ENABLED, move || {
-                            serde_json::Value::Bool(
-                                hovered.get()
-                                    && self.state.active.get()
-                                    && !self.state.blocked.get(),
-                            )
-                        })
-                        .on_native_event(move |event: &nsh_core::element::NativeEvent| {
-                            if event.name.as_ref() == protocol::WHEEL {
-                                match serde_json::from_value::<protocol::WheelEvent>(
-                                    event.data.clone(),
-                                ) {
-                                    Ok(value) => self.wheel(value.delta_y),
-                                    Err(error) => {
-                                        log::error!("[NSH navigation] invalid wheel event: {error}")
-                                    }
-                                }
-                            }
-                        })
-                },
-            ))
     }
 }

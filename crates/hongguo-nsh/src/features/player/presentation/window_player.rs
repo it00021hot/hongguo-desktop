@@ -7,6 +7,7 @@ use crate::i18n::{format_duration, tr};
 use crate::ui::Icon;
 use caption::caption;
 use nsh_base::theme;
+use nsh_core::desktop::WindowMode;
 use nsh_core::prelude::*;
 
 const MINI_RATES: [f32; 4] = [1.0, 1.5, 2.0, 3.0];
@@ -55,9 +56,60 @@ pub(crate) fn window_drag_bar() -> View {
         .top_0()
         .left_0()
         .right_0()
-        .h_6()
-        .z_index(30)
+        .h_11()
+        .z_index(10)
         .window_drag(true)
+}
+
+pub(crate) fn window_caption_controls() -> View {
+    use nsh_core::desktop::WindowControl;
+    view()
+        .absolute()
+        .top_2()
+        .right_2()
+        .flex_row()
+        .gap_1()
+        .z_index(40)
+        .child(caption_button(WindowControl::Minimize))
+        .child(caption_button(WindowControl::Maximize))
+        .child(caption_button(WindowControl::Close))
+}
+
+fn caption_button(control: nsh_core::desktop::WindowControl) -> nsh_base::ButtonElement {
+    use nsh_core::desktop::WindowControl;
+    let maximized = move || {
+        nsh_core::element::desktop::current_window()
+            .state()
+            .is_some_and(|state| state.mode == WindowMode::Maximized)
+    };
+    buttons::surface(move || {
+        tr(match control {
+            WindowControl::Minimize => "window.minimize",
+            WindowControl::Maximize if maximized() => "window.restore",
+            WindowControl::Maximize => "window.maximize",
+            WindowControl::Close => "window.close",
+        })
+    })
+    .child(dynamic(move || {
+        buttons::special(match control {
+            WindowControl::Minimize => buttons::MINIMIZE,
+            WindowControl::Maximize if maximized() => buttons::RESTORE,
+            WindowControl::Maximize => buttons::MAXIMIZE,
+            WindowControl::Close => buttons::CLOSE,
+        })
+    }))
+    .on_press(move || {
+        let window = nsh_core::element::desktop::current_window();
+        match control {
+            WindowControl::Minimize => window.minimize(),
+            WindowControl::Maximize => window.set_mode(if maximized() {
+                WindowMode::Normal
+            } else {
+                WindowMode::Maximized
+            }),
+            WindowControl::Close => window.close(),
+        }
+    })
 }
 
 pub(crate) fn window_player_controls(

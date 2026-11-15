@@ -87,7 +87,8 @@ pub(crate) fn surface(
             )
             .child(rail),
     )
-    .child(controls);
+    .child(controls)
+    .z_index(20);
     let overlay = match chrome {
         Some(chrome) => chrome.bind_focus(overlay),
         None => overlay,
@@ -102,6 +103,12 @@ pub(crate) fn surface(
         })
         .relative()
         .overflow_hidden()
+        .child(when(
+            move || {
+                modes.is_some_and(|modes| modes.state().mode != crate::window_modes::Mode::Normal)
+            },
+            crate::features::player::presentation::window_drag_bar,
+        ))
         .child(view().absolute().inset_0().child(video))
         .child(when(
             move || is_desktop() && geometry.is_some(),

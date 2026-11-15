@@ -2,10 +2,7 @@ use super::{
     chrome::Chrome,
     stage::{ControlAction, ControlState, Info},
 };
-use crate::{
-    features::player::presentation as ui,
-    window_modes::{Mode, WindowModes, portrait_aspect},
-};
+use crate::window_modes::{Mode, WindowModes, portrait_aspect};
 use nsh_core::prelude::*;
 
 pub(super) fn controls(
@@ -17,12 +14,16 @@ pub(super) fn controls(
     let Some(modes) = WindowModes::current() else {
         return view();
     };
-    let controls = ui::window_player_controls(
-        ui::WindowPlayerState {
+    if let Some(chrome) = Chrome::current() {
+        effect(move || modes.set_mini_controls_visible(chrome.shown().get()));
+        cleanup(move || modes.set_mini_controls_visible(true));
+    }
+    let controls = crate::features::player::presentation::window_player_controls(
+        crate::features::player::presentation::WindowPlayerState {
             portrait: computed(move || modes.state().mode == Mode::Portrait),
             caption: computed(move || {
                 let info = information.get();
-                ui::WindowCaption {
+                crate::features::player::presentation::WindowCaption {
                     title: info.title,
                     intro: info.intro,
                     episode: info.episode,
@@ -44,7 +45,7 @@ pub(super) fn controls(
             if let Some(chrome) = Chrome::current() {
                 chrome.wake();
             }
-            use ui::WindowPlayerAction;
+            use crate::features::player::presentation::WindowPlayerAction;
             let shared = match intent {
                 WindowPlayerAction::PlayPause => {
                     state.paused.update(|paused| *paused = !*paused);
@@ -88,6 +89,17 @@ pub(super) fn controls(
             move || modes.state().mode == Mode::Normal,
             |style| style.hidden(),
         )
-        .child(ui::window_drag_bar())
+        .child(when(
+            move || {
+                matches!(os(), nsh_core::platform::Os::Windows) && modes.state().mode == Mode::Mini
+            },
+            || {
+                let buttons = super::presentation::window_player::window_caption_controls();
+                match Chrome::current() {
+                    Some(chrome) => chrome.bind_toolbar(buttons),
+                    None => buttons,
+                }
+            },
+        ))
         .child(controls)
 }

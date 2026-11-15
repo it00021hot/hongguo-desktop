@@ -110,6 +110,9 @@ impl Window for AppKitWindow {
         }
         Ok(())
     }
+    fn mini_controls_visible(&self, visible: bool) -> Result<(), String> {
+        self.controls_hidden(!visible)
+    }
     fn visible(&self, visible: bool, activate: bool) -> Result<(), String> {
         let window = self.window()?;
         if !visible {
@@ -145,6 +148,11 @@ impl NativeComponent for Host {
     }
     fn set_prop(&mut self, name: &str, value: Option<&Value>) {
         match name {
+            "miniControlsVisible" => {
+                if let Some(visible) = value.and_then(Value::as_bool) {
+                    self.desktop.borrow_mut().set_mini_controls_visible(visible);
+                }
+            }
             "observeVisibility" => {
                 if let Some(enabled) = value.and_then(Value::as_bool) {
                     self.desktop.borrow_mut().observe_visibility(enabled);

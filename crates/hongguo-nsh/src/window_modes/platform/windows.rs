@@ -131,6 +131,10 @@ impl Window for WinWindow {
     fn controls_hidden(&self, hidden: bool) -> Result<(), String> {
         self.chrome.apply(self.root()?, hidden)
     }
+    fn mini_controls_visible(&self, _visible: bool) -> Result<(), String> {
+        // Windows mini controls are rendered by the shared playback chrome.
+        Ok(())
+    }
     fn visible(&self, visible: bool, activate: bool) -> Result<(), String> {
         unsafe {
             let root = self.root()?;
@@ -179,6 +183,11 @@ impl NativeComponent for Host {
     }
     fn set_prop(&mut self, name: &str, value: Option<&Value>) {
         match name {
+            "miniControlsVisible" => {
+                if let Some(visible) = value.and_then(Value::as_bool) {
+                    self.desktop.borrow_mut().set_mini_controls_visible(visible);
+                }
+            }
             "observeVisibility" => {
                 if let Some(enabled) = value.and_then(Value::as_bool) {
                     self.desktop.borrow_mut().observe_visibility(enabled);

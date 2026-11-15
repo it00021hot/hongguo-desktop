@@ -78,6 +78,7 @@ fn content(
     feed: Option<navigation::FeedNavigation>,
 ) -> impl IntoElement {
     let selection = signal((id, episode));
+    let direction = feed.map_or_else(|| signal(1), navigation::FeedNavigation::direction);
     let definition = signal(None::<u32>);
     let reset_definition = signal(false);
     let paused = signal(false);
@@ -201,6 +202,7 @@ fn content(
         if busy.get() {
             return;
         }
+        direction.set(1);
         if let Some(next) = source.with(|source| source.and_then(|source| source.next_episode)) {
             batch(|| {
                 selection.update(|(_, episode)| *episode = next);
@@ -279,6 +281,11 @@ fn content(
             return;
         }
         batch(|| {
+            direction.set(if episode < selection.get_untracked().1 {
+                -1
+            } else {
+                1
+            });
             selection.update(|(_, selected)| *selected = episode);
             position.set((0.0, 0.0));
             pending_seek.set(None);
@@ -291,6 +298,7 @@ fn content(
             active: computed(move || visible.get() && !busy.get()),
             blocked: panels_open,
             series: computed(move || selection.get().0),
+            direction,
         },
         feed,
         move |direction| {

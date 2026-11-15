@@ -30,9 +30,13 @@ pub(crate) struct WindowModes {
     aspect: Signal<f64>,
     applied_aspect: Stored<f64>,
     windowed_mode: Stored<WindowMode>,
+    mini_controls_visible: Signal<bool>,
 }
 
 impl WindowModes {
+    pub fn set_mini_controls_visible(self, visible: bool) {
+        self.mini_controls_visible.set(visible);
+    }
     pub fn exposed(self) -> bool {
         self.exposed.get()
     }
@@ -257,6 +261,7 @@ pub(crate) fn install(observe_visibility: Memo<bool>) -> impl IntoElement {
         aspect: signal(PHONE_ASPECT),
         applied_aspect: stored(PHONE_ASPECT),
         windowed_mode: stored(WindowMode::Normal),
+        mini_controls_visible: signal(true),
     };
     provide_context(state);
     let window = nsh_core::element::desktop::current_window();
@@ -283,6 +288,9 @@ pub(crate) fn install(observe_visibility: Memo<bool>) -> impl IntoElement {
         .child(
             native("hongguo.window-modes")
                 .size(px(1.0))
+                .prop("miniControlsVisible", move || {
+                    serde_json::Value::Bool(state.mini_controls_visible.get())
+                })
                 .prop("observeVisibility", move || {
                     serde_json::Value::Bool(observe_visibility.get())
                 })

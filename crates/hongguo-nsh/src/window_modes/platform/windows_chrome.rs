@@ -1,5 +1,8 @@
 use nsh_platform_windows::windows::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+    Foundation::{E_INVALIDARG, HWND, LPARAM, LRESULT, RECT, WPARAM},
+    Graphics::Dwm::{
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND, DwmSetWindowAttribute,
+    },
     UI::{
         HiDpi::GetDpiForWindow,
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
@@ -66,6 +69,30 @@ impl Chrome {
                 .map_err(|error| error.to_string())?;
             }
         }
+        self.round_corners(root)?;
+        Ok(())
+    }
+
+    fn round_corners(&self, root: HWND) -> Result<(), String> {
+        unsafe {
+            let windowed = GetWindowLongPtrW(root, GWL_STYLE) & WS_THICKFRAME.0 as isize != 0;
+            let preference = if IsZoomed(root).as_bool() || !windowed {
+                DWMWCP_DONOTROUND
+            } else {
+                DWMWCP_ROUND
+            };
+            if let Err(error) = DwmSetWindowAttribute(
+                root,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                &preference as *const _ as *const std::ffi::c_void,
+                std::mem::size_of_val(&preference) as u32,
+            ) {
+                // Windows 10 does not expose the Windows 11 corner preference.
+                if error.code() != E_INVALIDARG {
+                    return Err(format!("cannot set system window corners: {error}"));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -88,6 +115,13 @@ unsafe extern "system" fn subclass(
     data: usize,
 ) -> LRESULT {
     let chrome = unsafe { &*(data as *const Chrome) };
+    if matches!(message, WM_SIZE | WM_DPICHANGED | WM_DWMCOMPOSITIONCHANGED) {
+        let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+        if let Err(error) = chrome.round_corners(hwnd) {
+            log::error!("[NSH window] corner update failed: {error}");
+        }
+        return result;
+    }
     if message == WM_GETMINMAXINFO && lparam.0 != 0 {
         let min = chrome.minimum.get();
         let scale = f64::from(unsafe { GetDpiForWindow(hwnd) }) / 96.0;
@@ -121,7 +155,7 @@ unsafe extern "system" fn subclass(
                     (_, true, _, _) => HTRIGHT,
                     (_, _, true, _) => HTTOP,
                     (_, _, _, true) => HTBOTTOM,
-                    _ => HTCLIENT,
+                    _ => return unsafe { DefSubclassProc(hwnd, message, wparam, lparam) },
                 };
                 return LRESULT(hit as isize);
             }

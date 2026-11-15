@@ -2,7 +2,11 @@
 
 规格来源：Tauri use-mini-window/use-portrait-window、window_cmd/incognito_cmd、AppShell、MiniScreenControls/MiniDragBar，以及 Android MainActivity.setLandscapeLocked。始终调整当前窗口，不创建第二个播放器，不换源/暂停/落库来切换尺寸。
 
-- Mini：480×270，工作区右下 16 点；最小 360×180。摘掉顶栏/侧栏/底导航；顶部 24 点原生拖拽带；标题/集数/简介、同源 seek 与 28 点紧凑按钮。
+Windows 无边框命中测试仅接管缩放边缘，内部区域交回 NSH，保留 `window_drag` 的系统拖拽语义。Windows 11 使用 DWM 系统圆角（`DWMWCP_ROUND`），最大化与全屏关闭圆角；Windows 10 不支持该属性，保留系统边界。不使用 `SetWindowRgn` 二值裁切，避免锯齿并保留系统合成能力。系统行为依据见 [Microsoft 圆角说明](https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/ui/apply-rounded-corners)。
+
+此前 Windows 独立窗口顶部拖动使屏幕坐标从(2064,1106)变为(1924,1170)，视频继续播放；旧区域裁切的锯齿随后被用户截图反证。本轮已改用系统圆角，并在独立窗口确认圆角、播放控件与窗口按钮一同隐藏，以及最大化到2560×1400后还原480×270。原生macOS按钮、最小化/关闭、退出恢复、窗口缩放、DPI切换与全屏尚未完成本轮运行验收。
+
+- Mini：480×270，工作区右下16点；最小360×180。摘掉应用顶栏/侧栏/底导航，顶部44点拖拽带独立于播放控件显隐。macOS原生红绿灯、Windows等价按钮（最小化、最大化/还原、关闭）跟随播放器Chrome显示状态；标题/集数/简介、同源seek与28点紧凑播放按钮共用该状态。Windows按钮走NSH窗口命令，macOS宿主同步原生按钮可见性。
 - Portrait：手机比例取 min(真实竖视频比,9/19.5)，普通高至多工作区 70%，min360×400；保留 44 顶栏，隐藏分类插槽/侧栏/底导航。铺满使用当前工作区，再还原用户普通竖窗快照。换流比例变化超过 1% 才 refit。
 - Frameless：保留原几何，隐藏壳 UI；mac 只藏交通灯，不改 styleMask。与系统全屏互斥。Mini/Portrait 互斥且恢复原始 Normal 快照，置顶意图独立于形态。
 - Incognito：系统光标出窗先暂停、至少 80ms 后原窗隐藏，回到原矩形显示且不夺焦点。显式用户暂停不改写；最小化/老板键隐藏时不自动抢回。唯一 native 窗口桥聚合藏显。

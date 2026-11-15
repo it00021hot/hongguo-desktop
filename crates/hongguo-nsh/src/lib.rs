@@ -35,7 +35,6 @@ fn native_components(components: &nsh_platform_macos::Components) {
     notifications::register(components);
     hongguo_nsh_video_macos::register(components);
     boss_key::register(components);
-    features::player::navigation::register(components);
     window_modes::register(components);
 }
 
@@ -44,7 +43,6 @@ fn native_components(components: &nsh_platform_windows::Components) {
     notifications::register(components);
     hongguo_nsh_video_windows::register(components);
     boss_key::register(components);
-    features::player::navigation::register(components);
     window_modes::register(components);
 }
 

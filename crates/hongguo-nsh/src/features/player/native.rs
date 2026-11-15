@@ -83,6 +83,7 @@ pub(super) fn mount<E: IntoElement>(
         |source: &VideoSource| source.url.clone(),
         move |mounted, _| {
             let mounted = mounted.get_untracked();
+            let entrance = super::presentation::video::player_source_motion(gestures.direction());
             let control = super::renderer::Control::new();
             let modes = crate::window_modes::WindowModes::current();
             let resize_mode = crate::features::player::presentation::player_resize_mode(
@@ -160,168 +161,196 @@ pub(super) fn mount<E: IntoElement>(
                         paused.update(|paused| *paused = !*paused);
                     }
                 })
-                .child(super::renderer::mount(
-                    super::renderer::State {
-                        url: mounted.url,
-                        frame_source: mounted.frame_source,
-                        codec_extension: Some(std::rc::Rc::new(move || {
-                            source.with(|source| {
-                                source
-                                    .ok_or_else(|| "media source is no longer current".to_string())?
-                                    .lease
-                                    .enable_codec_extension(
-                                        pending_seek
-                                            .get_untracked()
-                                            .unwrap_or(native_position.get_untracked().0),
-                                    )
-                            })
-                        })),
-                        control,
-                        rate: computed(move || rate.get()),
-                        interval: computed(|| 250.0),
-                        volume,
-                        muted: computed(move || muted.get() || pending_seek.get().is_some()),
-                        opacity: computed(|| 1.0_f32),
-                        paused: computed(move || {
-                            !play_allowed.get() || !current_source() || paused.get()
-                        }),
-                        active: computed(move || play_allowed.get() && current_source()),
-                        resize_mode,
-                    },
-                    super::renderer::Callbacks {
-                        load: Box::new(move |info: &VideoInfo| {
-                            if !current_source() {
-                                return;
-                            }
-                            let size =
-                                (f64::from(info.size.width.0), f64::from(info.size.height.0));
-                            video_size.set(size);
-                            if let Some(modes) = crate::window_modes::WindowModes::current() {
-                                modes.refit(crate::window_modes::portrait_aspect(size.0, size.1));
-                            }
-                            native_position.update(|position| position.1 = info.duration.into());
-                            let duration =
-                                effective_duration(mounted.expected_duration, info.duration.into());
-                            if let Some(at) = initial_load.with(|load| {
-                                load.seek(pending_seek.get_untracked(), mounted.resume_at, duration)
-                            }) {
-                                position.set((0.0, duration));
-                                let target = transport::initial_seek(at);
-                                pending_seek.set(target);
-                                if target.is_none() {
-                                    buffering
-                                        .set(buffer_state.with(|state| state.is_buffering(false)));
-                                }
-                                loaded.set(true);
-                            } else {
-                                position.update(|position| position.1 = duration);
-                            }
-                            failure.set(SharedString::default());
-                        }),
-                        progress: Box::new(move |progress: &VideoProgress| {
-                            if !progress.current_time.is_finite() || progress.current_time < 0.0 {
-                                return;
-                            }
-                            if loaded.get_untracked() && current_source() {
-                                let duration = effective_duration(
-                                    mounted.expected_duration,
-                                    progress.duration.into(),
-                                );
-                                let target = pending_seek.get_untracked();
-                                let confirmed = target.is_some_and(|target| {
-                                    seek.with(|seek| {
-                                        seek.confirmed(target, progress.current_time.into())
+                .child(
+                    view()
+                        .flex_1()
+                        .bind_motion(&entrance)
+                        .child(super::renderer::mount(
+                            super::renderer::State {
+                                url: mounted.url,
+                                frame_source: mounted.frame_source,
+                                codec_extension: Some(std::rc::Rc::new(move || {
+                                    source.with(|source| {
+                                        source
+                                            .ok_or_else(|| {
+                                                "media source is no longer current".to_string()
+                                            })?
+                                            .lease
+                                            .enable_codec_extension(
+                                                pending_seek
+                                                    .get_untracked()
+                                                    .unwrap_or(native_position.get_untracked().0),
+                                            )
                                     })
-                                });
-                                if confirmed {
-                                    pending_seek.set(None);
-                                }
-                                let seeking = target.is_some() && !confirmed;
-                                let previous = native_position.get_untracked();
-                                native_position
-                                    .set((progress.current_time.into(), progress.duration.into()));
-                                if let Some(buffered) = buffer_state.with(|state| {
-                                    state.progress(
-                                        confirmed,
-                                        f64::from(progress.current_time) > previous.0,
-                                        seeking,
-                                    )
-                                }) {
-                                    buffering.set(buffered);
-                                }
-                                if !seeking {
-                                    position.set((progress.current_time.into(), duration));
-                                    recorder.record(progress.current_time.into(), duration);
-                                }
-                            }
-                        }),
-                        buffer: Box::new(move |value: &bool| {
-                            if current_source() {
-                                buffering.set(buffer_state.with(|state| {
-                                    state.native_event(
-                                        *value,
+                                })),
+                                control,
+                                rate: computed(move || rate.get()),
+                                interval: computed(|| 250.0),
+                                volume,
+                                muted: computed(move || {
+                                    muted.get() || pending_seek.get().is_some()
+                                }),
+                                opacity: computed(|| 1.0_f32),
+                                paused: computed(move || {
+                                    !play_allowed.get() || !current_source() || paused.get()
+                                }),
+                                active: computed(move || play_allowed.get() && current_source()),
+                                resize_mode,
+                            },
+                            super::renderer::Callbacks {
+                                load: Box::new(move |info: &VideoInfo| {
+                                    if !current_source() {
+                                        return;
+                                    }
+                                    let size = (
+                                        f64::from(info.size.width.0),
+                                        f64::from(info.size.height.0),
+                                    );
+                                    video_size.set(size);
+                                    if let Some(modes) = crate::window_modes::WindowModes::current()
+                                    {
+                                        modes.refit(crate::window_modes::portrait_aspect(
+                                            size.0, size.1,
+                                        ));
+                                    }
+                                    native_position
+                                        .update(|position| position.1 = info.duration.into());
+                                    let duration = effective_duration(
+                                        mounted.expected_duration,
+                                        info.duration.into(),
+                                    );
+                                    if let Some(at) = initial_load.with(|load| {
+                                        load.seek(
+                                            pending_seek.get_untracked(),
+                                            mounted.resume_at,
+                                            duration,
+                                        )
+                                    }) {
+                                        position.set((0.0, duration));
+                                        let target = transport::initial_seek(at);
+                                        pending_seek.set(target);
+                                        if target.is_none() {
+                                            buffering.set(
+                                                buffer_state
+                                                    .with(|state| state.is_buffering(false)),
+                                            );
+                                        }
+                                        loaded.set(true);
+                                    } else {
+                                        position.update(|position| position.1 = duration);
+                                    }
+                                    failure.set(SharedString::default());
+                                }),
+                                progress: Box::new(move |progress: &VideoProgress| {
+                                    if !progress.current_time.is_finite()
+                                        || progress.current_time < 0.0
+                                    {
+                                        return;
+                                    }
+                                    if loaded.get_untracked() && current_source() {
+                                        let duration = effective_duration(
+                                            mounted.expected_duration,
+                                            progress.duration.into(),
+                                        );
+                                        let target = pending_seek.get_untracked();
+                                        let confirmed = target.is_some_and(|target| {
+                                            seek.with(|seek| {
+                                                seek.confirmed(target, progress.current_time.into())
+                                            })
+                                        });
+                                        if confirmed {
+                                            pending_seek.set(None);
+                                        }
+                                        let seeking = target.is_some() && !confirmed;
+                                        let previous = native_position.get_untracked();
+                                        native_position.set((
+                                            progress.current_time.into(),
+                                            progress.duration.into(),
+                                        ));
+                                        if let Some(buffered) = buffer_state.with(|state| {
+                                            state.progress(
+                                                confirmed,
+                                                f64::from(progress.current_time) > previous.0,
+                                                seeking,
+                                            )
+                                        }) {
+                                            buffering.set(buffered);
+                                        }
+                                        if !seeking {
+                                            position.set((progress.current_time.into(), duration));
+                                            recorder.record(progress.current_time.into(), duration);
+                                        }
+                                    }
+                                }),
+                                buffer: Box::new(move |value: &bool| {
+                                    if current_source() {
+                                        buffering.set(buffer_state.with(|state| {
+                                            state.native_event(
+                                                *value,
+                                                pending_seek.get_untracked().is_some(),
+                                            )
+                                        }));
+                                    }
+                                }),
+                                error: Box::new(move |message: &str| {
+                                    if current_source() {
+                                        failure.set(message.to_owned().into());
+                                        pending_seek.set(None);
+                                        buffering.set(false);
+                                    }
+                                }),
+                                end: Box::new(move || {
+                                    if !current_source() {
+                                        return;
+                                    }
+                                    if completion::end_is_blocked(
+                                        paused.get_untracked(),
                                         pending_seek.get_untracked().is_some(),
-                                    )
-                                }));
-                            }
-                        }),
-                        error: Box::new(move |message: &str| {
-                            if current_source() {
-                                failure.set(message.to_owned().into());
-                                pending_seek.set(None);
-                                buffering.set(false);
-                            }
-                        }),
-                        end: Box::new(move || {
-                            if !current_source() {
-                                return;
-                            }
-                            if completion::end_is_blocked(
-                                paused.get_untracked(),
-                                pending_seek.get_untracked().is_some(),
-                            ) {
-                                recorder.flush();
-                                return;
-                            }
-                            let ended = completion.with(|gate| {
-                                gate.on_end_for(
-                                    loaded.get_untracked(),
-                                    comments_open.get_untracked(),
-                                )
-                            });
-                            match ended {
-                                completion::End::Ignore => return,
-                                completion::End::Repeat => {
-                                    batch(|| {
-                                        pending_seek.set(Some(0.0));
-                                        paused.set(false);
+                                    ) {
+                                        recorder.flush();
+                                        return;
+                                    }
+                                    let ended = completion.with(|gate| {
+                                        gate.on_end_for(
+                                            loaded.get_untracked(),
+                                            comments_open.get_untracked(),
+                                        )
                                     });
-                                    return;
-                                }
-                                completion::End::Complete => {}
-                            }
-                            recorder.complete();
-                            lifecycle::delete_finished(
-                                session,
-                                finished_series.get(),
-                                finished_episode,
-                                notice,
-                            );
-                            if play_allowed.get_untracked()
-                                && !paused.get_untracked()
-                                && !download_open.get_untracked()
-                                && session
-                                    .with(|session| session.state.settings().auto_next_episode)
-                            {
-                                gestures.enter_binge();
-                                chrome.arm_quiet();
-                                next();
-                            } else {
-                                paused.set(true);
-                            }
-                        }),
-                    },
-                ))
+                                    match ended {
+                                        completion::End::Ignore => return,
+                                        completion::End::Repeat => {
+                                            batch(|| {
+                                                pending_seek.set(Some(0.0));
+                                                paused.set(false);
+                                            });
+                                            return;
+                                        }
+                                        completion::End::Complete => {}
+                                    }
+                                    recorder.complete();
+                                    lifecycle::delete_finished(
+                                        session,
+                                        finished_series.get(),
+                                        finished_episode,
+                                        notice,
+                                    );
+                                    if play_allowed.get_untracked()
+                                        && !paused.get_untracked()
+                                        && !download_open.get_untracked()
+                                        && session.with(|session| {
+                                            session.state.settings().auto_next_episode
+                                        })
+                                    {
+                                        gestures.enter_binge();
+                                        chrome.arm_quiet();
+                                        next();
+                                    } else {
+                                        paused.set(true);
+                                    }
+                                }),
+                            },
+                        )),
+                )
                 .child(overlay())
                 .map(move |surface| gestures.bind(surface))
         },
