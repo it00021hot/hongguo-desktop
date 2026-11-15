@@ -8,13 +8,12 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-hongguo-bytevc2 = { path = "../hongguo-bytevc2" }
+hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-common = { path = "../hongguo-common" }
 hongguo-signer = { path = "../hongguo-signer" }
 aes = "0.9"
 chrono = "0.4"
 # zlib-rs 后端：注册的 TT-Encrypt V5 要求 gzip 字节流与服务端逐字节一致
-# （与 src-tauri 的同名取舍一致）。
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 futures-util = "0.3"
 hex = "0.4"

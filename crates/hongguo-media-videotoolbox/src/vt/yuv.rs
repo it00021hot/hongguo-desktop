@@ -1,8 +1,8 @@
 //! 显示序 I420 帧经 VideoToolbox 编成 HEVC。
 
 use hongguo_common::{AppError, AppResult};
-use hongguo_media_platform_api::video::bitrate_for;
-use hongguo_media_platform_api::{EncodedVideo, I420View};
+use hongguo_media_types::encoding::bitrate_for;
+use hongguo_media_types::encoding::{EncodedVideo, I420View};
 
 use super::encode::Compressor;
 use super::pixel::{Nv12Pool, Pb, Transfer};

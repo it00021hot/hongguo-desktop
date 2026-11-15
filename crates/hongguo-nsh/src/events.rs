@@ -13,13 +13,13 @@ pub(crate) struct SessionHandle {
     merges: Signal<u64>,
     library: Signal<u64>,
     follow_notices: Signal<u64>,
-    notice_preferences: crate::library::NoticePreferences,
+    notice_preferences: crate::features::library::NoticePreferences,
     notifications: crate::notifications::Notifications,
     login_notice: Signal<SharedString>,
-    playback: crate::player::PreferenceSignals,
-    social: crate::player::SocialMemory,
-    emoji_collections: crate::emoji::CollectionMemory,
-    danmaku: crate::player::DanmakuPreferences,
+    playback: crate::features::player::PreferenceSignals,
+    social: crate::features::player::SocialMemory,
+    emoji_collections: crate::features::emoji::CollectionMemory,
+    danmaku: crate::features::player::DanmakuPreferences,
 }
 
 impl SessionHandle {
@@ -33,13 +33,13 @@ impl SessionHandle {
             merges: signal(0),
             library: signal(0),
             follow_notices: signal(0),
-            notice_preferences: crate::library::NoticePreferences::new(),
+            notice_preferences: crate::features::library::NoticePreferences::new(),
             notifications: crate::notifications::Notifications::current(),
             login_notice: signal(SharedString::default()),
-            playback: crate::player::PreferenceSignals::new(),
-            social: crate::player::SocialMemory::new(),
-            emoji_collections: crate::emoji::CollectionMemory::new(),
-            danmaku: crate::player::DanmakuPreferences::new(),
+            playback: crate::features::player::PreferenceSignals::new(),
+            social: crate::features::player::SocialMemory::new(),
+            emoji_collections: crate::features::emoji::CollectionMemory::new(),
+            danmaku: crate::features::player::DanmakuPreferences::new(),
         };
         spawn(async move {
             loop {
@@ -129,16 +129,16 @@ impl SessionHandle {
     pub(crate) fn identity(self) -> u64 {
         self.identity.get()
     }
-    pub(crate) fn playback_preferences(self) -> crate::player::PreferenceSignals {
+    pub(crate) fn playback_preferences(self) -> crate::features::player::PreferenceSignals {
         self.playback
     }
-    pub(crate) fn social_memory(self) -> crate::player::SocialMemory {
+    pub(crate) fn social_memory(self) -> crate::features::player::SocialMemory {
         self.social
     }
-    pub(crate) fn emoji_collections(self) -> crate::emoji::CollectionMemory {
+    pub(crate) fn emoji_collections(self) -> crate::features::emoji::CollectionMemory {
         self.emoji_collections
     }
-    pub(crate) fn danmaku_preferences(self) -> crate::player::DanmakuPreferences {
+    pub(crate) fn danmaku_preferences(self) -> crate::features::player::DanmakuPreferences {
         self.danmaku
     }
     pub(crate) fn downloads(self) -> u64 {
@@ -159,7 +159,7 @@ impl SessionHandle {
     pub(crate) fn follow_notices(self) -> u64 {
         self.follow_notices.get()
     }
-    pub(crate) fn notice_preferences(self) -> crate::library::NoticePreferences {
+    pub(crate) fn notice_preferences(self) -> crate::features::library::NoticePreferences {
         self.notice_preferences
     }
     pub(crate) fn notifications(self) -> crate::notifications::Notifications {

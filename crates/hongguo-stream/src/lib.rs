@@ -1,6 +1,6 @@
 //! 在线播放的内存流数据面：缓存按 (vid, 清晰度档位) 分条目，渐进（稀疏解密拼装）
 //! 与整集（一次性原子写入）两条供数路径，谁先就绪走谁。
-//! 填充侧（hongguo-service）与应答侧（hongguo-protocol）共用的上游，不依赖 tauri / 服务层。
+//! 由 service 填充、NSH 媒体 HTTP 入口读取；不依赖外壳或服务层。
 
 mod cache;
 mod progressive;

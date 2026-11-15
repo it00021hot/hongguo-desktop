@@ -3,8 +3,8 @@
 use std::time::Instant;
 
 use hongguo_common::{AppError, AppResult};
-use hongguo_media_platform_api::PlatformRequest;
-use hongguo_media_platform_api::video::bitrate_for;
+use hongguo_media_types::encoding::PlatformRequest;
+use hongguo_media_types::encoding::bitrate_for;
 use hongguo_video::sample_table::TrackInfo;
 
 use super::decode::{HevcDecoder, Nv12Frame};
@@ -19,7 +19,7 @@ pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     }
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
-    if !hongguo_media::hevc::is_hevc(&video.info.codec) {
+    if !hongguo_video::hevc::is_hevc(&video.info.codec) {
         return None;
     }
     Some(run(req, &demuxed, &video.info))
@@ -31,7 +31,7 @@ fn run(
     video: &TrackInfo,
 ) -> AppResult<()> {
     let started = Instant::now();
-    let (raw_sets, length_size) = hongguo_media::hevc::read_parameter_set_nalus(req.input, video)?;
+    let (raw_sets, length_size) = hongguo_video::hevc::read_parameter_set_nalus(req.input, video)?;
     let mut csd = Vec::new();
     for nalu in &raw_sets {
         csd.extend_from_slice(&[0, 0, 0, 1]);
@@ -61,7 +61,7 @@ fn run(
         if raw.is_empty() {
             continue;
         }
-        let annexb = hongguo_media::hevc::to_annexb(&raw, length_size);
+        let annexb = hongguo_video::hevc::to_annexb(&raw, length_size);
         let pts = sorted_pts.get(i).copied().unwrap_or(i as f64 * frame_dur);
         let pts_us = (pts * 1_000_000.0).round() as i64;
         let eos = i + 1 == n;

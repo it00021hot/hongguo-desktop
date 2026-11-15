@@ -13,7 +13,6 @@
 //! 这里只对它公开 ByteVC2 专属的三件事——找轨（[`track_from_moov`]）、
 //! 从任意样本起解（[`decode_track_vvdec`]）——以及两种解核共用的帧与缓冲池。
 
-mod codec;
 mod container;
 mod decode;
 mod extradata;
@@ -21,7 +20,6 @@ mod sample;
 #[cfg(feature = "vvdec")]
 mod vvdec;
 
-pub use codec::{CONFIG_BOX, FOURCC, WIRE_NAME, is_bytevc2, is_bytevc2_fourcc};
 pub use container::{Bytevc2Track, read_moov_at, track_from_moov};
 pub use decode::{
     DecodedFrame, FramePool, Plaintext, active_decoder_name, open_plaintext, presentation_tick,
@@ -29,6 +27,9 @@ pub use decode::{
 #[cfg(feature = "vvdec")]
 pub use decode::{decode_track_vvdec, decode_track_vvdec_native};
 pub use extradata::{annexb_from_extradata, length_size_from_extradata};
+pub use hongguo_media_types::codec::{
+    CONFIG_BOX, FOURCC, WIRE_NAME, is_bytevc2, is_bytevc2_fourcc,
+};
 pub use hongguo_media_types::{ChromaSampling, ColorMetadata, CropRect, NativeFrame, NativePlane};
 pub use sample::sample_to_annexb_checked;
 #[cfg(feature = "vvdec")]

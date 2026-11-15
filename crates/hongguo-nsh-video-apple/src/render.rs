@@ -1,6 +1,6 @@
 use crate::{ImportedFrame, MetalSurface, OutputError, controller::Viewport};
-use hongguo_enhancement::Pipeline;
 use hongguo_nsh_video_api::{Enhancement, ErrorCode, ResizeMode};
+use hongguo_video_gpu::enhancement::Pipeline;
 use objc2::rc::Retained;
 use objc2_quartz_core::CAMetalLayer;
 use std::{
@@ -143,7 +143,14 @@ impl Renderer {
         if let Some(pipeline) = &mut self.pipeline
             && self.options != Some(options)
         {
-            pipeline.prepare(options).await.map_err(enhancement_error)?;
+            pipeline
+                .prepare(hongguo_video_gpu::enhancement::Settings {
+                    anime4k_on: options.anime4k_on,
+                    sharpen_on: options.sharpen_on,
+                    strength: options.strength,
+                })
+                .await
+                .map_err(enhancement_error)?;
             self.options = Some(options);
         }
         if !valid() {
@@ -272,8 +279,8 @@ fn frame_error(error: impl std::fmt::Display) -> OutputError {
     OutputError::new(ErrorCode::FrameFormatUnsupported, error.to_string())
 }
 
-fn enhancement_error(error: hongguo_enhancement::Error) -> OutputError {
-    let code = if matches!(error, hongguo_enhancement::Error::InputTooLarge) {
+fn enhancement_error(error: hongguo_video_gpu::enhancement::Error) -> OutputError {
+    let code = if matches!(error, hongguo_video_gpu::enhancement::Error::InputTooLarge) {
         ErrorCode::InputTooLarge
     } else {
         ErrorCode::GpuFailed

@@ -76,7 +76,7 @@ Apple / Android 不能照搬 Windows 的 MFT 注册方式。特殊视频轨需�
 
 ## 4. 代码与开发依赖的收敛
 
-1. `hongguo-nsh/src/player/renderer` 恢复 Video 主入口；`media` 提供解密后的原 MP4 地址和必要的特殊媒体源描述，不再为所有流创建 `hongguo-playback` FFmpeg 会话。
+1. `hongguo-nsh/src/features/player/renderer` 恢复 Video 主入口；`media` 提供解密后的原 MP4 地址和必要的特殊媒体源描述，不再为所有流创建 `hongguo-playback` FFmpeg 会话。
 2. 平台 crate 只保留缺失编码的适配、实际所需的帧呈现和颜色处理。删除普通格式也强制走 PixelView 的分派；保留组件外观、叠层和控制行为。
 3. 移除 `hongguo-codec-ffi` 及其所有调用、FFmpeg decoder audit、FFmpeg PCM/重采样/atempo 路径。现有 `hongguo-playback` 中 MP4 时间轴和索引等必要逻辑按真实使用者收敛；无消费者的会话和专用 PCM 设备 crate 删除，不留闲置的第二套播放框架。
 4. 清理 Cargo feature/lock、运行期 DLL/dylib 路径、FFmpeg 四库包装、FFmpeg 来源清单及专用重链接工具。PE 审计按最终实际运行库调整，继续验证静态 CRT、明确的系统依赖及随包库闭包。

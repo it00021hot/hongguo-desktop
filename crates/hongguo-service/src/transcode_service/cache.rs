@@ -40,26 +40,21 @@ pub fn seal_complete(path: &std::path::Path) -> std::io::Result<()> {
     );
     let partial = marker_partial(path);
     let dest = marker_path(path);
-    hongguo_store::paths::qa_write(&partial, body.as_bytes())?;
-    if let Err(err) = hongguo_store::paths::qa_rename(&partial, &dest) {
-        let _ = hongguo_store::paths::qa_remove_file(&partial);
+    hongguo_common::file_io::write(&partial, body.as_bytes())?;
+    if let Err(err) = hongguo_common::file_io::rename(&partial, &dest) {
+        let _ = hongguo_common::file_io::remove_file(&partial);
         return Err(err);
     }
     Ok(())
 }
 
 pub fn discard_completion(path: &std::path::Path) {
-    let _ = hongguo_store::paths::qa_remove_file(&marker_path(path));
-    let _ = hongguo_store::paths::qa_remove_file(&marker_partial(path));
+    let _ = hongguo_common::file_io::remove_file(&marker_path(path));
+    let _ = hongguo_common::file_io::remove_file(&marker_partial(path));
 }
 
 pub fn completion_matches(path: &std::path::Path) -> bool {
-    let Ok(marker) = hongguo_store::paths::prepare_qa_io(&marker_path(path)) else {
-        return false;
-    };
-    let Ok(path) = hongguo_store::paths::prepare_qa_io(path) else {
-        return false;
-    };
+    let marker = marker_path(path);
     let Ok(raw) = std::fs::read_to_string(marker) else {
         return false;
     };
@@ -73,13 +68,13 @@ pub fn completion_matches(path: &std::path::Path) -> bool {
     let Some(hash) = lines.next() else {
         return false;
     };
-    let Ok(meta) = std::fs::metadata(&path) else {
+    let Ok(meta) = std::fs::metadata(path) else {
         return false;
     };
     if meta.len() != len {
         return false;
     }
-    let Ok(bytes) = std::fs::read(&path) else {
+    let Ok(bytes) = std::fs::read(path) else {
         return false;
     };
     sha256_hex(&bytes) == hash
@@ -99,10 +94,10 @@ fn sanitize(id: &str) -> String {
 pub fn clear() -> usize {
     let dir = compat_cache_dir();
     let mut n = 0;
-    if let Ok(entries) = hongguo_store::paths::qa_read_dir(&dir) {
+    if let Ok(entries) = hongguo_common::file_io::read_dir(&dir) {
         for e in entries.flatten() {
             if e.path().extension().and_then(|x| x.to_str()) == Some("mp4")
-                && hongguo_store::paths::qa_remove_file(&e.path()).is_ok()
+                && hongguo_common::file_io::remove_file(&e.path()).is_ok()
             {
                 n += 1;
             }

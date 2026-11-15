@@ -3,8 +3,8 @@ use crate::{
     controller::{Shared, Viewport},
     render::Renderer,
 };
-use hongguo_enhancement::FrameBudget;
 use hongguo_nsh_video_api::{Enhancement, EnhancementPhase, ErrorCode, VideoEvent, VideoProps};
+use hongguo_video_gpu::enhancement::FrameBudget;
 use std::sync::{Arc, atomic::Ordering, mpsc::Receiver};
 
 #[path = "worker_render.rs"]

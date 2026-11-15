@@ -3,3 +3,10 @@
 
 pub mod registry;
 pub mod resolver;
+
+pub async fn resolve(
+    input: &str,
+    state: &crate::AppState,
+) -> hongguo_common::AppResult<hongguo_common::model::Series> {
+    resolver::resolve_series(input, &state.api_env()).await
+}

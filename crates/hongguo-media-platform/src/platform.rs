@@ -14,7 +14,7 @@ use hongguo_media_platform_windows as imp;
 use hongguo_common::AppResult;
 
 /// 平台归档转码请求。
-pub use hongguo_media_platform_api::PlatformRequest;
+pub use hongguo_media_types::encoding::PlatformRequest;
 
 /// 平台编码层可用时执行 HEVC→HEVC 转码。
 /// `None` 表示没有可用的归档编解码会话，`Some(Err)` 保留实际失败原因。

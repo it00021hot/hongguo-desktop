@@ -60,11 +60,10 @@ impl ArchiveHevc {
             return Err(AppError::Media("片段封装缺少分辨率或时长".into()));
         }
         if let Some(parent) = path.parent() {
-            hongguo_common::offline_qa::qa_create_dir_all(parent)
-                .map_err(|e| AppError::Io(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
         }
         let file =
-            hongguo_common::offline_qa::qa_create(path).map_err(|e| AppError::Io(e.to_string()))?;
+            hongguo_common::file_io::create(path).map_err(|e| AppError::Io(e.to_string()))?;
         Ok(Self {
             file,
             path: path.to_path_buf(),
@@ -96,7 +95,7 @@ impl ArchiveHevc {
                 && (!video[0].2
                     || !hvcc::split(&video[0].1)
                         .into_iter()
-                        .any(crate::hevc::is_random_access_nal)))
+                        .any(hongguo_video::hevc::is_random_access_nal)))
         {
             return Err(AppError::Media("片段缺少同步样本".into()));
         }

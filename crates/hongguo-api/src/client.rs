@@ -31,11 +31,7 @@ pub fn build_client(config: &hongguo_common::model::ProxyConfig) -> AppResult<re
     static CLIENTS: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, reqwest::Client>>,
     > = std::sync::OnceLock::new();
-    let key = if hongguo_common::offline_qa::enabled() {
-        "offline-qa".to_string()
-    } else {
-        config.resolved().unwrap_or_default()
-    };
+    let key = config.resolved().unwrap_or_default();
     let clients = CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut guard = clients
         .lock()
@@ -62,20 +58,13 @@ fn build_client_uncached(
 
     let mut builder = builder;
 
-    if hongguo_common::offline_qa::enabled() {
-        // 配置里的代理和默认重定向都能把 loopback 请求带到外部主机。开关打开时这两条都不走。
-        builder = builder.no_proxy().redirect(offline_redirect_policy());
-    } else {
-        match config.resolved() {
-            Some(url) => {
-                let proxy = Proxy::all(&url)
-                    .map_err(|e| AppError::Network(format!("代理地址无效: {e}")))?;
-                builder = builder.proxy(proxy);
-            }
-            None => {
-                builder = builder.no_proxy();
-            }
+    match config.resolved() {
+        Some(url) => {
+            let proxy =
+                Proxy::all(&url).map_err(|e| AppError::Network(format!("代理地址无效: {e}")))?;
+            builder = builder.proxy(proxy);
         }
+        None => builder = builder.no_proxy(),
     }
 
     builder
@@ -284,12 +273,10 @@ pub(crate) async fn api_call_playback_v5(
         extra.push(("x-tt-token".into(), short));
     }
 
-    refuse_external(origin)?;
     let client = build_client(&env.proxy)?;
     let body = gzip_bytes(&payload)?;
     let signed =
         crate::metasec::sign_playback(&client, origin, pathname, &body, &extra, env).await?;
-    refuse_external(&signed.url)?;
     let mut req = client.post(&signed.url);
     for (k, v) in &signed.headers {
         req = req.header(k.as_str(), v.as_str());
@@ -460,7 +447,6 @@ pub async fn api_call_full_response(
 /// 请求视频 CDN 直链（下载与在线取流共用）：裸 UA 优先，403 补官网
 /// Referer 重试一次。
 pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<reqwest::Response> {
-    refuse_external(url)?;
     let send = |referer: bool| {
         let mut req = client
             .get(url)
@@ -523,7 +509,6 @@ const VIDEO_RANGE_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// `Range: bytes=0-0` 探测直链总长；CDN 不支持 Range（回 200）即 Err。
 pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u64> {
-    refuse_external(url)?;
     let resp = client
         .get(url)
         .timeout(VIDEO_RANGE_PROBE_TIMEOUT)
@@ -554,36 +539,12 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
 
 /// 取直链的一段密文（失败重试 3 次；CDN 忽略 Range 回 200 时按字节
 /// 切片自愈；403 补 Referer 重试一次）。
-fn offline_redirect_policy() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| {
-        if hongguo_common::offline_qa::parsed_url_forbidden(attempt.url()) {
-            attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
-        } else {
-            attempt.follow()
-        }
-    })
-}
-
-pub fn refuse_external_send(url: &str) -> AppResult<()> {
-    refuse_external(url)
-}
-
-fn refuse_external(url: &str) -> AppResult<()> {
-    if hongguo_common::offline_qa::external_url_forbidden(url) {
-        return Err(AppError::Network(
-            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub async fn get_video_range(
     client: &reqwest::Client,
     url: &str,
     start: u64,
     end: u64,
 ) -> AppResult<Vec<u8>> {
-    refuse_external(url)?;
     let mut last_err = None;
     for attempt in 0..STREAM_RETRY_ATTEMPTS {
         let started = std::time::Instant::now();
@@ -739,11 +700,6 @@ async fn send_once(
     extra_headers: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<ApiCallResponse> {
-    if hongguo_common::offline_qa::external_url_forbidden(origin) {
-        return Err(AppError::Network(
-            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
-        ));
-    }
     let mut extra: Vec<(String, String)> = extra_headers.to_vec();
     if let Some(c) = &env.cookie
         && !c.is_empty()
@@ -775,11 +731,6 @@ async fn send_once(
         ),
     };
 
-    if hongguo_common::offline_qa::external_url_forbidden(&signed.url) {
-        return Err(AppError::Network(
-            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
-        ));
-    }
     let mut req = match &signed.body {
         Some(bytes) => client.post(&signed.url).body(bytes.clone()),
         None => client.get(&signed.url),

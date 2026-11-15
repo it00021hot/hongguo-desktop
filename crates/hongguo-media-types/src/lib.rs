@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
+pub mod codec;
 mod decoder;
+pub mod encoding;
 mod hdr;
 mod presentation;
 pub use decoder::{DecodedVideoFrame, HevcDecoderConfig, VideoDecoder};

@@ -1,17 +1,20 @@
-use super::{Icon, icon, motion::FAST_MS, radii};
 use crate::i18n::tr;
+use crate::ui::Icon;
+use crate::ui::icon;
+use crate::ui::motion::FAST_MS;
+use crate::ui::radii;
 use nsh_base::{MenuEvent, theme};
 use nsh_core::prelude::*;
 
-pub(super) const THEMES: &[(&str, &str)] = &[
+pub(crate) const THEMES: &[(&str, &str)] = &[
     ("auto", "settings.themeAuto"),
     ("light", "settings.themeLight"),
     ("dark", "settings.themeDark"),
 ];
-pub(super) const LANGUAGES: &[(&str, &str)] =
+pub(crate) const LANGUAGES: &[(&str, &str)] =
     &[("zh-CN", "search.langZh"), ("en-US", "search.langEn")];
 
-pub(super) fn change_language(language: crate::i18n::Language, value: &'static str) {
+pub(crate) fn change_language(language: crate::i18n::Language, value: &'static str) {
     if let Err(error) = language.select(value) {
         spawn(async move {
             let answer = nsh_base::alert_dialog()
@@ -26,7 +29,7 @@ pub(super) fn change_language(language: crate::i18n::Language, value: &'static s
     }
 }
 
-pub(super) fn menu(
+pub(crate) fn menu(
     trigger: nsh_base::ButtonElement,
     choices: &'static [(&'static str, &'static str)],
     selected: impl Fn() -> String + 'static,

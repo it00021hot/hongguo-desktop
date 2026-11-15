@@ -1,6 +1,6 @@
 # 红果播放器 · Hongguo Desktop
 
-基于 NSH 0.5.0 与 Rust 的非官方红果短剧客户端，桌面目标为 Windows 10 1809+ / Windows 11、macOS，另有独立 Android / iOS 宿主。
+基于 NSH 0.5.1 与 Rust 的非官方红果短剧客户端，桌面目标为 Windows 10 1809+ / Windows 11、macOS，另有独立 Android / iOS 宿主。
 
 [English](README.en.md) · [使用声明](NOTICE) · [第三方组件](THIRD-PARTY-NOTICES.md)
 
@@ -27,7 +27,10 @@ Windows 扩展 HEVC 优先 D3D11 VLD，Main10 使用 P010；实际硬解不可�
 平台实际验证范围见 [解码验证记录](docs/nsh-decoder-validation.md)。
 
 共用图标、表情和语言资源位于 `assets/`；NSH 界面与装配在 `crates/hongguo-nsh`。
-原生 UI 预览的 TypeScript 声明由匹配版本 NSH CLI 生成，详见 [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md)。
+功能页面与专用呈现归 `src/features/`，共享控件归 `src/ui/`，窗口与导航装配归 `src/shell/`。
+业务请求通过 `hongguo-service`，NSH 不直接依赖 API 客户端；ByteVC2 解码能力保持不变。
+工作区现为 29 个 crate；编码契约归媒体类型层，GPU 增强归视频 GPU 层，HEVC 解析归容器层。
+结构边界见 [项目结构](docs/project-structure.md)，命令及环境见 [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md)。
 
-Tauri、GPUI 壳、专用播放器与 WebView 前端已从主线移除，完整旧版保存在
+Tauri、GPUI 壳及其旧播放器、WebView 前端已从主线移除，完整旧版保存在
 [`codex/backup-tauri-final`](https://github.com/it00021hot/hongguo-desktop/tree/codex/backup-tauri-final)。

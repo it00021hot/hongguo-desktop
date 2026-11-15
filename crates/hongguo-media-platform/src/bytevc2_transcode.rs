@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_media::mux::{ArchiveHevc, AudioTrack};
-use hongguo_media_platform_api::PlatformRequest;
+use hongguo_media_types::encoding::PlatformRequest;
 
 #[cfg(any(
     target_os = "macos",
@@ -26,7 +26,7 @@ pub fn transcode_bytevc2(req: &PlatformRequest<'_>) -> AppResult<()> {
     {
         let result = imp_thread(|| drive(req));
         if result.is_err() {
-            let _ = hongguo_common::offline_qa::qa_remove_file(req.output);
+            let _ = hongguo_common::file_io::remove_file(req.output);
         }
         result
     }
@@ -174,7 +174,7 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
         let body = format!(
             "{{\"frames\":{frames},\"width\":{width},\"height\":{height},\"fps\":{fps},\"decoder\":\"{decoder}\",\"media_secs\":{media_secs:.6},\"realtime_x\":{realtime_x:.4},\"loop_ns\":{loop_ns},\"decode_ns\":{decode_ns},\"encode_push_ns\":{push_ns},\"encode_flush_ns\":{flush_ns},\"mux_ns\":{mux_ns},\"wall_ns\":{wall_ns}}}\n",
         );
-        hongguo_common::offline_qa::qa_write(std::path::Path::new(&path), body.as_bytes())
+        hongguo_common::file_io::write(std::path::Path::new(&path), body.as_bytes())
             .map_err(|e| AppError::Io(format!("阶段日志写入失败: {e}")))?;
     }
     log::info!(
@@ -303,15 +303,16 @@ fn push_frame(
     pts: f64,
 ) -> AppResult<()> {
     let push_started = pass.stage_log.as_ref().map(|_| Instant::now());
-    pass.encoder.push(&hongguo_media_platform_api::I420View {
-        y: &frame.y,
-        u: &frame.u,
-        v: &frame.v,
-        width: frame.width,
-        height: frame.height,
-        pts,
-        dur: pass.frame_dur,
-    })?;
+    pass.encoder
+        .push(&hongguo_media_types::encoding::I420View {
+            y: &frame.y,
+            u: &frame.u,
+            v: &frame.v,
+            width: frame.width,
+            height: frame.height,
+            pts,
+            dur: pass.frame_dur,
+        })?;
     if let Some(push_started) = push_started {
         *pass.push_ns += push_started.elapsed().as_nanos();
     }

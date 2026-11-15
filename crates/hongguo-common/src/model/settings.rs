@@ -201,7 +201,7 @@ pub struct Settings {
     /// 最小化自动暂停，恢复窗口后继续播。
     #[serde(default = "default_true")]
     pub pause_on_minimize: bool,
-    /// 老板键全局快捷键（tauri accelerator 形态，如 "CommandOrControl+Alt+H"；
+    /// 老板键全局快捷键（accelerator 形态，如 "CommandOrControl+Alt+H"；
     /// 空 = 未启用）。注册在壳侧（issue #4：隐藏/显示主窗口）
     #[serde(default)]
     pub boss_key: String,

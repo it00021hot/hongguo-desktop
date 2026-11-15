@@ -10,7 +10,7 @@ pub(crate) fn card() -> View {
     let checked = signal(false);
     let available = signal(None::<String>);
     let failure = signal(SharedString::default());
-    ui::form_surface(
+    crate::features::settings::presentation::form_surface(
         view()
             .gap_1p5()
             .child(
@@ -25,7 +25,7 @@ pub(crate) fn card() -> View {
                     )
                     .child(view().flex_1())
                     .child(
-                        ui::update_action(
+                        crate::features::settings::presentation::update_action(
                             move || {
                                 tr(if busy.get() {
                                     "update.checking"
@@ -68,23 +68,29 @@ pub(crate) fn card() -> View {
                         }),
                     ),
             )
-            .child(ui::form_hint(move || {
-                let version =
-                    tr("update.versionLine").replace("{version}", env!("CARGO_PKG_VERSION"));
-                if let Some(available) = available.get() {
-                    format!(
-                        "{version} · {}",
-                        tr("update.newVersionAvailable").replace("{version}", &available)
-                    )
-                } else if checked.get() {
-                    format!("{version} · {}", tr("update.upToDate"))
-                } else {
-                    version
-                }
-            }))
+            .child(crate::features::settings::presentation::form_hint(
+                move || {
+                    let version =
+                        tr("update.versionLine").replace("{version}", env!("CARGO_PKG_VERSION"));
+                    if let Some(available) = available.get() {
+                        format!(
+                            "{version} · {}",
+                            tr("update.newVersionAvailable").replace("{version}", &available)
+                        )
+                    } else if checked.get() {
+                        format!("{version} · {}", tr("update.upToDate"))
+                    } else {
+                        version
+                    }
+                },
+            ))
             .child(when(
                 move || available.get().is_some(),
-                move || ui::form_description(move || tr("update.nshReleaseNote")),
+                move || {
+                    crate::features::settings::presentation::form_description(move || {
+                        tr("update.nshReleaseNote")
+                    })
+                },
             ))
             .child(when(
                 move || !failure.get().is_empty(),

@@ -1,6 +1,8 @@
 # NSH 四端壳实施方案
 
-状态：方案已确认，正在实施。用户已明确选择纯 Rust 与独立移动端宿主。
+本文保留初始接入方案。当前主线仅保留 NSH 与纯 Rust 内核，Tauri/GPUI 壳已移除。
+2026-11-15 已将受控 NSH 源码与本机 CLI 更新至 0.5.1（224d9a7）；下文 0.5.0 与多壳描述为历史基线。
+现行接入与验证以 [NSH 开发说明](../.agents/skills/hongguo-dev/references/nsh.md) 为准。
 
 本轮目标：新增第三个独立壳，覆盖 Windows、macOS、Android、iOS。
 保持客户端直接调用红果官方 API 的工作方式；现有 Rust service 是本地业务内核，
@@ -32,7 +34,7 @@ Android embedding SDK 已拆为独立发布资产，安装与校验方式见
 
 ## 2. 分层与目录归属
 
-新增 `crates/hongguo-nsh/`，保持入口只装配，业务功能按域组织：
+当前 `crates/hongguo-nsh/` 保持入口只装配，业务功能按域组织；完整依赖边界见 [项目结构](project-structure.md)：
 
 ```text
 hongguo-nsh/
@@ -40,14 +42,15 @@ hongguo-nsh/
   DESIGN.md / theme.json
   src/
     lib.rs / main.rs
-    bootstrap/       启动、目录、数据库、设置和设备身份装载
-    bridge/          service 异步结果与业务事件接入 NSH 生命周期
-    ui/              基于 nsh-base 的应用样式组件与动效
-    pages/           推荐、搜索、详情、榜单、历史、设置等
-    player/          NSH 播放组件、控制与供数适配
-    platform/        窗口、移动端生命周期、目录与导出适配
-    i18n/            加载现有中英文资源
-  tests/
+    bootstrap.rs     目录、数据库、设置和设备身份装载
+    bridge.rs        service 异步结果接入 NSH 生命周期
+    shell/           窗口、顶栏与导航装配
+    navigation.rs    路由与导航状态
+    features/        功能页面、状态与专用 presentation
+    ui/              共享控件、图标与动效
+    media/           临时媒体 HTTP Range 供数及播放适配
+    window_modes/    原生窗口生命周期与模式
+    i18n.rs          加载现有中英文资源
 ```
 
 依赖方向：NSH 页面 → 本壳交互与状态 → 既有 service/api → store/signer/stream/media。

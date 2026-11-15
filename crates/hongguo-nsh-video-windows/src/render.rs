@@ -3,9 +3,9 @@ use crate::{
     DisplayedFrame, FrameLease, SharedFrames, VideoError,
     output::{OutputLease, OutputSlot},
 };
-use hongguo_enhancement::Pipeline;
 use hongguo_nsh_video_api::{Enhancement, ErrorCode, FrameMetadata};
 use hongguo_video_color::{ColorTransform, LUT_HEIGHT, LUT_WIDTH};
+use hongguo_video_gpu::enhancement::Pipeline;
 use std::{
     borrow::Cow,
     sync::{
@@ -263,7 +263,14 @@ impl GpuRenderer {
         epoch: u64,
         valid: impl Fn() -> bool,
     ) -> Result<bool, VideoError> {
-        self.pipeline.prepare(options).await.map_err(enhancement)?;
+        self.pipeline
+            .prepare(hongguo_video_gpu::enhancement::Settings {
+                anime4k_on: options.anime4k_on,
+                sharpen_on: options.sharpen_on,
+                strength: options.strength,
+            })
+            .await
+            .map_err(enhancement)?;
         self.prepare_color(color);
         if !valid() {
             return Ok(false);
@@ -459,8 +466,8 @@ impl GpuRenderer {
 fn gpu(error: impl std::fmt::Display) -> VideoError {
     VideoError::new(ErrorCode::GpuFailed, error.to_string())
 }
-fn enhancement(error: hongguo_enhancement::Error) -> VideoError {
-    let code = if matches!(error, hongguo_enhancement::Error::InputTooLarge) {
+fn enhancement(error: hongguo_video_gpu::enhancement::Error) -> VideoError {
+    let code = if matches!(error, hongguo_video_gpu::enhancement::Error::InputTooLarge) {
         ErrorCode::InputTooLarge
     } else {
         ErrorCode::GpuFailed

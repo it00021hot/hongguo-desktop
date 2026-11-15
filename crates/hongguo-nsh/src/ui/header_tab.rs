@@ -25,7 +25,7 @@ pub(crate) fn header_tab(label: impl IntoReactive<SharedString>) -> nsh_base::Bu
             if reduce_motion() {
                 0.0
             } else {
-                super::motion::FAST_MS
+                crate::ui::motion::FAST_MS
             }
         })
         .child(

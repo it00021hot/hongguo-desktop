@@ -11,7 +11,7 @@ authors.workspace = true
 # 共用底座：统一错误（AppError / AppResult）。
 hongguo-common = { path = "../hongguo-common" }
 # 统一契约：帧载体 / 解码器 trait / PlatformRequest（门面 re-export）。
-hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
+hongguo-media-types = { path = "../hongguo-media-types" }
 # 纯 Rust 编解码核心：Backend 标识与能力探测口径（capability 聚合用）。
 hongguo-media = { path = "../hongguo-media" }
 # ByteVC2 识别（四字码 / 线名）；解码能力探测在 capability::bytevc2。

@@ -4,12 +4,12 @@ use crate::{
     raw_yuv::{ImportedImage, RawYuv},
     surface::OutputSurface,
 };
-use hongguo_enhancement::Pipeline;
 use hongguo_media_types::{FrameImage, PresentationFrame};
 use hongguo_nsh_video_api::{
     Enhancement, ErrorCode, ResizeMode,
     frames::{FrameLease, PixelFrame},
 };
+use hongguo_video_gpu::enhancement::Pipeline;
 use hongguo_video_gpu::{ConvertedFrame, YuvConverter};
 use std::{
     sync::{
@@ -463,14 +463,25 @@ impl Renderer {
                     )
                     .await
                     .map_err(enhancement)?;
-                    pipeline.prepare(options).await.map_err(enhancement)?;
+                    pipeline
+                        .prepare(hongguo_video_gpu::enhancement::Settings {
+                            anime4k_on: options.anime4k_on,
+                            sharpen_on: options.sharpen_on,
+                            strength: options.strength,
+                        })
+                        .await
+                        .map_err(enhancement)?;
                     self.pipeline = Some((pipeline, size));
                 } else if options != self.options {
                     self.pipeline
                         .as_mut()
                         .expect("enhancement initialized")
                         .0
-                        .prepare(options)
+                        .prepare(hongguo_video_gpu::enhancement::Settings {
+                            anime4k_on: options.anime4k_on,
+                            sharpen_on: options.sharpen_on,
+                            strength: options.strength,
+                        })
                         .await
                         .map_err(enhancement)?;
                 }
@@ -586,8 +597,8 @@ fn gpu(value: impl std::fmt::Display) -> (ErrorCode, String) {
 fn format_error(value: impl std::fmt::Display) -> (ErrorCode, String) {
     (ErrorCode::FrameFormatUnsupported, error(value))
 }
-fn enhancement(value: hongguo_enhancement::Error) -> (ErrorCode, String) {
-    let code = if matches!(value, hongguo_enhancement::Error::InputTooLarge) {
+fn enhancement(value: hongguo_video_gpu::enhancement::Error) -> (ErrorCode, String) {
+    let code = if matches!(value, hongguo_video_gpu::enhancement::Error::InputTooLarge) {
         ErrorCode::InputTooLarge
     } else {
         ErrorCode::GpuFailed

@@ -19,11 +19,14 @@ pnpm format:check
 - `hongguo-nsh-android`：JNI 启动与 Android Activity；`getFilesDir()` 必须在挂载根组件前传入。
 - `hongguo-nsh-ios`：UIKit 启动；先配置 app 容器内的 Application Support，再挂载根组件。
 - `hongguo-media-videotoolbox`：macOS/iOS 共用 VT 管线；平台门面分别由两端实现 crate 转出。
+- 编码契约统一在 `hongguo-media-types::encoding`，增强管线在 `hongguo-video-gpu::enhancement`，HEVC 容器解析在 `hongguo-video::hevc`；完整边界见 [项目结构](../../../../docs/project-structure.md)。
 
-NSH 0.5.0，不加入 QuickJS。Cargo 依赖与 CLI 统一锁定发布提交
-`f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1`。界面开发先读 `nsh` 与 `nsh-design-guides`，
-设计规范与动效清单在 `crates/hongguo-nsh/DESIGN.md`。页面控件只用本壳 `ui`，
+NSH 0.5.1，不加入 QuickJS。Cargo 依赖使用 vendor/nsh 受控源码，CLI 与源码对齐发布提交
+`224d9a795c7ac9d10d75750de9351adac5549675`。界面开发先读 `nsh` 与 `nsh-design-guides`，
+设计规范与动效清单在 `crates/hongguo-nsh/DESIGN.md`。页面使用本功能的呈现组件与 `ui` 共享控件，
 不得用 React/shadcn 组件替代 NSH 控件；颜色从 theme.json 的语义令牌读取。
+功能专用呈现归 `features/<功能>/presentation`，窗口与导航装配归 `shell/`；`ui/` 只保存共享控件。
+业务请求及类型契约由 service 提供，NSH 不直接依赖 API 客户端。详见 [项目结构](../../../../docs/project-structure.md)。
 
 ## 命令
 
@@ -47,15 +50,15 @@ VVdeC 的 vendored 源码在 `crates/hongguo-vvdec-sys/vendor/vvdec`，不是根
 
 桌面打包仅在对应宿主执行。Android 需要已配置的 ANDROID_HOME、NDK_HOME、JDK 与
 Gradle 9.7.0（仓库内 wrapper 固定版本与 SHA-256）；AGP 沿用现有 Android 工程的 9.3.1。
-本项目宿主与原生编译保留 Android 9/API 28 下限；0.5.0 AAR 的 manifest 声明 API 26，
+本项目宿主与原生编译保留 Android 9/API 28 下限；0.5.1 AAR 的 manifest 声明 API 26，
 不据此扩大尚未验证的本项目支持范围。
 首批 APK 为 arm64-v8a，
 由本地调试签名构建；发布签名尚未接入。NSH_DISTRIBUTION 可指定 NSH 安装目录，
 未设置时从 nsh 可执行文件的真实位置解析。
 
-0.5.0 的 CLI 安装包不再附带 embedding SDK，`nsh component add android` 只安装通用
+0.5.1 的 CLI 安装包不再附带 embedding SDK，`nsh component add android` 只安装通用
 运行时，不能替代本项目需要的 AAR。Android 构建前从
-[同版本发布页](https://github.com/longbridge/nsh/releases/tag/v0.5.0) 下载
+[同版本发布页](https://github.com/longbridge/nsh/releases/tag/v0.5.1) 下载
 `nsh-embed-android.zip` 与 `.sha256`，在下载目录执行
 `shasum -a 256 -c nsh-embed-android.zip.sha256`；校验后将压缩包内的
 `nsh-embed-android/nsh.aar` 放到 `${NSH_DISTRIBUTION}/embed/android/nsh.aar`
@@ -75,7 +78,7 @@ Windows 原生打包另需安装 NSIS 3（`makensis` 在 PATH 中，仅构建工
 
 macOS 上的真实 Windows MSVC 交叉检查另见 [工具链与可复现命令](../../../../docs/nsh-windows-cross-check.md)。
 锁定的 VVdeC 3.2.1 使用并行安装的 LLVM 19.1.7；保留默认 LLVM、Werror 与 SDK，源码局部兼容改动记录在该解核的 SOURCE.md。
-NSH 0.5.0 使用的 wgpu 29 要求 `gpu-allocator 0.28.0` 的 Windows 绑定与其统一为
+NSH 0.5.1 使用的 wgpu 29 要求 `gpu-allocator 0.28.0` 的 Windows 绑定与其统一为
 `windows 0.62.2`（旧壳的 `windows 0.57.0` 已随壳移出锁文件）。
 Windows 目标的严格 clippy 会检出两套 COM 类型混用导致的编译失败。
 
@@ -97,7 +100,8 @@ iOS 需要完整 Xcode 与对应 SDK，最低 iOS 16.0。设备签名需要 NSH_
 
 ## 数据与生命周期
 
-桌面使用与另两个壳平级的 hongguo-nsh 数据根；移动端使用自己的 app 私有目录。
+桌面使用独立的 hongguo-nsh 数据根；移动端使用自己的 app 私有目录。
+`HONGGUO_DATA_DIR` 可显式覆盖数据根。生产代码已移除离线 QA 开关与路径隔离包装；正式文件 IO 保留同步落盘和符号链接保护。
 自动化验证显式设置独立测试目录，不读取现有壳的账号或数据库。
 异步业务经共用 service runtime 调度，NSH 资源销毁时取消未完成的桥接请求。
 service 事件在 NSH 执行环境更新状态；订阅溢出后重新读取快照。
@@ -108,7 +112,7 @@ Windows HEVC 扩展优先直接 D3D11 VLD（Main/NV12、Main10/P010），不经�
 仅实际不可用/失败时回退 libde265；硬解探针与无扩展环境验证见 Windows adapter README。
 不保留 FFmpeg、PCM 设备环或外部安装引导。所有媒体 URL 是带临时访问范围的本机 HTTP Range。
 首帧呈现及原生时钟就绪后才解除 hold；代次和 owner 隔离旧 seek、控制及呈现回调。
-FrameLease 保留至 GPU 消费结束，显示映射位于增强之后。旧壳继续使用原有软解。
+FrameLease 保留至 GPU 消费结束，显示映射位于增强之后。
 构建和实际验证范围见 docs/native-media-build.md、docs/nsh-decoder-validation.md。
 
 媒体源只通过注册过的临时 URL 读取，关闭页面即注销。媒体按块读取，

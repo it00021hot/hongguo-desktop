@@ -91,10 +91,6 @@ async fn run_registration(mut job: Job, request: Request) {
 }
 
 fn prepare(state: &AppState) -> Option<Registration> {
-    if hongguo_common::offline_qa::enabled() {
-        log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
-        return Some(publish_refusal(state, "离线 QA 不发起注册"));
-    }
     if let Some(refusal) = reuse_refusal(state) {
         let mut status = blocked_status(state, 0);
         status.set_failure(AppError::Rejected(
@@ -140,7 +136,7 @@ async fn attempt_registration(
     if registration_blocked(&meta, now_ms()) {
         return Outcome::Blocked(AppError::Rejected("注册限制仍有效".into()));
     }
-    if hongguo_common::offline_qa::enabled() || reuse_json_path().is_some() {
+    if reuse_json_path().is_some() {
         return Outcome::Blocked(AppError::Rejected("当前模式禁止注册".into()));
     }
     meta.last_register_attempt_ms = Some(now_ms());

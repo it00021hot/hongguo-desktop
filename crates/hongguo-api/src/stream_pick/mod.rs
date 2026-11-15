@@ -17,7 +17,7 @@ const BYTEVC2_RANK: u8 = 2;
 
 /// 编码偏好：HEVC > bytevc1 > bytevc2 > 其余。
 fn codec_rank(codec: &str) -> u8 {
-    if hongguo_bytevc2::is_bytevc2(codec) {
+    if hongguo_media_types::codec::is_bytevc2(codec) {
         return BYTEVC2_RANK;
     }
     match codec {
@@ -39,7 +39,7 @@ fn codec_of(v: &Value) -> &str {
 /// 与 ByteVC2。接口的编码名和 MP4 四字码都认——在线选流拿到的是前者，本地文件探到的是后者。
 /// H.264 不在其中：在线播放不回落到系统解码器。
 pub fn builtin_decodable(codec: &str) -> bool {
-    hongguo_bytevc2::is_bytevc2(codec)
+    hongguo_media_types::codec::is_bytevc2(codec)
         || matches!(
             codec,
             "h265" | "h265_hvc1" | "hevc" | "hvc1" | "hev1" | "bytevc1"
@@ -53,12 +53,13 @@ pub fn builtin_decodable(codec: &str) -> bool {
 pub fn is_playable(v: &Value, cap: DecoderCapability) -> bool {
     let codec = codec_of(v);
     if cap.builtin_only {
-        return builtin_decodable(codec) && (cap.bytevc2 || !hongguo_bytevc2::is_bytevc2(codec));
+        return builtin_decodable(codec)
+            && (cap.bytevc2 || !hongguo_media_types::codec::is_bytevc2(codec));
     }
     if codec.is_empty() {
         return true;
     }
-    if hongguo_bytevc2::is_bytevc2(codec) {
+    if hongguo_media_types::codec::is_bytevc2(codec) {
         return cap.bytevc2;
     }
     codec_rank(codec) < UNRANKED_CODEC

@@ -1,7 +1,7 @@
 use super::*;
 use std::rc::Rc;
 
-pub(super) fn body(
+pub(crate) fn body(
     items: Memo<Vec<SelectOption>>,
     value: Memo<Option<SharedString>>,
     choose: impl Fn(SharedString) + Copy + 'static,

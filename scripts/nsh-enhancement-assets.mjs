@@ -102,7 +102,7 @@ const graph = {
   output: captured.output,
   shaders: shaders.map(({ file, sha256 }) => ({ file, sha256 })),
 };
-const destination = 'crates/hongguo-enhancement/shaders/anime4k';
+const destination = 'crates/hongguo-video-gpu/shaders/enhancement/anime4k';
 const files = [
   ...shaders.map(({ file, code }) => [`${destination}/${file}`, code]),
   [`${destination}/graph.json`, `${JSON.stringify(graph, null, 2)}\n`],

@@ -20,7 +20,7 @@ pub fn transcode(
         .info
         .codec;
     let bytevc2 = hongguo_bytevc2::is_bytevc2(codec);
-    if !hongguo_media::hevc::is_hevc(codec) && !bytevc2 {
+    if !hongguo_video::hevc::is_hevc(codec) && !bytevc2 {
         return Err(AppError::CodecUnsupported(codec.clone()));
     }
     if cache::is_complete(target) && output_is_hevc_archive(target) {
@@ -46,11 +46,11 @@ pub fn transcode(
         })
     };
     if let Err(error) = result {
-        let _ = hongguo_store::paths::qa_remove_file(target);
+        let _ = hongguo_common::file_io::remove_file(target);
         return Err(error);
     }
     if !output_is_hevc_archive(target) {
-        let _ = hongguo_store::paths::qa_remove_file(target);
+        let _ = hongguo_common::file_io::remove_file(target);
         return Err(AppError::Media("平台编码器产出的 HEVC 归档校验失败".into()));
     }
     log::info!("[Transcode] 平台归档完成: {}", target.display());

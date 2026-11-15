@@ -3,10 +3,10 @@ use crate::{
     controller::{Layers, SeekCommand, Shared, Viewport},
     render::Renderer,
 };
-use hongguo_enhancement::FrameBudget;
 use hongguo_nsh_video_api::{
     Enhancement, EnhancementPhase, ErrorCode, Seek, Source, VideoEvent, VideoProps,
 };
+use hongguo_video_gpu::enhancement::FrameBudget;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_quartz_core::CATransaction;
 use std::{

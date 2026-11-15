@@ -6,8 +6,9 @@ description: 红果 NSH 客户端开发规范。修改本仓库前，与用户�
 # 红果 NSH 开发
 
 先读用户级 `dev-habits` 及对应门禁文档，再读本项目 `AGENTS.md`。
+结构边界见 `docs/project-structure.md`：功能状态与呈现归 `features/`，共享控件归 `ui/`，窗口与导航装配归 `shell/`。
 UI 与平台装配遵循 `nsh`、`nsh-design-guides` 及 [NSH 接入说明](references/nsh.md)。
-界面只通过本壳 `ui` 层构建，采用语义令牌与设计文档规定的交互、动效和可访问性。
+通用控件通过本壳 `ui` 构建，功能专用呈现归 `features/<功能>/presentation` 并组合共享控件；采用语义令牌与设计文档规定的交互、动效和可访问性。
 组件只执行一次，变化值通过 signal/memo/闭包绑定；异步结果须隔离 owner 与来源代次。
 业务调用直接经共享 service，原生组件事件边界使用具名 serde 类型。
 

@@ -1,7 +1,7 @@
 //! 流式解密：只凭 moov 回答「明文第 X 字节来自密文哪里、要不要异或 keystream」，协议层按 Range 取一段、解一段。
 //! 可行性三条事实：CTR 解密不改样本长度（moov 前明文/密文偏移一一对应，moov 后按 moov 长度差整体平移）；
 //! CTR 任意子区间可独立解；异或可交换（多轨重叠与整文件多次原地异或等价，与 [`super::decrypt_buffer`] 逐字节一致，由测试锁住）。
-//! 布局原位替换、不合成 faststart：WebView2 对尾部 moov 发 Range 请求是日常主路径。
+//! 布局原位替换，不合成 faststart；尾部 moov 通过 Range 读取。
 
 use std::sync::Arc;
 use std::time::Duration;

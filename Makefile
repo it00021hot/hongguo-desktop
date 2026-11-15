@@ -26,8 +26,8 @@ build:
 lint:
 	pnpm format:check
 	cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
-	cargo clippy -p hongguo-media-platform-api -p hongguo-media-platform -p hongguo-media-videotoolbox --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
-	cargo clippy -p hongguo-media-platform-api -p hongguo-media-platform -p hongguo-media-videotoolbox --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+	cargo clippy -p hongguo-media-types -p hongguo-media-platform -p hongguo-media-videotoolbox --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+	cargo clippy -p hongguo-media-types -p hongguo-media-platform -p hongguo-media-videotoolbox --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
 fmt:
 	cargo fmt
 assets:

@@ -1,4 +1,4 @@
-//! MP4 解析与 CENC 解密：box 树、样本表、CENC-AES-CTR 原语与解密管线
+//! MP4 解析与 CENC 解密：box 树、样本表、HEVC 参数集、CENC-AES-CTR 原语与解密管线
 //! （`deprotect` 原位替换 / `decrypt_file` / `decrypt_buffer` / `streaming` 流式按 Range 惰性解）。
 
 pub mod audio_view;
@@ -11,6 +11,7 @@ pub mod decrypt_buffer;
 pub mod decrypt_file;
 pub mod deprotect;
 pub mod esds;
+pub mod hevc;
 pub mod sample_table;
 pub mod streaming;
 pub mod timing;

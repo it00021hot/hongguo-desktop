@@ -5,8 +5,8 @@ use std::time::Instant;
 use hongguo_common::{AppError, AppResult};
 use hongguo_video::sample_table::TrackInfo;
 
-use hongguo_media_platform_api::PlatformRequest;
-use hongguo_media_platform_api::video::bitrate_for;
+use hongguo_media_types::encoding::PlatformRequest;
+use hongguo_media_types::encoding::bitrate_for;
 
 use super::decoder::{Decoder, Nv12Frame};
 use super::encoder::{Encoder, EncoderKind};
@@ -20,7 +20,7 @@ use super::scaler::Scaler;
 pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
-    if !hongguo_media::hevc::is_hevc(&video.info.codec) {
+    if !hongguo_video::hevc::is_hevc(&video.info.codec) {
         return None;
     }
     let kind = if hevc_hw_encoder_available() {

@@ -17,15 +17,11 @@ static CACHE_ROOT_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
 /// 必须在任何路径解析前调用，一次为准。
 pub fn set_shell_data_root(name: &str) {
     let _ = SHELL_DATA_ROOT.set(name.to_string());
-    if let Some(parent) = dirs::data_dir() {
-        hongguo_common::offline_qa::note_production_root(parent.join(name));
-    }
 }
 
 /// 声明本进程的绝对数据根（移动端用，见 `ABSOLUTE_DATA_ROOT`）。必须在任何路径解析前调用，一次为准；优先级低于 `HONGGUO_DATA_DIR`（测试重定向与用户显式指定的语义不变）。
 pub fn set_absolute_data_root(dir: &Path) {
     let _ = ABSOLUTE_DATA_ROOT.set(dir.to_path_buf());
-    hongguo_common::offline_qa::note_production_root(dir.to_path_buf());
 }
 
 /// 应用缓存根覆盖。启动装载与设置保存后调用（见 `Settings::cache_override`）。
@@ -35,94 +31,8 @@ pub fn set_cache_root_override(dir: Option<PathBuf>) {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = dir;
 }
 
-/// 开库前用和写文件相同的路径解析。不按文件名枚举旁路。
-pub(crate) fn refuse_offline_store_open(db_path: &Path) -> Result<(), String> {
-    if !hongguo_common::offline_qa::enabled() || db_path == Path::new(":memory:") {
-        return Ok(());
-    }
-    prepare_qa_io(db_path).map(|_| ())
-}
-
-pub fn prepare_qa_io(path: &Path) -> Result<PathBuf, String> {
-    sync_production_roots();
-    hongguo_common::offline_qa::prepare_qa_io(path)
-}
-
-pub fn qa_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    sync_production_roots();
-    hongguo_common::offline_qa::qa_write(path, bytes)
-}
-
-pub fn qa_read(path: &Path) -> std::io::Result<Vec<u8>> {
-    sync_production_roots();
-    hongguo_common::offline_qa::qa_read(path)
-}
-
-pub fn qa_read_to_string(path: &Path) -> std::io::Result<String> {
-    sync_production_roots();
-    hongguo_common::offline_qa::qa_read_to_string(path)
-}
-
-pub fn qa_rename(from: &Path, to: &Path) -> std::io::Result<()> {
-    sync_production_roots();
-    hongguo_common::offline_qa::qa_rename(from, to)
-}
-
-pub fn qa_remove_file(path: &Path) -> std::io::Result<()> {
-    sync_production_roots();
-    hongguo_common::offline_qa::qa_remove_file(path)
-}
-
-pub fn qa_create_dir_all(path: &Path) -> std::io::Result<()> {
-    sync_production_roots();
-    hongguo_common::offline_qa::qa_create_dir_all(path)
-}
-
-pub fn qa_read_dir(path: &Path) -> std::io::Result<std::fs::ReadDir> {
-    sync_production_roots();
-    hongguo_common::offline_qa::qa_read_dir(path)
-}
-
-pub fn qa_remove_dir_all(path: &Path) -> std::io::Result<()> {
-    sync_production_roots();
-    hongguo_common::offline_qa::qa_remove_dir_all(path)
-}
-
-pub fn qa_create(path: &Path) -> std::io::Result<std::fs::File> {
-    sync_production_roots();
-    hongguo_common::offline_qa::qa_create(path)
-}
-
-fn sync_production_roots() {
-    if let Some(parent) = dirs::data_dir()
-        && let Some(name) = SHELL_DATA_ROOT.get()
-    {
-        hongguo_common::offline_qa::note_production_root(resolve_data_root(
-            &parent,
-            Some(name.as_str()),
-        ));
-    }
-    if let Some(root) = ABSOLUTE_DATA_ROOT.get() {
-        hongguo_common::offline_qa::note_production_root(root.clone());
-    }
-}
-
-fn isolated_data_dir() -> Result<PathBuf, String> {
-    sync_production_roots();
-    hongguo_common::offline_qa::isolation_root()
-}
-
 /// 应用数据目录。
 pub fn data_dir() -> PathBuf {
-    if hongguo_common::offline_qa::enabled() {
-        if let Ok(dir) = isolated_data_dir() {
-            return dir;
-        }
-        // 校验失败也不回落到生产目录。开库入口会在创建任何文件前拒绝。
-        return PathBuf::from(
-            std::env::var("HONGGUO_DATA_DIR").unwrap_or_else(|_| "offline-qa-rejected".into()),
-        );
-    }
     if let Ok(explicit) = std::env::var("HONGGUO_DATA_DIR") {
         return PathBuf::from(explicit);
     }
@@ -140,17 +50,6 @@ fn cache_root() -> PathBuf {
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    if hongguo_common::offline_qa::enabled() {
-        let Ok(allowed) = isolated_data_dir() else {
-            return data_dir();
-        };
-        if let Some(config) = configured
-            && let Ok(bound) = hongguo_common::offline_qa::prepare_qa_io(&config)
-        {
-            return bound;
-        }
-        return allowed;
-    }
     configured.unwrap_or_else(data_dir)
 }
 

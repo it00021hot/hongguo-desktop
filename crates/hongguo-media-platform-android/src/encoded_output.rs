@@ -37,7 +37,7 @@ impl EncodedOutput {
         let is_key = is_key
             || nalus
                 .iter()
-                .any(|nal| hongguo_media::hevc::is_random_access_nal(nal));
+                .any(|nal| hongguo_video::hevc::is_random_access_nal(nal));
         let mut annexb = Vec::new();
         if is_key {
             if self.configuration.iter().any(Vec::is_empty) {

@@ -2,7 +2,7 @@
 //!
 //! 并发模型：`Connection` 内部走连接级串行，多个 `connect()` 共享同一文件由库自身做页级加锁，无需外层 `RwLock`。事务边界：`begin/commit/rollback` 是独立 SQL 语句而非持有式 API，调用方必须在同一 async 任务里成对使用，仓储层 `with_tx` 收口。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use turso::{Builder, Connection, Database};
 
@@ -131,50 +131,6 @@ pub static MIGRATIONS: &[&str] = &[
     "#,
 ];
 
-/// 隔离目录里已有的符号链接不删、不跟随。库引擎还会在旁边写自己的日志文件，开库前先看见这些链接。
-fn refuse_symlink_children(dir: &Path) -> Result<(), String> {
-    let entries =
-        std::fs::read_dir(dir).map_err(|err| format!("离线 QA 无法检查数据目录: {err}"))?;
-    for entry in entries.flatten() {
-        let meta = std::fs::symlink_metadata(entry.path())
-            .map_err(|err| format!("离线 QA 无法检查 {}: {err}", entry.path().display()))?;
-        if meta.file_type().is_symlink() {
-            return Err(format!(
-                "离线 QA 拒绝隔离目录中的符号链接 {}，不会删除或跟随它",
-                entry.path().display()
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// turso 开库后会自己写 `*-wal` / `*-shm`（及可能的 `-journal`），不经 prepare_qa_io。
-/// 开库前拒绝这些名字上的既有符号链接；开库后再核一次：若已出现则必须是隔离内普通文件。
-fn refuse_engine_sidecars(db_path: &Path) -> Result<(), String> {
-    for suffix in ["-wal", "-shm", "-journal"] {
-        let side = PathBuf::from(format!("{}{suffix}", db_path.display()));
-        match std::fs::symlink_metadata(&side) {
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(format!(
-                    "离线 QA 无法检查引擎旁路 {}: {err}",
-                    side.display()
-                ));
-            }
-            Ok(meta) if meta.file_type().is_symlink() => {
-                return Err(format!(
-                    "离线 QA 拒绝数据库引擎旁路符号链接 {}，不会删除或跟随它",
-                    side.display()
-                ));
-            }
-            Ok(_) => {
-                crate::paths::prepare_qa_io(&side)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 /// 数据库句柄。`Database` 持有 IO 线程必须存活，`Connection` 可克隆共享。
 #[derive(Clone)]
 pub struct Db {
@@ -187,14 +143,8 @@ impl Db {
         let path = if path.as_ref() == Path::new(":memory:") {
             ":memory:".to_string()
         } else {
-            let open_at =
-                crate::paths::prepare_qa_io(path.as_ref()).map_err(AppError::InvalidArgs)?;
-            if hongguo_common::offline_qa::enabled() {
-                if let Some(dir) = open_at.parent() {
-                    refuse_symlink_children(dir).map_err(AppError::InvalidArgs)?;
-                }
-                refuse_engine_sidecars(&open_at).map_err(AppError::InvalidArgs)?;
-            } else if let Some(dir) = open_at.parent() {
+            let open_at = path.as_ref();
+            if let Some(dir) = open_at.parent() {
                 std::fs::create_dir_all(dir)
                     .map_err(|e| AppError::Io(format!("创建数据目录失败: {e}")))?;
             }
@@ -218,9 +168,6 @@ impl Db {
         // Database 不能 drop（会带走 IO 线程），用 forget 语义保活；
         // Connection 内部持有对实例的引用，进程退出时统一回收。
         std::mem::forget(db);
-        if hongguo_common::offline_qa::enabled() && path != ":memory:" {
-            refuse_engine_sidecars(Path::new(&path)).map_err(AppError::InvalidArgs)?;
-        }
         let this = Self { conn };
         this.migrate().await?;
         Ok(this)

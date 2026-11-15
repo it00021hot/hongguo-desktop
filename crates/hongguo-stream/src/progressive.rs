@@ -154,8 +154,6 @@ pub(crate) fn wait_for_entry(
             return Err(StreamReadError::Cancelled);
         }
         if !cache.is_fetching(vid, definition) {
-            // debug：连播/预算淘汰后 WebView 仍会对旧 URL 打并发 Range，每条一 warn 会刷爆日志；
-            // 真正卡死看下方 Timeout。错误仍回给协议层（404），播放器走自愈。
             log::debug!("[Stream] 请求无对应缓存条目: {vid}@{definition}（已被逐出或从未就绪）");
             return Err(StreamReadError::Missing {
                 vid: vid.to_string(),

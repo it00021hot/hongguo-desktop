@@ -2,8 +2,8 @@ use crate::{
     GpuRenderer, VideoError,
     state::{Picture, Shared},
 };
-use hongguo_enhancement::FrameBudget;
 use hongguo_nsh_video_api::{Enhancement, EnhancementPhase, ErrorCode, VideoEvent};
+use hongguo_video_gpu::enhancement::FrameBudget;
 use std::{
     sync::{Arc, atomic::Ordering},
     time::Duration,

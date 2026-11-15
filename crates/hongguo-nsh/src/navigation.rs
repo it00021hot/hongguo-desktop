@@ -1,4 +1,4 @@
-pub(crate) use crate::pages::DetailPrefill;
+pub(crate) use crate::features::DetailPrefill;
 use nsh_core::prelude::*;
 
 #[derive(Clone, Debug, PartialEq)]

@@ -9,7 +9,7 @@ publish = false
 [target.'cfg(target_os = "windows")'.dependencies]
 hongguo-native-clock = { path = "../hongguo-native-clock" }
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
-hongguo-enhancement = { path = "../hongguo-enhancement" }
+hongguo-video-gpu = { path = "../hongguo-video-gpu" }
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-hevc = { path = "../hongguo-hevc" }
 hongguo-video-color = { path = "../hongguo-video-color" }

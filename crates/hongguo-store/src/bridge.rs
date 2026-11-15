@@ -46,9 +46,6 @@ impl Store {
     /// 打开文件库（含 schema 迁移）。
     pub fn open(path: impl AsRef<std::path::Path>) -> AppResult<Self> {
         let path = path.as_ref();
-        if let Err(msg) = crate::paths::refuse_offline_store_open(path) {
-            return Err(AppError::InvalidArgs(msg));
-        }
         Self::spawn_open(path.to_string_lossy().into_owned())
     }
 

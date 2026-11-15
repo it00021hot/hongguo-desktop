@@ -1731,8 +1731,8 @@ dependencies = [
  "flate2",
  "futures-util",
  "hex",
- "hongguo-bytevc2",
  "hongguo-common",
+ "hongguo-media-types",
  "hongguo-signer",
  "log",
  "parking_lot 0.13.0",
@@ -1768,19 +1768,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "url",
  "uuid",
  "webpki-roots 1.0.11",
-]
-
-[[package]]
-name = "hongguo-enhancement"
-version = "0.6.6"
-dependencies = [
- "hongguo-nsh-video-api",
- "serde",
- "serde_json",
- "wgpu",
 ]
 
 [[package]]
@@ -1814,8 +1803,8 @@ dependencies = [
  "hongguo-common",
  "hongguo-media",
  "hongguo-media-platform-android",
- "hongguo-media-platform-api",
  "hongguo-media-platform-windows",
+ "hongguo-media-types",
  "hongguo-media-videotoolbox",
  "log",
  "parking_lot 0.13.0",
@@ -1828,7 +1817,7 @@ version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
- "hongguo-media-platform-api",
+ "hongguo-media-types",
  "hongguo-video",
  "log",
  "ndk",
@@ -1836,16 +1825,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "hongguo-media-platform-api"
-version = "0.6.6"
-
-[[package]]
 name = "hongguo-media-platform-windows"
 version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
- "hongguo-media-platform-api",
+ "hongguo-media-types",
  "hongguo-video",
  "jpeg-encoder",
  "log",
@@ -1863,7 +1848,7 @@ version = "0.6.6"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
- "hongguo-media-platform-api",
+ "hongguo-media-types",
  "hongguo-video",
  "libc",
  "log",
@@ -1885,10 +1870,8 @@ dependencies = [
  "env_logger",
  "futures-util",
  "global-hotkey",
- "hongguo-api",
  "hongguo-bytevc2",
  "hongguo-common",
- "hongguo-media-platform",
  "hongguo-media-types",
  "hongguo-native-clock",
  "hongguo-nsh-video-api",
@@ -1944,7 +1927,6 @@ name = "hongguo-nsh-video-android"
 version = "0.6.6"
 dependencies = [
  "glow",
- "hongguo-enhancement",
  "hongguo-media-types",
  "hongguo-native-clock",
  "hongguo-nsh-video-api",
@@ -1974,7 +1956,6 @@ name = "hongguo-nsh-video-apple"
 version = "0.6.6"
 dependencies = [
  "block2",
- "hongguo-enhancement",
  "hongguo-media-types",
  "hongguo-native-clock",
  "hongguo-nsh-video-api",
@@ -2026,12 +2007,12 @@ dependencies = [
 name = "hongguo-nsh-video-windows"
 version = "0.6.6"
 dependencies = [
- "hongguo-enhancement",
  "hongguo-hevc",
  "hongguo-media-types",
  "hongguo-native-clock",
  "hongguo-nsh-video-api",
  "hongguo-video-color",
+ "hongguo-video-gpu",
  "log",
  "nsh-platform-windows",
  "pollster",
@@ -2048,7 +2029,6 @@ dependencies = [
  "hongguo-bytevc2",
  "hongguo-common",
  "hongguo-hevc",
- "hongguo-media",
  "hongguo-media-types",
  "hongguo-native-clock",
  "hongguo-video",
@@ -2127,7 +2107,6 @@ name = "hongguo-video"
 version = "0.6.6"
 dependencies = [
  "aes 0.9.4",
- "base64 0.23.1",
  "ctr 0.10.1",
  "hongguo-common",
  "log",
@@ -2147,6 +2126,8 @@ version = "0.6.6"
 dependencies = [
  "hongguo-media-types",
  "hongguo-video-color",
+ "serde",
+ "serde_json",
  "wgpu",
 ]
 

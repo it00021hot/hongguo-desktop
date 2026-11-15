@@ -69,7 +69,7 @@ export function copyMediaNotices(prefix, triple, destination) {
   mkdirSync(anime4k, { recursive: true });
   for (const name of ['LICENSE.md', 'graph.json'])
     copyFileSync(
-      join(root, 'crates/hongguo-enhancement/shaders/anime4k', name),
+      join(root, 'crates/hongguo-video-gpu/shaders/enhancement/anime4k', name),
       join(anime4k, name),
     );
   if (triple.includes('android')) {

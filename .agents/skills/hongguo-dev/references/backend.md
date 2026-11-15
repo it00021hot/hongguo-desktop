@@ -30,7 +30,7 @@ crates/hongguo-service（业务编排，无任何 UI 框架）
   `consts/mod.rs` 头注释。
 - **媒体层三块**：纯 Rust 容器与封装在 `hongguo-media`；原生媒体编解码和能力探测在
   `hongguo-media-platform` 门面（Apple 走 `hongguo-media-videotoolbox`）及各平台实现 crate；
-  平台请求契约在 `hongguo-media-platform-api`。方向恒为「平台/能力探测 → 媒体核心」，
+  平台请求契约在 `hongguo-media-types::encoding`。方向恒为「平台/能力探测 → 媒体核心」，
   禁止反向。
 - **在线流的两侧分工（`hongguo-stream` 是唯一交点）**：填数据在
   `crates/hongguo-service/src/play_service/online/`（`hongguo_stream::cache()` 拿全局缓存，

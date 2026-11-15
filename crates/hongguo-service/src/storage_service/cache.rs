@@ -78,7 +78,7 @@ pub fn clear() -> CacheClearResult {
 /// 目录占用；`ext` 给定时只统计该扩展名的文件（与清理口径一致）。
 fn dir_part(dir: &std::path::Path, ext: Option<&str>) -> CachePart {
     let mut part = CachePart::default();
-    let Ok(entries) = hongguo_store::paths::qa_read_dir(dir) else {
+    let Ok(entries) = hongguo_common::file_io::read_dir(dir) else {
         return part;
     };
     for e in entries.flatten() {
@@ -101,9 +101,9 @@ fn dir_part(dir: &std::path::Path, ext: Option<&str>) -> CachePart {
 /// 清空目录下全部文件，返回删掉的个数。目录不存在按空处理。
 fn clear_dir(dir: &std::path::Path) -> u64 {
     let mut n = 0;
-    if let Ok(entries) = hongguo_store::paths::qa_read_dir(dir) {
+    if let Ok(entries) = hongguo_common::file_io::read_dir(dir) {
         for e in entries.flatten() {
-            if hongguo_store::paths::qa_remove_file(&e.path()).is_ok() {
+            if hongguo_common::file_io::remove_file(&e.path()).is_ok() {
                 n += 1;
             }
         }
@@ -140,7 +140,7 @@ struct CacheFile {
 fn collect_files() -> Vec<CacheFile> {
     let mut out = Vec::new();
     let dir = cover_cache_dir();
-    let Ok(entries) = hongguo_store::paths::qa_read_dir(&dir) else {
+    let Ok(entries) = hongguo_common::file_io::read_dir(&dir) else {
         return out;
     };
     for entry in entries.flatten() {
@@ -192,7 +192,7 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
             }
         }
         for file in expired {
-            if hongguo_store::paths::qa_remove_file(&file.path).is_ok() {
+            if hongguo_common::file_io::remove_file(&file.path).is_ok() {
                 removed += 1;
                 freed += file.bytes;
             }
@@ -208,7 +208,7 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
                 if total <= policy.limit_bytes {
                     break;
                 }
-                if hongguo_store::paths::qa_remove_file(&file.path).is_ok() {
+                if hongguo_common::file_io::remove_file(&file.path).is_ok() {
                     removed += 1;
                     freed += file.bytes;
                     total = total.saturating_sub(file.bytes);

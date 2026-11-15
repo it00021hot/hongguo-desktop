@@ -9,7 +9,7 @@ use hongguo_common::{AppError, AppResult};
 use hongguo_video::r#box::parse_boxes;
 use hongguo_video::sample_table::{TrackInfo, collect_tracks};
 
-use crate::codec::{CONFIG_BOX, is_bytevc2};
+use crate::{CONFIG_BOX, is_bytevc2};
 
 /// ISO/IEC 14496-15 VisualSampleEntry 固定字段长度（box 载荷起点之后）。
 const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;

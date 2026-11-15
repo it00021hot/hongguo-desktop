@@ -1,19 +1,22 @@
 # hongguo-desktop
 
-当前客户端使用 NSH 0.5.0 与纯 Rust 业务内核，支持 Windows/macOS，另有独立 Android/iOS 宿主。
+当前客户端使用 NSH 0.5.1 与纯 Rust 业务内核，支持 Windows/macOS，另有独立 Android/iOS 宿主。
 Tauri、GPUI 与 React/WebView 专用代码已移除；历史备份为 `codex/backup-tauri-final`，不得根据历史文档恢复旧壳。
 
 ## 开发前
 
-先读用户级 `dev-habits`，再读 `.agents/skills/hongguo-dev/SKILL.md`；NSH 开发另读 `nsh`、`nsh-design-guides` 与项目 `DESIGN.md`。
+先读用户级 `dev-habits`，再读 `.agents/skills/hongguo-dev/SKILL.md`；NSH 开发另读 `nsh`、`nsh-design-guides` 与 `crates/hongguo-nsh/DESIGN.md`。
 现行接入与验证要求在 `.agents/skills/hongguo-dev/references/nsh.md`。
 
 ## 结构
 
 - `crates/hongguo-nsh`：共享界面、服务装配、媒体 HTTP 供数；只消费共享业务服务。
+- NSH 的 `features/<功能>/presentation` 保存功能专用呈现，`ui/` 保存共享控件，`shell/` 保存窗口与导航装配；历史、下载与个人片库独立。
+- `hongguo-service` 公开业务操作与类型契约；NSH 不直接依赖 `hongguo-api` 或构造请求环境。详细边界见 `docs/project-structure.md`。
 - `hongguo-nsh-android` / `hongguo-nsh-ios`：独立移动宿主。
 - `hongguo-nsh-video-*`、`hongguo-playback`、`hongguo-native-clock`：播放、原生呈现与音轨时钟。
 - `hongguo-media-*`、`hongguo-hevc`、`hongguo-bytevc2`、`hongguo-vvdec-sys`：媒体、GPU 与专用解码核。
+- 编码识别归 `hongguo-media-types::codec`，归档编码契约归 `hongguo-media-types::encoding`；ByteVC2 解码及 VVdeC/oxideav 保留。增强归 `hongguo-video-gpu::enhancement`，消费自身 `Settings`，不依赖 NSH 视频契约；HEVC 容器解析归 `hongguo-video::hevc`。
 - `hongguo-service`、`hongguo-api`、`hongguo-store`、`hongguo-common`、`hongguo-signer`：业务、接口、持久化与签名。
 - `hongguo-video`、`hongguo-stream`：容器、解密与渐进数据；媒体来源 URL 形态在 `hongguo-common::media_url`。
 - `assets/icons`、`assets/emoji`、`assets/locales`：共用资源。语言文案同步中英文。

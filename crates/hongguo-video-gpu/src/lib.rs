@@ -2,6 +2,8 @@ use hongguo_media_types::{ChromaSampling, ColorMetadata, FrameDescriptor, Native
 use hongguo_video_color::{ColorTransform, DisplayTarget, LUT_HEIGHT, LUT_WIDTH};
 use std::{borrow::Cow, sync::Arc};
 
+pub mod enhancement;
+
 const WORKGROUP: u32 = 8;
 const GEOMETRY_SIZE: u64 = 48;
 

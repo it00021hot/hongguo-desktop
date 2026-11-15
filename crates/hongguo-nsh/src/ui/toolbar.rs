@@ -11,19 +11,19 @@ impl PartialEq for Content {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ToolbarSlot(Signal<Option<Content>>);
+pub(crate) struct ToolbarSlot(Signal<Option<Content>>);
 
 impl ToolbarSlot {
-    pub(super) fn provide() -> Self {
+    pub(crate) fn provide() -> Self {
         let slot = Self(signal(None));
         provide_context(slot);
         slot
     }
 
-    pub(super) fn occupied(self) -> bool {
+    pub(crate) fn occupied(self) -> bool {
         self.0.with(Option::is_some)
     }
-    pub(super) fn content(self) -> Option<AnyElement> {
+    pub(crate) fn content(self) -> Option<AnyElement> {
         self.0.get().map(|content| (content.0)())
     }
 }

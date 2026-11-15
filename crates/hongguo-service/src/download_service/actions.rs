@@ -112,7 +112,7 @@ pub fn delete_tasks(state: &AppState, task_ids: &[String], delete_files: bool) -
                 && task.is_done()
             {
                 let path = std::path::Path::new(&task.file_path);
-                if let Err(e) = hongguo_store::paths::qa_remove_file(path) {
+                if let Err(e) = hongguo_common::file_io::remove_file(path) {
                     failed.push(format!("{} ({e})", path.display()));
                 }
                 crate::download_service::worker::cleanup_temp(path);

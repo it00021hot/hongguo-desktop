@@ -7,7 +7,7 @@ pub(crate) fn tabs() -> nsh_base::TabsElement {
         .flex_row()
         .h_9()
         .p_1()
-        .rounded(super::radii::control)
+        .rounded(crate::ui::radii::control)
         .bg(move || theme().muted)
 }
 
@@ -18,7 +18,7 @@ pub(crate) fn tab(label: impl IntoReactive<SharedString>) -> nsh_base::TabElemen
         .py_1()
         .items_center()
         .justify_center()
-        .rounded(super::radii::control)
+        .rounded(crate::ui::radii::control)
         .text_color(move || theme().muted_foreground)
         .selected_style(|style| {
             style
@@ -34,7 +34,7 @@ pub(crate) fn tab(label: impl IntoReactive<SharedString>) -> nsh_base::TabElemen
             if reduce_motion() {
                 0.0
             } else {
-                super::motion::FAST_MS
+                crate::ui::motion::FAST_MS
             }
         })
         .child(

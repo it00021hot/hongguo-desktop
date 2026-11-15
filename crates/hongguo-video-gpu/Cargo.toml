@@ -9,4 +9,15 @@ publish = false
 [dependencies]
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-video-color = { path = "../hongguo-video-color" }
-wgpu = { version = "=29.0.4", default-features = false, features = ["wgsl"] }
+wgpu = { version = "=29.0.4", default-features = false, features = ["std", "wgsl"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+wgpu = { version = "=29.0.4", default-features = false, features = ["metal"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { version = "=29.0.4", default-features = false, features = ["dx12"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+wgpu = { version = "=29.0.4", default-features = false, features = ["gles"] }

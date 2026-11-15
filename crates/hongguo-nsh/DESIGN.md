@@ -15,6 +15,8 @@
 全选/反选/区间/取消重开两项原生用例和两项 Headless 回归通过；手机仍保留 48pt 关闭目标，
 手机真机及系统读屏未新增验收。面板沿原 Sheet 动效，减少动态效果策略不变。
 
+当前目录与业务边界见 [项目结构](../../docs/project-structure.md)。本次仅调整代码归属，沿用现有视觉、动效和交互契约；历史预览不代表本轮重新验收。
+
 ## 平台与任务
 
 本轮覆盖 Windows、macOS、Android、iOS。核心任务是找剧、选集、观看和续播。
@@ -133,10 +135,10 @@ pressed 沿共享缩放，减少动态效果取消过渡和缩放。计数按已
 另查最窄窗口、移动端安全区、长译文、大字体、减少动态效果及键盘完成主流程。
 无界面测试只证明行为；真机播放器、文件授权、屏幕阅读器和视觉效果需独立验收。
 
-个人片库的操作及动效清单见 [library/DESIGN.md](src/library/DESIGN.md)。
-普通设置的保存、校验与动效见 [preferences/DESIGN.md](src/pages/settings/preferences/DESIGN.md)。
-播放器舞台及离线同源视图见 [player/DESIGN.md](src/player/DESIGN.md)。
-窄窗口播放选项与动效见 [mobile_player_more/DESIGN.md](src/ui/mobile_player_more/DESIGN.md)。
+个人片库的操作及动效清单见 [library/DESIGN.md](src/features/library/DESIGN.md)。
+普通设置的保存、校验与动效见 [preferences/DESIGN.md](src/features/settings/preferences/DESIGN.md)。
+播放器舞台及离线同源视图见 [player/DESIGN.md](src/features/player/DESIGN.md)。
+窄窗口播放选项与动效见 [mobile_player_more/DESIGN.md](src/features/player/presentation/mobile_player_more/DESIGN.md)。
 
 离线对齐的找剧/榜单沿用 Tauri 原页面结构。找剧筛选的展开收起保持单一滚动区，
 筛选胶囊的选中边框/背景使用 FAST_MS；海报 hover 边框/pressed 透明度沿共享动效。

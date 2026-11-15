@@ -1,6 +1,6 @@
 #![cfg(target_os = "android")]
 //! Android 平台 HEVC 解码与编码。
-//! 接口语义由 `hongguo-media-platform-api` 定义，门面 `hongguo-media-platform` 按编译目标选择本 crate；
+//! 接口语义由 `hongguo-media-types::encoding` 定义，门面 `hongguo-media-platform` 按编译目标选择本 crate；
 //! 其余目标上空壳编译（`#![cfg]` 剥掉全部内容）。平台依赖（ndk）只在本 crate 的 target 表。
 
 // 显式拉 mediandk：ndk 的 media feature 在部分 LTO 组合下不会把 NEEDED 留到最终 .so。

@@ -8,7 +8,7 @@ pub struct SeasonCandidate<'a> {
     pub episode_count: u32,
 }
 
-/// 与 Tauri `/^第(\d{1,2})季$/` 保持同一严格角标契约。
+/// 只识别完整的“第N季”角标，N 为一至两位 ASCII 数字。
 pub fn season_no_from_tag(tag: &str) -> Option<u32> {
     let rest = tag.strip_prefix('第')?;
     let no: String = rest.chars().take_while(char::is_ascii_digit).collect();

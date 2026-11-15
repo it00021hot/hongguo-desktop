@@ -10,16 +10,6 @@ const IMAGE_HOSTS: &[&str] = &[
 ];
 
 pub(crate) fn cdn_image_url(source: &str) -> String {
-    let network = source.starts_with("//")
-        || source
-            .get(..5)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http:"))
-        || source
-            .get(..6)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https:"));
-    if network && hongguo_common::offline_qa::external_url_forbidden(source) {
-        return String::new();
-    }
     normalize(source)
 }
 

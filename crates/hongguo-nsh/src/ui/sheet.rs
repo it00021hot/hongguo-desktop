@@ -1,5 +1,6 @@
-use super::{ButtonVariant, button};
 use crate::i18n::tr;
+use crate::ui::ButtonVariant;
+use crate::ui::button;
 use nsh_base::{SheetEvent, theme};
 use nsh_core::prelude::*;
 

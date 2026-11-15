@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-playback"
-description = "Shared indexed native video and PCM playback sessions"
+description = "Shared indexed video decoding and native-clock playback sessions"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,6 +17,5 @@ hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false, features = ["vvdec"] }
 hongguo-hevc = { path = "../hongguo-hevc" }
 hongguo-native-clock = { path = "../hongguo-native-clock" }
-hongguo-media = { path = "../hongguo-media" }
 parking_lot = "0.13"
 log = "0.4"

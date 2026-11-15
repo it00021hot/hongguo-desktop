@@ -12,6 +12,5 @@ authors.workspace = true
 hongguo-common = { path = "../hongguo-common" }
 aes = "0.9"
 ctr = "0.10"
-base64 = "0.23"
 log = "0.4"
 parking_lot = "0.13"

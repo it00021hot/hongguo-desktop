@@ -12,7 +12,6 @@ hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-video-gpu = { path = "../hongguo-video-gpu" }
 hongguo-video-color = { path = "../hongguo-video-color" }
-hongguo-enhancement = { path = "../hongguo-enhancement" }
 wgpu = { version = "=29.0.4", default-features = false, features = ["gles", "wgsl"] }
 jni = "0.21"
 log = "0.4"

@@ -1,4 +1,4 @@
-use super::motion::FAST_MS;
+use crate::ui::motion::FAST_MS;
 use nsh_base::theme;
 use nsh_core::prelude::*;
 

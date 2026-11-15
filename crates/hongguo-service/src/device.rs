@@ -100,7 +100,7 @@ fn load_sidecar_block(store: &Store) -> BlockSource {
     let Some(path) = block_sidecar(store) else {
         return BlockSource::Absent;
     };
-    match hongguo_store::paths::qa_read_to_string(&path) {
+    match hongguo_common::file_io::read_to_string(&path) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
         Err(_) => BlockSource::Unreadable,
         Ok(raw) => match serde_json::from_str::<BootstrapMeta>(&raw) {
@@ -150,10 +150,10 @@ fn write_block_sidecar(store: &Store, meta: &BootstrapMeta) -> hongguo_common::A
     let raw = serde_json::to_string(meta)
         .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
     let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
-    hongguo_store::paths::qa_write(&tmp, raw.as_bytes())
+    hongguo_common::file_io::write(&tmp, raw.as_bytes())
         .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
-    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
-        let _ = hongguo_store::paths::qa_remove_file(&tmp);
+    hongguo_common::file_io::rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_common::file_io::remove_file(&tmp);
         hongguo_common::AppError::Io(e.to_string())
     })
 }
@@ -165,9 +165,6 @@ fn unknown_marker(store: &Store) -> Option<std::path::PathBuf> {
 fn marker_state(store: &Store) -> BlockSource {
     let Some(path) = unknown_marker(store) else {
         return BlockSource::Absent;
-    };
-    let Ok(path) = hongguo_store::paths::prepare_qa_io(&path) else {
-        return BlockSource::Unreadable;
     };
     match std::fs::symlink_metadata(&path) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
@@ -182,10 +179,10 @@ fn write_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
         hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的未知限制标记".into())
     })?;
     let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
-    hongguo_store::paths::qa_write(&tmp, b"unknown\n")
+    hongguo_common::file_io::write(&tmp, b"unknown\n")
         .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
-    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
-        let _ = hongguo_store::paths::qa_remove_file(&tmp);
+    hongguo_common::file_io::rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_common::file_io::remove_file(&tmp);
         hongguo_common::AppError::Io(e.to_string())
     })
 }
@@ -198,7 +195,7 @@ fn journal_state(store: &Store) -> BlockSource {
     let Some(path) = journal_path(store) else {
         return BlockSource::Absent;
     };
-    match hongguo_store::paths::qa_read_to_string(&path) {
+    match hongguo_common::file_io::read_to_string(&path) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
         Err(_) => BlockSource::Unreadable,
         Ok(raw) => match serde_json::from_str::<BootstrapMeta>(&raw) {
@@ -215,7 +212,7 @@ fn remove_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
     let Some(path) = unknown_marker(store) else {
         return Ok(());
     };
-    match hongguo_store::paths::qa_remove_file(&path) {
+    match hongguo_common::file_io::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
@@ -226,7 +223,7 @@ fn remove_block_sidecar(store: &Store) -> hongguo_common::AppResult<()> {
     let Some(path) = block_sidecar(store) else {
         return Ok(());
     };
-    match hongguo_store::paths::qa_remove_file(&path) {
+    match hongguo_common::file_io::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
@@ -255,7 +252,7 @@ fn write_meta_strict(store: &Store, meta: &BootstrapMeta) -> hongguo_common::App
 pub fn open_application_store(path: &std::path::Path) -> hongguo_common::AppResult<Store> {
     let first_install = is_new_device_db(path);
     let store = Store::open_with_lock_retry(path)?;
-    if hongguo_common::offline_qa::enabled() || reuse_json_path().is_some() {
+    if reuse_json_path().is_some() {
         return Ok(store);
     }
     let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());

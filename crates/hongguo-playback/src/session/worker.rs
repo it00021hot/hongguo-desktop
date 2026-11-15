@@ -113,7 +113,7 @@ fn decode(shared: &Shared, job: &Job) -> Result<(), Failure> {
                     (Vec::new(), (track.extradata[21] & 3) as usize + 1)
                 } else {
                     let (nalus, length) =
-                        hongguo_media::hevc::param_nalus_from_hvcc(&track.extradata)?;
+                        hongguo_video::hevc::param_nalus_from_hvcc(&track.extradata)?;
                     let parameters = nalus
                         .into_iter()
                         .flat_map(|nal| [0, 0, 0, 1].into_iter().chain(nal))

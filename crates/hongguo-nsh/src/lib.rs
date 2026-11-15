@@ -2,19 +2,17 @@ mod appearance;
 mod bootstrap;
 mod boss_key;
 mod bridge;
-mod emoji;
 mod events;
+mod features;
 mod file_access;
 mod i18n;
 mod image_url;
-mod library;
 mod media;
 mod native_window;
 mod navigation;
 mod notifications;
-mod pages;
-mod personal_sources;
-mod player;
+use hongguo_service::personal_service as personal_sources;
+mod shell;
 mod shortcuts;
 mod ui;
 mod update;
@@ -37,7 +35,7 @@ fn native_components(components: &nsh_platform_macos::Components) {
     notifications::register(components);
     hongguo_nsh_video_macos::register(components);
     boss_key::register(components);
-    player::navigation::register(components);
+    features::player::navigation::register(components);
     window_modes::register(components);
 }
 
@@ -46,7 +44,7 @@ fn native_components(components: &nsh_platform_windows::Components) {
     notifications::register(components);
     hongguo_nsh_video_windows::register(components);
     boss_key::register(components);
-    player::navigation::register(components);
+    features::player::navigation::register(components);
     window_modes::register(components);
 }
 
@@ -79,7 +77,7 @@ pub fn App() -> impl IntoElement {
         .child(when(
             move || session.error().is_some(),
             move || {
-                pages::error_state(
+                features::error_state(
                     move || {
                         session
                             .error()
@@ -111,7 +109,7 @@ pub fn App() -> impl IntoElement {
                 let nav = navigation::Navigation::new();
                 view_memory::provide_models();
                 shortcuts::Shortcuts::provide();
-                ui::provide_account_label(
+                crate::shell::provide_account_label(
                     computed(move || {
                         handle.identity();
                         handle.with(|session| {
@@ -130,15 +128,15 @@ pub fn App() -> impl IntoElement {
                     }),
                 );
                 let theme_pending = signal(false);
-                let account_dialogs = pages::account_dialogs(handle);
-                ui::shell_with_theme(
+                let account_dialogs = features::account_dialogs(handle);
+                crate::shell::shell_with_theme(
                     nav,
                     view(),
-                    ui::stack().child(each(
+                    crate::shell::stack().child(each(
                         nav.routes(),
                         |route: &navigation::Route| format!("{route:?}"),
                         move |route, index| {
-                            pages::render(route.get_untracked(), handle, nav)
+                            features::render(route.get_untracked(), handle, nav)
                                 .on_dismiss(move || nav.dismiss(index.get_untracked()))
                         },
                     )),

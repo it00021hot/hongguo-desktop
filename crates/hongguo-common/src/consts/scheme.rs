@@ -1,6 +1,4 @@
-//! 自定义 URI scheme 名（前后端契约）：前端 CSP（`tauri.conf.json` 的 `media-src`）与 WebView 的拦截注册都依赖这些字面量。
-//!
-//! 改名等于改契约，前端与 Rust 必须同 commit；值一旦发布，非破坏性升级不得更改。
+//! 媒体来源的内部 URI 标识；由媒体供数层解析成临时 HTTP Range 地址。
 
 /// 本地成品文件播放（支持 Range 拖动进度条）。
 pub const LOCAL: &str = "hongguo-local";

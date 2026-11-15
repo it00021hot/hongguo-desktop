@@ -78,7 +78,7 @@ impl MediaCache {
         for entry in entries {
             if let Some((total, start)) = entry.range(&self.fingerprint)
                 && total == source_len
-                && let Ok(bytes) = paths::qa_read(&entry.path)
+                && let Ok(bytes) = hongguo_common::file_io::read(&entry.path)
                 && bytes.len() as u64 == entry.bytes
             {
                 sparse.write(start, &bytes);
@@ -111,10 +111,10 @@ impl MediaCache {
         let path = self
             .dir
             .join(format!("{}-{total}-{start}.{EXTENSION}", self.fingerprint));
-        paths::qa_create_dir_all(&self.dir)?;
+        std::fs::create_dir_all(&self.dir)?;
         let temp = path.with_extension("tmp");
-        paths::qa_write(&temp, bytes)?;
-        paths::qa_rename(&temp, &path)?;
+        hongguo_common::file_io::write(&temp, bytes)?;
+        hongguo_common::file_io::rename(&temp, &path)?;
         prune(&self.dir);
         Ok(())
     }
@@ -141,7 +141,7 @@ impl CacheFile {
 }
 
 fn files(dir: &Path) -> Vec<CacheFile> {
-    let Ok(entries) = paths::qa_read_dir(dir) else {
+    let Ok(entries) = hongguo_common::file_io::read_dir(dir) else {
         return Vec::new();
     };
     entries
@@ -169,7 +169,7 @@ fn prune(dir: &Path) {
         if bytes <= CAPACITY {
             break;
         }
-        if paths::qa_remove_file(&entry.path).is_ok() {
+        if hongguo_common::file_io::remove_file(&entry.path).is_ok() {
             bytes -= entry.bytes;
         }
     }
@@ -219,15 +219,15 @@ pub(crate) fn clear() -> (u64, u64) {
     let mut bytes_removed = 0;
     let dir = paths::online_cache_dir();
     for entry in files(&dir) {
-        if paths::qa_remove_file(&entry.path).is_ok() {
+        if hongguo_common::file_io::remove_file(&entry.path).is_ok() {
             files_removed += 1;
             bytes_removed += entry.bytes;
         }
     }
-    if let Ok(entries) = paths::qa_read_dir(&dir) {
+    if let Ok(entries) = hongguo_common::file_io::read_dir(&dir) {
         for entry in entries.flatten() {
             if entry.path().extension().is_some_and(|ext| ext == "tmp") {
-                let _ = paths::qa_remove_file(&entry.path());
+                let _ = hongguo_common::file_io::remove_file(&entry.path());
             }
         }
     }
