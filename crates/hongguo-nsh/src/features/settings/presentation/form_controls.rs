@@ -119,14 +119,6 @@ pub(crate) fn form_action(
         .py_1p5()
 }
 
-pub(crate) fn form_save(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
-    button(label, ButtonVariant::Primary)
-        .h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
-        .min_h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
-        .px_4()
-        .py_0()
-}
-
 pub(crate) fn directory_field(label: impl IntoReactive<SharedString>) -> nsh_base::Input {
     field(label)
         .text_xs()

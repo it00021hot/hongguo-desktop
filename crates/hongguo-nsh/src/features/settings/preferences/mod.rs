@@ -7,8 +7,9 @@ mod proxy;
 mod runtime;
 mod sections;
 mod transcode;
+mod updates;
 
-use crate::{bridge, events::SessionHandle, i18n::tr, navigation::Navigation, ui};
+use crate::{events::SessionHandle, i18n::tr, navigation::Navigation, ui};
 use model::Draft;
 use nsh_core::prelude::*;
 
@@ -20,30 +21,13 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
     let draft = signal(initial);
     let busy = signal(false);
     let message = signal(SharedString::default());
+    updates::install(session, draft, message);
     let runtime = runtime::Runtime::production(session, nav, message);
-    crate::shell::page(nav, move || tr("nav.settings.title")).child(form(
-        draft,
-        busy,
-        message,
-        runtime,
-        computed(move || {
-            nav.routes()
-                .with(|routes| routes.last() == Some(&crate::navigation::Route::Settings))
-        }),
-        move || save(session, draft, busy, message),
-    ))
-}
-
-fn form(
-    draft: Signal<Draft>,
-    busy: Signal<bool>,
-    message: Signal<SharedString>,
-    runtime: runtime::Runtime,
-    active: Memo<bool>,
-    save_action: impl Fn() + 'static,
-) -> View {
-    let tasks = super::Tasks::provide();
-    ui::form(
+    let active = computed(move || {
+        nav.routes()
+            .with(|routes| routes.last() == Some(&crate::navigation::Route::Settings))
+    });
+    crate::shell::page(nav, move || tr("nav.settings.title")).child(ui::form(
         view()
             .w_full()
             .max_w(px(768.0))
@@ -60,130 +44,6 @@ fn form(
             .child(keyboard::boss(draft, busy))
             .child(cache::section(draft, busy, message, runtime))
             .child(crate::update::card())
-            .child(
-                crate::features::settings::presentation::form_save(move || tr("settings.save"))
-                    .self_end()
-                    .disabled(move || busy.get() || tasks.pending.get())
-                    .on_press(save_action),
-            )
             .child(ui::status(message)),
-    )
-}
-
-fn validate(
-    draft: Draft,
-    latest: hongguo_common::model::Settings,
-    desktop: bool,
-) -> Result<hongguo_common::model::Settings, SharedString> {
-    let settings = draft.apply(latest, desktop).map_err(|error| {
-        SharedString::from(format!(
-            "{}: {}–{}",
-            tr(error.field),
-            error.minimum,
-            error.maximum
-        ))
-    })?;
-    if desktop
-        && crate::shortcuts::Shortcuts::current()
-            .is_some_and(|keys| !keys.conflicts(&settings.boss_key).is_empty())
-    {
-        return Err(tr("settings.bossKeyConflictBlock"));
-    }
-    Ok(settings)
-}
-
-fn save(
-    session: SessionHandle,
-    draft: Signal<Draft>,
-    busy: Signal<bool>,
-    message: Signal<SharedString>,
-) {
-    let tasks = super::Tasks::provide();
-    if tasks.pending.get_untracked() {
-        return;
-    }
-    if let Some(keys) = crate::shortcuts::Shortcuts::current() {
-        keys.cancel_capture();
-    }
-    let state = session.with(|session| session.state.clone());
-    let pending = draft.get_untracked();
-    let desktop = is_desktop();
-    let proposed = match validate(pending.clone(), state.settings(), desktop) {
-        Ok(settings) => settings,
-        Err(error) => {
-            message.set(error);
-            return;
-        }
-    };
-    let old_boss = state.settings().boss_key;
-    let boss_changed = desktop && proposed.boss_key != old_boss;
-    let page_owner = Owner::current();
-    message.set(SharedString::default());
-    tasks.pending.set(true);
-    busy.set(true);
-    tasks.owner.run(move || {
-        spawn(async move {
-            if boss_changed
-                && let Err(error) = crate::boss_key::apply(proposed.boss_key).await
-            {
-                log::error!("[NSH settings] global shortcut registration failed: {error}");
-                if page_owner.is_live() {
-                    message.set(error);
-                    busy.set(false);
-                }
-                tasks.pending.set(false);
-                return;
-            }
-            let result = bridge::request(async move {
-                hongguo_service::runtime::spawn_blocking(move || {
-                    let settings = pending.apply(state.settings(), desktop).map_err(|error| {
-                        hongguo_common::AppError::InvalidArgs(format!(
-                            "{}: {}–{}", error.field, error.minimum, error.maximum
-                        ))
-                    })?;
-                    hongguo_service::settings_service::save(&state, settings)
-                })
-                .await
-                .map_err(|error| hongguo_common::AppError::Internal(error.to_string()))?
-            })
-            .await;
-            match result {
-                Ok(settings) => {
-                    set_color_scheme(match settings.theme.as_str() {
-                        "light" => nsh_core::platform::Appearance::Light,
-                        "dark" => nsh_core::platform::Appearance::Dark,
-                        _ => nsh_core::platform::Appearance::System,
-                    });
-                    session.notify_identity();
-                    if page_owner.is_live() {
-                        draft.set(Draft::from(settings));
-                        message.set(tr("settings.saved"));
-                    }
-                }
-                Err(error) => {
-                    let mut notice = error.text();
-                    if boss_changed
-                        && let Err(rollback) = crate::boss_key::apply(old_boss).await
-                    {
-                        log::error!(
-                            "[NSH settings] restoring the previous global shortcut failed: {rollback}"
-                        );
-                        notice = format!(
-                            "{notice}\n{}",
-                            tr("nsh.bossKeyRollbackFailed").replace("{error}", &rollback)
-                        )
-                        .into();
-                    }
-                    log::error!("[NSH settings] save failed: {notice}");
-                    if page_owner.is_live() {
-                        message.set(notice);
-                    }
-                }
-            }
-            if page_owner.is_live() {
-                busy.set(false);
-            }
-            tasks.pending.set(false);
-        })
-    });
+    ))
 }

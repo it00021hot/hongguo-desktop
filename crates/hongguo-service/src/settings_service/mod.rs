@@ -1,5 +1,4 @@
-//! 设置服务：归一化与校验。保存时收敛并发到 1–10 并立即应用到下载调度器，无需重启。
-//! 保存编排（归一化 → 换内存态 → 调度器并发 → 落库）在本模块，两个壳走同一段。
+//! 设置校验、持久化与即时应用；落库成功后更新内存、调度器和缓存根。
 pub mod proxy;
 
 use crate::app_state::AppState;
@@ -16,7 +15,7 @@ const MAX_CACHE_TTL_DAYS: u32 = 365;
 /// 保存设置（立即生效，无需重启）。
 pub fn save(state: &AppState, settings: Settings) -> AppResult<Settings> {
     let normalized = normalize(settings)?;
-
+    state.store.save_settings(&normalized)?;
     state.replace_settings(normalized.clone());
     // 并发上限立即应用到调度器：调高并发时在途任务数不会自己涨，保存后补一轮派发
     //（降低或不变时 kick 因坑满/无可跑任务自然空转）。
@@ -26,8 +25,6 @@ pub fn save(state: &AppState, settings: Settings) -> AppResult<Settings> {
     hongguo_store::paths::set_cache_root_override(
         normalized.cache_override().map(std::path::PathBuf::from),
     );
-
-    state.store.save_settings(&normalized)?;
 
     Ok(normalized)
 }

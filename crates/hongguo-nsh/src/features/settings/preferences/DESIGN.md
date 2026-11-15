@@ -1,69 +1,53 @@
-# 设置页交互清单
+# 设置页交互清单 / Settings interactions
 
-普通设置沿用 Tauri 的账户、下载目录、命名与并发、代理、播放、快捷键、老板键、存储、更新顺序，
-复用共享输入、Select、Slider 与 Switch。账户进入同一受控登录弹窗，匿名收藏/评论入口亦复用它。
-手机保留私有目录，只在桌面显示系统目录选择；保存前核对数值范围，
-保存时合并最新账号与壳专属字段，不覆盖同时发生的登录。
-主题由顶栏独占；普通设置草稿不再持有或写回主题，避免覆盖打开设置后发生的外观切换。
+设置项修改即应用并持久化，不保留保存按钮、集中提交动作或成功保存提示。
+账户、目录、命名与并发、代理、播放、快捷键、老板键、存储和更新保留原有顺序，
+使用现有共享Input、Select、Slider和Switch。账户仍进入同一受控登录弹窗。
 
-桌面播放设置将原“最小化时自动暂停”升级为“窗口不可见时暂停播放”，沿用已保存的
-pause_on_minimize 字段及默认值，不增加重叠开关，也不改变 Tauri/GPUI 的语义。
-开关和说明走中英文资源，保存后更新原生可见性观察；checked/disabled/focus 沿共享 Switch 与 FAST_MS，
-减少动态效果沿既有策略。恢复可见只解除临时播放门禁，不修改用户暂停意图或切换媒体源。
-macOS 明暗设置预览两项通过，开关与保存流程已验证；系统读屏及 Windows 真机未新增验收。
+输入模型只承载控件当前值，不把整页内容写回设置。每次变化只提交改变的字段，
+执行时从最新设置合并，保留同时发生的登录、外观及其他设置变化。
+更新由应用owner持有并串行执行，页面退出不取消已经开始的应用与持久化；
+页面销毁后不再写它的Signal。连续修改不因上一次请求而禁用输入或丢失后续值。
 
-| 状态变化           | 工具与令牌                                                                                                                | 验收                                                                                          |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 命名和代理模式选中 | 共享语义 Select，popup/sheet 原生开合、键盘选择与焦点归还；trigger FAST_MS；减少动态效果即时切换                          | macOS 命名项 End/Enter 选择通过；代理展开、减少动态效果待验                                   |
-| 并发数拖动和方向键 | 共享语义 Slider，逐步更新值，无插值避免拖动滞后；焦点可见                                                                 | macOS Tab 转入滑块、Right 将 3 调为 4 通过；拖动待验                                          |
-| 播放开关           | 语义 Switch、track/thumb FAST_MS；减少动态效果即时切换                                                                    | 待运行                                                                                        |
-| 代理地址展开       | 稳定表单滚动区内条件渲染，保持其余输入身份                                                                                | 待运行                                                                                        |
-| 保存/测试/目录选择 | 共享禁用状态与反馈区，禁止重复请求；系统目录面板原生进出                                                                  | 模型合并与校验 5 项通过；预览按钮启用但仅记录本地意图，未进行真实系统/网络操作                |
-| 输入、键盘与焦点   | 共享 form 键盘 inset 和 focus ring，Tab/Return，数字键盘                                                                  | 待运行                                                                                        |
-| 转换方式检测       | 真实平台探测在 blocking 任务；探测按钮 pending 禁用，结果徽章立即切换，颜色沿 FAST                                        | 已接线；离线能力徽章已目检，真实平台重探测待验                                                |
-| 缓存统计/清理      | 真实 storage_service::cache，成功后 revision 重取占用；pending 禁用和反馈，不为数字做插值                                 | 两主题原生预览的本地清理回显通过；真实目录删除待验                                            |
-| 缓存周期           | 共享 Select 五档 0/1/3/7/30，键盘与原生 popup/sheet 开合；仍走主草稿保存                                                  | 两主题原生 End/Enter 选择 30 天通过                                                           |
-| 登录/退出          | 一个 App owner 持手机号、逐手机号倒计时和 MFA 视图；native Modal Fade，减少动态效果 None，关闭保持后台 MFA，退出明确确认  | 7 项 Headless、两主题原生输入/发送倒计时/关闭重开保留通过；真实短信、MFA、退出待验            |
-| 播放快捷键         | 桌面 App owner 持五项键位，修改后真实绑定响应；录制期消费键、Escape 取消、重复/保留键拒绝；边框沿 FAST，标签即时改变      | 两主题原生录制 J 通过；真实行为另有键位重绑、输入/离页隔离 Headless 回归                      |
-| 老板键             | 桌面录制带修饰组合，单按 Backspace 清空；随主设置保存，先系统注册再数据库保存，数据库失败显式回滚；页面销毁不取消中途事务 | 两主题原生冲突提示并阻止保存通过，清空纯逻辑先红后绿；系统注册/注销独立验收，不以离线预览代替 |
-| 更新检查           | 真版本查询与发布页入口，pending 禁用、结果即时反馈；未把 Tauri 更新包当 NSH 安装包                                        | 已接线；本地预览同 presenter，真实网络检查待验                                                |
+- Select、Switch、Slider：变化后立即应用，不额外添加成功提示或动效。
+- 文本与数值：随输入更新。非法数值不持久化，保留输入并显示范围错误；不阻塞其他字段更新。
+- 目录：桌面输入或系统面板选择后立即应用，手机继续使用私有目录；新缓存写入新目录，旧缓存不自动移动。
+- 代理：模式和地址改变后立即持久化，测试代理仍是独立的显式动作。
+- 播放：自动下一集、播放后删除、窗口不可见暂停即时更新；恢复可见不改写用户手动暂停。
+- 老板键：录制或Backspace清空后立即调用NSH注册/注销；应用内冲突明确提示未应用。
+  先注册新组合，成功后注销旧组合；占用失败保留原绑定。数据库失败回滚系统绑定，回滚失败有日志和可见提示。
+- 播放快捷键、主题、语言、检测、缓存清理、更新检查和账户操作保留各自现有即时流程。
 
-逐项检查桌面宽窄窗口和手机明暗主题的圆角、字体、间距、对齐、颜色、
-hover、pressed、错误/加载/禁用与动效。行为单测不代表视觉验收通过。
+持久化失败不更新内存、下载调度器或缓存根。失败时只恢复尚未被再次编辑的受影响字段，
+不覆盖用户随后输入；恢复控件不再次触发应用请求。失败反馈保留在原反馈区。
 
-## 本轮离线检查
+主题与语言仍归顶栏/手机菜单；表单不持有或写回外观。手机不挂载桌面键盘卡片。
+保留表单滚动、焦点、键盘inset和原生目录面板；测试与目录面板的忙碌状态独立于即时更新。
 
-以完整生产 Tauri `SettingsPage`、固定 QueryClient 数据的 1280×840 明暗主题截图为基线；
-NSH 使用生产与预览共用的表单。没有启动完整业务 App 或移动宿主。
+动效沿共享令牌：Switch track/thumb、Select trigger、hover/pressed/focus使用FAST_MS与减少动效策略；
+反馈文字即时替换，不添加保存中遮罩、不重建表单或移动输入焦点。
+圆角、字体、间距、颜色、控件身份及可访问名称保持现有设计，移除底部保存按钮占位。
 
-| 检查组               | 结果                                                                                                                                    |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| 圆角、间距、对齐     | 首四卡在两主题目检：720px 宽，x=392；账户 y=68、目录 y=214、命名 y=364、代理 y=614，与基线一致；目录输入和动作同行，保存靠右            |
-| 字体                 | 路径使用 monospace、12pt、normal；标题/标签沿现有字号层级。原生与浏览器同为 400 仍有可见字重差异，尚未宣称字体像素一致，没有用 300 补偿 |
-| 颜色、表面           | 使用语义主题；并发 range 的浅深 fill/track/border token 从 Tauri 截图采样；LogIn/FolderOpen/Zap 取自现有 Lucide 图标族                  |
-| hover、pressed、焦点 | 共享控件有相应样式；命名 Select 键盘选中及焦点返回后 Tab 进入滑块已验；其他按压与过渡逐帧未验                                           |
-| 其余状态、动效       | 保存时最新账号/主题与移动私有目录保留、数值边界均有模型测试；真实保存、失败、系统面板、代理请求与减少动态效果未验                       |
-| 可访问性             | 真实 macOS 预览按 Combobox/Adjustable 名称定位并完成键盘选择；屏幕阅读器、手机触控、最窄窗口及较大字体未验                              |
-| 滚动                 | 只有共享 form 承担纵向滚动；原生滚动条可见性仍与浏览器基线不同，未以隐藏滚动条掩盖                                                      |
+历史保存按钮与集中草稿的预览/测试记录不代表本次即时应用流程通过。
+构建、静态检查和对应平台运行验收分别记录；不恢复已删除的测试、预览或探针入口。
 
-设置页下半区现已接转换方式探测、播放器快捷键、老板键、缓存占用/清理/保留周期和版本检查。
-2026-11-11 六项受影响原生用例全部通过：登录、历史/任务确认、设置高级操作各两主题。
-已逐张查看登录和设置上部/播放区/底部，不能由这些离线图片推出真实短信、系统注册、缓存删除已通过。
-检查中发现登录键盘 padding 与居中冲突、保存按钮 32px 与源 36px、桌面 Switch 行 36px 与源 18.4px
-的差异，均已窄修。最终登录/高级设置两主题 4/4 原生补验通过：登录中心 y420，播放卡约 305.2px 高，
-底部存储/更新/保存的位置与同源 Tauri 基准一致。快捷键录制 J、冲突阻止保存、Backspace 清空老板键后
-保存成功均实际通过；Root 另在独立正式 App 验证 OS 注册→注销 1/1，不以预览的本地保存代替。
+2026-11-15 Windows独立实例（`target/nsh-settings-immediate-20261115`）确认：
+并发3改7和自动下一集开关无需保存；重启仍为7，先前设置的缓存周期30天保留，
+非法上限9999999未写入（重启为0）。非法输入时周期仍可独立改7天，范围错误提示保留；
+上限改1024后提示清空。页尾截图确认无保存按钮，既有控件与布局保持。
+NSH检查、Windows全工作区构建、严格Clippy及格式检查通过。
+老板键系统占用/数据库故障回滚、明亮主题、减少动效、读屏和其他平台未运行验收。
 
-主设置保存由 App owner 持有完整事务；保存开始清空旧反馈，退出页面后不再写已销毁的页面 Signal，
-全局 pending 在任务结束才清除。保存合并最新设置，身份/主题不被旧草稿覆盖；失败保留草稿并显示错误，
-老板键回滚失败同时记录日志和可见提示。手机不挂载只能由桌面键盘操作的两张快捷键卡。
+提交前重启补验：并发7、缓存上限1024及周期7天正确保留。
+录制Ctrl+Alt+F10后无需保存即可隐藏窗口，在另一独立数据目录的自建实例前台按同组合可恢复；
+录制时Backspace清空后，原组合不再隐藏窗口。临时前台实例已关闭，未操作用户现有实例或账号。
 
-2026-11-15 老板键改用NSH `register_global_shortcut` / `unregister_global_shortcut`。
-保留新组合注册成功才注销旧组合、冲突失败保留原注册、清空注销、保存失败回滚，
-注册回调归应用owner；录制时按下已有老板键仍用于录制，不隐藏窗口。
-别名等价的同一组合不重复注册。上述历史原生用例不是本次框架迁移的运行结果，
-本轮静态检查与真实系统组合键、占用冲突验收分别记录。
-
-截图：`target/nsh-preview/settings-{light,dark}-expanded-1280x840.png`；
-参照：`target/tauri-layout-reference/settings-{light,dark}-expanded-1280x840.png`。
-固定目录、代理与登录入口的预览回调仅报告 `nsh.previewAction`，真实页仍使用系统面板和既有服务。
+Settings apply and persist on change. Only changed fields merge into the latest settings, and application-owned
+updates run sequentially without disabling text input. Invalid numbers remain editable with visible errors.
+Global shortcut registration preserves the previous binding on failure and rolls back if persistence fails.
+Database writes complete before runtime settings change. Failed updates restore only fields the user has not
+edited again. Existing focus, controls, motion and mobile restrictions remain; no Save button or bulk submission remains.
+The isolated Windows run verified persistence across restart, independent valid edits alongside invalid numeric input,
+validation feedback clearing after correction, and removal of the Save button. Other platforms and failure injection remain unverified.
+Pre-commit runtime checks also confirmed immediate global shortcut registration, hide/restore from a separate
+foreground instance, and unregistration with Backspace. Restart retained the valid concurrency, cache limit and retention values.

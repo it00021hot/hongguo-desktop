@@ -9,7 +9,7 @@ mod preferences;
 #[derive(Clone, Copy)]
 struct Tasks {
     owner: Owner,
-    pending: Signal<bool>,
+    updates: Stored<std::sync::Arc<tokio::sync::Mutex<()>>>,
 }
 
 impl Tasks {
@@ -19,7 +19,7 @@ impl Tasks {
         }
         let tasks = Self {
             owner: Owner::current(),
-            pending: signal(false),
+            updates: stored(std::sync::Arc::new(tokio::sync::Mutex::new(()))),
         };
         provide_context(tasks);
         tasks

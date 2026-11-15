@@ -138,7 +138,7 @@ pressed 沿共享缩放，减少动态效果取消过渡和缩放。计数按已
 无界面测试只证明行为；真机播放器、文件授权、屏幕阅读器和视觉效果需独立验收。
 
 个人片库的操作及动效清单见 [library/DESIGN.md](src/features/library/DESIGN.md)。
-普通设置的保存、校验与动效见 [preferences/DESIGN.md](src/features/settings/preferences/DESIGN.md)。
+普通设置修改即应用并持久化，不显示保存按钮；逐项校验、失败恢复与动效见 [preferences/DESIGN.md](src/features/settings/preferences/DESIGN.md)。
 播放器舞台及离线同源视图见 [player/DESIGN.md](src/features/player/DESIGN.md)。
 窄窗口播放选项与动效见 [mobile_player_more/DESIGN.md](src/features/player/presentation/mobile_player_more/DESIGN.md)。
 
