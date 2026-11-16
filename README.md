@@ -6,6 +6,39 @@
 
 仅供非商业学习研究，与官方无关联，不存储或分发影视内容。使用前请阅读 [NOTICE](NOTICE) 与 [LICENSE](LICENSE)。
 
+## 新版体验
+
+`0.7.0` 桌面版使用 NSH 原生界面与 Rust 业务内核，支持 Windows 10 1809+ / Windows 11、macOS 14+，提供中文与英文界面、浅色与深色主题。
+
+| 功能       | 使用方式                                                             |
+| ---------- | -------------------------------------------------------------------- |
+| 沉浸刷剧   | 推荐、漫剧、真人剧频道，切换剧集并按观看历史续播                     |
+| 找剧与搜索 | 分类、排行榜、新剧与搜索联想；有片源的结果打开详情，纯关键词执行搜索 |
+| 播放控制   | 选集、倍速、清晰度、全屏、小屏、竖屏、置顶与无边框窗口               |
+| 弹幕与互动 | 弹幕及表情、评论、点赞、收藏、追更与预约                             |
+| 本地管理   | 下载队列、个人片库、一键合并与磁盘清理                               |
+| 桌面集成   | 托盘、老板键、快捷键与关闭确认                                       |
+
+在线媒体采用渐进缓存，预取遵循服务端下发的时段、数量和字节预算，并优先保障当前播放。高峰时段可能暂停预取；缓存命中也不意味着所有片源都能立即出画面。
+
+## 功能截图
+
+以下为真实桌面界面截图；搜索联想图来自本轮功能反馈，播放图来自本机运行窗口。
+
+**沉浸播放与弹幕**
+
+![番果桌面端沉浸播放与弹幕](docs/screenshots/desktop-playback.png)
+
+**搜索结果与关键词联想**
+
+![带封面片源结果与无封面关键词联想](docs/screenshots/search-suggestions.png)
+
+## 下载与安装
+
+安装包见 [Releases](https://github.com/it00021hot/hongguo-desktop/releases)。Windows 提供中文安装器和便携 ZIP；macOS 按 Apple Silicon、Intel 分别提供 DMG 与压缩归档，DMG 内将应用拖入「Applications」即可安装。
+
+当前 `0.7.0` 仍为候选版本，准备产物不代表已公开发版。Windows 暂无 Authenticode 签名，macOS 为 ad hoc 签名、未公证。Windows N 不在支持范围内。
+
 ## 开发与打包
 
 安装 Rust、对应平台 SDK 与 Node.js 后，在仓库根构建本项目固定的 NSH CLI（包含必要的原生宿主接入补丁），并将 `target/nsh-cli/debug` 加入当前终端 PATH：
@@ -42,3 +75,4 @@ Windows 扩展 HEVC 优先 D3D11 VLD，Main10 使用 P010；实际硬解不可�
 
 Tauri、GPUI 壳及其旧播放器、WebView 前端已从主线移除，完整旧版保存在
 [`codex/backup-tauri-final`](https://github.com/it00021hot/hongguo-desktop/tree/codex/backup-tauri-final)。
+旧版停止维护，不再提供功能更新和问题修复；当前开发与问题反馈以 NSH 新版为准。
