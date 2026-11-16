@@ -17,7 +17,7 @@ impl SeekGate {
             self.complete = true;
         }
     }
-    pub fn empty_edit(&mut self) {
+    pub fn video_gap(&mut self) {
         if self.generation.is_some() {
             self.complete = true;
         }

@@ -89,6 +89,10 @@ impl MediaServer {
         if hongguo_bytevc2::is_bytevc2(&codec) || precision_extension {
             lease.enable_codec_extension(0.0)?;
         }
+        log::debug!(
+            "[NSH media] sourceId={} stage=registered codec={codec}",
+            lease.id
+        );
         Ok(lease)
     }
 

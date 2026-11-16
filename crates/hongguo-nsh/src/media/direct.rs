@@ -98,13 +98,12 @@ impl FrameSource for Frames {
 
     fn control(&self, control: PlaybackControl) -> Result<(), String> {
         self.session
-            .set_volume(control.volume, control.muted)
-            .map_err(|error| error.to_string())?;
-        self.session
-            .set_rate(control.rate)
-            .map_err(|error| error.to_string())?;
-        self.session
-            .set_playing(control.playing)
+            .control(hongguo_native_clock::Control {
+                playing: control.playing,
+                rate: control.rate,
+                volume: control.volume,
+                muted: control.muted,
+            })
             .map_err(|error| error.to_string())
     }
 

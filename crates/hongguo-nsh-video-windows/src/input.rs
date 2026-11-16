@@ -105,8 +105,8 @@ impl TextureInput {
         } else {
             DXGI_FORMAT_R16_UINT
         };
-        let mut signature = Vec::with_capacity(count);
-        for plane in &frame.planes {
+        let mut signature = [(0, 0, format); 3];
+        for (plane, signature) in frame.planes.iter().zip(&mut signature) {
             if plane.bytes_per_sample != bytes {
                 return Err(error("native CPU bit depth disagrees with sample storage"));
             }
@@ -118,19 +118,20 @@ impl TextureInput {
                 plane.data.len(),
             )
             .map_err(error)?;
-            signature.push((width, height, format));
+            *signature = (width, height, format);
         }
+        let signature = &signature[..count];
         if self.signature != signature {
             let mut textures = Vec::with_capacity(count);
             let mut views = Vec::with_capacity(count);
-            for &(width, height, format) in &signature {
+            for &(width, height, format) in signature {
                 let texture = texture(&self.device, width, height, format)?;
                 views.push(view(&self.device, &texture, format)?);
                 textures.push(texture);
             }
             self.textures = textures;
             self.views = views;
-            self.signature = signature;
+            self.signature = signature.to_vec();
         }
         for (texture, plane) in self.textures.iter().zip(&frame.planes) {
             // SAFETY: plane_storage verified every accessed row and its pitch; samples stay at source precision.

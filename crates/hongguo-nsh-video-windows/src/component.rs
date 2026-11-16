@@ -23,6 +23,18 @@ struct PixelVideo {
 }
 
 impl NativeComponent for PixelVideo {
+    fn needs_frames(&self) -> bool {
+        let props = self
+            .shared
+            .props
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        props.active
+            && props.source.is_some()
+            && self.shared.consumer_active.load(Ordering::Acquire)
+            && (!props.paused || self.shared.awaiting_presentation.load(Ordering::Acquire))
+    }
+
     fn draw(&self, dc: &ID2D1DeviceContext, size: (f32, f32)) {
         let result = self.controller.borrow_mut().draw(&self.shared, dc, size);
         if let Err(error) = result {
@@ -87,6 +99,7 @@ impl NativeComponent for PixelVideo {
                 }
             }
             self.shared.context.redraw();
+            self.shared.context.request_frames();
             Ok(())
         })();
         if let Err(error) = result {
@@ -116,8 +129,12 @@ impl NativeComponent for PixelVideo {
             }
             self.shared.consumer_active.store(true, Ordering::Release);
             self.controller.borrow_mut().seek(request, &props)?;
+            self.shared
+                .awaiting_presentation
+                .store(true, Ordering::Release);
             self.shared.clear_frames();
             self.shared.context.redraw();
+            self.shared.context.request_frames();
             Ok(())
         })();
         if let Err(error) = result {
@@ -161,7 +178,7 @@ pub fn register(components: &Components) {
         COMPONENT_NAME,
         Rc::new(|context: ComponentContext| {
             let shared = Shared::new(context);
-            for (name, worker) in [("hongguo-video-gpu", true), ("hongguo-video-frames", false)] {
+            for (name, worker) in [("hongguo-video-gpu", true), ("hongguo-video-retire", false)] {
                 let state = shared.clone();
                 if let Err(error) = std::thread::Builder::new()
                     .name(name.into())
@@ -170,29 +187,7 @@ pub fn register(components: &Components) {
                             crate::gpu_worker::run(state);
                         } else {
                             while state.reap() || !state.stopped.load(Ordering::Acquire) {
-                                let props = state
-                                    .props
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .clone();
-                                let active = props.active
-                                    && props.source.is_some()
-                                    && state.consumer_active.load(Ordering::Acquire);
-                                if active {
-                                    state.context.redraw();
-                                }
-                                std::thread::sleep(
-                                    if !active
-                                        || props.paused
-                                            && !state.awaiting_presentation.load(Ordering::Acquire)
-                                    {
-                                        Duration::from_millis(u64::from(
-                                            props.progress_interval_ms.min(250),
-                                        ))
-                                    } else {
-                                        Duration::from_millis(16)
-                                    },
-                                );
+                                std::thread::sleep(Duration::from_millis(16));
                             }
                         }
                     })

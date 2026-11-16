@@ -91,6 +91,47 @@ libde265 与 VVdeC 各自遵守对应许可证及分发要求；不能直接沿�
 
 ## 5. 验证与完成条件
 
+### 扩展帧路径的队列与交互
+
+Windows 扩展组件通过固定 NSH 的 `request_frames` / `needs_frames` 补丁接入原生
+`Surface::on_draw_frame`；刷新跟随 DWM 和当前显示环境，不再由项目线程每 16ms 请求重绘。
+暂停且首帧确认完成、失去消费权或销毁后停止请求；后台线程仅负责硬解帧租约的 GPU 退役。
+普通 NSH Video 本来就使用同一帧调度器。补丁归属与移除条件见 `vendor/nsh/UPSTREAM.md`。
+
+到期帧在 50ms 实际播放时间的延迟预算内逐帧取出，利用显示刷新余量追赶短暂抖动；
+超过预算的过期帧才跳过，避免积压变成长期音画偏移。长于预算的单帧仍按其原时长处理。
+不为零丢帧统计延缓原生音轨时钟；显示刷新不足以容纳源帧率乘倍速时，也不能承诺每帧独立显示。
+空画面区间按样本覆盖范围判断，包含空编辑段与只有音轨的尾段，不能等待不存在的首帧。
+
+软件解码队列按实际播放时间控制前瞻量：默认 250ms，乘以当前倍速换算为媒体时间，
+同时受 48 帧和 64MiB 队列内存上限约束。硬解帧另限 4 帧，避免提前占满解码表面池。
+首次起播与 seek 仍以首帧实际呈现为音轨放行条件；已经播放后发生视频欠载，
+恢复前积累约 100ms 实际播放时间。达到容量上限、解码结束或进入空编辑段时不等待无法满足的水位。
+这些上限仅针对已排队帧，不代表整个进程或解码核的总内存预算。
+
+播放、音量、静音和倍速一次应用至共享会话；关键帧按 PTS 建索引，seek 二分定位，
+保留重排时间戳与相同 PTS 的原选择语义。Windows 连续 seek 立即撤销旧代次，
+以最新请求替换在途目标，不串行等候旧目标呈现；尚未就绪时只保留最新待办。
+下一集媒体预取仍复用 service 的既有入口，不新增并行下载或第二套播放器。
+
+Windows 软件帧沿用原精度逐平面上传，上传布局和几何常量在稳态不再逐帧堆分配。
+CPU 数据经 `UpdateSubresource` 复制后不再额外创建逐帧退役查询；硬解纹理仍持有原生租约，
+直到 GPU 完成。首帧和 seek 的真实呈现查询仍保留，音轨不会仅凭 CPU 提交就开始前进。
+依据为 [Microsoft UpdateSubresource 契约](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-updatesubresource)。
+测量与平台验收范围见 [解码验证记录](nsh-decoder-validation.md)。
+
+English: Software frames use a rate-scaled 250ms lookahead bounded by 48 frames and 64MiB;
+hardware frames retain the four-frame surface limit. Video underruns refill about 100ms of
+wall-clock playback, while startup and seeks keep the existing first-presentation gate.
+Controls are applied atomically, keyframe lookup uses a PTS index, and Windows seeks supersede
+older requests. CPU uploads avoid redundant retirement queries; hardware leases and actual
+presentation confirmation remain intact.
+
+Windows extension frames now follow NSH's DWM-paced surface client rather than a 16ms
+application timer. Due frames catch up in sequence within a 50ms wall-time lateness budget;
+only expired frames are skipped. Audio retains its native clock. Intentional video gaps
+include audio-only tails, so seek completion does not wait for a nonexistent video frame.
+
 先在 Windows 独立 Video 实例验证系统流和缺失 HEVC/ByteVC2 的接入，证明 MediaEngine 实际使用扩展且正常输出原生音轨，再迁移主入口。这个依赖顺序不代表接受减少格式的最终产品。
 
 - 所有实际 APK 清晰度与编码组合均以真实样本验收，包含当前已知 ByteVC1、ByteVC2、8/10 位与实际 AAC 变体。完整解帧、随机 seek、尾帧和原位深对拍通过；特殊编码不能只证明单帧解码。

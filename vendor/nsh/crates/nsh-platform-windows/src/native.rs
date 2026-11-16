@@ -114,6 +114,11 @@ use crate::{
 /// }
 /// ```
 pub trait NativeComponent {
+    /// Whether this component needs drawing on the compositor's next frames.
+    fn needs_frames(&self) -> bool {
+        false
+    }
+
     /// Opts into diagnostic feedback after the complete NSH canvas is submitted.
     fn wants_presentation_feedback(&self) -> bool {
         false
@@ -274,6 +279,19 @@ impl ComponentContext {
         self.ui.invoke(move || {
             if let Some(surface) = Surface::by_key(key) {
                 surface.invalidate();
+            }
+        });
+    }
+
+    /// Uses the surface's compositor ticker until `NativeComponent::needs_frames` becomes false.
+    pub fn request_frames(&self) {
+        let key = self.surface;
+        let id = self.id;
+        self.ui.invoke(move || {
+            if let Some(surface) = Surface::by_key(key)
+                && let Some(item) = component_item(&surface, id)
+            {
+                item.pump(&surface);
             }
         });
     }
@@ -438,6 +456,7 @@ pub(crate) fn create(surface: &Rc<Surface>, view: &NshView) {
             window: Cell::new(None),
             parent: Cell::new(None),
             placement: Placement::default(),
+            pumping: Cell::new(false),
         })),
     };
     fill(view, &host.item());
@@ -670,9 +689,33 @@ struct ComponentItem {
     /// The window it is a child of: the one its view shows in.
     parent: Cell<Option<HWND>>,
     placement: Placement,
+    pumping: Cell<bool>,
 }
 
 impl ComponentItem {
+    fn pump(self: &Rc<Self>, surface: &Rc<Surface>) {
+        if self.pumping.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        surface.on_draw_frame(move |surface, _| {
+            let Some(item) = weak.upgrade() else {
+                return false;
+            };
+            let needs_frames = item
+                .component
+                .borrow()
+                .as_ref()
+                .is_some_and(|component| component.needs_frames());
+            let Some(view) = surface.view(item.id).filter(|_| needs_frames) else {
+                item.pumping.set(false);
+                return false;
+            };
+            surface.invalidate_view(&view);
+            true
+        });
+    }
+
     /// Puts `component` back, unless the view was deleted meanwhile (then
     /// it drops).
     fn put(&self, component: Box<dyn NativeComponent>) {

@@ -35,9 +35,9 @@ impl Default for SessionConfig {
         Self {
             defer_decoder_binding: false,
             start_position_secs: 0.0,
-            video_queue_frames: 4,
+            video_queue_frames: 48,
             video_queue_bytes: 64 * 1024 * 1024,
-            video_ahead_secs: 0.75,
+            video_ahead_secs: 0.25,
             decoder_threads: std::thread::available_parallelism()
                 .map_or(1, |count| count.get().min(4) as u32),
             rate: 1.0,

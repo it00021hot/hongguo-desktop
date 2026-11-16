@@ -31,6 +31,7 @@ pub struct IndexedTrack {
     pub color: ColorMetadata,
     pub rotation_degrees: u16,
     durations: HashMap<i64, u32>,
+    seek_points: Vec<(i64, usize)>,
     coverage: coverage::Coverage,
 }
 
@@ -120,6 +121,17 @@ impl IndexedTrack {
             return Err(AppError::Media("track has no decoder configuration".into()));
         }
         let samples = info.media_sample_timeline()?;
+        let mut seek_points = samples
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                info.stss
+                    .as_ref()
+                    .is_none_or(|sync| sync.binary_search(&(*index as u32 + 1)).is_ok())
+            })
+            .map(|(index, sample)| (sample.pts, index))
+            .collect::<Vec<_>>();
+        seek_points.sort_unstable();
         let coverage = coverage::Coverage::new(&samples)?;
         let durations = samples
             .iter()
@@ -139,24 +151,18 @@ impl IndexedTrack {
             color,
             rotation_degrees,
             durations,
+            seek_points,
             coverage,
         })
     }
 
     pub fn seek_sample(&self, media_secs: f64) -> usize {
         let target = media_secs * f64::from(self.info.media_timescale);
-        let is_sync = |index: usize| {
-            self.info
-                .stss
-                .as_ref()
-                .is_none_or(|sync| sync.binary_search(&(index as u32 + 1)).is_ok())
-        };
-        self.samples
-            .iter()
-            .enumerate()
-            .filter(|(index, sample)| is_sync(*index) && sample.pts as f64 <= target)
-            .max_by_key(|(_, sample)| sample.pts)
-            .map_or(0, |(index, _)| index)
+        let end = self
+            .seek_points
+            .partition_point(|&(pts, _)| pts as f64 <= target);
+        end.checked_sub(1)
+            .map_or(0, |index| self.seek_points[index].1)
     }
 
     pub fn duration_for_pts(&self, media_secs: f64) -> AppResult<f64> {
@@ -176,14 +182,6 @@ impl IndexedTrack {
                 self.coverage
                     .contains(time.media_secs * f64::from(self.info.media_timescale))
             })
-    }
-
-    pub(crate) fn is_empty_edit_at(&self, movie_secs: f64) -> bool {
-        self.timeline.segments().iter().any(|segment| {
-            segment.media_start_secs.is_none()
-                && movie_secs >= segment.movie_start_secs
-                && movie_secs < segment.movie_start_secs + segment.duration_secs
-        })
     }
 }
 

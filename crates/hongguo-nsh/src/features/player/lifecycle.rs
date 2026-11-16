@@ -14,7 +14,11 @@ pub(super) fn may_play(
     } else {
         lifecycle == Lifecycle::Active
     };
-    current_route && (foreground || desktop && !pause_in_background)
+    let allowed = current_route && (foreground || desktop && !pause_in_background);
+    log::debug!(
+        "[NSH player] stage=playbackGate lifecycle={lifecycle:?} desktop={desktop} currentRoute={current_route} pauseInBackground={pause_in_background} exposed={exposed} allowed={allowed}"
+    );
+    allowed
 }
 
 pub(super) fn delete_finished(

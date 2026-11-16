@@ -31,8 +31,8 @@ impl Shared {
             state.position
         };
         state.position = position.min(index.duration_secs);
-        state.video_gap = index.video.is_empty_edit_at(state.position);
         let expected = index.video.expects_frame_at(state.position);
+        state.video_gap = !expected;
         let missing = expected
             && state.current.as_ref().is_none_or(|frame| {
                 frame.pts_secs + frame.duration_secs + DUE_AHEAD_SECS < state.position
@@ -44,6 +44,7 @@ impl Shared {
             ));
         }
         if missing && state.presented {
+            state.rebuffering = true;
             state.presented = false;
             state.current = None;
         }
@@ -61,7 +62,20 @@ impl Shared {
                 "video decoder stalled beyond recovery deadline".into(),
             ));
         }
-        let holding = !audio_ready || (expected && (!state.presented || missing));
+        if state.rebuffering {
+            let ready_until = state
+                .queue
+                .back()
+                .or(state.current.as_ref())
+                .map_or(state.position, |frame| frame.pts_secs + frame.duration_secs);
+            let recovered = ready_until - state.position
+                >= REBUFFER_SECS.min(self.config.video_ahead_secs) * state.control.rate;
+            if recovered || state.queue_full || state.video_done || !expected {
+                state.rebuffering = false;
+            }
+        }
+        let holding =
+            !audio_ready || (expected && (!state.presented || missing || state.rebuffering));
         let buffering = holding || audio_buffering;
         let playing = state.control.playing && !buffering && state.position < index.duration_secs;
         state.silent.set_running(playing, now);

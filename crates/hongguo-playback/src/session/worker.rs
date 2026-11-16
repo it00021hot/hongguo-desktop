@@ -247,14 +247,21 @@ fn publish(
         if state.epoch != job.epoch || job.cancel.load(Ordering::Acquire) {
             return Err(AppError::Cancelled);
         }
-        shared.refresh(&mut state)?;
-        if state.queue.len() < shared.config.video_queue_frames
+        let frames = if matches!(&image, hongguo_media_types::FrameImage::Hardware(_)) {
+            shared.config.video_queue_frames.min(HARDWARE_QUEUE_FRAMES)
+        } else {
+            shared.config.video_queue_frames
+        };
+        let room = state.queue.len() < frames
             && state
                 .bytes
                 .checked_add(bytes)
                 .is_some_and(|total| total <= shared.config.video_queue_bytes)
-            && (state.holding || pts - state.position <= shared.config.video_ahead_secs)
-        {
+            && (state.queue.is_empty()
+                || pts - state.position <= shared.config.video_ahead_secs * state.control.rate);
+        state.queue_full = !room;
+        shared.refresh(&mut state)?;
+        if room {
             break;
         }
         shared.changed.wait(&mut state);

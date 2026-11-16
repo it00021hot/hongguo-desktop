@@ -8,7 +8,7 @@
 //! - the session has no display: another user switched in, or a remote
 //!   session was disconnected (`WTS_CONSOLE_DISCONNECT`,
 //!   `WTS_REMOTE_DISCONNECT`, until the matching connect);
-//! - the display is off (`GUID_CONSOLE_DISPLAY_STATE`'s power setting
+//! - the display is off (`GUID_SESSION_DISPLAY_STATUS`'s power setting
 //!   notification; dimmed still shows);
 //! - the shell cloaks the window: on another virtual desktop (the shell
 //!   cloaks the windows of the desktops not shown), read with `DWMWA_CLOAKED`
@@ -44,7 +44,7 @@ use windows::{
                 WTSQuerySessionInformationW, WTSRegisterSessionNotification, WTSSessionInfoEx,
                 WTSUnRegisterSessionNotification,
             },
-            SystemServices::GUID_CONSOLE_DISPLAY_STATE,
+            SystemServices::GUID_SESSION_DISPLAY_STATUS,
             Threading::GetCurrentProcessId,
         },
         UI::{
@@ -62,7 +62,7 @@ use windows::{
 
 use crate::surface::Surface;
 
-/// `GUID_CONSOLE_DISPLAY_STATE`'s value for a display that is off (1 is
+/// `GUID_SESSION_DISPLAY_STATUS`'s value for a display that is off (1 is
 /// on, 2 dimmed).
 const DISPLAY_OFF: u32 = 0;
 
@@ -104,7 +104,7 @@ impl Screen {
     }
 
     /// The state after the display's power setting became `state`
-    /// (`GUID_CONSOLE_DISPLAY_STATE`).
+    /// (`GUID_SESSION_DISPLAY_STATUS`).
     pub(crate) fn display_changed(self, state: u32) -> Self {
         Self {
             display_off: state == DISPLAY_OFF,
@@ -177,7 +177,7 @@ pub(crate) fn watch(hwnd: HWND) -> Watch {
             session: WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION).is_ok(),
             power: RegisterPowerSettingNotification(
                 HANDLE(hwnd.0),
-                &GUID_CONSOLE_DISPLAY_STATE,
+                &GUID_SESSION_DISPLAY_STATUS,
                 DEVICE_NOTIFY_WINDOW_HANDLE,
             )
             .ok(),
@@ -255,7 +255,7 @@ pub(crate) fn power_setting_changed(surface: &Surface, setting: LPARAM) {
     // is read only when it is as long as the display state's `u32`.
     let state = unsafe {
         let setting = &*(setting.0 as *const POWERBROADCAST_SETTING);
-        if setting.PowerSetting != GUID_CONSOLE_DISPLAY_STATE
+        if setting.PowerSetting != GUID_SESSION_DISPLAY_STATUS
             || (setting.DataLength as usize) < std::mem::size_of::<u32>()
         {
             return;

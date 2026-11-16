@@ -1,31 +1,14 @@
 use super::*;
 
 impl PlaybackSession {
-    pub fn set_playing(&self, playing: bool) -> AppResult<()> {
-        let mut state = self.shared.state.lock();
-        state.check()?;
-        state.control.playing = playing;
-        self.shared.refresh(&mut state)?;
-        self.shared.changed.notify_all();
-        Ok(())
-    }
-
-    pub fn set_volume(&self, volume: f32, muted: bool) -> AppResult<()> {
-        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+    pub fn control(&self, control: Control) -> AppResult<()> {
+        if !control.volume.is_finite() || !(0.0..=1.0).contains(&control.volume) {
             return Err(AppError::Media("invalid video volume".into()));
         }
         let mut state = self.shared.state.lock();
         state.check()?;
-        state.control.volume = volume;
-        state.control.muted = muted;
-        self.shared.refresh(&mut state)
-    }
-
-    pub fn set_rate(&self, rate: f64) -> AppResult<()> {
-        let mut state = self.shared.state.lock();
-        state.check()?;
-        state.silent.set_rate(rate, Instant::now())?;
-        state.control.rate = rate;
+        state.silent.set_rate(control.rate, Instant::now())?;
+        state.control = control;
         self.shared.refresh(&mut state)?;
         self.shared.changed.notify_all();
         Ok(())
@@ -87,6 +70,8 @@ impl Shared {
         state.presented = false;
         state.video_done = false;
         state.buffering = true;
+        state.rebuffering = false;
+        state.queue_full = false;
         state.audio_tail = false;
         state.stalled_at = None;
         state.silent.set_running(false, Instant::now());

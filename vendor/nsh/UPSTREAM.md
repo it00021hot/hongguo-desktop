@@ -11,6 +11,14 @@ compile-time fixtures, and workspace member examples. The website and unrelated
 example applications are omitted. All application NSH dependencies must resolve
 to this one tree. The Cargo and Git caches are never patched in place.
 
+Windows native components can request compositor-paced drawing through
+`ComponentContext::request_frames` and report continued demand with
+`NativeComponent::needs_frames`. The component host uses the same surface
+`on_draw_frame` client as native Video, with a weak host reference and one
+pump per component. This bridges the custom-component scheduling gap without
+adding a second display clock. Remove it when upstream provides equivalent
+native-component frame scheduling.
+
 Local changes include the Windows backend's same-canvas high-precision display
 composition. Android additionally exposes a
 conservative `SurfaceComposition.supports(View)` admission check: separate HDR
@@ -20,6 +28,12 @@ and their descendants are also checked for transforms, partial opacity and
 shader/mask composition; their own rounded button clips remain permitted. Rectangular video surfaces
 stay below the NSH window so sibling controls remain visible. These changes are intended to be
 proposed upstream and removed when an upstream release provides the same API.
+
+Windows screen presence subscribes to `GUID_SESSION_DISPLAY_STATUS`, as required
+for interactive user-mode applications, instead of the console monitor's
+`GUID_CONSOLE_DISPLAY_STATE`. Remote Desktop and Hyper-V enhanced sessions must
+follow their own display state when the console display is off. Lock, disconnect,
+minimize and window-cloaking lifecycle handling is retained.
 
 On Android API 26–29, the bottom safe-area and native tab-bar insets are capped by the stable system-bar
 inset. The legacy system-window inset also includes the IME during `adjustResize`;

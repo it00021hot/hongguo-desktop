@@ -21,6 +21,9 @@ mod worker;
 pub use types::{ReadAt, RecoveryLimits, SessionConfig, SessionInfo, SessionPosition};
 
 const DUE_AHEAD_SECS: f64 = 0.008;
+const PRESENTATION_LAG_SECS: f64 = 0.05;
+const HARDWARE_QUEUE_FRAMES: usize = 4;
+const REBUFFER_SECS: f64 = 0.1;
 
 struct State {
     closed: bool,
@@ -46,6 +49,8 @@ struct State {
     video_done: bool,
     video_gap: bool,
     buffering: bool,
+    rebuffering: bool,
+    queue_full: bool,
     recoveries: u32,
     stalled_at: Option<Instant>,
 }
@@ -123,6 +128,8 @@ impl PlaybackSession {
                 video_done: false,
                 video_gap: false,
                 buffering: true,
+                rebuffering: false,
+                queue_full: false,
                 recoveries: 0,
                 stalled_at: None,
             }),
@@ -226,6 +233,13 @@ impl PlaybackSession {
                 .is_some_and(|frame| frame.pts_secs <= position + DUE_AHEAD_SECS)
             {
                 state.current = state.pop();
+                if state.current.as_ref().is_some_and(|frame| {
+                    let deadline =
+                        (PRESENTATION_LAG_SECS * state.control.rate).max(frame.duration_secs);
+                    frame.pts_secs + deadline >= position
+                }) {
+                    break;
+                }
             }
         }
         let frame = state.current.clone();
@@ -322,6 +336,7 @@ impl State {
     fn pop(&mut self) -> Option<Arc<PresentationFrame>> {
         let frame = self.queue.pop_front()?;
         self.bytes -= frame_bytes(&frame);
+        self.queue_full = false;
         Some(frame)
     }
 }

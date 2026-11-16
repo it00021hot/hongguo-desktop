@@ -125,15 +125,12 @@ impl Controller {
         }
         self.bitmap = None;
         self.raw = None;
-        if self.waiting_for_device
-            || self.pending.is_some()
-            || !self.loaded
-            || self.source != props.source
-        {
+        if self.waiting_for_device || !self.loaded || self.source != props.source {
             self.queued = Some(request);
         } else if let Some(direct) = &mut self.direct {
             direct.apply(props)?;
             if direct.seek(request.position_ms)? {
+                self.queued = None;
                 self.pending = Some((request, Instant::now()));
             }
             self.ended = false;
@@ -309,7 +306,7 @@ impl Controller {
         }
         let mut position = direct.position()?;
         if position.is_some_and(|position| position.video_gap) {
-            direct.empty_edit();
+            direct.video_gap();
         }
         if !self.loaded
             && let Some(info) = direct.info()?
@@ -364,7 +361,7 @@ impl Controller {
         let gap = position.is_some_and(|position| position.video_gap);
         shared.set_video_gap(gap);
         if gap {
-            direct.empty_edit();
+            direct.video_gap();
             self.raw = None;
             self.bitmap = None;
         }
@@ -394,11 +391,16 @@ impl Controller {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let raw = self.raw.as_mut().expect("native raw frame initialized");
-                let retirement = crate::presentation::Presentation::prepare(
-                    self.device.as_ref().expect("drawing device"),
-                    frame.generation,
-                    frame.serial,
-                )?;
+                let retirement =
+                    matches!(&frame.image, hongguo_media_types::FrameImage::Hardware(_))
+                        .then(|| {
+                            crate::presentation::Presentation::prepare(
+                                self.device.as_ref().expect("drawing device"),
+                                frame.generation,
+                                frame.serial,
+                            )
+                        })
+                        .transpose()?;
                 if let Err(error) = raw.convert(dc, conversion, &frame, display, enhance) {
                     if error.code() == ErrorCode::FrameFormatUnsupported
                         && matches!(&frame.image, hongguo_media_types::FrameImage::Hardware(_))
@@ -427,7 +429,9 @@ impl Controller {
                     }
                     return Err(error);
                 }
-                shared.retain(retirement, frame.clone());
+                if let Some(retirement) = retirement {
+                    shared.retain(retirement, frame.clone());
+                }
                 *snapshot = raw.metadata().map(|metadata| RawSnapshot {
                     device: self.device.as_ref().expect("drawing device").clone(),
                     texture: raw.texture().clone(),

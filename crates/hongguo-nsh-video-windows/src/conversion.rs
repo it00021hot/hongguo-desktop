@@ -274,7 +274,10 @@ impl Conversion {
     }
 }
 
-fn geometry_bytes(input: InputGeometry, frame: &FrameDescriptor) -> Result<Vec<u8>, VideoError> {
+fn geometry_bytes(
+    input: InputGeometry,
+    frame: &FrameDescriptor,
+) -> Result<[u8; GEOMETRY_BYTES as usize], VideoError> {
     let crop = frame.crop;
     if crop.width == 0
         || crop.height == 0
@@ -323,7 +326,7 @@ fn geometry_bytes(input: InputGeometry, frame: &FrameDescriptor) -> Result<Vec<u
         1_u32 << (frame.bit_depth - 1),
         u32::from(frame.rotation_degrees / 90),
     ];
-    Ok(values
+    let bytes = values
         .into_iter()
         .flat_map(f32::to_le_bytes)
         .chain(flags.into_iter().flat_map(u32::to_le_bytes))
@@ -331,8 +334,12 @@ fn geometry_bytes(input: InputGeometry, frame: &FrameDescriptor) -> Result<Vec<u
             [step_x, step_y, phase_x, phase_y]
                 .into_iter()
                 .flat_map(f32::to_le_bytes),
-        )
-        .collect())
+        );
+    let mut result = [0; GEOMETRY_BYTES as usize];
+    for (output, byte) in result.iter_mut().zip(bytes) {
+        *output = byte;
+    }
+    Ok(result)
 }
 
 fn buffer(device: &ID3D11Device, bytes: u32) -> Result<ID3D11Buffer, VideoError> {

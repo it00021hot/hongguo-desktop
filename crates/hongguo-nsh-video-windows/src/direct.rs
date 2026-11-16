@@ -116,12 +116,12 @@ impl Direct {
         self.gate.take_complete()
     }
 
-    pub fn empty_edit(&mut self) {
+    pub fn video_gap(&mut self) {
         self.uploaded = None;
         self.last_submission = None;
-        // No media frame exists for an empty edit. Keep submitted GPU queries
+        // No media frame exists in this gap. Keep submitted GPU queries
         // alive for retirement; the seek no longer waits for a nonexistent frame.
-        self.gate.empty_edit();
+        self.gate.video_gap();
     }
 
     pub fn frame(&self, clock_secs: f64) -> Result<Option<Arc<PresentationFrame>>, VideoError> {

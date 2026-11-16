@@ -174,6 +174,218 @@ including 1080p to 720p switching, a backward seek, and episode 6 to 7 switching
 The correction separates FP32 texture filtering from framebuffer renderability; source precision
 and selection remain unchanged. This is not an all-content, HDR or long-run A/V acceptance.
 
+## 2026-11-15 Windows 虚拟机实播与会话状态修复
+
+环境为 Hyper-V Windows 10 22H2 Pro 增强会话，使用独立 `GuavaVmQA` 数据目录，
+未操作用户的业务数据。初始 ByteVC2 样本已完整下载，但视频控件收到
+`active=false、paused=true`；只在隔离实例关闭不可见暂停后即出画。
+NSH 将控制台显示器的电源状态用于当前远程会话，导致后台暂停条件误判。
+按 [Microsoft 电源通知契约](https://learn.microsoft.com/en-us/windows/win32/power/power-setting-guids)，
+交互式应用改订阅并处理 `GUID_SESSION_DISPLAY_STATUS`，不再使用
+`GUID_CONSOLE_DISPLAY_STATE`。锁屏、断连、最小化和窗口遮挡的判断仍保留。
+
+修复后，全新数据、默认开启不可见暂停，实际播放《我寻找恩人第十年》：
+720p → 1080p → 720p、暂停/恢复、第 1 集 → 第 2 集均出画。
+该次各档容器编码为 `hvc1`；系统 Video 报 `0xC00D5212`，D3D11 HEVC
+初始化报 `0x80004002`，随后通过 libde265 软件解码出画，未安装 HEVC 扩展作为修复手段。
+最小化约 20 秒时 `allowed=false`，还原后 `lifecycle=Active、exposed=true、allowed=true`，
+恢复出画。此结论覆盖上述样本与环境，不代表 Windows 物理 GPU 硬解、全部档位或长期性能验收。
+
+运行证据在 `target/windows-vm-session-incoming/logs/`；初始定位日志在
+`target/windows-vm-incoming/`、`target/windows-vm-diagnostic-incoming/` 和
+`target/windows-vm-diagnostic2-incoming/`。临时控件/绘制诊断日志已移除，
+仅保留默认关闭的来源注册与播放条件 debug 日志。最终生产打包目录为
+`target/windows-vm-final-20261115/`，不包含临时日志启动器。
+
+最终 Windows 工作区构建、严格 Clippy、格式门禁、NSH release 打包与 PE 依赖审计通过；
+Inno Setup 安装器生成成功。记录为 `target/windows-vm-final-workspace-build.log`、
+`target/windows-vm-final-lint.log` 和 `target/windows-vm-final-build.log`。
+macOS 媒体适配子集的交叉 Clippy 通过，不将其报告为 macOS 整应用运行验证。
+
+另有独立的分发阻断：虚拟机 Defender 将原安装器 `guava-setup.exe` 隔离为
+`Trojan:Win32/Bearfoos.A!ml`，SHA-256 为
+`76B0DCF9A0715897F1BE950F0C6C97F611E6275D684A9B1317B924E51E058821`。
+宿主机 Defender 对同一安装器、应用目录及诊断启动器的 scan-only 扫描未检出威胁，
+日志为 `target/windows-vm-defender-installer.log`、`target/windows-vm-defender-payload.log`
+及 `target/windows-vm-defender-launcher.log`。两端结果不一致，尚无 Microsoft 样本复核结论，
+不能认定误报或已解除告警；原安装器保持隔离，没有恢复文件、设置排除项或关闭防护。
+应用与安装器尚无 Authenticode 签名，不能将“未签名”当作此检测的确定原因。
+
+English: The Hyper-V enhanced-session playback stall was caused by a false background
+state. NSH now follows the interactive session's display notification. Fresh-data
+playback with auto-pause enabled, 720p/1080p switching, episode switching and minimize/restore
+passed. System HEVC and D3D11 failures correctly fell back to libde265 in this VM.
+The original installer's Defender quarantine remains unresolved; a clean host scan
+does not establish a false positive.
+
+## 2026-11-15 Windows 本机软件解码与倍速
+
+宿主为 i5-13400（10 核、16 逻辑处理器），解码线程数为 4，使用独立数据实例。
+诊断 release 对 HEVC 绕过系统 Video 并禁用 D3D11 解码设备，确认进入 libde265；
+ByteVC2 仍走 VVdeC。该操作强制的是软件解码路径，没有转码或改变片源编码，GPU 呈现仍保留。
+《错把大佬当穷人》第 2 集的 1080p 来源为 HEVC，第 3 集的 720p 来源为 ByteVC2；
+同剧其他来源也出现过 720p HEVC，因此画质标签不能替代实际编码识别。
+
+| 来源 / 软件解码器 | 倍速 | 稳态采样时长 | 解码输出帧/秒 | 单包解码均值 / P95 | 采样内缓冲启动 |
+| --- | --- | --- | --- | --- | --- |
+| 1080p HEVC / libde265 | 1.5× | 27 秒 | 45.04 | 6.44 / 11.20 ms | 0 |
+| 1080p HEVC / libde265 | 2× | 19 秒 | 60.16 | 6.27 / 10.68 ms | 0 |
+| 1080p HEVC / libde265 | 3× | 26 秒 | 90.00 | 6.00 / 10.55 ms | 0 |
+| 720p ByteVC2 / VVdeC | 1.5× | 11 秒 | 44.00 | 1.66 / 2.59 ms | 0 |
+| 720p ByteVC2 / VVdeC | 2× | 28 秒 | 60.04 | 1.53 / 1.91 ms | 0 |
+| 720p ByteVC2 / VVdeC | 3× | 26 秒 | 90.00 | 1.54 / 1.88 ms | 0 |
+
+实际窗口有连续画面，播放进度与所选倍速相符。以上取整秒窗口避开切换边界，
+ByteVC2 1.5× 的短样本约 44 帧/秒；输出帧数包含队列节奏，不能作为解码器极限吞吐。
+计时覆盖解码调用及输出帧复制，不包含发布等待；GPU 转换仅记录 CPU 提交时间，
+不表示 GPU 完成耗时。启动、seek、切集及切倍速的瞬时缓冲不计入这些稳态窗口。
+这些结果确认本机上述片源在最高 3× 下能跟上，不证明虚拟机性能瓶颈或长期音画同步。
+
+证据为 `target/windows-soft-rate-summary.json` 与
+`target/windows-soft-vm-qa/logs/20261115-151333-b47c254c604843f8a74bc6ba1c88dc76/stderr.log`。
+该目录名不代表已在虚拟机运行；本节均为宿主实测。
+所有强制软件路径及逐帧计时的临时源码已移除，诊断包只留在忽略的 `target/` 中，
+不替代生产包，也没有新增用户设置或生产探针接口。
+
+English: On the i5-13400 host with four decoder threads, HEVC/libde265 at 1080p and
+ByteVC2/VVdeC at 720p sustained 1.5×, 2× and 3× playback in the sampled windows.
+Both produced 90 decoded frames per second at 3× without steady-state rebuffering.
+The diagnostic build forced software decoding without transcoding; temporary source hooks
+were removed. These host measurements do not establish the VM bottleneck or long-run A/V accuracy.
+
+## 2026-11-15 队列、seek 与 Windows 软件帧呈现优化
+
+实现契约见 [解码方案](nsh-decoder-plan.md#扩展帧路径的队列与交互)。
+本轮没有变更选流、分辨率、位深、色彩、播放控件或操作入口。
+普通流仍使用 NSH Video；仅诊断包强制 HEVC 软件路径，生产包恢复正常硬解优先策略。
+
+使用同一独立实例取得的原流，临时独立程序调用真实 `PlaybackSession` 和解码核，
+以可控时钟隔离原生音频及 GPU；每 180 次读取注入 180ms 停顿。
+在无打包编译和并发实播干扰的 3×、8 秒采样内，对比相同新实现的 4 帧容量与默认队列：
+
+| 原流 / 软件核 | 4 帧容量再缓冲 | 默认队列再缓冲 | 4 帧 / 默认首次取帧 |
+| --- | --- | --- | --- |
+| 1080p HEVC / libde265 | 3 次 | 0 次 | 49 / 50 ms |
+| 720p ByteVC2 / VVdeC | 3 次 | 0 次 | 33 / 34 ms |
+
+这是队列策略的受控对比，不是旧版整应用的音画或端到端基准。
+同一程序验证 1 帧容量、连续 10s → 30s → 15s seek 仅返回最终代次，
+并在两份片源各 1001 个采样点比较新旧关键帧定位结果，全部相同。
+该次 10000 次定位的平均耗时，HEVC 约 8.84 → 0.007µs，ByteVC2 约 5.89 → 0.006µs；
+它仅衡量索引查找，不表示实际 seek 首帧也缩短相同倍数。
+记录为 `target/playback-opt-isolated-check.log`；包含小容量字节预算和尾段结束检查的
+最终记录为 `target/playback-opt-final-check.log`。临时程序及媒体只放在忽略的 `target/`。
+
+Windows 独立窗口实际回归了暂停/恢复、3×、自动连播、手动选集、1080p/720p 切换与进度跳转。
+在无并行编译和压力程序的稳态窗口内：
+
+| 实际编码 / 档位 | 倍速 | 窗口 | 解码输出 | 单包解码均值 | 转换 CPU 提交均值 | 再缓冲 |
+| --- | --- | --- | --- | --- | --- | --- |
+| HEVC / 1080p | 3× | 20 秒 | 1800 帧 | 5.87 ms | 0.825 ms | 0 |
+| ByteVC2 / 720p | 3× | 13 秒 | 1169 帧 | 1.52 ms | 0.590 ms | 0 |
+
+HEVC 排队帧最多记录 65,454,480 字节，ByteVC2 为 33,229,440 字节，均低于 64MiB 队列上限。
+ByteVC2 短窗口约 89.92 帧/秒，取整秒边界会有一帧差异；这些数据不衡量显示器实际刷新帧数。
+软件帧现在每次转换少一个退役 query 的创建、提交/Flush 及轮询，布局签名与 64 字节几何数据
+也不再稳态逐帧堆分配。硬解帧的 GPU 完成租约、NSH/D2D 提交边界和实际呈现确认均保留。
+本次没有统计总 CPU、GPU 完成时间或能耗，不能据此宣称固定百分比的整体性能收益。
+
+日志位于 `target/playback-opt-diagnostic/logs/20261115-153949-0bf914e9668e41d6a23a95a511e01f61/`，
+稳态统计为 `target/playback-opt-gui-summary.json` 和 `target/playback-opt-gui-bytevc2-summary.json`。
+临时强制软件路径和逐帧采样源码均已移除；干净 Windows NSH 生产打包位于
+`target/playback-opt-final/`。工作区构建与严格 lint 记录为
+`target/playback-opt-workspace-build.log`、`target/playback-opt-lint.log` 和
+`target/playback-opt-final-build.log`。本轮没有重新验收移动端与 macOS 真机，
+受控时钟检查也不替代原生音频的长期同步验证。
+
+English: In an isolated 3× test with a 180ms read stall every 180 reads, both software
+codecs had three rebuffer events with a four-frame queue and none with the new default.
+Startup frame acquisition remained about 50ms for HEVC and 34ms for ByteVC2.
+Real Windows playback covered rate, pause/resume, episode/quality switching and seeks;
+both measured 3× windows sustained about 90 decoded frames per second without rebuffering.
+Temporary diagnostics were removed. Mobile and macOS runtime, GPU completion timing,
+power use and long-run native A/V synchronization were not revalidated in this round.
+
+## 2026-11-16 Windows 真机呈现、音轨时钟与尾段回归
+
+本轮将解码吞吐与实际呈现分开验收。环境为 Windows 物理宿主、i5-13400
+（10 核 / 16 逻辑处理器）、GTX 1650 所在的 2560×1440 / 144Hz 显示环境，
+硬件记录在 `target/av-hardware.json`。两类扩展流都在诊断 release 中走软件核，
+解码线程保持 4；生产源码已恢复普通 NSH Video / HEVC 硬解优先策略。
+测试使用独立数据实例，没有操作用户活跃账号或虚拟机。
+
+原 16ms 重绘请求与“取最新到期帧”策略会掩盖解码之后的跳帧：
+基线一个 ByteVC2 3×稳态样本约 74.6 帧/秒，1109 个呈现帧之间缺失 229 个帧身份。
+接入 NSH 的 DWM 帧调度后，2× ByteVC2 和 HEVC 样本均约 60 帧/秒、无身份缺口；
+HEVC 3×仍出现少量缺口，进一步收敛为 50ms 实际播放时间预算内逐帧追赶，
+避免短暂刷新迟到就直接丢弃所有中间帧。没有按 CPU/GPU 型号硬编码性能档位，也没有
+增加解码线程或第二套显示时钟；当前测量表明解码有余量，需优化的是呈现调度。
+
+统计同时记录源代次、帧身份、PTS、窗口提交计数、DXGI 呈现历史和原生 MediaEngine
+音轨时钟的 QPC 采样。帧身份缺口与 PTS 连续性分别核对，不能只用解码 fps 宣称零丢帧。
+同一来源 / 代次在去掉起止各约 2 秒媒体时间后，最终诊断版累计约 19273 个 DXGI
+呈现历史中的稳态视频帧，身份缺口、异常 PTS 间隔和 PTS 倒退均为 0。
+seek 的预卷、主动切换和暂停不算作稳态丢帧；这不是无限时长或所有片源的保证。
+
+| 软件路径 / 档位 | 倍速 | 代表稳态帧数 | 实际呈现约帧/秒 | 身份缺口 / PTS 缺口 |
+| --- | --- | --- | --- | --- |
+| HEVC / libde265 / 1080p | 1× | 1641 | 30.00 | 0 / 0 |
+| HEVC / libde265 / 1080p | 3× | 2650 | 90.00 | 0 / 0 |
+| ByteVC2 / VVdeC / 720p | 1× | 1339 | 30.00 | 0 / 0 |
+| ByteVC2 / VVdeC / 720p | 3× | 1422 | 90.03 | 0 / 0 |
+
+ByteVC2 1×代表样本来自前一轮相同呈现策略的 `av-catchup-qa`，最终轮增加的尾段判断
+仅改变无视频覆盖区间，不改变这个稳态路径。最终轮还包含多个完整 HEVC 1× / 3×及
+ByteVC2 3×连续剧集，所有稳态分组均为零身份缺口与零 PTS 缺口。
+
+音画计时将原生音轨位置映射到 DXGI 呈现参考 QPC；以 `(音频时间 - 帧 PTS) / 倍速`
+报告原始时间差，并另行计算音频位置落在该帧覆盖区间之外的超差。
+一帧正常保留期间 PTS 本来就固定，不能把整段帧时长当成同步故障：
+
+| 样本 | 原始时间差 P95 | 帧覆盖区间外超差 P95 |
+| --- | --- | --- |
+| HEVC 1080p 1× | 约 34.5ms | 约 1.1ms |
+| HEVC 1080p 3× | 约 20.3ms | 约 9.2ms |
+| ByteVC2 720p 1× | 约 36.3ms | 约 3.0ms |
+| ByteVC2 720p 3× | 约 19.5ms | 约 8.3ms |
+
+各连续样本未观察到随播放时间持续增长的偏差。此口径使用
+[DXGI 呈现统计](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/ns-dxgi-dxgi_frame_statistics)
+与原生音轨时间，GPU 绘制结束不充当屏幕呈现；它也不等于光电传感器或声学回环测量。
+当前驱动的 refresh 计数字段为 0，保留原始 PresentCount / QPC 历史，不虚构逐扫描线时间。
+没有验收外接音频设备、蓝牙链路的额外声学延迟、所有刷新率或所有分辨率。
+例如 60Hz 显示器不能独立显示 30fps 片源 3×后的全部 90 帧，不能据此承诺所有设备零丢帧。
+
+长播还复现了尾段续播超时：第 4 集的一份原流视频编辑段结束于 82.167s，
+音轨 / 容器长至 82.175s，落在 82.174s 时没有可呈现的视频帧。
+旧逻辑仅识别显式空编辑段，导致等待不存在的帧；现在按实际样本覆盖判断 `video_gap`，
+音轨保留原时间轴，呈现门闸无需等待空画面的 GPU 确认。
+独立复现 `target/av-tail-red.log` 为失败，修复后 `target/av-tail-green.log` 通过；
+最终实例的尾段续播、自动连播也未再出现此前的 15 秒 seek 超时。
+
+实际窗口另外回归了空格暂停/恢复、暂停时切换 1080p、暂停时拖动进度至起点、
+恢复播放、倍速变更、手动选集及自动连播。原有按钮、键盘和选流规则保持不变。
+帧统计 / QPC / 预算诊断、临时强制软件解码和临时 FFI 均已从生产源码移除，
+没有新增测试专用接口或用户开关。固定 NSH 的生产补丁只补原生组件帧调度缺口。
+
+证据为 `target/av-baseline-summary.json`、`target/av-paced-summary.json`、
+`target/av-catchup-summary.json`、`target/av-final-summary.json` 及对应 `av-*-qa/logs/`。
+最终真机日志目录为
+`target/av-final-qa/logs/20261115-162816-ab7d18f6fdf547ba8b2773736f22a76c/`，
+目录时间使用 UTC；本节日期使用本地 Asia/Shanghai。
+干净生产包输出为 `target/av-production-final-20261116/`，不包含诊断启动器。
+构建与检查记录为 `target/av-production-build.log`、`target/av-workspace-build.log`、
+`target/av-final-lint.log` 和 `target/av-nsh-check.log`。
+
+English: On the physical 144Hz Windows host, compositor-paced drawing and bounded
+in-order catch-up eliminated the observed steady-state presentation skips. About
+19273 final-run DXGI-history video frames had no identity gaps, PTS gaps or reversals.
+Both software codecs sustained normal and 3× playback. Audio/video timing used native
+audio QPC samples and DXGI history; the table distinguishes raw PTS age from error
+outside the frame's time interval. Audio-only-tail seeks now complete without waiting
+for a nonexistent video frame. Temporary diagnostics were removed. These are bounded
+Windows sample results, not acoustic, optical, all-device or all-content guarantees.
+
 ## 尚未验证及实际限制
 
 - Mac 已解锁并通过上述合成样本的真实窗口测试；实际在线多剧长播的丢帧、音画偏差、
