@@ -1,6 +1,6 @@
 # NSH 桌面发版
 
-本流程面向 Windows x64、macOS Apple Silicon 与 Intel。Android 和 iOS 模拟器继续走普通 CI 构建验证，不进入桌面 Release。当前候选版本为 `0.7.0`、NSH build `2`。
+本流程面向 Windows x64、macOS Apple Silicon 与 Intel。Android 和 iOS 模拟器继续走普通 CI 构建验证，不进入桌面 Release。当前版本为 `0.7.0`、NSH build `2`。
 
 ## 检查与产物
 
@@ -24,10 +24,12 @@ Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未
 ## 创建草稿
 
 1. 确认 `Cargo.toml` 工作区版本、`Cargo.lock` 所有工作区成员版本与 `crates/hongguo-nsh/nsh.json` 一致；NSH build 单调增加，更新 `CHANGELOG.md` 对应段落。
-2. 在本机执行 `node scripts/release-preflight.mjs`，通过构建、严格检查和实际安装/播放验收后合入发版提交。
+2. 在本机执行 `cargo build-tool release-preflight`，通过构建、严格检查和实际安装/播放验收后合入发版提交。
 3. 用户确认后推送该提交和对应 `v0.7.0` tag。tag 触发 `NSH Desktop Release`；也可手动运行该 workflow，填写已存在的 tag。
 4. 流程验证 tag、版本、更新日志及实际包元数据，使用同一提交完成全部桌面检查和打包，然后创建 **draft** GitHub Release。重复运行时发现已有 Release 会失败，不覆盖现有附件。
-5. 下载并验收草稿附件后，用户在 GitHub 手动正式发布。本次准备不推送、不创建 tag、不触发 workflow、不创建远端 Release。
+5. 检查草稿附件、来源与校验和后，按用户明确的发布授权正式公开；未获得授权时保留草稿。跨平台安装与播放的真实验收状态须如实说明。
+
+0.7.0 默认不迁移旧版数据。手动复制桌面旧数据库的默认路径、重命名及旁路日志处理见 [README 迁移说明](../README.md#旧版数据)；发布说明必须保留这一升级提示。
 
 正式发布前的人工验收包括：Windows 覆盖安装与卸载、中文入口及新图标；两种 Mac 架构安装启动、Dock 与托盘；清晰度/倍速记忆、续播、返回已看完集数、自动切集、隐藏窗口播放、弱网缓冲及音画同步。CI 编译不替代这些行为验收。
 
