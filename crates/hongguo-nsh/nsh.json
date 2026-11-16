@@ -31,8 +31,28 @@
   },
   "nativeHost": {
     "displayNames": { "zh-CN": "番果" },
-    "build": ["node", "../../scripts/nsh-native-host.mjs", "build"],
-    "stage": ["node", "../../scripts/nsh-native-host.mjs", "stage"],
+    "build": [
+      "cargo",
+      "run",
+      "--locked",
+      "--target",
+      "host-tuple",
+      "--manifest-path",
+      "../../tools/build/Cargo.toml",
+      "--",
+      "build"
+    ],
+    "stage": [
+      "cargo",
+      "run",
+      "--locked",
+      "--target",
+      "host-tuple",
+      "--manifest-path",
+      "../../tools/build/Cargo.toml",
+      "--",
+      "stage"
+    ],
     "hosts": {
       "windows": "../../target/nsh-native/windows/{profile}/host.exe",
       "macos": "../../target/nsh-native/macos/{profile}/host",

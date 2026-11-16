@@ -10,19 +10,19 @@
 ```sh
 rustup target add x86_64-pc-windows-msvc
 cargo install cargo-xwin --version 0.23.1 --locked
-node scripts/nsh-native-host.mjs setup x86_64-pc-windows-msvc
-mkdir -p target/nsh-cross-tools
-ln -sfn "$PWD/scripts/nsh-windows-rc.cjs" target/nsh-cross-tools/rc.exe
+cargo build-tool setup x86_64-pc-windows-msvc
+cargo build-tool cross-tools
+ln -sfn "$PWD/target/nsh-cross-tools/nsh-windows-rc" target/nsh-cross-tools/rc.exe
 ```
 
-在仓库根执行，工具路径由本机安装位置提供，不写入项目配置：
+先将所选 LLVM 的 bin 加入 PATH，并将 `XWIN_CACHE_DIR` 设置为自己的独立 SDK 缓存目录。在仓库根执行，不依赖包管理器或固定安装位置：
 
 ```sh
 PATH="$PWD/target/nsh-cross-tools:$PATH" \
-NSH_WINDOWS_RC="$(brew --prefix llvm)/bin/llvm-rc" \
-RC_x86_64_pc_windows_msvc="$(brew --prefix llvm)/bin/llvm-rc" \
+NSH_WINDOWS_RC="$(command -v llvm-rc)" \
+RC_x86_64_pc_windows_msvc="$(command -v llvm-rc)" \
 RUSTFLAGS='-C target-cpu=x86-64 -C link-arg=/STACK:8388608 -C target-feature=+crt-static' \
-XWIN_CACHE_DIR="$HOME/Library/Caches/hongguo-nsh-xwin-symbols" \
+XWIN_CACHE_DIR="${XWIN_CACHE_DIR:?Set your SDK cache directory}" \
 XWIN_INCLUDE_DEBUG_SYMBOLS=true XWIN_ARCH=x86_64 CARGO_INCREMENTAL=0 \
 cargo xwin clippy -p hongguo-nsh --all-targets --target x86_64-pc-windows-msvc \
   -- -D warnings -D clippy::allow_attributes
@@ -52,7 +52,7 @@ SIMD 按对象编译并在运行期分派，不使用全局 AVX2。
 VVdeC 3.2.1 的构建与局部 clang-cl 兼容修改见其 SOURCE.md。
 LLVM 19 是维护者重建该旧内核时使用的并行工具链，不是新机日常启动要求。
 
-新 release EXE 与唯一媒体 DLL 均经过 `auditWindowsBundle`：
+新 release EXE 与唯一媒体 DLL 均经过 Rust 构建工具的 Windows 包审计：
 检查 PE 架构、静态 CRT、普通/delay imports、系统媒体 DLL、图标和 manifest，
 拒绝 WebView2Loader、外部 VC runtime 和未随包第三方 DLL。
 

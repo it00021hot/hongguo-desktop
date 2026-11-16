@@ -14,15 +14,15 @@ NSH 原生宿主构建入口自动解包仓库 `vendor/native-codecs/` 内的固
 仍需 Rust 与平台常规开发工具：Windows MSVC Build Tools/Windows SDK、macOS Xcode 工具，
 移动端的 NDK/JDK/Android SDK 或完整 Xcode。
 
-`node scripts/nsh-native-host.mjs setup <Rust triple>` 单独准备当前或交叉目标。
-目标取自 `CARGO_BUILD_TARGET` 或 `rustc -vV`，不按 Node 的架构推测。
+`cargo build-tool setup <Rust triple>` 单独准备当前或交叉目标。
+省略目标时取自 `CARGO_BUILD_TARGET` 或 `rustc -vV`。构建与打包工具位于 `tools/build`，由 Rust 编译，不需要 Node.js。
 原生库缓存损坏时重新从随仓库归档提取，绝不自动尝试源码编译。
 直接运行 Cargo 前先准备 SDK。Windows 原生宿主旁复制认证 DLL，`nsh run` 无需修改全局 PATH；macOS 开发 rpath 指向目标 SDK，正式包删除开发 rpath。
 
 应用元数据、平台配置和原生宿主选择统一在 `crates/hongguo-nsh/nsh.json`。固定 NSH CLI 的 `nativeHost` 补丁保留独立宿主与媒体材料接入，`nsh package` 负责最终装包和签名。旧 NSIS、Gradle 装包与独立平台打包脚本已删除。工具链配置与签名参数见 [NSH 开发说明](../.agents/skills/hongguo-dev/references/nsh.md)。
 
 The normal NSH workflow unpacks authenticated codec binaries already included in the repository.
-It does not download or compile FFmpeg, libde265 or VVdeC. Standard Rust platform tools remain required.
+It does not download or compile FFmpeg, libde265 or VVdeC. Building, packaging and SDK maintenance use `tools/build`, a Rust tool invoked as `cargo build-tool`; Node.js is not required. Standard Rust platform tools remain required.
 
 ## 固定来源与目标
 
@@ -79,11 +79,13 @@ libde265 采用 LGPL-3.0-or-later；VVdeC 使用独立的 Clear BSD 许可证。
 移动包另交付实际最终链接输入、SHA-256 清单、命令和重签名/Android 宿主材料：
 
 ```sh
-node Relink/relink.mjs --linker <target-clang> --sdk <SDK-or-NDK> \
+cd Relink
+cargo run --target host-tuple --manifest-path BuildTool/Cargo.toml -- relink --materials . \
+  --linker <target-clang> --sdk <SDK-or-NDK> \
   --hevc <modified-libde265-prefix> --output <new-binary>
 ```
 
-省略 `--hevc` 使用材料中的原库；替换目录提供 ABI 兼容的 `lib/libde265.a`。
+`Relink/BuildTool` 随附独立 Rust 工具源码及依赖锁，无需 Node.js；省略 `--hevc` 使用材料中的原库，替换目录提供 ABI 兼容的 `lib/libde265.a`。iOS 重签名使用同一工具的 `resign-ios --app <app> --binary <binary> --identity <identity> [--profile <profile>]`；详情见随包 `Relink/README.md`。
 iOS 使用接收者自己的合法身份/profile，模拟器可 ad hoc；Android 使用接收者自己的签名。
 不分发私钥或平台 SDK。重链测试使用真实对象，删除原输入后替换静态库并验证运行结果改变。
 
@@ -92,14 +94,15 @@ iOS 使用接收者自己的合法身份/profile，模拟器可 ad hoc；Android
 仅维护 SDK 或修改解码库时使用，与日常启动分开：
 
 ```sh
-node scripts/native-codec-build.mjs aarch64-apple-darwin
+cargo build-tool codec-build aarch64-apple-darwin
 cargo build -p hongguo-vvdec-sys --features source-build
-node scripts/native-sdk-package.mjs all
+cargo build-tool sdk-package all
 ```
 
 libde265 重建需要 CMake/Ninja 和目标 C++ 工具链；VVdeC 维护构建需要 CMake、bindgen/libclang。
 `hongguo-hevc/source-build` 读取显式 `HONGGUO_HEVC_ROOT`。
 Windows 原生维护构建在 MSVC 开发环境运行；macOS 交叉构建使用 clang-cl、lld-link 和 xwin SDK。
+工具从 PATH 查找，不绑定 Homebrew 或固定安装位置。macOS 交叉源码重建须显式设置 `XWIN_CACHE_DIR` 指向自己的 cargo-xwin SDK 缓存；可用 `HONGGUO_WINDOWS_LLVM_BIN` 指定所选 LLVM 的 bin，`HONGGUO_WINDOWS_LINKER`、`HONGGUO_WINDOWS_RC` 分别指定链接器和资源编译器，`HONGGUO_INSPECTION_LLVM_BIN` 指定审计工具目录。
 移动端使用真实目标 SDK/NDK；禁止用宿主产物充当目标产物。
 
 导出只接受通过源码完整性和真实对象检查的两个组件，生成确定性归档及来源锁。
@@ -110,7 +113,7 @@ ARM Mac 单目标维护可从本机 Release 源码构建导出 VVdeC，并复用
 
 ```sh
 cargo build -p hongguo-vvdec-sys --release --features source-build --message-format=json
-node scripts/native-sdk-package.mjs aarch64-apple-darwin <build-script-out_dir>
+cargo build-tool sdk-package aarch64-apple-darwin <build-script-out_dir>
 ```
 
 使用该次构建 JSON 消息中 `hongguo-vvdec-sys` 的 `out_dir`。导出器校验源清单、

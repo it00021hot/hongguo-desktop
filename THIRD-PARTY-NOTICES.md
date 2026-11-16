@@ -15,7 +15,6 @@ This project uses PolyForm Noncommercial 1.0.0. Third-party components retain th
 | aes、ctr、md-5、sm3                | 解密与摘要 / Decryption and hashing                 | MIT OR Apache-2.0                                                  |
 | Anime4K WebGPU                     | 离线导出的增强着色器 / Exported enhancement shaders | 见 crates/hongguo-video-gpu/shaders/enhancement/anime4k/LICENSE.md |
 | Tokio、Serde、Reqwest 等 Rust 依赖 | 运行时、序列化与网络 / Runtime, data and networking | 各 crate 的许可 / Respective crate licenses                        |
-| ESLint、TypeScript、Prettier       | 开发检查 / Development tooling                      | 各包的许可 / Respective package licenses                           |
 
 客户包中的 `NativeMedia` 提供编解码库许可、对应源码、构建参数与哈希；移动端附带重新链接材料。
 Customer packages include codec licenses, corresponding sources, build configurations and hashes in `NativeMedia`; mobile packages include relinking materials.

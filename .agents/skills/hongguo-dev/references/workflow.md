@@ -4,12 +4,12 @@ NSH 单壳的流程参考；接入与验证的技术细节以 `references/nsh.md
 
 ## 环境准备
 
-- Node ≥ 22 + Rust toolchain（MSRV 1.99，edition 2024）及仓库固定 NSH CLI。格式工具依赖单独执行 `npm ci --prefix tools --ignore-scripts`。
+- Rust toolchain（MSRV 1.99，edition 2024）及仓库固定 NSH CLI；开发、检查、着色器维护、构建与打包均无需 Node.js/npm。
 - 桌面数据根 `%APPDATA%/guava`（经 `paths::set_shell_data_root("guava")` 钉到
   与其他数据根平级的独立目录，互不嵌套）；移动端用 app 私有目录
   （`set_absolute_data_root`，漏掉这步开库即退）。
 - 自动化一律用自建实例与独立数据目录，不碰用户活跃实例（dev-habits『不碰用户活跃环境』）。
-- 原生编解码 SDK 由 `scripts/nsh-native-host.mjs` 从 `vendor/native-codecs/` 自动解包校验，默认不源码构建。
+- 原生编解码 SDK 由 `tools/build` 的 Rust 工具从 `vendor/native-codecs/` 自动解包校验，默认不源码构建；可单独执行 `cargo build-tool setup <Rust triple>`。
 
 ## 日常命令
 
@@ -20,25 +20,25 @@ NSH 单壳的流程参考；接入与验证的技术细节以 `references/nsh.md
 | `make dev` / `make nsh`  | 增量构建并启动 NSH 客户端                                  |
 | `make nsh-check`         | 工作区检查（含 SDK 解包）                                  |
 | `make nsh-package TARGET=`| macos / windows / android / ios / ios-simulator 打包      |
-| `make lint`              | **质量闸门、一票否决**：Prettier + cargo clippy×3          |
+| `make lint`              | 当前宿主门禁：cargo fmt + 着色器校验 + 工作区严格 Clippy |
+| `make lint-macos`        | 显式 macOS 双目标平台链交叉检查，需另备 Rust target 与 LLVM |
 | `make fmt` / `make clean`| cargo fmt / 清理 target                                     |
 
 Rust 日志：`RUST_LOG=debug`（env_logger）。验证细节与预览/真机验收矩阵见 `references/nsh.md`。
 
-## lint 闸门的注意事项（Makefile 注释是真踩出来的）
+## lint 闸门与可选交叉检查
 
 - clippy 使用 `--all-targets` 覆盖库、二进制与构建入口；自有测试及离线预览已移除。
-- macOS 双目标交叉 clippy（`--target aarch64-apple-darwin` / `x86_64-apple-darwin`）只守平台链正清单
-  （Makefile 交叉两行 / pre-commit `MAC_CROSS`）：VT 等 cfg 门后的代码 Windows 宿主看不见；
-  全图交叉会拖进 aws-lc-sys（要真 macOS SDK 的 Darwin libc 头），全图覆盖在 CI 的 macOS 原生 runner。
-  交叉的 C 工具链是真 clang（LLVM，前置 `winget install LLVM.LLVM`）：交叉链上有真编 C/C++ 的
-  build script；路径必须 `C:/` 短路径形态（cc 拆带空格路径）。
+- `make lint` 与提交钩子只检查当前宿主，不要求安装其他系统的 Rust target 或交叉工具链。
+- `make build`、`make lint` 与提交钩子先准备相应目标的认证 SDK，不依赖维护者预先填好的本机缓存。
+- `make lint-macos` 显式检查 `aarch64-apple-darwin`、`x86_64-apple-darwin` 的媒体平台链。
+  先安装这两个 Rust target 并将所选 LLVM 的 `bin` 加入 PATH；默认使用工具名 `clang`、`clang++`、`llvm-ar`，不假设安装目录。
+  已设置的 `CC_<target>`、`CXX_<target>`、`AR_<target>` 或 make 命令行变量优先，且这些默认值只对该交叉目标生效。
+  全工作区的 macOS 原生构建与严格检查由 CI 对应 runner 承担；Windows 上的有限交叉检查不能替代真 macOS SDK。
 - `-D clippy::allow_attributes`：`#[allow]` 直接拒；确需断言用 `#[expect(reason)]`——lint 不再触发时
   编译失败，杜绝过期放行。
 - 别用 `-` 前缀或 `|| true` 吞失败；每行独立 shell，`cd` 只对本行有效。
-- VVdeC 的 CI 与 Release 都需设置 `SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL=always`，Intel Mac 交叉构建还需
-  `PKG_CONFIG_ALLOW_CROSS_x86_64_apple_darwin=1`；Windows 必须先安装 pkgconf。本机装有 libvvdec
-  不代表干净 runner 可构建。
+- 日常构建使用认证 SDK，不要求源码重建 VVdeC 或安装 pkgconf。维护者源码重建的额外工具见 `docs/native-media-build.md`。
 - 门禁命令必须**裸跑**确认退出码——管道（`command | tail`）会吞掉失败。
 
 ## 提交纪律

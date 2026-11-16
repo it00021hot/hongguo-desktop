@@ -1715,6 +1715,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hongguo-build"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "naga",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+]
+
+[[package]]
 name = "hongguo-bytevc2"
 version = "0.7.0"
 dependencies = [

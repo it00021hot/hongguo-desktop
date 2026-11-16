@@ -10,14 +10,8 @@ dist-ssr/
 # Rust（workspace 化后 target 落在仓库根）
 target/
 
-# TypeScript 增量编译缓存
-*.tsbuildinfo
-
 # 临时脚本
 fix_*.py
-
-# 开发期自动生成
-.tanstack/
 
 # 调试截图
 .shots/

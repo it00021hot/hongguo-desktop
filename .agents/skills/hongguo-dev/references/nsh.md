@@ -20,23 +20,28 @@ nsh package crates/hongguo-nsh --target ios --sign '<identity>' --profile '<prof
 Makefile 转发到这些命令，并在 macOS 设置 VVdeC 的阻塞等待策略；本机开发使用 `make dev`。
 直接运行 CLI 时使用 `VVDEC_BUSY_WAIT_TIME_MIN=0 VVDEC_BUSY_WAIT_TIME_MAX=0 nsh run crates/hongguo-nsh`。
 正式 macOS 包通过 `macos.infoPlist.LSEnvironment` 在进程初始化前设置相同策略。
-名称、ID、版本、图标、平台 plist、窗口参数与 `nativeHost` 接入配置统一位于 `crates/hongguo-nsh/nsh.json`，不从 npm manifest 读取应用元数据。运行客户端不需要 pnpm 或安装 npm 工具依赖。
+名称、ID、版本、图标、平台 plist、窗口参数与 `nativeHost` 接入配置统一位于 `crates/hongguo-nsh/nsh.json`。客户端开发、检查、构建、运行、打包及资源维护均无需 Node.js/npm。
 
-`nativeHost` 是本项目为固定 CLI 增加的通用原生宿主接入口，尚非上游 0.5.1 标准能力，必须使用仓库构建的 CLI。它通过参数数组启动构建与资源装配命令，失败即中止。项目脚本只准备 SDK、独立宿主、媒体依赖和重链接材料；NSH 自己生成安装器、APK/AAB、Apple 包和签名。补丁范围见 `vendor/nsh/UPSTREAM.md`。
+`nativeHost` 是本项目为固定 CLI 增加的通用原生宿主接入口，尚非上游 0.5.1 标准能力，必须使用仓库构建的 CLI。它通过参数数组调用 `tools/build` 的 Rust 工具，失败即中止。工具只准备 SDK、独立宿主、媒体依赖和重链接材料；NSH 自己生成安装器、APK/AAB、Apple 包和签名。仓库根可用 `cargo build-tool <命令>` 调用同一工具。补丁范围见 `vendor/nsh/UPSTREAM.md`。
 
-`tools/package.json` 仅管理 Prettier 和增强着色器维护工具。格式门禁：
+`cargo build-tool` 与 `nativeHost` 都通过 `--target host-tuple` 在当前宿主编译构建工具，避免移动端或交叉编译的 `CARGO_BUILD_TARGET` 把工具本身编译成目标平台程序；SDK 目标仍通过参数或该环境变量选择。
+
+格式与资源门禁使用 Rust 工具，不安装 npm 依赖：
 
 ```sh
-npm ci --prefix tools --ignore-scripts
-npm exec --prefix tools -- prettier --check .
 cargo fmt -- --check
+cargo build-tool enhancement-assets
 cargo build --workspace
 cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
 ```
 
+`make lint` 和提交钩子仅执行当前宿主门禁。可选 `make lint-macos` 另需两个 macOS Rust target 与 PATH 上的 `clang`、`clang++`、`llvm-ar`；已有的目标编译器环境变量不被覆盖。CI 在各自原生 runner 覆盖 Windows 与两种 Mac 架构。
+
+Anime4K 的已入库 WGSL 与 `graph.json` 是维护源文件，保留版本、原始来源摘要与许可证；不执行上游 JavaScript 导出器。上述资源门禁复用 WGPU 同版本 Naga 校验 WGSL、模型入口、绑定、纹理顺序、工作组与 SHA-256。修改着色器后执行 `cargo build-tool enhancement-assets --patch` 输出哈希更新补丁，审核后精确应用；不改原始来源摘要来冒充新的上游版本。
+
 ## 原生依赖与打包
 
-SDK 从 `vendor/native-codecs` 自动解包、校验，日常不源码重建。单独准备可用 `node scripts/nsh-native-host.mjs setup <Rust triple>`。源码重建见 `docs/native-media-build.md`；VVdeC 源码位于 `crates/hongguo-vvdec-sys/vendor/vvdec`。不得混入 FFmpeg、QuickJS 或旧播放器链。
+SDK 从 `vendor/native-codecs` 自动解包、校验，日常不源码重建。单独准备可用 `cargo build-tool setup <Rust triple>`。源码重建见 `docs/native-media-build.md`；VVdeC 源码位于 `crates/hongguo-vvdec-sys/vendor/vvdec`。不得混入 FFmpeg、QuickJS 或旧播放器链。
 
 Windows/macOS 优先在对应宿主打包。macOS 交叉构建 Windows x64 时需配置 MSVC SDK、clang-cl、lld-link 和资源编译器；Inno Setup 6 可通过 Wine 编译 NSH 生成的安装脚本，媒体 SDK 按 Windows x64 目标选择。NSH 默认输出到调用目录的 `.nsh/out`，可用 `--out` 指定。Windows 生成 `guava/`、`guava.zip`；检测到 Inno Setup 时生成 `guava-setup.exe`，不再使用 NSIS。macOS 生成 `guava.app` 并由 NSH ad hoc 签名；当前分别打包 arm64 与 x86_64，不宣称支持通用媒体库包。安装、卸载与播放仍需真机验收。
 

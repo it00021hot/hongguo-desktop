@@ -53,7 +53,7 @@ ByteVC2 编码识别常量及函数归 `hongguo-media-types::codec`；API 的选
 `hongguo-bytevc2` 保留完整解码能力，并复用这些识别定义；VVdeC 与 oxideav 配置保持原样。
 720p 等规格实际下发的 ByteVC2 流继续经 `hongguo-playback → hongguo-bytevc2` 解码。
 
-工作区共 29 个 crate。平台归档编码契约统一位于 `hongguo-media-types::encoding`，包含请求、I420 帧与编码输出。
+工作区共 30 个 crate，含 `tools/build` 下独立的 `hongguo-build` 构建与分发工具；它不参与应用运行时。平台归档编码契约统一位于 `hongguo-media-types::encoding`，包含请求、I420 帧与编码输出。
 HEVC 参数集与 Annex-B 解析位于 `hongguo-video::hevc`，播放层直接消费容器能力，不依赖归档媒体层。
 
 `hongguo-video-gpu::enhancement::Settings` 是 GPU 增强管线的参数类型；增强 shader 和授权文件位于该 crate 的 `shaders/enhancement/`。
@@ -95,7 +95,7 @@ NSH consumes services and typed service contracts, without a direct dependency o
 Services own network operations, authentication and business orchestration. Reactive ownership, focus, scrolling and optimistic feedback remain in the UI.
 
 ByteVC2 recognition lives in `hongguo-media-types`; decoding remains in `hongguo-bytevc2` with VVdeC and oxideav unchanged.
-The workspace contains 29 crates. Encoding contracts live in `hongguo-media-types::encoding`, and HEVC container helpers live in `hongguo-video::hevc`.
+The workspace contains 30 crates, including the independent `hongguo-build` build and distribution tool under `tools/build`, which is not part of the app runtime. Encoding contracts live in `hongguo-media-types::encoding`, and HEVC container helpers live in `hongguo-video::hevc`.
 Playback consumes container helpers directly without depending on the archival media layer.
 The enhancement pipeline lives in `hongguo-video-gpu::enhancement`; platform adapters convert the unchanged NSH wire contract.
 Shared color conversion remains in `hongguo-video-color`; enhancement shaders and licenses are preserved under `hongguo-video-gpu/shaders/enhancement/`.

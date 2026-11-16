@@ -35,9 +35,6 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.ref }}
           persist-credentials: false
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: 26.13.0
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.triple }}
@@ -51,7 +48,7 @@ jobs:
             vendor/nsh -> ../../target/nsh-cli
       - name: Prepare authenticated native SDK
         shell: bash
-        run: node scripts/nsh-native-host.mjs setup '${{ matrix.triple }}'
+        run: cargo build-tool setup '${{ matrix.triple }}'
       - name: Prepare the pinned Chinese installer compiler
         if: runner.os == 'Windows'
         shell: pwsh
@@ -66,7 +63,7 @@ jobs:
         run: nsh package crates/hongguo-nsh --target '${{ matrix.target }}' ${{ matrix.args }} --out 'target/packages/${{ matrix.triple }}'
       - name: Audit and archive release artifacts
         shell: bash
-        run: node scripts/release-assets.mjs '${{ matrix.triple }}' 'target/packages/${{ matrix.triple }}' 'target/release-assets/${{ matrix.triple }}'
+        run: cargo build-tool release-assets '${{ matrix.triple }}' 'target/packages/${{ matrix.triple }}' 'target/release-assets/${{ matrix.triple }}'
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: guava-desktop-${{ matrix.triple }}

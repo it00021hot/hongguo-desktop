@@ -12,6 +12,7 @@
 # feature 解析语义会静默变化。
 resolver = "3"
 members = [
+    "tools/build",
     "crates/hongguo-api",
     "crates/hongguo-bytevc2",
     "crates/hongguo-common",

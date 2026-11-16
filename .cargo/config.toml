@@ -1,3 +1,6 @@
+[alias]
+build-tool = "run --locked --target host-tuple -p hongguo-build --"
+
 # 编译期提速开关。三个目标各按其**真实硬件下限**取值，
 # 宁可少拿收益，也不让老机器跑不起来。
 #

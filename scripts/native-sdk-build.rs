@@ -97,7 +97,7 @@ pub fn require_sdk(crate_directory: &Path, target: &str) -> PathBuf {
     println!("cargo:rerun-if-changed={}", root.join("sdk.json").display());
     println!("cargo:rerun-if-changed={}", root.display());
     verify_sdk(&root, target, &lock).unwrap_or_else(|error| {
-        panic!("Native SDK is unavailable or invalid at {}: {error}. Run node scripts/nsh-native-host.mjs setup, or set HONGGUO_NATIVE_SDK_ROOT to the verified target SDK directory", root.display())
+        panic!("Native SDK is unavailable or invalid at {}: {error}. Run cargo build-tool setup, or set HONGGUO_NATIVE_SDK_ROOT to the verified target SDK directory", root.display())
     });
     if target.contains("msvc") {
         let features = env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default();

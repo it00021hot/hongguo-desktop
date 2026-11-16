@@ -13,7 +13,7 @@
 React/WebView 前端及专用工具。NSH 使用的语言包、表情和目录表迁至 assets。
 已移除旧音轨遮蔽器、NV12/WebView 色彩适配、旧协议线程池、封面代理与 Range 应答；
 NSH 使用的渐进缓存、明文字节读取与 Range 解析保留，回归验证解密、取消、代次与 FIFO。
-Anime4K npm 包仍供 NSH 着色器离线提取使用，保留为开发依赖，不将其误判为旧 Web 前端依赖。
+当时保留的 Anime4K 开发依赖已在后续去除 Node.js 的迁移中移除；现以入库 WGSL、模型图及许可证为维护来源，由 `cargo build-tool enhancement-assets` 校验。
 
 二轮清理（2026-11-15）：删除 `hongguo-softdec`（索引/软解会话与 playback 同构，唯一
 消费者 pixel_surface 夹具改接 `hongguo-playback`，合成样本迁 `hongguo-media/tests/fixtures`）、

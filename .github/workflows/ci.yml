@@ -29,18 +29,12 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.ref }}
           persist-credentials: false
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: 26.13.0
-          cache: npm
-          cache-dependency-path: tools/package-lock.json
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rustfmt
-      - run: npm ci --prefix tools --ignore-scripts
-      - run: npm exec --prefix tools -- prettier --check .
       - run: cargo fmt -- --check
-      - run: node scripts/release-preflight.mjs
+      - run: cargo build-tool enhancement-assets
+      - run: cargo build-tool release-preflight
 
   check:
     strategy:
@@ -60,9 +54,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.source_ref || github.ref }}
           persist-credentials: false
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: 26.13.0
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.triple }}
@@ -75,7 +66,7 @@ jobs:
       - name: Prepare authenticated media SDK
         shell: pwsh
         run: |
-          node scripts/nsh-native-host.mjs setup '${{ matrix.triple }}'
+          cargo build-tool setup '${{ matrix.triple }}'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($IsWindows) {
             "$PWD/target/native-media/${{ matrix.triple }}/libde265-1.1.3/bin" >> $env:GITHUB_PATH
@@ -124,9 +115,6 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.ref }}
           persist-credentials: false
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: 26.13.0
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.triple }}

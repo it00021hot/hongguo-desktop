@@ -1,7 +1,0 @@
-{
-  "private": true,
-  "devDependencies": {
-    "anime4k-webgpu": "1.0.0",
-    "prettier": "3.9.10"
-  }
-}
