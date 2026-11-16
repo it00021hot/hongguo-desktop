@@ -89,8 +89,7 @@ pub async fn search_suggest(q: &str, env: &ApiEnv) -> AppResult<Vec<SuggestItem>
     parse_suggest(&value)
 }
 
-/// query_result_v2 → 联想条目。series_id 优先 video_data（带封面/vid 可直拨），
-/// 没有时退 keyword（纯词联想）。两者都缺的废条目跳过。
+/// query_result_v2 → 联想条目；仅 video_data 提供剧集标识，纯词联想保留搜索语义。
 fn parse_suggest(value: &Value) -> AppResult<Vec<SuggestItem>> {
     let data = value
         .get("data")
@@ -112,7 +111,7 @@ fn parse_suggest(value: &Value) -> AppResult<Vec<SuggestItem>> {
                 str_field(vd, "vid"),
                 str_field(vd, "cover"),
             ),
-            None => (str_field(raw, "keyword"), String::new(), String::new()),
+            None => (String::new(), String::new(), String::new()),
         };
         let (book_title, book_cover, book_score) = match raw.get("book_data") {
             Some(b) => (
