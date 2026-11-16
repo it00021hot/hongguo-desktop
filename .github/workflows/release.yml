@@ -64,6 +64,15 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: cargo build-tool release-preflight --tag "$RELEASE_TAG" --artifacts artifacts --notes "$RUNNER_TEMP/release-notes.md"
+      - name: Preserve the frozen legacy updater feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LEGACY_UPDATE_TAG: v0.6.6
+          LEGACY_UPDATE_SHA256: d36bac7c56fc7b5c25e72c14aa7faa8ee661cd8a88cf039f1f1cc64815a44fe9
+        run: |
+          gh release download "$LEGACY_UPDATE_TAG" --pattern latest.json --dir "$RUNNER_TEMP/legacy-updater"
+          echo "$LEGACY_UPDATE_SHA256  $RUNNER_TEMP/legacy-updater/latest.json" | sha256sum -c -
+          cp "$RUNNER_TEMP/legacy-updater/latest.json" artifacts/latest.json
       - name: Create draft release without publishing
         env:
           GH_TOKEN: ${{ github.token }}

@@ -455,7 +455,7 @@
     "installFailed": "安装失败：{error}",
     "noChangelog": "暂无更新说明",
     "releaseOpenFailed": "无法打开版本发布页",
-    "nshReleaseNote": "请到版本发布页查看可用的 Native Shell 安装包。"
+    "nshReleaseNote": "请到版本发布页手动下载安装包；不会自动安装或迁移旧版数据。"
   },
   "settings": {
     "downloadDir": "下载目录",
