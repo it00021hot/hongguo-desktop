@@ -130,8 +130,24 @@ jobs:
       - name: Prepare Android SDK and embedding runtime
         if: matrix.target == 'android'
         shell: bash
+        env:
+          ANDROID_TOOLS_ARCHIVE: commandlinetools-linux-15859902_latest.zip
+          ANDROID_TOOLS_SHA256: 4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583
         run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export ANDROID_HOME="$RUNNER_TEMP/android-sdk"
+          export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          curl -fL --retry 3 "https://dl.google.com/android/repository/$ANDROID_TOOLS_ARCHIVE" -o "$RUNNER_TEMP/$ANDROID_TOOLS_ARCHIVE"
+          echo "$ANDROID_TOOLS_SHA256  $RUNNER_TEMP/$ANDROID_TOOLS_ARCHIVE" | sha256sum -c -
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          unzip -q "$RUNNER_TEMP/$ANDROID_TOOLS_ARCHIVE" -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          printf 'y\n%.0s' {1..20} | sdkmanager --licenses >/dev/null
           sdkmanager 'platforms;android-37.0' 'build-tools;36.1.0' 'ndk;30.0.16248370'
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
           echo "NSH_DISTRIBUTION=$RUNNER_TEMP/nsh-sdk" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/nsh-sdk/embed/android"
