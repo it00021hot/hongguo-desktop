@@ -60,3 +60,8 @@ removed when the released CLI offers equivalent native-host integration.
 Android platform lookup also accepts stable SDK directories whose package names
 include a minor API suffix, by checking `source.properties`; preview SDKs are not
 substituted for the requested stable API.
+
+Windows packaging accepts `windows.installerLanguage`, the alphanumeric stem of an
+Inno Setup bundled language file (for example, `ChineseSimplified`). It adds the
+native `[Languages]` entry to the generated installer script; absent configuration
+keeps Inno Setup's default language. Missing compiler translations fail compilation.

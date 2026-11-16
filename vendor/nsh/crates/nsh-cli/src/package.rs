@@ -148,6 +148,8 @@ pub(crate) struct AppConfig {
     _native_host: Option<serde_json::Value>,
     /// Display name.
     pub(crate) name: Option<String>,
+    #[serde(default)]
+    pub(crate) windows: crate::windows::WindowsConfig,
     /// Bundle identifier (`com.example.app`).
     pub(crate) id: Option<String>,
     /// User-visible version (`1.2.0`).

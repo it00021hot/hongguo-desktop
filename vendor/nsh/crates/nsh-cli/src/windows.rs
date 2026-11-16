@@ -37,6 +37,12 @@ const ICON_ID: u16 = 1;
 /// 200% scaling, and Explorer's largest view.
 const ICON_SIZES: [u32; 7] = [16, 20, 24, 32, 40, 48, 64];
 
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WindowsConfig {
+    pub(crate) installer_language: Option<String>,
+}
+
 /// A directory `<out>/<name>`: the release runner as `<name>.exe` (the
 /// app's icon embedded), the bundle and assets in `nsh\` (where the runner
 /// looks, next to itself), `nsh\app.json` (the window's title, the app's
@@ -104,7 +110,7 @@ pub(crate) fn package(
         ui::path(&dir),
         ui::path(&archive)
     ));
-    installer(options.out, name, id, version, &dir, &exe)?;
+    installer(options.out, name, id, version, &dir, &exe, &config.windows)?;
     if options.run {
         Command::new(&exe)
             .current_dir(&dir)
@@ -136,6 +142,7 @@ fn installer(
     version: &str,
     dir: &Path,
     exe: &Path,
+    config: &WindowsConfig,
 ) -> anyhow::Result<()> {
     let stem = file_stem(name);
     let script_path = out.join(format!("{stem}.iss"));
@@ -147,7 +154,7 @@ fn installer(
     let icon_rel = Path::new(dir.file_name().unwrap_or_default())
         .join("nsh")
         .join("icon.ico");
-    let script = inno_script(&InnoApp {
+    let mut script = inno_script(&InnoApp {
         name,
         id,
         version,
@@ -164,6 +171,15 @@ fn installer(
             .is_file()
             .then(|| icon_rel.to_string_lossy().replace('/', "\\")),
     });
+    if let Some(language) = &config.installer_language {
+        anyhow::ensure!(
+            !language.is_empty() && language.bytes().all(|byte| byte.is_ascii_alphanumeric()),
+            "windows.installerLanguage must name an Inno Setup bundled language file without its extension"
+        );
+        script.push_str(&format!(
+            "\n[Languages]\nName: \"{language}\"; MessagesFile: \"compiler:Languages\\{language}.isl\"\n"
+        ));
+    }
     fs::write(&script_path, script).with_context(|| format!("write {}", script_path.display()))?;
     let Some(iscc) = find_iscc() else {
         ui::warn(format!(
