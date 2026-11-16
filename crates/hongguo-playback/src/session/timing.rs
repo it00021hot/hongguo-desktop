@@ -45,7 +45,6 @@ impl Shared {
         }
         if missing && state.presented {
             state.rebuffering = true;
-            state.presented = false;
             state.current = None;
         }
         if missing && state.control.playing {

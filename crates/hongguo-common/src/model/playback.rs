@@ -15,8 +15,20 @@ pub struct PlaybackPosition {
     pub updated_at: i64,
 }
 
-/// 续播阈值（秒）：看过超过这个数才接上原位，否则视为没看过从头播。用户口径一处定义（前端 utils/resume-entry 同口径，技术栈不同不共享实现）。
+/// 未完成的集看过超过此秒数时续播。
 pub const RESUME_THRESHOLD_SECS: f64 = 3.0;
+
+pub fn resume_position(current_time: f64, duration: f64) -> f64 {
+    if current_time.is_finite()
+        && duration.is_finite()
+        && current_time > RESUME_THRESHOLD_SECS
+        && (duration <= 0.0 || current_time < duration)
+    {
+        current_time
+    } else {
+        0.0
+    }
+}
 
 impl PlaybackPosition {
     /// 构造位置。
@@ -28,10 +40,9 @@ impl PlaybackPosition {
         }
     }
 
-    /// 是否值得续播：看过超过 [`RESUME_THRESHOLD_SECS`] 就接上那个位置。
-    /// （用户口径：只要超过三秒都需播放，不管片尾。）
+    /// 已完成的集重新从头播放，未完成的集保留有效断点。
     pub fn is_resumable(&self) -> bool {
-        self.current_time > RESUME_THRESHOLD_SECS
+        resume_position(self.current_time, self.duration) > 0.0
     }
 }
 

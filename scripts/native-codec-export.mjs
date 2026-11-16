@@ -23,7 +23,8 @@ export const vvdecSource = Object.freeze({
   sha256: '5c334557a33cd93e981b84ba0e77126ef970a38e2481b67f0475db40f75379b8',
 });
 
-export function stageVvdec(repository, destination, target) {
+export function stageVvdec(repository, destination, target, build) {
+  if (build) return stageBuiltVvdec(repository, destination, target, build);
   const input = join(
     repository,
     'target/native-media',
@@ -40,6 +41,13 @@ export function stageVvdec(repository, destination, target) {
   const source = inventorySdk(join(repository, 'crates/hongguo-vvdec-sys/vendor/vvdec'));
   if (jsonDigest(source) !== manifest.source.vendoredTreeSha256)
     throw new Error('VVdeC source tree differs from the native library build');
+  for (const patch of manifest.source.patches ?? []) {
+    if (
+      !['private-frame-allocator.patch', 'picture-pool.cmake'].includes(patch.path) ||
+      digest(join(repository, 'crates/hongguo-vvdec-sys', patch.path)) !== patch.sha256
+    )
+      throw new Error('VVdeC allocator recipe differs from the native library build');
+  }
   const actual = new Map(inventorySdk(input).map((artifact) => [artifact.path, artifact]));
   for (const artifact of manifest.artifacts) {
     const file = actual.get(artifact.path);
@@ -49,6 +57,110 @@ export function stageVvdec(repository, destination, target) {
   const evidence = JSON.parse(readFileSync(join(input, manifest.build.inspectionPath), 'utf8'));
   validateBuildEvidence(vvdecTarget(target.triple), evidence);
   cpSync(input, destination, { recursive: true, dereference: false, verbatimSymlinks: true });
+  return manifest;
+}
+
+function stageBuiltVvdec(repository, destination, target, prefix) {
+  if (target.triple !== 'aarch64-apple-darwin' || process.platform !== 'darwin')
+    throw new Error('VVdeC allocator SDK maintenance requires the native Apple Silicon host');
+  const directory = join(repository, 'crates/hongguo-vvdec-sys');
+  const source = join(directory, 'vendor/vvdec');
+  const inherited = join(
+    repository,
+    'target/native-media',
+    target.triple,
+    'vvdec-' + vvdecSource.version,
+  );
+  const original = JSON.parse(readFileSync(join(inherited, 'manifest.json'), 'utf8'));
+  const inventory = inventorySdk(source);
+  if (jsonDigest(inventory) !== original.source.vendoredTreeSha256)
+    throw new Error('VVdeC upstream tree differs from the authenticated SDK source');
+  const build = join(prefix, 'build');
+  const cache = readFileSync(join(build, 'CMakeCache.txt'), 'utf8');
+  const cached = (name) => {
+    const value = cache.match(new RegExp('^' + name + ':[^=]+=(.*)$', 'm'))?.[1];
+    if (!value) throw new Error('VVdeC build cache is missing ' + name);
+    return value;
+  };
+  if (
+    cached('CMAKE_BUILD_TYPE') !== 'Release' ||
+    realpathSync(cached('CMAKE_HOME_DIRECTORY')) !== realpathSync(source) ||
+    realpathSync(cached('CMAKE_PROJECT_INCLUDE')) !==
+      realpathSync(join(directory, 'picture-pool.cmake')) ||
+    realpathSync(cached('HONGGUO_PICTURE_POOL_SOURCE')) !==
+      realpathSync(join(prefix, 'PicListManager.cpp'))
+  )
+    throw new Error('VVdeC source build does not match the pinned allocator recipe');
+  const info = join(destination, 'build-info');
+  const patches = join(destination, 'patches');
+  mkdirSync(info, { recursive: true });
+  mkdirSync(patches);
+  const patched = join(info, 'PicListManager.cpp');
+  copyFileSync(join(source, 'source/Lib/CommonLib/PicListManager.cpp'), patched);
+  const patch = join(directory, 'private-frame-allocator.patch');
+  run('/usr/bin/patch', ['--batch', '--forward', patched, patch]);
+  if (digest(patched) !== digest(join(prefix, 'PicListManager.cpp')))
+    throw new Error('VVdeC compiled source differs from the allocator patch');
+  run('cmake', ['--build', build, '--target', 'install', '--config', 'Release', '--clean-first']);
+  const library = join(prefix, 'lib/libvvdec.a');
+  const inspection = run(tool('llvm-readobj'), ['--file-headers', '--macho-version-min', library]);
+  const arches = [...new Set([...inspection.matchAll(/^Arch: (.+)$/gm)].map((value) => value[1]))];
+  const platforms = [
+    ...new Set([...inspection.matchAll(/^\s+Platform: (.+)$/gm)].map((value) => value[1])),
+  ];
+  const flags = readFileSync(
+    join(build, 'source/Lib/vvdec/CMakeFiles/vvdec.dir/flags.make'),
+    'utf8',
+  );
+  const evidence = {
+    configuration: 'Release',
+    sourceMatches: true,
+    genericFlags: flags.match(/^CXX_FLAGS = (.*)$/m)?.[1],
+    architecture: arches.length === 1 && arches[0] === 'aarch64' ? 'arm64' : arches.join(','),
+    platforms: platforms.map((value) => (value === 'macos' ? '1' : value)),
+    minimumVersions: [
+      ...new Set([...inspection.matchAll(/^\s+Version: (.+)$/gm)].map((value) => value[1])),
+    ],
+  };
+  if (!/(?:^|\s)-mcpu=apple-m1(?:\s|$)/.test(evidence.genericFlags ?? ''))
+    throw new Error('VVdeC Apple Silicon objects must use the M1 CPU baseline');
+  validateBuildEvidence(vvdecTarget(target.triple), evidence);
+  cpSync(join(prefix, 'include'), join(destination, 'include'), { recursive: true });
+  mkdirSync(join(destination, 'lib'));
+  copyFileSync(library, join(destination, 'lib/libvvdec.a'));
+  copyFileSync(join(prefix, 'bindings.rs'), join(destination, 'bindings.rs'));
+  cpSync(join(inherited, 'licenses'), join(destination, 'licenses'), { recursive: true });
+  for (const name of ['LICENSE.txt', 'AUTHORS.md'])
+    copyFileSync(join(source, name), join(destination, 'licenses', name));
+  copyFileSync(join(directory, 'SOURCE.md'), join(destination, 'SOURCE.md'));
+  copyFileSync(patch, join(patches, 'private-frame-allocator.patch'));
+  copyFileSync(join(directory, 'picture-pool.cmake'), join(patches, 'picture-pool.cmake'));
+  copyFileSync(join(build, 'CMakeCache.txt'), join(info, 'CMakeCache.txt'));
+  copyFileSync(
+    join(build, 'source/Lib/vvdec/CMakeFiles/vvdec.dir/flags.make'),
+    join(info, 'compiler-configuration.txt'),
+  );
+  writeJson(join(info, 'library-inspection.json'), evidence);
+  writeJson(join(info, 'source-inventory.json'), inventory);
+  const manifest = {
+    schemaVersion: 1,
+    source: {
+      ...vvdecSource,
+      vendoredTreeSha256: jsonDigest(inventory),
+      patches: inventorySdk(patches),
+    },
+    target: { ...vvdecTarget(target.triple), cpuBaseline: 'apple-m1' },
+    bindingsPath: 'bindings.rs',
+    libraryPath: 'lib/libvvdec.a',
+    build: {
+      provenance: 'cargo-source-build',
+      cmakeCacheSha256: digest(join(info, 'CMakeCache.txt')),
+      flagsSha256: digest(join(info, 'compiler-configuration.txt')),
+      inspectionPath: 'build-info/library-inspection.json',
+    },
+    artifacts: inventorySdk(destination),
+  };
+  writeJson(join(destination, 'manifest.json'), manifest);
   return manifest;
 }
 

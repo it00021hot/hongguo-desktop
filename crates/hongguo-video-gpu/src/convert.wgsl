@@ -20,11 +20,9 @@ fn sample(plane: texture_2d<u32>, point: vec2f, channel: u32) -> f32 {
         mix(load(plane, low + vec2i(0, 1), channel), load(plane, low + vec2i(1, 1), channel), weight.x), weight.y);
 }
 
-@compute @workgroup_size(8, 8, 1)
-fn main(@builtin(global_invocation_id) id: vec3u) {
+fn working_at(point: vec2u) -> vec3f {
     let size = textureDimensions(output_image);
-    if any(id.xy >= size) { return; }
-    var uv = (vec2f(id.xy) + 0.5) / vec2f(size);
+    var uv = (vec2f(point) + 0.5) / vec2f(size);
     let rotation = u32(geometry.options.x);
     if rotation == 90u { uv = vec2f(uv.y, 1.0 - uv.x); }
     else if rotation == 180u { uv = vec2f(1.0) - uv; }
@@ -38,5 +36,17 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         u = sample(u_plane, chroma_pixel, 0u);
         v = sample(v_plane, chroma_pixel, select(0u, 1u, geometry.options.y != 0.0));
     }
-    textureStore(output_image, vec2i(id.xy), vec4f(hg_source_to_working(vec3f(y, u, v), color, color_lut), 1.0));
+    return hg_source_to_working(vec3f(y, u, v), color, color_lut);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+    if any(id.xy >= textureDimensions(output_image)) { return; }
+    textureStore(output_image, vec2i(id.xy), vec4f(working_at(id.xy), 1.0));
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn output(@builtin(global_invocation_id) id: vec3u) {
+    if any(id.xy >= textureDimensions(output_image)) { return; }
+    textureStore(output_image, vec2i(id.xy), vec4f(hg_working_to_output(working_at(id.xy), color, color_lut), 1.0));
 }

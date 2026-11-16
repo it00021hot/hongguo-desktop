@@ -6,7 +6,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::cache::StreamEntry;
-use crate::progressive::{EntryMode, read_plain_range, wait_for_entry};
+use crate::progressive::{EntryMode, read_plain_range, wait_for_entry, wait_plain_range};
 
 /// 一次字节读取的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +74,28 @@ pub fn read_range_cancellable(
     cancelled: impl Fn() -> bool,
 ) -> Result<StreamChunk, StreamReadError> {
     read_range_inner(vid, definition, start, len, &cancelled)
+}
+
+/// Wait for compressed media coverage without copying or decrypting the payload.
+pub fn wait_range_cancellable(
+    vid: &str,
+    definition: u32,
+    start: u64,
+    end: u64,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), StreamReadError> {
+    let (lease, mode) = wait_for_entry(vid, definition, &cancelled)?;
+    let total = match &mode {
+        EntryMode::Whole => *lease.entry.size.lock(),
+        EntryMode::Progressive(progressive) => progressive.plain_len,
+    };
+    if start > end || end > total {
+        return Err(StreamReadError::OutOfRange { start: end, total });
+    }
+    if let EntryMode::Progressive(progressive) = mode {
+        wait_plain_range(&progressive, start, end, &lease, &cancelled)?;
+    }
+    Ok(())
 }
 
 fn read_range_inner(

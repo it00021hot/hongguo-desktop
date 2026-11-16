@@ -55,6 +55,8 @@ export function copyMediaNotices(prefix, triple, destination) {
   copyFileSync(join(vvdec, 'SOURCE.md'), join(notices, 'SOURCE.md'));
   copyFileSync(join(sdk.vvdec, 'manifest.json'), join(notices, 'source-manifest.json'));
   cpSync(join(vvdec, 'vendor/vvdec'), join(notices, 'source'), { recursive: true });
+  if (existsSync(join(sdk.vvdec, 'patches')))
+    cpSync(join(sdk.vvdec, 'patches'), join(notices, 'patches'), { recursive: true });
   cpSync(join(sdk.vvdec, 'build-info'), join(notices, 'build-info'), { recursive: true });
   copyFileSync(
     join(vvdec, 'vendor/vvdec/thirdparty/simde/COPYING'),

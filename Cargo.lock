@@ -1722,6 +1722,7 @@ dependencies = [
  "hongguo-media-types",
  "hongguo-video",
  "hongguo-vvdec-sys",
+ "log",
  "oxideav-core",
  "oxideav-h266",
 ]
@@ -1928,6 +1929,7 @@ dependencies = [
  "hongguo-nsh-video-api",
  "hongguo-video-color",
  "hongguo-video-gpu",
+ "log",
  "objc2",
  "objc2-core-foundation",
  "objc2-core-graphics",

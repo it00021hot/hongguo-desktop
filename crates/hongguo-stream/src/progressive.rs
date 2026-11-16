@@ -231,8 +231,21 @@ pub(crate) fn read_plain_range(
     lease: &EntryLease,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<u8>, StreamReadError> {
+    wait_plain_range(prog, start, end, lease, cancelled)?;
+    let mut body = vec![0u8; (end - start) as usize];
+    prog.render(start, end, &mut body);
+    Ok(body)
+}
+
+pub(crate) fn wait_plain_range(
+    prog: &ProgressiveStream,
+    start: u64,
+    end: u64,
+    lease: &EntryLease,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), StreamReadError> {
     if start >= end {
-        return Ok(Vec::new());
+        return Ok(());
     }
 
     let needed = prog.needed(start, end);
@@ -268,7 +281,5 @@ pub(crate) fn read_plain_range(
         outcome?;
     }
 
-    let mut body = vec![0u8; (end - start) as usize];
-    prog.render(start, end, &mut body);
-    Ok(body)
+    Ok(())
 }

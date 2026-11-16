@@ -1,10 +1,12 @@
 use hongguo_nsh_video_api::VideoEvent;
 use hongguo_nsh_video_apple::{DisplayClock, OutputError, PlayerController};
 use nsh_platform_macos::{
-    objc2_app_kit::NSView,
-    objc2_foundation::{NSPoint, NSRect, NSSize},
+    objc2_app_kit::{NSView, NSWindowDidChangeOcclusionStateNotification, NSWindowOcclusionState},
+    objc2_foundation::{NSNotificationCenter, NSPoint, NSRect, NSSize},
 };
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained};
+use objc2::{
+    DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained, sel,
+};
 use objc2_quartz_core::{CALayer, CAMetalLayer};
 use std::{cell::RefCell, rc::Rc};
 
@@ -45,7 +47,22 @@ define_class!(
         fn backing_changed(&self) { self.resize(); }
 
         #[unsafe(method(viewDidMoveToWindow))]
-        fn moved_to_window(&self) { self.resize(); }
+        fn moved_to_window(&self) { self.observe_window(); self.resize(); }
+
+        #[unsafe(method(hongguoOcclusionChanged:))]
+        fn occlusion_changed(&self, _: &objc2::runtime::AnyObject) { self.refresh_visibility(); }
+
+        #[unsafe(method(viewDidHide))]
+        fn view_did_hide(&self) {
+            unsafe { let _: () = msg_send![super(self), viewDidHide]; }
+            self.refresh_visibility();
+        }
+
+        #[unsafe(method(viewDidUnhide))]
+        fn view_did_unhide(&self) {
+            unsafe { let _: () = msg_send![super(self), viewDidUnhide]; }
+            self.refresh_visibility();
+        }
     }
 );
 
@@ -70,6 +87,7 @@ impl PixelView {
         self.ivars()
             .display_clock
             .replace(Some(unsafe { DisplayClock::new(self, self) }));
+        self.observe_window();
         self.resize();
         Ok(controller)
     }
@@ -96,6 +114,7 @@ impl PixelView {
     }
 
     fn refresh_display(&self, controller: &PlayerController) {
+        self.refresh_visibility();
         // EDR headroom also changes with display brightness while playing;
         // a backing-size notification alone does not cover those changes.
         let screen = self.window().and_then(|window| window.screen());
@@ -113,6 +132,39 @@ impl PixelView {
         }
     }
 
+    fn observe_window(&self) {
+        let center = NSNotificationCenter::defaultCenter();
+        let name = unsafe { NSWindowDidChangeOcclusionStateNotification };
+        unsafe {
+            center.removeObserver_name_object(self, Some(name), None);
+        }
+        if let Some(window) = self.window() {
+            unsafe {
+                center.addObserver_selector_name_object(
+                    self,
+                    sel!(hongguoOcclusionChanged:),
+                    Some(name),
+                    Some(&window),
+                );
+            }
+        }
+        self.refresh_visibility();
+    }
+
+    fn refresh_visibility(&self) {
+        if let Some(controller) = self.ivars().controller.borrow().as_ref() {
+            let visible = !self.isHiddenOrHasHiddenAncestor()
+                && self.window().is_some_and(|window| {
+                    window.isVisible()
+                        && !window.isMiniaturized()
+                        && window
+                            .occlusionState()
+                            .contains(NSWindowOcclusionState::Visible)
+                });
+            controller.set_surface_visible(visible);
+        }
+    }
+
     pub(super) fn set_clock_active(&self, active: bool) {
         if let (Some(clock), Some(controller)) = (
             self.ivars().display_clock.borrow().as_ref(),
@@ -123,6 +175,13 @@ impl PixelView {
     }
 
     pub(super) fn detach_clock(&self) {
+        unsafe {
+            NSNotificationCenter::defaultCenter().removeObserver_name_object(
+                self,
+                Some(NSWindowDidChangeOcclusionStateNotification),
+                None,
+            );
+        }
         self.ivars().display_clock.take();
     }
 }

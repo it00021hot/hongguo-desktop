@@ -2,19 +2,32 @@ use std::{
     collections::HashMap,
     ffi::CStr,
     ptr::{self, NonNull},
+    sync::Arc,
 };
 
 use hongguo_common::{AppError, AppResult};
-use hongguo_media_types::{ChromaSampling, CropRect, NativeFrame, NativePlane};
+use hongguo_media_types::{ChromaSampling, CropRect, FrameBufferPool, NativeFrame, NativePlane};
 use hongguo_vvdec_sys as ffi;
 
 #[path = "vvdec_metadata.rs"]
 mod metadata;
 
+#[cfg(target_os = "macos")]
+#[path = "vvdec_allocator.rs"]
+mod allocator;
+
+const MAX_FILTERED_FLUSH_FRAMES: usize = 64;
+
 pub struct VvdecDecoder {
     raw: NonNull<ffi::vvdecDecoder>,
     timestamps: HashMap<u64, f64>,
     next_token: u64,
+    buffers: FrameBufferPool,
+    minimum_output_pts: Option<f64>,
+    discarded_preroll: u64,
+    // Native close releases every callback allocation before this zone is destroyed.
+    #[cfg(target_os = "macos")]
+    _allocation: allocator::AllocationZone,
 }
 
 impl VvdecDecoder {
@@ -23,12 +36,28 @@ impl VvdecDecoder {
             return Err(AppError::Media("invalid VVdeC thread count".into()));
         }
         let mut params = std::mem::MaybeUninit::<ffi::vvdecParams>::uninit();
+        #[cfg(target_os = "macos")]
+        let allocation = allocator::AllocationZone::new()?;
         // The C initializer fills the complete native struct, including reserved fields.
         let raw = unsafe {
             ffi::vvdec_params_default(params.as_mut_ptr());
             let mut params = params.assume_init();
             params.threads = threads;
+            #[cfg(target_os = "macos")]
+            {
+                params.parseDelay = 0;
+            }
             params.logLevel = ffi::vvdecLogLevel_VVDEC_SILENT;
+            #[cfg(target_os = "macos")]
+            {
+                params.opaque = allocation.as_ptr();
+                ffi::vvdec_decoder_open_with_allocator(
+                    &mut params,
+                    Some(allocator::create),
+                    Some(allocator::unref),
+                )
+            }
+            #[cfg(not(target_os = "macos"))]
             ffi::vvdec_decoder_open(&mut params)
         };
         let raw = NonNull::new(raw)
@@ -37,6 +66,11 @@ impl VvdecDecoder {
             raw,
             timestamps: HashMap::new(),
             next_token: 1,
+            buffers: FrameBufferPool::default(),
+            minimum_output_pts: None,
+            discarded_preroll: 0,
+            #[cfg(target_os = "macos")]
+            _allocation: allocation,
         })
     }
 
@@ -45,6 +79,14 @@ impl VvdecDecoder {
         unsafe { CStr::from_ptr(ffi::vvdec_get_version()) }
             .to_str()
             .unwrap_or("invalid VVdeC version")
+    }
+
+    pub fn discard_output_before(&mut self, pts: f64) -> AppResult<()> {
+        if !pts.is_finite() {
+            return Err(AppError::Media("invalid VVdeC output timestamp".into()));
+        }
+        self.minimum_output_pts = Some(pts);
+        Ok(())
     }
 
     pub fn decode(
@@ -88,9 +130,18 @@ impl VvdecDecoder {
     }
 
     pub fn flush(&mut self) -> AppResult<Option<NativeFrame>> {
-        let mut frame = ptr::null_mut();
-        let result = unsafe { ffi::vvdec_flush(self.raw.as_ptr(), &mut frame) };
-        self.output(result, frame)
+        for _ in 0..MAX_FILTERED_FLUSH_FRAMES {
+            let mut frame = ptr::null_mut();
+            let result = unsafe { ffi::vvdec_flush(self.raw.as_ptr(), &mut frame) };
+            let had_frame = !frame.is_null();
+            let output = self.output(result, frame)?;
+            if output.is_some() || !had_frame {
+                return Ok(output);
+            }
+        }
+        Err(AppError::Media(
+            "VVdeC filtered flush exceeds frame budget".into(),
+        ))
     }
 
     fn output(
@@ -130,17 +181,25 @@ impl VvdecDecoder {
                 decoded
             })
             .transpose()
+            .map(Option::flatten)
     }
 
-    fn copy_frame(&mut self, frame: NonNull<ffi::vvdecFrame>) -> AppResult<NativeFrame> {
+    fn copy_frame(&mut self, frame: NonNull<ffi::vvdecFrame>) -> AppResult<Option<NativeFrame>> {
         let raw = unsafe { frame.as_ref() };
         let pts = if raw.ctsValid {
             self.timestamps.remove(&raw.cts)
         } else {
             None
         };
+        if pts
+            .zip(self.minimum_output_pts)
+            .is_some_and(|(pts, minimum)| pts < minimum)
+        {
+            self.discarded_preroll += 1;
+            return Ok(None);
+        }
         let color = unsafe { metadata::read(self.raw.as_ptr(), frame.as_ptr()) };
-        copy_pixels(raw, pts, color)
+        copy_pixels(raw, pts, color, &self.buffers).map(Some)
     }
 }
 
@@ -149,6 +208,7 @@ impl Drop for VvdecDecoder {
         unsafe {
             ffi::vvdec_decoder_close(self.raw.as_ptr());
         }
+        log::debug!(target: "hongguo_bytevc2::vvdec", "retired decoder discardedPrerollFrames={} outputBuffers={:?}", self.discarded_preroll, self.buffers);
     }
 }
 
@@ -156,6 +216,7 @@ fn copy_pixels(
     raw: &ffi::vvdecFrame,
     pts: Option<f64>,
     color: hongguo_media_types::ColorMetadata,
+    buffers: &FrameBufferPool,
 ) -> AppResult<NativeFrame> {
     if raw.frameFormat != ffi::vvdecFrameFormat_VVDEC_FF_PROGRESSIVE {
         return Err(AppError::Media(
@@ -185,9 +246,21 @@ fn copy_pixels(
     {
         return Err(AppError::Media("invalid VVdeC frame layout".into()));
     }
+    let frame_bytes =
+        raw.planes[..expected_planes as usize]
+            .iter()
+            .try_fold(0usize, |total, plane| {
+                let length = (plane.width as usize)
+                    .checked_mul(plane.height as usize)
+                    .and_then(|pixels| pixels.checked_mul(plane.bytesPerSample as usize));
+                length
+                    .and_then(|length| total.checked_add(length))
+                    .ok_or_else(|| AppError::Media("VVdeC frame size overflow".into()))
+            })?;
+    buffers.set_budget(frame_bytes);
     let planes = raw.planes[..expected_planes as usize]
         .iter()
-        .map(copy_plane)
+        .map(|plane| copy_plane(plane, buffers))
         .collect::<AppResult<_>>()?;
     Ok(NativeFrame {
         width: raw.width as usize,
@@ -207,7 +280,7 @@ fn copy_pixels(
     })
 }
 
-fn copy_plane(plane: &ffi::vvdecPlane) -> AppResult<NativePlane> {
+fn copy_plane(plane: &ffi::vvdecPlane, buffers: &FrameBufferPool) -> AppResult<NativePlane> {
     let (width, height, stride, bps) = (
         plane.width as usize,
         plane.height as usize,
@@ -217,7 +290,7 @@ fn copy_plane(plane: &ffi::vvdecPlane) -> AppResult<NativePlane> {
     let row_bytes = width
         .checked_mul(bps)
         .ok_or_else(|| AppError::Media("VVdeC plane overflow".into()))?;
-    let length = stride
+    let length = row_bytes
         .checked_mul(height)
         .filter(|&bytes| bytes <= isize::MAX as usize)
         .ok_or_else(|| AppError::Media("VVdeC plane overflow".into()))?;
@@ -226,24 +299,22 @@ fn copy_plane(plane: &ffi::vvdecPlane) -> AppResult<NativePlane> {
         || height == 0
         || !matches!(bps, 1 | 2)
         || row_bytes > stride
+        || stride
+            .checked_mul(height)
+            .is_none_or(|size| size > isize::MAX as usize)
     {
         return Err(AppError::Media("invalid VVdeC plane".into()));
     }
-    // A cropped native pointer may start inside a larger row. Only visible
-    // bytes are guaranteed readable in the final row; keep upload padding owned
-    // and zeroed instead of reading native trailing padding past that row.
-    let mut bytes = Vec::with_capacity(length);
+    let mut bytes = buffers.take(length);
     for row in 0..height {
         let offset = row * stride;
-        // SAFETY: The native frame lease stays live; validated stride and native
-        // plane dimensions guarantee each visible row, without assuming padding.
+        // SAFETY: The native lease covers each visible row, but not trailing crop padding.
         let visible = unsafe { std::slice::from_raw_parts(plane.ptr.add(offset), row_bytes) };
         bytes.extend_from_slice(visible);
-        bytes.resize(offset + stride, 0);
     }
     Ok(NativePlane {
-        data: bytes.into(),
-        stride,
+        data: Arc::new(bytes),
+        stride: row_bytes,
         width,
         height,
         bytes_per_sample: bps as u8,

@@ -135,6 +135,7 @@ pub static MIGRATIONS: &[&str] = &[
 #[derive(Clone)]
 pub struct Db {
     conn: Connection,
+    _database: Database,
 }
 
 impl Db {
@@ -165,10 +166,10 @@ impl Db {
         let conn = db
             .connect()
             .map_err(|e| AppError::StoreCorrupt(format!("建立连接失败: {e}")))?;
-        // Database 不能 drop（会带走 IO 线程），用 forget 语义保活；
-        // Connection 内部持有对实例的引用，进程退出时统一回收。
-        std::mem::forget(db);
-        let this = Self { conn };
+        let this = Self {
+            conn,
+            _database: db,
+        };
         this.migrate().await?;
         Ok(this)
     }

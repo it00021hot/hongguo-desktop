@@ -4,7 +4,7 @@ use std::{
     path::Path,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -16,6 +16,8 @@ pub(super) struct Source {
     only_audio: bool,
     pub(super) codec: Option<String>,
     pub(super) precision_extension: bool,
+    buffering: Arc<Vec<super::buffering::BufferingTrack>>,
+    rate: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
@@ -44,8 +46,19 @@ impl Source {
         self.audio_view = hongguo_video::audio_view::AudioView::from_moov(offset, &moov)
             .map_err(|error| error.to_string())?
             .map(Arc::new);
-        let track = hongguo_video::sample_table::collect_tracks(&moov)
-            .map_err(|error| error.to_string())?
+        let tracks = hongguo_video::sample_table::collect_tracks(&moov)
+            .map_err(|error| error.to_string())?;
+        if matches!(&self.kind, SourceKind::Online { .. }) {
+            self.buffering = Arc::new(
+                tracks
+                    .iter()
+                    .filter(|track| track.is_video || track.sample_rate > 0)
+                    .map(super::buffering::BufferingTrack::new)
+                    .collect::<hongguo_common::AppResult<Vec<_>>>()
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        let track = tracks
             .into_iter()
             .find(|track| track.is_video)
             .ok_or_else(|| "media source has no video track".to_string())?;
@@ -104,11 +117,18 @@ impl Source {
             only_audio: false,
             codec: None,
             precision_extension: false,
+            buffering: Arc::default(),
+            rate: Arc::new(AtomicU64::new(1.0_f64.to_bits())),
         }
     }
 
     pub(super) fn revoke(&self) {
         self.revoked.store(true, Ordering::Release);
+    }
+
+    pub(super) fn set_playback_rate(&self, rate: f32) {
+        self.rate
+            .store(f64::from(rate).to_bits(), Ordering::Release);
     }
 
     pub(super) fn len(&self) -> Option<u64> {
@@ -151,15 +171,35 @@ impl Source {
             }
             SourceKind::Online {
                 vid, definition, ..
-            } => hongguo_stream::read_range_cancellable(
-                vid,
-                *definition,
-                start,
-                Some(count),
-                interrupted,
-            )
-            .map(|chunk| chunk.bytes)
-            .map_err(|error| error.to_string()),
+            } => {
+                let rate = f64::from_bits(self.rate.load(Ordering::Acquire));
+                for track in self.buffering.iter() {
+                    if let Some((first, last)) =
+                        track.reserve(start, start.saturating_add(count), rate)
+                    {
+                        let entered = std::time::Instant::now();
+                        hongguo_stream::wait_range_cancellable(
+                            vid,
+                            *definition,
+                            first,
+                            last,
+                            interrupted,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        track.mark_ready(first, last, rate);
+                        log::debug!(target: "hongguo_nsh::media::buffering", "vid={vid} definition={definition} rate={rate} start={first} end={last} waitMillis={}", entered.elapsed().as_millis());
+                    }
+                }
+                hongguo_stream::read_range_cancellable(
+                    vid,
+                    *definition,
+                    start,
+                    Some(count),
+                    interrupted,
+                )
+                .map(|chunk| chunk.bytes)
+                .map_err(|error| error.to_string())
+            }
         }?;
         if self.only_audio
             && let Some(view) = &self.audio_view

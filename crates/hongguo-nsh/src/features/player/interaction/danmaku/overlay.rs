@@ -1,6 +1,6 @@
 use super::{
     Handle,
-    flight_model::{Cursor, FLIGHT_MS, Flight, FlightClock, geometry},
+    flight_model::{Cursor, FLIGHT_MS, Flight, FlightClock, geometry, lane_height},
     millis,
 };
 use crate::features::emoji;
@@ -133,7 +133,7 @@ fn caption(
     view()
         .absolute()
         .left_0()
-        .top(px(flight.lane as f32 * (flight.font_px + 10.0)))
+        .top(px(flight.lane as f32 * lane_height(flight.font_px)))
         .on_layout(move |frame: &Bounds<Points>| item_width.set(frame.size.width.0))
         .child(emoji::render(
             flight.item.text,

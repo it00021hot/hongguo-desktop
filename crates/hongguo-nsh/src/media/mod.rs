@@ -1,3 +1,4 @@
+mod buffering;
 mod cancellation;
 mod direct;
 mod response;
@@ -84,14 +85,12 @@ impl MediaServer {
     fn register(&self, source: Source) -> Result<MediaLease, String> {
         let id = uuid::Uuid::new_v4().to_string();
         let (source, codec) = source.prepare()?;
-        let precision_extension = source.precision_extension;
         let lease = self.publish(id, source, None)?;
-        if hongguo_bytevc2::is_bytevc2(&codec) || precision_extension {
-            lease.enable_codec_extension(0.0)?;
-        }
+        let (stream_entries, stream_bytes) = hongguo_service::play_service::online::status();
         log::debug!(
-            "[NSH media] sourceId={} stage=registered codec={codec}",
-            lease.id
+            "[NSH media] sourceId={} stage=registered codec={codec} imageCacheBytes={} streamEntries={stream_entries} streamMemoryBytes={stream_bytes}",
+            lease.id,
+            nsh_core::image::budget().used()
         );
         Ok(lease)
     }
@@ -137,6 +136,39 @@ pub(crate) struct MediaLease {
 }
 
 impl MediaLease {
+    pub(crate) fn set_playback_rate(&self, rate: f32) -> Result<(), String> {
+        let sources = self
+            .sources
+            .lock()
+            .map_err(|_| "media routes lock poisoned")?;
+        let source = sources
+            .get(&self.id)
+            .ok_or("media source is no longer registered")?;
+        source.set_playback_rate(rate);
+        Ok(())
+    }
+
+    pub(crate) fn prepare_codec_extension(&self, position_secs: f64) -> Result<(), String> {
+        let needs_extension = {
+            let sources = self
+                .sources
+                .lock()
+                .map_err(|_| "media routes lock poisoned")?;
+            let source = sources
+                .get(&self.id)
+                .ok_or("media source is no longer registered")?;
+            source.precision_extension
+                || source
+                    .codec
+                    .as_deref()
+                    .is_some_and(hongguo_bytevc2::is_bytevc2)
+        };
+        if needs_extension {
+            self.enable_codec_extension(position_secs)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn url(&self) -> &str {
         &self.url
     }

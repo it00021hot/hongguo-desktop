@@ -67,7 +67,7 @@ pub(super) unsafe fn copy(image: *const ffi::Image, timescale: u32) -> AppResult
             };
         }
         planes.push(NativePlane {
-            data: Arc::from(data),
+            data: Arc::new(data.into()),
             stride,
             width,
             height,

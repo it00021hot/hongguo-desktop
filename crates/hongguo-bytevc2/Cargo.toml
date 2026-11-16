@@ -16,6 +16,7 @@ vvdec = ["dep:hongguo-vvdec-sys"]
 oxideav = ["dep:oxideav-h266", "dep:oxideav-core"]
 
 [dependencies]
+log = "0.4"
 hongguo-common = { path = "../hongguo-common" }
 hongguo-video = { path = "../hongguo-video" }
 hongguo-media-types = { path = "../hongguo-media-types" }

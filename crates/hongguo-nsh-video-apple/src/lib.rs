@@ -4,6 +4,7 @@ mod control;
 mod controller;
 mod display_clock;
 mod frame;
+mod gpu;
 mod native;
 mod native_audio;
 mod output;

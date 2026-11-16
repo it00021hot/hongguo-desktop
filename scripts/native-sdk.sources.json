@@ -6,10 +6,10 @@
     "aarch64-apple-darwin": {
       "assetName": "hongguo-codecs-v2-aarch64-apple-darwin.tar.gz",
       "archivePath": "vendor/native-codecs/hongguo-codecs-v2-aarch64-apple-darwin.tar.gz",
-      "sha256": "783a0518399c5d720d5937667751d37b4688445a25cbae8d0290ca2bee3dbcfc",
-      "byteLength": 2324435,
-      "manifestSha256": "d423d835b7661ed4cc8ac5fb7350a7899b991232b9fc3b7f7324d9f8319f3dd6",
-      "recipeSha256": "a11a831f4af8b0ee9a2589083fa852f6337b06ccf8cafe262856e9c6442d550a"
+      "sha256": "c0a8f74c5ef9d23a944fbff95048b9436b85097d3e82e7c3e407424be2979e97",
+      "byteLength": 2330953,
+      "manifestSha256": "eed017c018dea0f14b66b2f1e64d7f202ac8da825b0db73dc3e3fe56df95be6b",
+      "recipeSha256": "0c4ccf2f61f35162f76e2cd20b2d0b25b9cac2b2e4928a7611e9208f91910e72"
     },
     "x86_64-apple-darwin": {
       "assetName": "hongguo-codecs-v2-x86_64-apple-darwin.tar.gz",

@@ -102,8 +102,17 @@ fn content(
         move || Some((selection.get(), definition.get(), reset_definition.get())),
         move |((id, episode), definition, reset_definition), _| {
             let session = session.with(|session| session.clone());
+            let start_position = pending_seek.get_untracked();
             bridge::request(async move {
-                prepare::prepare(session, id, episode, definition, reset_definition).await
+                prepare::prepare(
+                    session,
+                    id,
+                    episode,
+                    definition,
+                    reset_definition,
+                    start_position,
+                )
+                .await
             })
         },
     );

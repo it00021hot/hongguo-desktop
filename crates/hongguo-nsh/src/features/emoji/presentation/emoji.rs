@@ -5,6 +5,8 @@ use crate::ui::motion::PRESS_SCALE;
 use nsh_base::{PopoverEvent, theme};
 use nsh_core::{element::ImageSrc, prelude::*};
 
+pub(crate) const DANMAKU_LINE_HEIGHT: f32 = 1.5;
+
 pub(crate) enum InlineEmojiPart {
     Text(String),
     Image {
@@ -80,29 +82,28 @@ pub(crate) fn emoji_paragraph(parts: Vec<InlineEmojiPart>, style: EmojiTextStyle
             .mr_1()
             .text_color(move || theme().color("video-mention").expect("mention token"))
             .into_element(),
-        InlineEmojiPart::Image { code, uri } => image(ImageSrc::from(uri))
-            .label(code)
-            .size(move || {
-                px(font_size
-                    * if matches!(style, EmojiTextStyle::Danmaku(_)) {
-                        1.3
-                    } else {
-                        1.15
-                    }
-                    * font_scale())
-            })
-            .align_baseline()
-            .translate_y(move || {
-                px(font_size
-                    * if matches!(style, EmojiTextStyle::Danmaku(_)) {
-                        0.28
-                    } else {
-                        0.18
-                    }
-                    * font_scale())
-            })
-            .object_fit(nsh_core::ResizeMode::Contain)
-            .into_element(),
+        InlineEmojiPart::Image { code, uri } => {
+            let image = image(ImageSrc::from(uri))
+                .label(code)
+                .size(move || {
+                    px(font_size
+                        * if matches!(style, EmojiTextStyle::Danmaku(_)) {
+                            1.3
+                        } else {
+                            1.15
+                        }
+                        * font_scale())
+                })
+                .object_fit(nsh_core::ResizeMode::Contain);
+            if matches!(style, EmojiTextStyle::Danmaku(_)) {
+                image.align_middle().into_element()
+            } else {
+                image
+                    .align_baseline()
+                    .translate_y(move || px(font_size * 0.18 * font_scale()))
+                    .into_element()
+            }
+        }
     });
     let paragraph = text("").children(content);
     match style {
@@ -140,6 +141,7 @@ pub(crate) fn emoji_paragraph(parts: Vec<InlineEmojiPart>, style: EmojiTextStyle
             .text_color(move || theme().color("video-caption").expect("caption token")),
         EmojiTextStyle::Danmaku(size) => paragraph
             .text_size(px(size))
+            .line_height(nsh_core::LineHeight::Multiple(DANMAKU_LINE_HEIGHT))
             .font_weight(FontWeight::SEMIBOLD)
             .number_of_lines(1)
             .text_color(move || theme().color("video-caption").expect("caption token"))

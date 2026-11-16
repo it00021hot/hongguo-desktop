@@ -8,6 +8,9 @@ pub fn build(target: &str) {
     println!("cargo:rerun-if-changed=vendor/vvdec");
     println!("cargo:rerun-if-changed=source_build.rs");
     let mut config = cmake::Config::new("vendor/vvdec");
+    if cfg!(target_os = "macos") && target.ends_with("apple-darwin") {
+        picture_pool(&mut config);
+    }
     config
         .profile("Release")
         .define("BUILD_SHARED_LIBS", "OFF")
@@ -25,6 +28,9 @@ pub fn build(target: &str) {
             "CMAKE_OSX_DEPLOYMENT_TARGET",
             macos_deployment_target(target),
         );
+        if target.starts_with("aarch64-") {
+            config.define("CMAKE_CXX_FLAGS_RELEASE", "-O3 -DNDEBUG -mcpu=apple-m1");
+        }
     }
     let ios = target.contains("apple-ios").then(|| ios_toolchain(target));
     if let Some((sdk, _)) = &ios {
@@ -60,6 +66,35 @@ pub fn build(target: &str) {
             PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR")).join("bindings.rs"),
         )
         .expect("write VVdeC bindings");
+}
+
+fn picture_pool(config: &mut cmake::Config) {
+    let directory = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("crate directory"));
+    let output = PathBuf::from(env::var_os("OUT_DIR").expect("build output"));
+    let source = output.join("PicListManager.cpp");
+    let patch = directory.join("private-frame-allocator.patch");
+    let hook = directory.join("picture-pool.cmake");
+    println!("cargo:rerun-if-changed={}", patch.display());
+    println!("cargo:rerun-if-changed={}", hook.display());
+    std::fs::copy(
+        directory.join("vendor/vvdec/source/Lib/CommonLib/PicListManager.cpp"),
+        &source,
+    )
+    .expect("stage picture pool source");
+    let status = Command::new("/usr/bin/patch")
+        .arg("--batch")
+        .arg("--forward")
+        .arg(&source)
+        .arg(&patch)
+        .status()
+        .expect("apply picture pool patch");
+    assert!(
+        status.success(),
+        "picture pool patch must match pinned VVdeC"
+    );
+    config
+        .define("CMAKE_PROJECT_INCLUDE", hook)
+        .define("HONGGUO_PICTURE_POOL_SOURCE", source);
 }
 
 fn macos_deployment_target(target: &str) -> String {

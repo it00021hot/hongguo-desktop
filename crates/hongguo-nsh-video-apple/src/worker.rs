@@ -1,7 +1,7 @@
 use crate::{
     AudioOutput, ImportedFrame, OutputError,
     controller::{Layers, SeekCommand, Shared, Viewport},
-    render::Renderer,
+    render::{Renderer, Submission},
 };
 use hongguo_nsh_video_api::{
     Enhancement, EnhancementPhase, ErrorCode, Seek, Source, VideoEvent, VideoProps,
@@ -10,7 +10,11 @@ use hongguo_video_gpu::enhancement::FrameBudget;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_quartz_core::CATransaction;
 use std::{
-    sync::{Arc, atomic::Ordering, mpsc::Receiver},
+    sync::{
+        Arc,
+        atomic::Ordering,
+        mpsc::{Receiver, SyncSender},
+    },
     time::{Duration, Instant},
 };
 
@@ -20,6 +24,7 @@ mod direct;
 
 struct Worker {
     shared: Arc<Shared>,
+    wake: SyncSender<()>,
     layers: Layers,
     emit: Sink,
     props: VideoProps,
@@ -33,18 +38,27 @@ struct Worker {
     last_metadata: Option<(Option<u64>, u32, u32)>,
     buffered: bool,
     video_gap: bool,
+    surface_visible: bool,
     progress_at: Instant,
     dirty: bool,
+    last_draw_deadline: u64,
     gpu_rebuilds: u8,
     budget: FrameBudget,
     phase: Option<(EnhancementPhase, Enhancement, Option<ErrorCode>, String)>,
     direct: Option<direct::Direct>,
 }
 
-pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, emit: Sink) {
+pub(crate) fn run(
+    shared: Arc<Shared>,
+    layers: Layers,
+    receiver: Receiver<()>,
+    wake: SyncSender<()>,
+    emit: Sink,
+) {
     layers.set_visible(false);
     let mut worker = Worker {
         shared,
+        wake,
         layers,
         emit,
         props: VideoProps::default(),
@@ -58,8 +72,10 @@ pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, e
         last_metadata: None,
         buffered: false,
         video_gap: false,
+        surface_visible: true,
         progress_at: Instant::now(),
         dirty: false,
+        last_draw_deadline: 0,
         gpu_rebuilds: 0,
         budget: FrameBudget::default(),
         phase: None,
@@ -68,12 +84,7 @@ pub(crate) fn run(shared: Arc<Shared>, layers: Layers, receiver: Receiver<()>, e
     while !worker.shared.stop.load(Ordering::Acquire) {
         objc2::rc::autoreleasepool(|_| worker.step());
         if worker.needs_tick() {
-            let interval = if worker.shared.display_clock_active.load(Ordering::Acquire) {
-                Duration::from_millis(u64::from(worker.props.progress_interval_ms))
-            } else {
-                FRAME_TICK
-            };
-            let _ = receiver.recv_timeout(interval);
+            let _ = receiver.recv_timeout(FRAME_TICK);
         } else if receiver.recv().is_err() {
             break;
         }
@@ -100,7 +111,8 @@ impl Worker {
         if !video.control().frames.is_control_owner().unwrap_or(false) {
             return retiring;
         }
-        self.dirty
+        (!self.props.paused && !video.ended())
+            || self.dirty
             || self.pending_seek.is_some()
             || (self.frame.is_none() && !self.video_gap)
             || self
@@ -111,7 +123,6 @@ impl Worker {
                 .direct
                 .as_ref()
                 .is_some_and(|direct| direct.frames.holding().unwrap_or(false))
-            || (!self.props.paused && !video.ended())
     }
     fn event(&self, event: VideoEvent) {
         if !self.shared.stop.load(Ordering::Acquire) {
@@ -169,6 +180,16 @@ impl Worker {
         if let Some(request) = snapshot.3 {
             self.seek(request);
         }
+        let visible = self.shared.surface_visible.load(Ordering::Acquire);
+        if visible != self.surface_visible {
+            self.surface_visible = visible;
+            self.frame.take();
+            self.dirty = true;
+            if let Some(renderer) = &mut self.renderer {
+                renderer.visibility_changed();
+            }
+            log::debug!(target: "hongguo_nsh_video_apple::cadence", "sourceId={} surfaceVisible={visible} active={} paused={}", self.source_id(), self.props.active, self.props.paused);
+        }
         if !self.props.active
             || self
                 .video
@@ -188,7 +209,40 @@ impl Worker {
         if self.video_gap {
             return;
         }
+        if !self.shared.surface_visible.load(Ordering::Acquire) {
+            self.layers.set_visible(false);
+            self.frame.take();
+            if let Some((generation, serial)) = self.direct.as_ref().and_then(|direct| {
+                direct
+                    .native
+                    .as_ref()
+                    .map(|frame| (frame.generation, frame.serial))
+                    .or_else(|| {
+                        direct
+                            .pixels
+                            .as_ref()
+                            .map(|frame| (frame.generation, frame.serial))
+                    })
+            }) {
+                self.present_direct(generation, serial);
+            }
+            return;
+        }
+        if self.shared.display_clock_active.load(Ordering::Acquire)
+            && self.last_draw_deadline == self.shared.display_deadline.load(Ordering::Acquire)
+        {
+            return;
+        }
         self.prepare_direct();
+        if self
+            .direct
+            .as_ref()
+            .is_some_and(|direct| direct.waiting_presentation)
+            && (!self.shared.display_clock_active.load(Ordering::Acquire)
+                || self.last_draw_deadline != self.shared.display_deadline.load(Ordering::Acquire))
+        {
+            self.dirty = true;
+        }
         if self.dirty && self.frame.is_some() {
             self.draw();
         }
@@ -199,6 +253,10 @@ impl Worker {
         let changed_active = self.props.active != props.active;
         let changed_mode = self.props.enhancement.anime4k_on != props.enhancement.anime4k_on
             || self.props.enhancement.sharpen_on != props.enhancement.sharpen_on;
+        let changed_target = self.viewport.color_target() != viewport.color_target();
+        if changed_mode || changed_target {
+            self.frame.take();
+        }
         if changed_mode {
             self.budget = FrameBudget::default();
         }
@@ -368,16 +426,12 @@ impl Worker {
             return;
         };
         let completed = renderer.poll();
+        if let Some(cadence) = renderer.take_cadence() {
+            log::debug!(target: "hongguo_nsh_video_apple::cadence", "sourceId={} visible={} paused={} rate={} submittedFps={:.1} completedFps={:.1} presentedFps={:.1} maxPresentationGapMs={:.1} gpuAllocatedBytes={:?}", self.source_id(), self.shared.surface_visible.load(Ordering::Acquire), self.props.paused, self.props.rate, cadence.submitted_fps, cadence.completed_fps, cadence.presented_fps, cadence.max_gap_ms, cadence.gpu_bytes);
+        }
         match completed {
-            Ok(Some(completed)) if completed.epoch == self.revision => {
-                if !completed.displayed {
-                    if let Some(direct) = &mut self.direct {
-                        direct.submitted = None;
-                    }
-                    self.dirty = true;
-                    return;
-                }
-                self.present_direct();
+            Ok(Some(completed)) if completed.submission.epoch == self.revision => {
+                self.present_direct(completed.submission.generation, completed.submission.serial);
                 if self.video.is_none() {
                     return;
                 }
@@ -408,8 +462,14 @@ impl Worker {
         let Some(video) = &self.video else {
             return;
         };
+        let Some(position) = video.position() else {
+            if let Err(error) = video.ready() {
+                self.direct_failure(error);
+            }
+            return;
+        };
         let source_id = self.source_id();
-        let gap = video.video_gap();
+        let gap = position.video_gap;
         if gap {
             self.layers.set_visible(false);
             self.frame.take();
@@ -422,7 +482,7 @@ impl Worker {
             }
         }
         self.video_gap = gap;
-        let duration_ms = video.duration_ms();
+        let duration_ms = Some((position.duration_secs.max(0.0) * 1000.0).round() as u64);
         if self.last_metadata.is_none()
             && let Ok(Some(info)) = video.control().frames.info()
         {
@@ -445,16 +505,12 @@ impl Worker {
                 height,
             });
         }
-        if video.take_ended() {
+        if video.take_ended(position.ended) {
             self.event(VideoEvent::End {
                 source_id: source_id.clone(),
             });
         }
-        let buffering = video.buffering()
-            || self
-                .direct
-                .as_ref()
-                .is_some_and(|direct| direct.frames.holding().unwrap_or(true));
+        let buffering = position.buffering;
         if buffering != self.buffered {
             self.buffered = buffering;
             self.event(VideoEvent::Buffer {
@@ -466,26 +522,36 @@ impl Worker {
             >= Duration::from_millis(u64::from(self.props.progress_interval_ms))
         {
             self.progress_at = Instant::now();
-            if let Some(position_ms) = video.position_ms() {
-                self.event(VideoEvent::Progress {
-                    source_id: source_id.clone(),
-                    position_ms,
-                    duration_ms,
-                });
-            }
+            self.event(VideoEvent::Progress {
+                source_id: source_id.clone(),
+                position_ms: (position.position_secs.max(0.0) * 1000.0).round() as u64,
+                duration_ms,
+            });
         }
         if !gap {
-            self.read_direct();
+            self.read_direct(position);
         }
     }
 
     fn draw(&mut self) {
-        // Hidden Metal layers can finish GPU work without displaying the drawable.
-        // Reveal before acquisition; the audio gate waits for native presentation.
+        // Acquire only after making the active child layer visible.
         self.layers.set_visible(self.props.active);
         let frame = self.frame.as_ref().expect("caller checked current frame");
         let shared = self.shared.clone();
         let revision = self.revision;
+        let display_deadline = f64::from_bits(self.shared.display_deadline.load(Ordering::Acquire));
+        let direct = self.direct.as_ref().expect("direct source");
+        let (generation, serial) = direct
+            .native
+            .as_ref()
+            .map(|frame| (frame.generation, frame.serial))
+            .or_else(|| {
+                direct
+                    .pixels
+                    .as_ref()
+                    .map(|frame| (frame.generation, frame.serial))
+            })
+            .expect("current frame has a source identity");
         let valid = move || {
             !shared.stop.load(Ordering::Acquire)
                 && shared
@@ -504,24 +570,18 @@ impl Worker {
                     self.viewport,
                     self.props.enhancement,
                     self.props.resize_mode,
-                    revision,
+                    Submission {
+                        epoch: revision,
+                        generation,
+                        serial,
+                        display_deadline,
+                    },
                     valid,
                 ),
         );
         match result {
             Ok(true) => {
-                if let Some(direct) = &mut self.direct {
-                    direct.submitted = direct
-                        .native
-                        .as_ref()
-                        .map(|frame| (frame.generation, frame.serial))
-                        .or_else(|| {
-                            direct
-                                .pixels
-                                .as_ref()
-                                .map(|frame| (frame.generation, frame.serial))
-                        });
-                }
+                self.last_draw_deadline = display_deadline.to_bits();
                 self.dirty = false;
             }
             Ok(false) => {}

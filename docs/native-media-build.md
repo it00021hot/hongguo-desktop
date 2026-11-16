@@ -105,3 +105,15 @@ Windows 原生维护构建在 MSVC 开发环境运行；macOS 交叉构建使用
 导出只接受通过源码完整性和真实对象检查的两个组件，生成确定性归档及来源锁。
 修改源、ABI 或目标参数后重新生成 SDK；所有库的许可证和构建材料一并更新。
 当前六目标归档已随仓库提供，旧的未发布 FFmpeg SDK 不参与默认构建或分发。
+
+ARM Mac 单目标维护可从本机 Release 源码构建导出 VVdeC，并复用认证 SDK 中未变的 HEVC：
+
+```sh
+cargo build -p hongguo-vvdec-sys --release --features source-build --message-format=json
+node scripts/native-sdk-package.mjs aarch64-apple-darwin <build-script-out_dir>
+```
+
+使用该次构建 JSON 消息中 `hongguo-vvdec-sys` 的 `out_dir`。导出器校验源清单、
+Release 配置、apple-m1 CPU 基线及 malloc zone 分配器补丁，干净重建后逐对象检查
+架构、平台与最低系统版本。补丁仅作用于构建目录中的源码副本，并随 SDK 和应用通知分发。
+日常启动和打包继续使用归档，不触发维护构建。

@@ -7,6 +7,9 @@ export AR_aarch64_apple_darwin := C:/PROGRA~1/LLVM/bin/llvm-ar.exe
 export CC_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang.exe
 export CXX_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang++.exe
 export AR_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/llvm-ar.exe
+else ifeq ($(shell uname -s),Darwin)
+export VVDEC_BUSY_WAIT_TIME_MIN := 0
+export VVDEC_BUSY_WAIT_TIME_MAX := 0
 endif
 
 help:

@@ -61,6 +61,7 @@ pub(crate) struct Shared {
     pub stopped: AtomicBool,
     pub control: Mutex<Option<(String, crate::control::PlaybackControl)>>,
     pub display_clock_active: AtomicBool,
+    pub surface_visible: AtomicBool,
     pub display_deadline: AtomicU64,
     pub preferred_frame_rate: AtomicU32,
 }
@@ -123,6 +124,11 @@ impl PlayerController {
     pub fn preferred_frame_rate(&self) -> u32 {
         self.shared.preferred_frame_rate.load(Ordering::Acquire)
     }
+    pub fn set_surface_visible(&self, visible: bool) {
+        if self.shared.surface_visible.swap(visible, Ordering::AcqRel) != visible {
+            let _ = self.wake.try_send(());
+        }
+    }
     pub fn display_tick(&self, deadline: f64) -> Result<(), OutputError> {
         self.shared
             .display_deadline
@@ -145,16 +151,24 @@ impl PlayerController {
             stopped: AtomicBool::new(false),
             control: Mutex::new(None),
             display_clock_active: AtomicBool::new(false),
+            surface_visible: AtomicBool::new(true),
             display_deadline: AtomicU64::new(0),
             preferred_frame_rate: AtomicU32::new(0),
         });
         let (wake, receiver) = std::sync::mpsc::sync_channel(1);
+        let completion_wake = wake.clone();
         let worker = shared.clone();
         let layers = Layers { metal };
         std::thread::Builder::new()
             .name("hongguo-pixel-video".into())
             .spawn(move || {
-                crate::worker::run(worker.clone(), layers, receiver, Arc::new(emit));
+                crate::worker::run(
+                    worker.clone(),
+                    layers,
+                    receiver,
+                    completion_wake,
+                    Arc::new(emit),
+                );
                 worker.stopped.store(true, Ordering::Release);
             })
             .map_err(|error| OutputError::new(ErrorCode::DecoderUnavailable, error.to_string()))?;

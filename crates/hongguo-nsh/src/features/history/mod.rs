@@ -66,7 +66,10 @@ fn content(
         let state = session.with(|session| session.clone());
         let id = item.id.clone();
         let episode = item.episode;
-        let at = item.position_ms.max(0) as f64 / 1000.0;
+        let at = hongguo_common::model::playback::resume_position(
+            item.position_ms.max(0) as f64 / 1000.0,
+            item.duration_ms.max(0) as f64 / 1000.0,
+        );
         let identity = session.identity();
         spawn(async move {
             let outcome =

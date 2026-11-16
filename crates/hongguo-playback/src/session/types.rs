@@ -38,8 +38,7 @@ impl Default for SessionConfig {
             video_queue_frames: 48,
             video_queue_bytes: 64 * 1024 * 1024,
             video_ahead_secs: 0.25,
-            decoder_threads: std::thread::available_parallelism()
-                .map_or(1, |count| count.get().min(4) as u32),
+            decoder_threads: crate::budget::available_threads() as u32,
             rate: 1.0,
             recovery: RecoveryLimits {
                 attempts: 2,

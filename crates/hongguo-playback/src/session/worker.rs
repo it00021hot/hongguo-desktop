@@ -31,6 +31,24 @@ pub(super) fn run(shared: &Shared) -> AppResult<()> {
         if state.closed {
             return Ok(());
         }
+        if state.epoch == 1
+            && index.duration_secs > 0.0
+            && state.target > 0.0
+            && state.target >= index.duration_secs
+        {
+            log::debug!(
+                target: "hongguo_playback::decoder",
+                "restarting completed entry targetSeconds={} durationSeconds={}",
+                state.target,
+                index.duration_secs
+            );
+            state.target = 0.0;
+            state.position = 0.0;
+            state.silent.seek(0.0, Instant::now())?;
+            if let Some(clock) = &state.clock {
+                clock.seek(0.0).map_err(AppError::Media)?;
+            }
+        }
         state.index = Some(index.clone());
         shared.changed.notify_all();
     }
@@ -152,8 +170,16 @@ fn decode(shared: &Shared, job: &Job) -> Result<(), Failure> {
             )?);
             let time = track.samples[sample_index].pts;
             if decoder.is_none() {
-                let (selected, unavailable) =
+                log::debug!(
+                    target: "hongguo_playback::decoder",
+                    "starting epoch={} targetSeconds={} sample={}",
+                    job.epoch,
+                    job.target,
+                    sample_index
+                );
+                let (mut selected, unavailable) =
                     Decoder::new(track, permit.threads(), device, &packet, &job.cancel)?;
+                selected.discard_preroll(track, target)?;
                 decoder = Some(selected);
                 if unavailable {
                     device = None;
@@ -178,11 +204,9 @@ fn decode(shared: &Shared, job: &Job) -> Result<(), Failure> {
             }
         }
         if !complete && let Some(mut decoder) = decoder {
-            for frame in decoder.drain()? {
-                if !publish(shared, job, track, segment, frame)? {
-                    break;
-                }
-            }
+            decoder.drain(|frame| {
+                publish(shared, job, track, segment, frame).map_err(Failure::from)
+            })?;
         }
     }
     Ok(())

@@ -118,6 +118,10 @@ pub(super) fn geometry(height: f32, font_scale: f32, area: f32) -> (f32, usize) 
     let font = ((height / 30.0).clamp(15.0, 22.0) * font_scale)
         .round()
         .max(10.0);
-    let lanes = ((height * area) / (font + 10.0)).floor().max(4.0) as usize;
+    let lanes = ((height * area) / lane_height(font)).floor().max(4.0) as usize;
     (font, lanes)
+}
+
+pub(super) fn lane_height(font: f32) -> f32 {
+    (font * crate::features::emoji::presentation::emoji::DANMAKU_LINE_HEIGHT).max(font + 10.0)
 }

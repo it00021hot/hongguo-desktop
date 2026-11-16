@@ -3,9 +3,11 @@ use std::sync::Arc;
 pub mod codec;
 mod decoder;
 pub mod encoding;
+mod frame_buffer;
 mod hdr;
 mod presentation;
 pub use decoder::{DecodedVideoFrame, HevcDecoderConfig, VideoDecoder};
+pub use frame_buffer::{FrameBufferPool, FrameBytes};
 pub use presentation::{
     DecodeDevice, FrameDescriptor, FrameImage, HardwareFrame, HardwareHandle, HardwareKind,
     PresentationFrame,
@@ -30,7 +32,7 @@ pub struct CropRect {
 #[derive(Clone, Debug)]
 pub struct NativePlane {
     /// Unsigned samples, little endian when bytes_per_sample is two.
-    pub data: Arc<[u8]>,
+    pub data: Arc<FrameBytes>,
     pub stride: usize,
     pub width: usize,
     pub height: usize,

@@ -22,6 +22,7 @@
     "infoPlist": {
       "LSMinimumSystemVersion": "14.0",
       "LSApplicationCategoryType": "public.app-category.video",
+      "LSEnvironment": { "VVDEC_BUSY_WAIT_TIME_MIN": "0", "VVDEC_BUSY_WAIT_TIME_MAX": "0" },
       "NSAppTransportSecurity": {
         "NSExceptionDomains": { "127.0.0.1": { "NSExceptionAllowsInsecureHTTPLoads": true } }
       }

@@ -53,12 +53,24 @@
       "source": {
         "version": "3.2.1",
         "sha256": "5c334557a33cd93e981b84ba0e77126ef970a38e2481b67f0475db40f75379b8",
-        "vendoredTreeSha256": "83fc81e145afc9a733dd072786cc0c4cb6fbc1949a65c0cd93c2209afce4bb95"
+        "vendoredTreeSha256": "83fc81e145afc9a733dd072786cc0c4cb6fbc1949a65c0cd93c2209afce4bb95",
+        "patches": [
+          {
+            "path": "picture-pool.cmake",
+            "sha256": "0d109bbf953599f00680f087ba2449edc09d24871fb71f50a8de2e1b3ce26d72",
+            "byteLength": 314
+          },
+          {
+            "path": "private-frame-allocator.patch",
+            "sha256": "deb9718f3ddd4744f79ef7e70055e00536f10887c324cf594d95c9201865dfcc",
+            "byteLength": 653
+          }
+        ]
       },
       "build": {
-        "provenance": "existing-cmake-output",
-        "cmakeCacheSha256": "e00e0f6374e023dd5c51380356df8c779bbc9049bcb37349dd2a980f75e49a9a",
-        "flagsSha256": "65af0dbc92165b853c370223929c5901ecd8550ade15badcccec78df971b695a",
+        "provenance": "cargo-source-build",
+        "cmakeCacheSha256": "05a783df3242862a6c09649da293d0a8c13fc93dfb3def48568b90b253d553d2",
+        "flagsSha256": "07ce962056fd17a73be70b581b2bf2f35b4848a0c0e02c188209dd804b63bc26",
         "inspectionPath": "build-info/library-inspection.json"
       },
       "target": {
@@ -68,12 +80,12 @@
         "minimumOs": "11.0",
         "crt": "system",
         "cxxRuntime": "libc++",
-        "cpuBaseline": "armv8-a",
+        "cpuBaseline": "apple-m1",
         "cppAbi": "itanium"
       }
     }
   },
-  "recipeSha256": "a11a831f4af8b0ee9a2589083fa852f6337b06ccf8cafe262856e9c6442d550a",
+  "recipeSha256": "0c4ccf2f61f35162f76e2cd20b2d0b25b9cac2b2e4928a7611e9208f91910e72",
   "components": {
     "hevc": {
       "version": "1.1.3",
@@ -159,23 +171,28 @@
     },
     {
       "path": "vvdec-3.2.1/build-info/CMakeCache.txt",
-      "sha256": "e00e0f6374e023dd5c51380356df8c779bbc9049bcb37349dd2a980f75e49a9a",
-      "byteLength": 23005
+      "sha256": "05a783df3242862a6c09649da293d0a8c13fc93dfb3def48568b90b253d553d2",
+      "byteLength": 23215
     },
     {
       "path": "vvdec-3.2.1/build-info/compiler-configuration.txt",
-      "sha256": "65af0dbc92165b853c370223929c5901ecd8550ade15badcccec78df971b695a",
-      "byteLength": 2172
+      "sha256": "07ce962056fd17a73be70b581b2bf2f35b4848a0c0e02c188209dd804b63bc26",
+      "byteLength": 2159
     },
     {
       "path": "vvdec-3.2.1/build-info/library-inspection.json",
-      "sha256": "3d64f465eb05e470019665792fe6902b4a4c025b6d5923eea46dfa902f6eb2f0",
-      "byteLength": 527
+      "sha256": "75f3ab1e474081dee6c175bca2a547a9dbe0443acceb720f437d133a4b21a263",
+      "byteLength": 542
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/PicListManager.cpp",
+      "sha256": "2803e6ea0b00118eccc9a29833bbda2ad1f55147696af89b38c8f529e3f26828",
+      "byteLength": 13166
     },
     {
       "path": "vvdec-3.2.1/build-info/source-inventory.json",
-      "sha256": "0432d651ea7c188e599befa6875d92b6328bb4249ee60ae241c8bc3413f4551d",
-      "byteLength": 127181
+      "sha256": "6c157904f53165f3b7ab2978cc049e941f0e7fae4a10317ee1d79c222fc0513d",
+      "byteLength": 119850
     },
     {
       "path": "vvdec-3.2.1/include/vvdec/sei.h",
@@ -199,8 +216,8 @@
     },
     {
       "path": "vvdec-3.2.1/lib/libvvdec.a",
-      "sha256": "53bcf89f94d0c48541ee1e68d9dd111d56babc8f7e2a902a4f542076bc76c1e4",
-      "byteLength": 5081440
+      "sha256": "f47c1d92788641abc3ef33d57d7d1848b12b41cb6f3993b130cfc034dad8110b",
+      "byteLength": 5080720
     },
     {
       "path": "vvdec-3.2.1/licenses/AUTHORS.md",
@@ -213,19 +230,24 @@
       "byteLength": 1768
     },
     {
-      "path": "vvdec-3.2.1/licenses/SIMDe-COPYING",
-      "sha256": "75ce0a8c5a7bff42fbd6f8f3b469b518132132c4f4948fb8d02b1ccb5d0df9d8",
-      "byteLength": 1077
+      "path": "vvdec-3.2.1/manifest.json",
+      "sha256": "d1fad787848eeb5f238c7692887921159c6031621ffdf6ce5aaa8627e9dfc7a8",
+      "byteLength": 3851
     },
     {
-      "path": "vvdec-3.2.1/manifest.json",
-      "sha256": "3fb8e802d1c4d3518bfefde401c79342a2dd1f6809e5d1b6dc326a498a6e5bf5",
-      "byteLength": 3136
+      "path": "vvdec-3.2.1/patches/picture-pool.cmake",
+      "sha256": "0d109bbf953599f00680f087ba2449edc09d24871fb71f50a8de2e1b3ce26d72",
+      "byteLength": 314
+    },
+    {
+      "path": "vvdec-3.2.1/patches/private-frame-allocator.patch",
+      "sha256": "deb9718f3ddd4744f79ef7e70055e00536f10887c324cf594d95c9201865dfcc",
+      "byteLength": 653
     },
     {
       "path": "vvdec-3.2.1/SOURCE.md",
-      "sha256": "f9194bcd064406eb57a2eff237a3b265a8815873aa5ae207f31a5112e0929ff1",
-      "byteLength": 1250
+      "sha256": "e0053960233ce9439c6d8c05727d33282b8eb3e5f4dd942f01ddc81e19f07c20",
+      "byteLength": 2163
     }
   ]
 }

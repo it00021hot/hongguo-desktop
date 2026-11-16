@@ -346,11 +346,10 @@ impl StreamCache {
         Some((prog.sparse.clone(), prog))
     }
 
-    /// 缓存状态：(条目数, 已缓存字节)。字节口径只含整集模式的明文缓冲，渐进条目的
-    /// 稀疏内存不计入（统计偏小）；当前唯一生产消费方只读条目数，够用。
+    /// Cache entries and their resident payload/plan byte cost, matching eviction accounting.
     pub fn status(&self) -> (usize, u64) {
         let guard = self.entries.lock();
-        let bytes: u64 = guard.values().map(|e| *e.filled.lock()).sum();
+        let bytes: u64 = guard.values().map(|entry| entry_weight(entry)).sum();
         (guard.len(), bytes)
     }
 

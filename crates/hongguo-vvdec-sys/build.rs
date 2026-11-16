@@ -1,4 +1,6 @@
-use std::{env, path::PathBuf};
+use std::env;
+#[cfg(not(feature = "source-build"))]
+use std::path::PathBuf;
 
 #[path = "../../scripts/native-cxx-build.rs"]
 mod native_cxx;

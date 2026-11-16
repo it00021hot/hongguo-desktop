@@ -1,5 +1,6 @@
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,11 +14,12 @@ import { codecTargets, hevcSource } from './native-codec-build.mjs';
 import { sdkTarget, vvdecTarget, validateBuildEvidence } from './native-codec-evidence.mjs';
 import { archiveSdk, digest, inventorySdk, jsonDigest, writeJson } from './native-codec-io.mjs';
 import { stageHevc, stageVvdec, vvdecSource } from './native-codec-export.mjs';
+import { verifyNativeSdk } from './native-sdk.mjs';
 
 const sdkVersion = 'native-codecs-v2-20261114';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-function packageSdk(triple, outputDirectory = join(repository, 'vendor/native-codecs')) {
+function packageSdk(triple, outputDirectory = join(repository, 'vendor/native-codecs'), build) {
   const target = sdkTarget(triple);
   mkdirSync(outputDirectory, { recursive: true });
   const work = mkdtempSync(join(outputDirectory, '.codec-sdk-stage-'));
@@ -26,8 +28,20 @@ function packageSdk(triple, outputDirectory = join(repository, 'vendor/native-co
     mkdirSync(destination);
     const hevcDirectory = 'libde265-' + hevcSource.version;
     const vvdecDirectory = 'vvdec-' + vvdecSource.version;
-    const hevc = stageHevc(repository, join(destination, hevcDirectory), target);
-    const vvdec = stageVvdec(repository, join(destination, vvdecDirectory), target);
+    const previous = build
+      ? verifyNativeSdk(triple, join(repository, 'target/native-media', triple))
+      : undefined;
+    let hevc;
+    if (previous) {
+      cpSync(previous.prefix, join(destination, hevcDirectory), {
+        recursive: true,
+        verbatimSymlinks: true,
+      });
+      hevc = previous.manifest.recipe.hevc;
+    } else {
+      hevc = stageHevc(repository, join(destination, hevcDirectory), target);
+    }
+    const vvdec = stageVvdec(repository, join(destination, vvdecDirectory), target, build);
     const recipe = {
       target,
       hevc: { source: hevcSource, build: hevc.build },
@@ -82,6 +96,9 @@ function packageSdk(triple, outputDirectory = join(repository, 'vendor/native-co
 
 function main() {
   const selection = process.argv[2] ?? 'all';
+  const build = process.argv[3];
+  if (build && selection === 'all')
+    throw new Error('A VVdeC build prefix requires one native target');
   const selected = selection === 'all' ? Object.keys(codecTargets) : [selection];
   const lockPath = join(repository, 'scripts/native-sdk.sources.json');
   const previous =
@@ -91,7 +108,8 @@ function main() {
   if (previous && previous.sdkVersion !== sdkVersion)
     throw new Error('Re-export all codec SDK targets when changing SDK versions');
   const targets = previous?.targets ?? {};
-  for (const triple of selected) targets[triple] = packageSdk(triple);
+  for (const triple of selected)
+    targets[triple] = packageSdk(triple, undefined, build && resolve(build));
   writeJson(lockPath, { schemaVersion: 1, sdkVersion, distribution: 'vendored', targets });
 }
 

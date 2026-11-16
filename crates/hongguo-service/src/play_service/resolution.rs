@@ -1,5 +1,4 @@
 //! 官方 rx4.q 选档的有状态部分：手选作用域、模型缓存命中和服务端规则存活期。
-use std::collections::HashMap;
 use std::time::Instant;
 
 use chrono::{Local, Timelike};
@@ -12,7 +11,6 @@ use crate::app_state::AppState;
 
 #[derive(Default)]
 pub(crate) struct ResolutionState {
-    memory: Mutex<HashMap<String, u32>>,
     controller: Mutex<Controller>,
     pub(super) poller: OnceCell<()>,
 }
@@ -54,24 +52,12 @@ fn remember_with_rules(
     value: Option<u32>,
 ) -> AppResult<()> {
     let scope = scope(rules, series);
-    if rules.series.single_progress {
-        let mut memory = state.playback_resolution.memory.lock();
-        if let Some(value) = value {
-            memory.insert(scope, value);
-        } else {
-            memory.remove(&scope);
-        }
-        Ok(())
-    } else {
-        state.store.save_playback_definition(&scope, value)
-    }
+    state.store.save_playback_definition(&scope, value)
 }
 
 fn preferred(state: &AppState, rules: &Rules, series: &str) -> AppResult<Option<u32>> {
     let scope = scope(rules, series);
-    if rules.series.single_progress {
-        Ok(state.playback_resolution.memory.lock().get(&scope).copied())
-    } else if rules.series.show {
+    if rules.series.single_progress || rules.series.show {
         state.store.playback_definition(&scope)
     } else {
         Ok(None)

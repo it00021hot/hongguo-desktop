@@ -24,6 +24,9 @@ impl PlaybackSession {
             .index
             .as_ref()
             .map_or(position, |index| position.min(index.duration_secs));
+        if !state.presented && (target * 1000.0).round() == (state.target * 1000.0).round() {
+            return Ok(state.epoch);
+        }
         self.shared.restart(&mut state, target)?;
         Ok(state.epoch)
     }

@@ -25,6 +25,7 @@ pub(super) async fn prepare(
     episode: u32,
     definition: Option<u32>,
     reset_definition: bool,
+    start_position: Option<f64>,
 ) -> AppResult<Playback> {
     let downloaded = session
         .state
@@ -96,13 +97,17 @@ pub(super) async fn prepare(
         session
             .personal
             .take_position(&session.state, &history.series_id, episode)?;
+    let resume_at = start_position.unwrap_or(if response.resume_at > 0.0 {
+        response.resume_at
+    } else {
+        cloud_resume
+    });
+    lease
+        .prepare_codec_extension(resume_at)
+        .map_err(AppError::Media)?;
     Ok(Playback {
         lease,
-        resume_at: if response.resume_at > 0.0 {
-            response.resume_at
-        } else {
-            cloud_resume
-        },
+        resume_at,
         history,
         next_episode,
         definitions: response.definitions,

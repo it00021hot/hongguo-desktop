@@ -274,7 +274,7 @@ function stage() {
       );
     const triple = desktopTriple(
       target,
-      arch === 'x86_64' ? 'x64' : arch === 'arm64' ? 'arm64' : process.arch,
+      target === 'windows' || arch === 'x86_64' ? 'x64' : arch === 'arm64' ? 'arm64' : process.arch,
     );
     copyDesktopMedia(prepareNativeMedia(triple), triple, destination);
     if (target === 'windows') {

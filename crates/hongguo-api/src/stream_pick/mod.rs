@@ -218,6 +218,14 @@ fn best_in(
         if target.is_some_and(|t| score.def_num != t) {
             continue;
         }
+        log::debug!(
+            target: "hongguo_api::stream_pick",
+            "candidate requestedDefinition={target:?} definition={} pixels={} codec={} bitrate={}",
+            score.def_num,
+            score.pixels,
+            codec_of(v),
+            score.bitrate
+        );
         if best.as_ref().is_none_or(|(b, _)| score > *b) {
             best = Some((score, v));
         }
@@ -235,6 +243,14 @@ pub fn pick_stream_at(
     let list = model.get("video_list")?.as_array()?;
     let chosen = best_in(list, cap, target).or_else(|| best_in(list, cap, None));
     let (score, v) = chosen?;
+    log::debug!(
+        target: "hongguo_api::stream_pick",
+        "selected requestedDefinition={target:?} definition={} pixels={} codec={} bitrate={}",
+        score.def_num,
+        score.pixels,
+        codec_of(v),
+        score.bitrate
+    );
     Some(PlayStream {
         url: v.get("main_url")?.as_str()?.to_string(),
         file_hash: v

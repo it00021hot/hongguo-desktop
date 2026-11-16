@@ -405,3 +405,209 @@ English: FFmpeg removal, authenticated vendored codecs, targeted tests and real 
 Native HTTP audio controls and one complete ByteVC2 decode sample passed on this Mac.
 Synthetic native-window presentation, pause, seek, resize and cadence-switch regressions passed.
 Online long-run A/V synchronization, drops, all source variants, HDR and energy remain separate gates.
+
+## 2026-11-16 macOS 在线 2 倍速、切集与内存复验
+
+以下为早期方案的历史采样。后续用户复现了画面停住及切集高占用，
+因此这些区间数据不能作为最终稳定性结论；当前实现与待验收项见本节末尾。
+
+Apple Silicon / macOS 27.0.1，release 独立包及独立 `GUAVA_DATA_DIR`。
+先播放《重生1988，从做倒爷开始起家》，随后换为《和离后我带女儿横扫魔域》，
+以 2 倍速覆盖 ByteVC2 与普通 HEVC、自动下一集、手动选集、前后跳转和暂停恢复。
+性能采样期间关闭 malloc 堆栈记录，不运行编译或 `leaks`；泄漏扫描只在暂停时执行。
+
+- 原生 Metal 呈现原先等上一帧的 GPU 完成和上屏回执后才能提交下一帧。
+  本机显示回调约 10ms，GPU 中位约 1.7ms，但上屏回执通常要约 20ms；
+  同一第 2 集从 5.0 到 218.47 秒的 2 倍速采样，确认呈现 3,566 帧、序号缺口 2,839 帧。
+- 改为与 Metal drawable 数量一致的最多两帧在途，完成回调唤醒所属工作线程。
+  每次提交独立保存 epoch、generation、serial、GPU 完成和上屏回执；
+  GPU 未完成时仍持有原生帧租约，不并发复用转换/增强资源。
+- 修正后，同一片源 5.0–172.53 秒连续确认 5,027 帧，序号无缺口；
+  后退跳转后的 60.0–136.77 秒另确认 2,304 帧，序号无缺口。
+  前一稳定区间呈现回执处理时的音频时钟减视频 PTS，P95 为 53ms 媒体时间，
+  按 2 倍速折算约 26.5ms 墙钟时间，包含回执投递延迟，不能解释为声学测量。
+- 暂停保持、恢复、跳至约 188 秒再退回 60 秒均恢复实际画面。
+  暂停恢复边缘另记到两处序号缺口，其中一处提交的旧 revision 回执被隔离；
+  不将这轮交互全过程宣称为绝对零丢帧。
+- 在 2 倍速下，第 2→26 集连续 24 次前向切集，再连续 8 次返回第 18 集，
+  随后自动连播至第 20 集，未观察到崩溃、持续黑屏或旧代次接管。
+  本轮普通 AVPlayer 的关闭摘要均为 `dropped=0、stalls=0`，其中最长单段观看约 70 秒。
+- 数据库原先 `mem::forget(Database)` 留下进程期泄漏，改为由 `Db` 持有并随克隆生命周期释放。
+  修改前扫描为 802 项 / 76,240 字节；修改后切集前后均为 416 项 / 19,936 字节，
+  剩余根均为系统 AppIntents 的 `LNDaemonApplicationInterface` / `com.apple.linkd.autoShortcut` XPC 环。
+  两次修正后扫描的物理 footprint 为 366.7MB、161.1MB，峰值 526.8MB，未见随切集累积的增长。
+  这不是“系统扫描零泄漏”或任意时长、全部内容无泄漏的证明。
+
+最终工作区构建、`cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes`、
+`nsh check`、Rust/Prettier 格式检查与 macOS release 打包通过。
+干净最终包再次实际启动，确认第 2 集、2 倍速、后退跳转后的持续出画；验证后关闭自建实例。
+
+证据位于 `target/mac-playback-20261116/`：`timing-playback.log`、`pipeline-playback.log`、
+对应 `*-metrics.json`、`leaks-fixed-before-switches.log`、`leaks-fixed-after-switches.log`。
+临时逐帧、时序及 AVPlayer access-log 诊断已从源码移除，vendor 恢复原样。
+Windows 未在本轮重新运行；HDR、增强全组合、其他显示刷新率与长时间驻留未穷尽。
+
+English: On this Mac, two bounded in-flight Metal presentations removed the sustained 2×
+ByteVC2 frame loss in the measured intervals. Switching, seeking and pause/resume were exercised
+on isolated data; two pause/resume boundary gaps remain recorded. Keeping the database owner
+eliminated the application leak root; the unchanged AppIntents XPC baseline remains disclosed.
+
+### 同日内存占用归因
+
+“未随切集持续增长”不代表峰值合理。再次使用干净 release 包采样，ByteVC2 播放的
+物理 footprint 为 405MB：Malloc Small/Large 合计约 302MB，图形与 IOSurface 约 69MB，
+CoreMedia HTTP Cache 约 15MB。切到普通 HEVC 后，活跃堆分配由约 263MB 降为 96MB，
+但堆仍有约 144MB 空闲/碎片页，不能把活跃分配和分配器驻留页混为一谈。
+
+另用带符号、开启 MallocStackLogging 的独立诊断包定位分配来源；不拿它测帧率或代表
+release 的绝对内存。ByteVC2 第 4 集暂停时，VVdeC `PelStorage::create` 的 69 块分配约
+112.3MB，CodingStructure 临时数据约 12.9MB，CodingUnit 缓存约 11.7MB，另有重建等缓冲；
+Rust ByteVC2 输出帧复制约 23.3MB。切回 HEVC 第 3 集后，同进程活跃堆由 267.7MB 降为
+88.1MB，以上 VVdeC/输出帧大项消失。生产 `video_queue_bytes=64MB` 只约束输出队列，
+不涵盖解码器内部参考帧、解析/重建数据、图形资源或系统 HTTP 缓冲。
+
+证据：`target/mac-memory-20261116/` 下的 `bytevc2-footprint.txt`、`bytevc2-vmmap.txt`、
+`hevc-vmmap.txt`、`bytevc2-heap-stacks.txt`、`hevc-profile-heap.txt` 及分配堆栈。
+本次仅做归因，没有调整解码并行、内存预算或分配器，也没有通过降低原流精度压缩占用。
+
+English: The peak is dominated by the ByteVC2 software decoder and copied output frames.
+Codec changes remove that live working set, while allocator-retained pages delay the footprint
+drop. The output queue's 64MB budget is not a whole-player memory limit; peak optimization
+remains separate from the leak check.
+
+### 同日后续修正与验证边界
+
+- Metal 提交容量只等待 GPU 完成；实际上屏反馈使用单个最新回执槽。
+  被系统跳过的 drawable 可能没有上屏回执，不能让该回执永久占据提交容量。
+  GPU 完成前仍保留原生帧租约，epoch/generation 隔离旧源回调。
+- 复用 YUV 上传、线性转换和输出纹理，保留原流精度；移除逐帧临时诊断。
+  短暂缺帧不再清除本代已经完成的首次呈现状态，避免恢复缓冲时互相等待。
+- macOS VVdeC 禁用工作线程忙等，720P 及以下使用解码线程内同步调度；
+  输出帧减少一次复制，原生参考帧由随解码器销毁的独立 malloc zone 管理。
+  原输出队列时间预算仍为 0.25 秒。曾尝试的参考帧延迟预分配方案没有稳定收益，已撤回。
+- ARM Mac 认证 SDK 采用 apple-m1 编译基线，记录外部分配器补丁与对象审计证据；
+  其他五个目标归档未改。原始第三方源码不直接修改。
+- 准备媒体时按最终断点创建解码器，避免先从零初始化再为同一断点重建。
+  已完成集保留历史记录，但重新进入时从零播放；本地、云端及历史入口使用相同规则。
+  实际媒体时长判定断点已到片尾时，也在初始化阶段归零，避免黑屏或自动跳过已看完的下一集。
+
+当前工作区的 workspace build、严格 Clippy、NSH check 和默认认证 SDK 的 macOS
+release 打包已通过。运行数据与偏好移回系统标准目录，只启动一个正常应用包，
+性能面板开启；用户操作播放控件，排查过程只读日志，不再自动反复选集。
+最终包由用户操作回到已完成的 323、324 集，日志均确认保存位置等于时长、实际从零创建
+解码器；随后 323 进入 324 时保留刚观看的新断点。用户反馈暂未再跳过。
+286→284→285 的原始路径未再次操作；此前仍出现过较高 CPU 和内存峰值，
+不能据构建通过宣称性能问题全部解决，也不能把界面 FPS 当作视频实际呈现帧率。
+
+### 切集设备重建与分配器驻留修正
+
+继续只读日志及进程采样，保持同一个数据目录和单实例，不操作播放控件。
+保留符号的相同优化级别 Release 包确认 VVdeC 使用 NEON，720P 同步解码的主要
+热点为运动补偿、重建及解析；Rust 输出帧复制占比远低于解码计算，没有再观察到工作线程忙等。
+默认 malloc zone 另有约 60MB 空闲/碎片页，原生参考帧 zone 切回普通视频后已消失。
+
+Apple 播放器现改为进程内共享一份 Metal/WGPU 设备、队列和三条基础色彩/呈现管线。
+缓存容量为一，初始化通过条件变量合并；设备错误使这一份失效，下一次创建替换。
+每个呈现者仍独立拥有纹理、颜色参数、视口和回执，GPU 完成前继续持有原生帧。
+单个呈现者退休时不无条件销毁共享设备；确认退休失败才标记设备失效。
+曾在 VVdeC 关闭后尝试 macOS pressure relief；默认 zone 与全部 zone 均实际返回零释放，
+没有收益，已移除此调用。不减少活跃参考帧或输出缓冲，不改变选流、倍速和像素精度。
+
+相关模块和 workspace 严格 Clippy、NSH check、macOS Release 打包通过。
+新包已启动并沿原历史继续播放，性能面板保持开启；连续切集的运行效果另行记录。
+
+后续源码及符号采样确认：`Queue::write_texture` 为每个平面创建临时 staging buffer，
+三个平面在 2×30fps 时每秒可产生 180 次分配；这些写入在下一次 queue submit 前一直保留。
+Apple 路径现使用每个呈现者自有的 StagingBelt，按 GPU 完成、重新映射后的回执复用，
+行距按 GPU 要求对齐；提交前 finish，提交后 recall。丢弃未提交的转换时先释放命令引用再回收。
+取得可用 drawable 后才准备上传，避免无法呈现时继续积累未提交的平面写入。
+初始 chunk 为 4MB，较大平面按实际尺寸分配；每次只准备一个在途帧，不缓存历史帧。
+已通过 workspace 严格 Clippy、NSH check 和打包，沿第 380 集历史启动实际运行。
+
+第二次采样中平面上传不再经过 `Queue::write_texture` 创建临时缓冲；剩余同类分配来自
+每帧重复创建几何 uniform，以及重复写入相同宽高比。几何参数现按完整的 crop、旋转、
+色度布局键保留一份资源，参数变化时替换；呈现宽高比仅变化时更新，不按帧重复上传。
+
+CPU 平面数据由共享的 `FrameBytes` 持有；VVdeC 输出使用 `FrameBufferPool` 回收。
+仅最后一个 `Arc` 释放时归还数组，池只保留一帧像素数据量的空闲容量，按实际 capacity
+计费；池销毁后弱引用失效，尚未退休的帧正常释放，不延长解码器生命周期。
+HEVC 等未启用池的生产者仍使用普通拥有型数组。每个 VVdeC 源关闭时记录复用和新分配次数，
+不记录逐帧日志；GPU 完成前的原生帧租约规则不变。
+
+首轮三个源的输出池复用分别为 846/1122、3639/4830、3379/4740 次；空闲池均不超过
+1,382,400 字节。进一步改为按归还顺序淘汰旧空闲数组，避免小平面占满预算后大平面无法回池。
+同时移除 ByteVC2 片尾批量复制的临时帧列表，flush 每次只交付一帧到原有播放队列，
+继续执行同一时间与字节预算；保留原有最多 64 帧的异常流清空上限。
+
+### 显示时钟、后台播放与清晰度记忆
+
+清晰度在 `single_progress` 模式下原来只存进程内 HashMap，重启即丢失。
+现统一使用既有 `playback_definition` 存储，保留原作用域和显式选择自动时的删除语义。
+本机重启后的选流日志与界面均确认手选 720P，倍速仍为 2×；未直接修改用户数据库。
+
+原首帧音轨 hold 等待实际上屏回调，窗口被遮挡时系统可能不再发回该回调。
+现可见窗口在 GPU 完成后确认本代帧就绪，实际上屏回调只计呈现统计；不可见窗口
+消费已解码的当前帧确认就绪，不申请 drawable 或上传纹理。GPU 租约仍在完成前保留。
+macOS 监听窗口遮挡通知及视图隐藏状态，用户的后台暂停设置继续独立决定播放意图。
+运行记录捕捉到 `surfaceVisible=false active=true paused=false`，随后恢复可见继续播放；
+用户反馈暂未再自动暂停。此前单个最新上屏回执槽已移除，不再承担首帧门控。
+
+NSH 面板 FPS 统计界面表面刷新，不能代替视频实际呈现帧率。新增 debug 聚合日志每秒
+分别统计提交、GPU 完成、实际上屏和最大呈现间隔；不伪造隐藏期间的上屏帧。
+Metal 呈现使用显示时钟目标时间。首轮 2× 运行多数秒约 59–60fps，仍观察到 30–40ms
+间隔，线程采样期间另有 240ms 间隔；此时尚不能宣称无丢帧。进一步将同一显示周期
+限制为一次提交，避免 GPU 完成唤醒时在同一个 deadline 再次呈现。运行效果待独立记录。
+
+恢复历史时，VVdeC 保留全部参考解码，只跳过目标前不可能覆盖目标时间的输出像素复制。
+截止时间为目标减去当前轨道最长帧时长，保留覆盖目标的帧；过滤后的 flush 继续取下一
+原生帧，直到真正无输出或达到既有 64 帧上限，不能把被过滤的输出当作流结束。
+
+English: Manual resolution now uses the existing persistent preference store. Playback
+readiness is independent of onscreen presentation feedback, with real occlusion events
+observed while playback remained active. Actual video cadence is logged separately from
+the NSH UI FPS counter; occasional presentation gaps remain under investigation.
+
+### 压缩流缓冲与外部实现对照
+
+在线供数增加按样本解码时间计算的压缩数据储备：每轨约 5 秒实际观看时长，乘当前倍速，
+2× 对应约 10 秒源时长。等待只登记现有稀疏流的密文覆盖需求，不复制或提前解码这些帧。
+原有取消、替换与 30 秒读取超时继续生效，片尾以剩余样本为界；本地文件不经过该门槛。
+缓存的覆盖窗口带倍速键，改变倍速后重新计算，窗口锁不跨等待。
+普通 NSH Video 与专用帧播放器共用此供数路径；运行已确认 2× 读取储备生效，当前缓存
+命中时等待为零。未对用户网络施加限速，因此弱网反复缓冲的改善尚未完成受控验证。
+
+外部实现对照（2026-11-16，仅采用一手文档或源码）：
+
+| 来源 | 已确认机制 | 本项目适用结论 |
+| --- | --- | --- |
+| [IINA VideoView](https://github.com/iina/iina/blob/develop/iina/VideoView.swift) | 视频使用独立显示时钟，空闲时停止显示链 | UI FPS 不代表视频 FPS，不强制刷新静态 UI 来抬高计数 |
+| [mpv render API](https://github.com/mpv-player/mpv/blob/master/include/mpv/render.h) | 新帧通知、独立渲染线程、目标呈现时间、支持时直接呈现减少复制 | 当前独立线程与显示 deadline 保留；进一步优化须核对数据所有权与 GPU 完成边界 |
+| [mpv cache](https://mpv.io/manual/stable/#cache) / [GStreamer buffering](https://gstreamer.freedesktop.org/documentation/application-development/advanced/buffering.html) | 压缩数据按时长及字节限制缓存，耗尽后达到恢复门槛再播 | 网络储备和解码帧队列分开，不通过增加大量图像帧获得几秒缓冲 |
+| [Apple Metal command structure](https://developer.apple.com/documentation/metal/setting-up-a-command-structure) | 复用设备、队列、管线、纹理与缓冲 | 进程共享设备及有界资源复用符合该路线，单次 command buffer 不能当作持久资源重复使用 |
+| [Apple Metal memory](https://developer.apple.com/documentation/metal/reducing-the-memory-footprint-of-metal-apps) | 观察实际 GPU 分配及资源生命周期，分开判断缓存与泄漏 | vmmap、输出池计数、在线缓存数据面和 Metal currentAllocatedSize 分开记录 |
+
+本轮 vmmap 中一个 720P ByteVC2 活跃源的参考帧 zone 约 80.4MiB；图片缓存计数
+约 0.2MiB，不能把 300MiB 总占用全部归因于图片。在线缓存原 status 漏计渐进流，现与
+逐出策略使用同一数据面和解密计划权重。一次 5 秒 Metal System Trace 可采集完成，但
+导出的资源表为空，不能作为 GPU 分配归因证据；增加运行时实际分配计数补足这一缺口。
+
+English: Compressed stream coverage now reserves about five seconds of wall-clock playback,
+scaled by playback rate, without expanding decoded-frame queues. Normal cached playback is
+verified; controlled weak-network validation is outstanding. The external comparisons above
+guide the investigation and do not establish a same-content performance comparison.
+
+关闭增强时，Apple 路径将 YUV→工作色彩→显示色彩合为一次 compute，沿用同一套色彩
+函数及 RGBA16Float 输出，省去中间纹理和一次 dispatch。开启增强时仍在工作色彩中处理，
+显示目标或增强开关变化会使当前转换失效并重建，避免把已映射的纹理再次映射。
+实际 720P/2× ByteVC2 的 Metal 计数从 38,010,880 降为 30,408,704 字节，减少
+7,602,176 字节（20%）；多个后续源仍约 59–61fps。此为 GPU 分配分项对比，不能
+将不同集的 CPU 波动或总 footprint 变化全部归于该改动。用户随后要求内存优化先停在此处。
+
+后续 Windows 影响检查确认，原单会话线程上限为4、进程预算为8；先前把两者混为一谈的
+“Windows 从8降到4”判断不成立。用户随后要求不再固定线程上限，当前默认会话线程数及
+进程总预算均改为 `available_parallelism`，显式请求仍受同一进程预算约束；macOS 720P
+ByteVC2 的同步路径保留。线程数、可用量和授权量在启动解码时记录，不把线程增加直接
+当作性能提升证据。播放、Windows 呈现与共享 GPU 模块已做真实 Windows 目标类型检查；
+完整工作区交叉检查受 `turso_sdk_kit` 构建脚本要求 `rc.exe` 阻断，Windows 实机未复验。
+当前 macOS 单实例重启日志确认 `availableThreads=12 requestedThreads=12 grantedThreads=12`；
+720P ByteVC2 仍按既有同步策略使用 `workers=0`，2× 实际呈现窗口记录约60fps。

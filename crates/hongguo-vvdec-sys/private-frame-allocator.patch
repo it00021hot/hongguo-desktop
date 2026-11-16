@@ -1,0 +1,27 @@
+--- a/source/Lib/CommonLib/PicListManager.cpp
++++ b/source/Lib/CommonLib/PicListManager.cpp
+@@ -136,10 +136,3 @@
+ 
+   bool externAllocator = m_userAllocator.enabled;
+-  if ( externAllocator )
+-  {
+-    if (sps.getBitDepth() == 8 )
+-    {
+-      externAllocator = false;
+-    }
+-  }
+   UserAllocator* userAllocator = externAllocator ? &m_userAllocator : nullptr;
+@@ -168,5 +161,5 @@
+     }
+ 
+-    if ( externAllocator )
++    if ( externAllocator && sps.getBitDepth() != 8 )
+     {
+       pic->destroy();
+@@ -186,5 +179,5 @@
+     pcPic = pic;
+ 
+-    if ( externAllocator )
++    if ( externAllocator && sps.getBitDepth() != 8 )
+     {
+       return pcPic;

@@ -1,4 +1,6 @@
-use hongguo_media_types::{ChromaSampling, ColorMetadata, FrameDescriptor, NativeFrame};
+use hongguo_media_types::{
+    ChromaSampling, ColorMetadata, FrameDescriptor, NativeFrame, NativePlane,
+};
 use hongguo_video_color::{ColorTransform, DisplayTarget, LUT_HEIGHT, LUT_WIDTH};
 use std::{borrow::Cow, sync::Arc};
 
@@ -7,6 +9,7 @@ pub mod enhancement;
 const WORKGROUP: u32 = 8;
 const GEOMETRY_SIZE: u64 = 48;
 
+#[derive(Clone)]
 pub struct YuvInput {
     pub planes: [wgpu::Texture; 3],
     pub descriptor: FrameDescriptor,
@@ -22,22 +25,37 @@ struct ColorResources {
     lut: wgpu::Texture,
 }
 
+struct GeometryResources {
+    values: [f32; 12],
+    buffer: wgpu::Buffer,
+}
+
 pub struct YuvConverter {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
     pipeline: wgpu::ComputePipeline,
+    output_pipeline: wgpu::ComputePipeline,
     mapping: wgpu::ComputePipeline,
     color: Option<ColorResources>,
+    geometry: Option<GeometryResources>,
+}
+
+#[derive(Clone)]
+pub struct YuvPipelines {
+    conversion: wgpu::ComputePipeline,
+    output_conversion: wgpu::ComputePipeline,
+    mapping: wgpu::ComputePipeline,
 }
 
 pub struct ConvertedFrame {
     pub texture: wgpu::Texture,
     pub descriptor: FrameDescriptor,
+    pub output_mapped: bool,
     _input: YuvInput,
 }
 
-impl YuvConverter {
-    pub fn new(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Self {
+impl YuvPipelines {
+    pub fn new(device: &wgpu::Device) -> Self {
         let source = format!(
             "{}\n{}",
             hongguo_video_color::WGSL,
@@ -52,6 +70,14 @@ impl YuvConverter {
             layout: None,
             module: &module,
             entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let output_conversion = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("native-yuv-output"),
+            layout: None,
+            module: &module,
+            entry_point: Some("output"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -73,15 +99,79 @@ impl YuvConverter {
             cache: None,
         });
         Self {
+            conversion: pipeline,
+            output_conversion,
+            mapping,
+        }
+    }
+}
+
+impl YuvConverter {
+    pub fn new(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Self {
+        let pipelines = YuvPipelines::new(&device);
+        Self::with_pipelines(device, queue, pipelines)
+    }
+
+    pub fn with_pipelines(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        pipelines: YuvPipelines,
+    ) -> Self {
+        Self {
             device,
             queue,
-            pipeline,
-            mapping,
+            pipeline: pipelines.conversion,
+            output_pipeline: pipelines.output_conversion,
+            mapping: pipelines.mapping,
             color: None,
+            geometry: None,
         }
     }
 
     pub fn upload(&self, frame: &NativeFrame) -> Result<YuvInput, String> {
+        self.upload_reusing(frame, None)
+    }
+
+    /// Reuse only after all GPU reads of the previous input have completed.
+    pub fn upload_reusing(
+        &self,
+        frame: &NativeFrame,
+        previous: Option<YuvInput>,
+    ) -> Result<YuvInput, String> {
+        self.upload_with(frame, previous, |texture, plane| {
+            self.queue.write_texture(
+                texture.as_image_copy(),
+                &plane.data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(plane.stride as u32),
+                    rows_per_image: Some(plane.height as u32),
+                },
+                texture.size(),
+            );
+            Ok(())
+        })
+    }
+
+    /// Finish the belt before submission, then recall it after submission.
+    pub fn upload_staged(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        belt: &mut wgpu::util::StagingBelt,
+        frame: &NativeFrame,
+        previous: Option<YuvInput>,
+    ) -> Result<YuvInput, String> {
+        self.upload_with(frame, previous, |texture, plane| {
+            stage_plane(encoder, belt, texture, plane)
+        })
+    }
+
+    fn upload_with(
+        &self,
+        frame: &NativeFrame,
+        previous: Option<YuvInput>,
+        mut write: impl FnMut(&wgpu::Texture, &NativePlane) -> Result<(), String>,
+    ) -> Result<YuvInput, String> {
         let expected = if frame.chroma == ChromaSampling::Monochrome {
             1
         } else {
@@ -90,8 +180,9 @@ impl YuvConverter {
         if frame.planes.len() != expected {
             return Err("native frame plane count does not match chroma layout".into());
         }
+        let previous = previous.filter(|input| input.monochrome == (expected == 1));
         let mut planes = Vec::with_capacity(3);
-        for plane in &frame.planes {
+        for (index, plane) in frame.planes.iter().enumerate() {
             let bytes = usize::from(plane.bytes_per_sample);
             if !matches!(bytes, 1 | 2)
                 || plane.width == 0
@@ -112,23 +203,15 @@ impl YuvConverter {
             } else {
                 wgpu::TextureFormat::R16Uint
             };
-            let texture = texture(
+            let texture = reuse_texture(
                 &self.device,
+                previous.as_ref().map(|input| input.planes[index].clone()),
                 plane.width as u32,
                 plane.height as u32,
                 format,
                 "native-yuv-plane",
             );
-            self.queue.write_texture(
-                texture.as_image_copy(),
-                &plane.data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(plane.stride as u32),
-                    rows_per_image: Some(plane.height as u32),
-                },
-                texture.size(),
-            );
+            write(&texture, plane)?;
             planes.push(texture);
         }
         while planes.len() < 3 {
@@ -162,8 +245,40 @@ impl YuvConverter {
         input: YuvInput,
         target: DisplayTarget,
     ) -> Result<ConvertedFrame, String> {
+        self.convert_reusing(encoder, input, target, None)
+    }
+
+    /// Reuse only after all GPU reads of the previous output have completed.
+    pub fn convert_reusing(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        input: YuvInput,
+        target: DisplayTarget,
+        previous: Option<wgpu::Texture>,
+    ) -> Result<ConvertedFrame, String> {
+        self.convert_into(encoder, input, target, previous, false)
+    }
+
+    /// Reuse only after all GPU reads of the previous output have completed.
+    pub fn convert_output_reusing(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        input: YuvInput,
+        target: DisplayTarget,
+        previous: Option<wgpu::Texture>,
+    ) -> Result<ConvertedFrame, String> {
+        self.convert_into(encoder, input, target, previous, true)
+    }
+
+    fn convert_into(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        input: YuvInput,
+        target: DisplayTarget,
+        previous: Option<wgpu::Texture>,
+        output_mapped: bool,
+    ) -> Result<ConvertedFrame, String> {
         self.prepare_color(&input.descriptor, target)?;
-        let color = self.color.as_ref().expect("prepared color resources");
         let crop = input.descriptor.crop;
         let coded_width = input.descriptor.width;
         let coded_height = input.descriptor.height;
@@ -194,8 +309,9 @@ impl YuvConverter {
         {
             return Err("native frame exceeds the GPU texture limit".into());
         }
-        let output = texture(
+        let output = reuse_texture(
             &self.device,
+            previous,
             width as u32,
             height as u32,
             wgpu::TextureFormat::Rgba16Float,
@@ -216,17 +332,14 @@ impl YuvConverter {
             input.high_shift as f32,
             if input.monochrome { 1.0 } else { 0.0 },
         ];
-        let geometry = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("native-yuv-geometry"),
-            size: GEOMETRY_SIZE,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bytes = values
-            .into_iter()
-            .flat_map(f32::to_le_bytes)
-            .collect::<Vec<_>>();
-        self.queue.write_buffer(&geometry, 0, &bytes);
+        self.prepare_geometry(values);
+        let geometry = &self.geometry.as_ref().expect("prepared geometry").buffer;
+        let color = self.color.as_ref().expect("prepared color resources");
+        let pipeline = if output_mapped {
+            &self.output_pipeline
+        } else {
+            &self.pipeline
+        };
         let views = input
             .planes
             .each_ref()
@@ -235,7 +348,7 @@ impl YuvConverter {
         let destination = output.create_view(&Default::default());
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("native-yuv-color"),
-            layout: &self.pipeline.get_bind_group_layout(0),
+            layout: &pipeline.get_bind_group_layout(0),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -268,7 +381,7 @@ impl YuvConverter {
             ],
         });
         let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(
             (width as u32).div_ceil(WORKGROUP),
@@ -295,8 +408,31 @@ impl YuvConverter {
         Ok(ConvertedFrame {
             texture: output,
             descriptor,
+            output_mapped,
             _input: input,
         })
+    }
+
+    fn prepare_geometry(&mut self, values: [f32; 12]) {
+        if self
+            .geometry
+            .as_ref()
+            .is_some_and(|geometry| geometry.values == values)
+        {
+            return;
+        }
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("native-yuv-geometry"),
+            size: GEOMETRY_SIZE,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bytes = values
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
+        self.queue.write_buffer(&buffer, 0, &bytes);
+        self.geometry = Some(GeometryResources { values, buffer });
     }
 
     fn prepare_color(
@@ -355,10 +491,23 @@ impl YuvConverter {
         descriptor: &FrameDescriptor,
         target: DisplayTarget,
     ) -> Result<wgpu::Texture, String> {
+        self.map_output_reusing(encoder, input, descriptor, target, None)
+    }
+
+    /// Reuse only after all GPU reads of the previous output have completed.
+    pub fn map_output_reusing(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &wgpu::Texture,
+        descriptor: &FrameDescriptor,
+        target: DisplayTarget,
+        previous: Option<wgpu::Texture>,
+    ) -> Result<wgpu::Texture, String> {
         self.prepare_color(descriptor, target)?;
         let color = self.color.as_ref().expect("prepared color resources");
-        let output = texture(
+        let output = reuse_texture(
             &self.device,
+            previous,
             input.width(),
             input.height(),
             wgpu::TextureFormat::Rgba16Float,
@@ -400,6 +549,66 @@ impl YuvConverter {
         drop(pass);
         Ok(output)
     }
+}
+
+fn stage_plane(
+    encoder: &mut wgpu::CommandEncoder,
+    belt: &mut wgpu::util::StagingBelt,
+    texture: &wgpu::Texture,
+    plane: &NativePlane,
+) -> Result<(), String> {
+    let row_bytes = plane.width * usize::from(plane.bytes_per_sample);
+    let aligned_row = u32::try_from(row_bytes)
+        .ok()
+        .and_then(|row| row.checked_next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT))
+        .ok_or("native upload row exceeds the GPU layout limit")?;
+    let size = u64::from(aligned_row)
+        .checked_mul(plane.height as u64)
+        .and_then(wgpu::BufferSize::new)
+        .ok_or("native upload buffer size overflow")?;
+    let staging = belt.allocate(
+        size,
+        wgpu::BufferSize::new(u64::from(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT))
+            .expect("GPU copy alignment is nonzero"),
+    );
+    {
+        let mut mapped = staging.get_mapped_range_mut();
+        for row in 0..plane.height {
+            let source = row * plane.stride;
+            let destination = row * aligned_row as usize;
+            mapped
+                .slice(destination..destination + row_bytes)
+                .copy_from_slice(&plane.data[source..source + row_bytes]);
+        }
+    }
+    encoder.copy_buffer_to_texture(
+        wgpu::TexelCopyBufferInfo {
+            buffer: staging.buffer(),
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: staging.offset(),
+                bytes_per_row: Some(aligned_row),
+                rows_per_image: Some(plane.height as u32),
+            },
+        },
+        texture.as_image_copy(),
+        texture.size(),
+    );
+    Ok(())
+}
+
+fn reuse_texture(
+    device: &wgpu::Device,
+    previous: Option<wgpu::Texture>,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    label: &str,
+) -> wgpu::Texture {
+    previous
+        .filter(|previous| {
+            previous.width() == width && previous.height() == height && previous.format() == format
+        })
+        .unwrap_or_else(|| texture(device, width, height, format, label))
 }
 
 fn texture(

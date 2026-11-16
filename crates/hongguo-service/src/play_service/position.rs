@@ -20,12 +20,18 @@ pub fn save_store(
     )
 }
 
-/// 读播放位置。看过超过 3 秒就续播那个位置（用户口径：不管片尾）。
+/// 读取未完成集的有效断点，已完成的集从头播放。
 pub fn load(state: &AppState, series_id: &str, vid_index: u32) -> hongguo_common::AppResult<f64> {
-    Ok(state
-        .store
-        .playback_position(series_id, vid_index)?
+    let saved = state.store.playback_position(series_id, vid_index)?;
+    let start = saved
+        .as_ref()
         .filter(|p| p.is_resumable())
         .map(|p| p.current_time)
-        .unwrap_or(0.0))
+        .unwrap_or(0.0);
+    log::debug!(
+        "resume seriesId={series_id} episode={vid_index} savedPositionSeconds={:?} durationSeconds={:?} startPositionSeconds={start}",
+        saved.as_ref().map(|position| position.current_time),
+        saved.as_ref().map(|position| position.duration),
+    );
+    Ok(start)
 }

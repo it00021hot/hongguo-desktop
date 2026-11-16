@@ -4,7 +4,7 @@
 
 use hongguo_api::history::WatchHistoryItem;
 use hongguo_common::AppResult;
-use hongguo_common::model::playback::RESUME_THRESHOLD_SECS;
+use hongguo_common::model::playback::{RESUME_THRESHOLD_SECS, resume_position};
 use hongguo_store::Store;
 
 /// 起点决策，返回 `(集号, 起播秒)`；无断点时 `(1, 0.0)`。云端行的 vid_index 0/1 基混杂
@@ -24,7 +24,7 @@ fn recent_entry(
 ) -> AppResult<(u32, f64, f64)> {
     let local = store
         .series_last_position(series_id)?
-        .filter(|(_, p)| p.is_resumable())
+        .filter(|(_, p)| p.current_time > RESUME_THRESHOLD_SECS)
         .map(|(idx, p)| (idx, p.current_time, p.duration, p.updated_at));
     let threshold_ms = (RESUME_THRESHOLD_SECS * 1000.0) as i64;
     let cloud = history
@@ -42,13 +42,13 @@ fn decide_entry(
     match (local, cloud) {
         (Some((_, _, _, updated_at)), Some(h)) if h.updated_at_ms > updated_at => (
             h.vid_index.max(1) as u32,
-            h.position_ms as f64 / 1000.0,
+            resume_position(h.position_ms as f64 / 1000.0, h.duration_ms as f64 / 1000.0),
             h.duration_ms as f64 / 1000.0,
         ),
-        (Some(entry), _) => (entry.0, entry.1, entry.2),
+        (Some(entry), _) => (entry.0, resume_position(entry.1, entry.2), entry.2),
         (None, Some(h)) => (
             h.vid_index.max(1) as u32,
-            h.position_ms as f64 / 1000.0,
+            resume_position(h.position_ms as f64 / 1000.0, h.duration_ms as f64 / 1000.0),
             h.duration_ms as f64 / 1000.0,
         ),
         (None, None) => (1, 0.0, 0.0),

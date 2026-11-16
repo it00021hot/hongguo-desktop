@@ -1,7 +1,7 @@
 use super::super::{desktop::TICK_SECONDS, wire::Observation};
 use nsh_platform_macos::{
     ComponentContext, Components, NativeComponent,
-    objc2::{MainThreadMarker, MainThreadOnly, rc::Retained},
+    objc2::{MainThreadMarker, rc::Retained},
     objc2_app_kit::{NSEvent, NSView, NSWindowButton, NSWindowOcclusionState},
     objc2_foundation::{NSRunLoop, NSRunLoopCommonModes, NSTimer},
 };

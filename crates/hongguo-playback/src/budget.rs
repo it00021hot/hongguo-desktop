@@ -6,6 +6,10 @@ use std::sync::{
 use hongguo_common::{AppError, AppResult};
 use parking_lot::{Condvar, Mutex};
 
+pub(crate) fn available_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+}
+
 struct Budget {
     limit: usize,
     used: Mutex<usize>,
@@ -15,7 +19,7 @@ struct Budget {
 fn budget() -> &'static Budget {
     static BUDGET: OnceLock<Budget> = OnceLock::new();
     BUDGET.get_or_init(|| Budget {
-        limit: std::thread::available_parallelism().map_or(1, |count| count.get().min(8)),
+        limit: available_threads(),
         used: Mutex::new(0),
         changed: Condvar::new(),
     })
@@ -37,6 +41,8 @@ impl DecoderPermit {
             return Err(AppError::Cancelled);
         }
         *used += threads;
+        drop(used);
+        log::debug!(target: "hongguo_playback::decoder", "threadBudget availableThreads={} requestedThreads={requested} grantedThreads={threads}", budget.limit);
         Ok(Self { threads })
     }
 

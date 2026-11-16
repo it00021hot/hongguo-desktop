@@ -8,7 +8,7 @@ pub struct ImportedFrame {
     texture: wgpu::Texture,
     metadata: FrameMetadata,
     native: Option<Arc<PresentationFrame>>,
-    _converted: Option<Arc<ConvertedFrame>>,
+    converted: Option<Arc<ConvertedFrame>>,
     aspect_ratio: f32,
 }
 
@@ -24,6 +24,12 @@ impl ImportedFrame {
     }
     pub fn source_descriptor(&self) -> Option<hongguo_media_types::FrameDescriptor> {
         self.native.as_ref().map(|frame| frame.image.descriptor())
+    }
+
+    pub(crate) fn needs_output_mapping(&self) -> bool {
+        self.converted
+            .as_ref()
+            .is_some_and(|frame| !frame.output_mapped)
     }
 
     pub(crate) fn converted(frame: Arc<PresentationFrame>, converted: ConvertedFrame) -> Self {
@@ -42,7 +48,7 @@ impl ImportedFrame {
             texture: converted.texture.clone(),
             metadata,
             native: Some(frame),
-            _converted: Some(Arc::new(converted)),
+            converted: Some(Arc::new(converted)),
             aspect_ratio,
         }
     }
@@ -81,7 +87,7 @@ impl ImportedFrame {
             texture,
             metadata,
             native: None,
-            _converted: None,
+            converted: None,
             aspect_ratio: frame.width as f32 / frame.height as f32,
         }
     }

@@ -57,6 +57,9 @@ impl AudioOutput {
     pub fn hold(&self, held: bool) -> bool {
         self.control.held.swap(held, Ordering::AcqRel) != held
     }
+    pub fn held(&self) -> bool {
+        self.control.held.load(Ordering::Acquire)
+    }
     pub fn ready(&self) -> Result<bool, OutputError> {
         if !self
             .control
@@ -102,26 +105,14 @@ impl AudioOutput {
         self.position()
             .map(|position| (position.position_secs.max(0.0) * 1000.0).round() as u64)
     }
-    pub fn duration_ms(&self) -> Option<u64> {
-        self.position()
-            .map(|position| (position.duration_secs.max(0.0) * 1000.0).round() as u64)
-    }
-    pub fn take_ended(&self) -> bool {
-        let ended = self.position().is_some_and(|position| position.ended);
+    pub fn take_ended(&self, ended: bool) -> bool {
         let previous = self.ended.swap(ended, Ordering::AcqRel);
         ended && !previous
-    }
-    pub fn buffering(&self) -> bool {
-        self.position().is_some_and(|position| position.buffering)
-            || self.control.frames.holding().unwrap_or(true)
     }
     pub fn ended(&self) -> bool {
         self.ended.load(Ordering::Acquire)
     }
-    pub fn video_gap(&self) -> bool {
-        self.position().is_some_and(|position| position.video_gap)
-    }
-    fn position(&self) -> Option<PlaybackPosition> {
+    pub fn position(&self) -> Option<PlaybackPosition> {
         match self.control.frames.position() {
             Ok(position) => position,
             Err(error) => {

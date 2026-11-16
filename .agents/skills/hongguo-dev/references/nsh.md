@@ -17,7 +17,10 @@ nsh package crates/hongguo-nsh --target ios-simulator
 nsh package crates/hongguo-nsh --target ios --sign '<identity>' --profile '<profile.mobileprovision>'
 ```
 
-Makefile 只转发到这些命令。名称、ID、版本、图标、平台 plist、窗口参数与 `nativeHost` 接入配置统一位于 `crates/hongguo-nsh/nsh.json`，不从 npm manifest 读取应用元数据。运行客户端不需要 pnpm 或安装 npm 工具依赖。
+Makefile 转发到这些命令，并在 macOS 设置 VVdeC 的阻塞等待策略；本机开发使用 `make dev`。
+直接运行 CLI 时使用 `VVDEC_BUSY_WAIT_TIME_MIN=0 VVDEC_BUSY_WAIT_TIME_MAX=0 nsh run crates/hongguo-nsh`。
+正式 macOS 包通过 `macos.infoPlist.LSEnvironment` 在进程初始化前设置相同策略。
+名称、ID、版本、图标、平台 plist、窗口参数与 `nativeHost` 接入配置统一位于 `crates/hongguo-nsh/nsh.json`，不从 npm manifest 读取应用元数据。运行客户端不需要 pnpm 或安装 npm 工具依赖。
 
 `nativeHost` 是本项目为固定 CLI 增加的通用原生宿主接入口，尚非上游 0.5.1 标准能力，必须使用仓库构建的 CLI。它通过参数数组启动构建与资源装配命令，失败即中止。项目脚本只准备 SDK、独立宿主、媒体依赖和重链接材料；NSH 自己生成安装器、APK/AAB、Apple 包和签名。补丁范围见 `vendor/nsh/UPSTREAM.md`。
 
@@ -35,7 +38,9 @@ cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attribute
 
 SDK 从 `vendor/native-codecs` 自动解包、校验，日常不源码重建。单独准备可用 `node scripts/nsh-native-host.mjs setup <Rust triple>`。源码重建见 `docs/native-media-build.md`；VVdeC 源码位于 `crates/hongguo-vvdec-sys/vendor/vvdec`。不得混入 FFmpeg、QuickJS 或旧播放器链。
 
-Windows/macOS 在对应宿主打包。NSH 默认输出到调用目录的 `.nsh/out`，可用 `--out` 指定。Windows 生成 `guava/`、`guava.zip`；检测到 Inno Setup 时生成 `guava-setup.exe`，不再使用 NSIS。macOS 生成 `guava.app` 并由 NSH ad hoc 签名；当前分别打包 arm64 与 x86_64，不宣称支持通用媒体库包。安装、卸载与播放仍需真机验收。
+Windows/macOS 优先在对应宿主打包。macOS 交叉构建 Windows x64 时需配置 MSVC SDK、clang-cl、lld-link 和资源编译器；Inno Setup 6 可通过 Wine 编译 NSH 生成的安装脚本，媒体 SDK 按 Windows x64 目标选择。NSH 默认输出到调用目录的 `.nsh/out`，可用 `--out` 指定。Windows 生成 `guava/`、`guava.zip`；检测到 Inno Setup 时生成 `guava-setup.exe`，不再使用 NSIS。macOS 生成 `guava.app` 并由 NSH ad hoc 签名；当前分别打包 arm64 与 x86_64，不宣称支持通用媒体库包。安装、卸载与播放仍需真机验收。
+
+本项目为纯 Rust 根组件，NSH 的 TSX `.nshpkg` 签名不适用；Windows 安装器不会自动获得 Authenticode 签名，交付时须明确实际签名状态。
 
 Android 需要 `ANDROID_HOME`、`ANDROID_NDK_HOME`（兼容 `NDK_HOME`）、JDK 和 SDK 37。NDK 必须匹配认证媒体 SDK 的 `30.0.16248370`。应用最低 API 28，`android.abis` 默认 arm64-v8a；未配置的 ABI 明确失败。NSH 负责 AAPT2、zipalign、APK/AAB 和签名，不依赖 Gradle。默认用调试签名；正式签名使用 `--keystore`、`--key-alias` 和环境变量 `NSH_KEYSTORE_PASSWORD`，不将密码放入命令历史或日志。
 

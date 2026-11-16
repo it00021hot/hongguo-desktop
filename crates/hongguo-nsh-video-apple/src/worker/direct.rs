@@ -1,20 +1,18 @@
 use super::*;
-use hongguo_nsh_video_api::frames::{FrameLease, PixelFrame};
+use hongguo_nsh_video_api::frames::{FrameLease, PixelFrame, PlaybackPosition};
 
 pub(super) struct Direct {
     pub frames: Arc<FrameLease>,
     pub pixels: Option<Arc<PixelFrame>>,
     pub native: Option<Arc<hongguo_media_types::PresentationFrame>>,
-    pub submitted: Option<(u64, u64)>,
     generation: Option<u64>,
-    waiting_presentation: bool,
+    pub(super) waiting_presentation: bool,
 }
 
 impl Direct {
     pub(super) fn blank(&mut self) {
         self.native = None;
         self.pixels = None;
-        self.submitted = None;
         self.waiting_presentation = false;
     }
     pub fn open(frames: Arc<FrameLease>) -> Result<Self, String> {
@@ -22,7 +20,6 @@ impl Direct {
             frames,
             pixels: None,
             native: None,
-            submitted: None,
             generation: None,
             waiting_presentation: true,
         })
@@ -41,7 +38,6 @@ impl Direct {
         self.generation = Some(generation);
         self.pixels = None;
         self.native = None;
-        self.submitted = None;
         self.waiting_presentation = true;
         Ok(true)
     }
@@ -63,7 +59,6 @@ impl Worker {
                     direct.generation = None;
                     direct.native = None;
                     direct.pixels = None;
-                    direct.submitted = None;
                     direct.waiting_presentation = true;
                     self.frame.take();
                     self.dirty = true;
@@ -93,7 +88,6 @@ impl Worker {
                 direct.generation = None;
                 direct.native = None;
                 direct.pixels = None;
-                direct.submitted = None;
                 direct.waiting_presentation = true;
                 match direct.frames.recover_presentation_if_owner(error.detail()) {
                     Ok(true) => {}
@@ -128,7 +122,7 @@ impl Worker {
         self.layers.set_visible(false);
     }
 
-    pub(super) fn read_direct(&mut self) {
+    pub(super) fn read_direct(&mut self, position: PlaybackPosition) {
         let result = (|| {
             let video = self.video.as_ref().expect("active audio");
             if !video.ready()? {
@@ -138,9 +132,9 @@ impl Worker {
             let info = direct.frames.info().map_err(decoder_error)?;
             let frame = direct
                 .frames
-                .frame_at(video.position_ms().unwrap_or(0))
+                .frame_at((position.position_secs.max(0.0) * 1000.0).round() as u64)
                 .map_err(decoder_error)?;
-            let lead = if self.props.paused || direct.frames.holding().unwrap_or(true) {
+            let lead = if self.props.paused || position.buffering {
                 0.0
             } else {
                 crate::display_clock::presentation_lead(f64::from_bits(
@@ -149,9 +143,10 @@ impl Worker {
             };
             let native = direct
                 .frames
-                .native_frame_at(video.position_ms().unwrap_or(0) as f64 / 1000.0 + lead)
+                .native_frame_at(position.position_secs + lead)
                 .map_err(decoder_error)?;
-            Ok::<_, OutputError>(info.map(|info| (info, frame, native, video.duration_ms())))
+            let duration_ms = Some((position.duration_secs.max(0.0) * 1000.0).round() as u64);
+            Ok::<_, OutputError>(info.map(|info| (info, frame, native, duration_ms)))
         })();
         match result {
             Ok(Some((info, frame, native, duration_ms))) => {
@@ -214,7 +209,7 @@ impl Worker {
         if self
             .renderer
             .as_ref()
-            .is_some_and(|renderer| !renderer.idle())
+            .is_some_and(|renderer| !renderer.can_draw())
         {
             return;
         }
@@ -230,7 +225,7 @@ impl Worker {
             return;
         }
         if self.renderer.is_none() {
-            match pollster::block_on(Renderer::new(self.layers.metal.clone())) {
+            match pollster::block_on(Renderer::new(self.layers.metal.clone(), self.wake.clone())) {
                 Ok(renderer) => self.renderer = Some(renderer),
                 Err(error) => {
                     self.direct_failure(error);
@@ -238,10 +233,19 @@ impl Worker {
                 }
             }
         }
+        self.layers.set_visible(self.props.active);
         let renderer = self.renderer.as_mut().expect("renderer initialized");
+        match renderer.prepare_frame(self.viewport) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                self.direct_failure(error);
+                return;
+            }
+        }
         if let Some(native) = native {
             let target = self.viewport.color_target();
-            match renderer.upload_native(native, target) {
+            match renderer.upload_native(native, target, self.props.enhancement) {
                 Ok(frame) => self.frame = Some(frame),
                 Err(error) => {
                     self.direct_failure(error);
@@ -254,11 +258,8 @@ impl Worker {
         self.dirty = true;
     }
 
-    pub(super) fn present_direct(&mut self) {
+    pub(super) fn present_direct(&mut self, generation: u64, serial: u64) {
         let direct = self.direct.as_mut().expect("direct source");
-        let Some((generation, serial)) = direct.submitted.take() else {
-            return;
-        };
         if direct
             .generation
             .is_some_and(|expected| generation != expected)
@@ -284,6 +285,9 @@ impl Worker {
         let Some(video) = &self.video else {
             return;
         };
+        if !video.held() {
+            return;
+        }
         if !direct.waiting_presentation
             && direct.frames.holding() == Ok(false)
             && video.ready().unwrap_or(false)

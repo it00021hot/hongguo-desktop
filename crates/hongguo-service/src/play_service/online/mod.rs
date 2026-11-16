@@ -17,7 +17,7 @@ pub use progress::{OnlineProgressEvent, ProgressReporter, ProgressSink};
 
 use hongguo_stream::cache;
 
-/// 在线缓存现状（分条数、已填充字节），供缓存占用统计读。
+/// 在线缓存现状（条目数、数据面与解密计划的内存字节）。
 pub fn status() -> (usize, u64) {
     cache().status()
 }

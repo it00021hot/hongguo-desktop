@@ -2,10 +2,13 @@ use crate::OutputError;
 use hongguo_nsh_video_api::{ErrorCode, ResizeMode};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandQueue, MTLDrawable, MTLPixelFormat, MTLTexture, MTLTextureType,
+    MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDrawable, MTLPixelFormat, MTLTexture,
+    MTLTextureType,
 };
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer, CATransaction};
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
+
+pub(crate) const MAX_DRAWABLES: usize = 2;
 
 pub(crate) struct SurfaceTarget {
     texture: wgpu::Texture,
@@ -14,6 +17,7 @@ pub(crate) struct SurfaceTarget {
 
 pub struct MetalSurface {
     layer: Retained<CAMetalLayer>,
+    gpu: Arc<crate::gpu::Gpu>,
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
     width: u32,
@@ -22,28 +26,14 @@ pub struct MetalSurface {
     pipeline: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     fit: wgpu::Buffer,
+    fit_transform: Option<[f32; 4]>,
 }
 
 impl MetalSurface {
     pub async fn new(layer: Retained<CAMetalLayer>) -> Result<Self, OutputError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                ..Default::default()
-            })
-            .await
-            .map_err(gpu_error)?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: device_limits(adapter.limits()),
-                ..Default::default()
-            })
-            .await
-            .map_err(gpu_error)?;
+        let gpu = crate::gpu::Gpu::shared()?;
+        let device = gpu.device.clone();
+        let queue = gpu.queue.clone();
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         {
@@ -55,7 +45,7 @@ impl MetalSurface {
         layer.setFramebufferOnly(true);
         layer.setOpaque(true);
         layer.setPresentsWithTransaction(false);
-        layer.setMaximumDrawableCount(2);
+        layer.setMaximumDrawableCount(MAX_DRAWABLES);
         layer.setAllowsNextDrawableTimeout(true);
         let color_space = objc2_core_graphics::CGColorSpace::with_name(Some(unsafe {
             objc2_core_graphics::kCGColorSpaceExtendedLinearSRGB
@@ -64,68 +54,55 @@ impl MetalSurface {
         layer.setWantsExtendedDynamicRangeContent(true);
         CATransaction::commit();
         CATransaction::flush();
-        let errors = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("video-present"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("present.wgsl"))),
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("video-present"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vertex"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fragment"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let pipeline = gpu.presentation.clone();
+        let sampler = gpu.sampler.clone();
         let fit = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("video-present-fit"),
             size: 16,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        if let Some(error) = errors.pop().await {
-            return Err(gpu_error(error));
-        }
         Ok(Self {
             layer,
-            device: Arc::new(device),
-            queue: Arc::new(queue),
+            gpu,
+            device,
+            queue,
             width: 0,
             height: 0,
             drawable: false,
             pipeline,
             sampler,
             fit,
+            fit_transform: None,
         })
     }
 
     pub fn device(&self) -> Arc<wgpu::Device> {
         self.device.clone()
     }
+
+    pub(crate) fn allocated_bytes(&self) -> Option<usize> {
+        unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }
+            .map(|metal| metal.raw_device().currentAllocatedSize())
+    }
     pub fn queue(&self) -> Arc<wgpu::Queue> {
         self.queue.clone()
+    }
+
+    pub(crate) fn converter(&self) -> hongguo_video_gpu::YuvConverter {
+        hongguo_video_gpu::YuvConverter::with_pipelines(
+            self.device(),
+            self.queue(),
+            self.gpu.color.clone(),
+        )
+    }
+
+    pub(crate) fn check(&self) -> Result<(), OutputError> {
+        self.gpu.check()
+    }
+
+    pub(crate) fn invalidate(&self, detail: String) {
+        self.gpu.invalidate(detail);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -206,7 +183,7 @@ impl MetalSurface {
     }
 
     pub(crate) fn encode_present(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         target: &SurfaceTarget,
         image: &wgpu::TextureView,
@@ -214,11 +191,14 @@ impl MetalSurface {
         mode: ResizeMode,
     ) -> Result<(), OutputError> {
         let transform = fit_aspect(source_aspect, self.width, self.height, mode)?;
-        let bytes = transform
-            .into_iter()
-            .flat_map(f32::to_le_bytes)
-            .collect::<Vec<_>>();
-        self.queue.write_buffer(&self.fit, 0, &bytes);
+        if self.fit_transform != Some(transform) {
+            let bytes = transform
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .collect::<Vec<_>>();
+            self.queue.write_buffer(&self.fit, 0, &bytes);
+            self.fit_transform = Some(transform);
+        }
         let bindings = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("video-present"),
             layout: &self.pipeline.get_bind_group_layout(0),
@@ -263,6 +243,7 @@ impl MetalSurface {
     pub(crate) fn present(
         &self,
         target: SurfaceTarget,
+        display_deadline: f64,
         presented: impl Fn(f64) + Send + Sync + 'static,
         completed: impl Fn() + Send + Sync + 'static,
     ) -> Result<(), OutputError> {
@@ -290,7 +271,7 @@ impl MetalSurface {
         unsafe {
             command.addCompletedHandler(&*done as *const _ as *mut _);
         }
-        command.presentDrawable(&target.drawable);
+        command.presentDrawable_atTime(&target.drawable, display_deadline);
         command.commit();
         Ok(())
     }
@@ -298,12 +279,6 @@ impl MetalSurface {
 
 fn gpu_error(error: impl std::fmt::Display) -> OutputError {
     OutputError::new(ErrorCode::GpuFailed, error.to_string())
-}
-
-fn device_limits(supported: wgpu::Limits) -> wgpu::Limits {
-    // iOS Metal can expose fewer shader variables than WebGPU defaults; keep
-    // conservative requirements while retaining portrait texture capacity.
-    wgpu::Limits::downlevel_defaults().using_resolution(supported)
 }
 
 fn fit_aspect(

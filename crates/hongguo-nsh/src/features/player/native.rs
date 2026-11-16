@@ -65,6 +65,16 @@ pub(super) fn mount<E: IntoElement>(
         comments_open,
         download_open,
     } = state;
+    effect(move || {
+        let rate = rate.get();
+        source.with(|source| {
+            if let Some(source) = source
+                && let Err(error) = source.lease.set_playback_rate(rate)
+            {
+                log::error!("[NSH media] could not update buffering rate: {error}");
+            }
+        });
+    });
     each(
         move || {
             source.with(|source| {
@@ -219,15 +229,18 @@ pub(super) fn mount<E: IntoElement>(
                                         mounted.expected_duration,
                                         info.duration.into(),
                                     );
+                                    let requested = pending_seek.get_untracked();
                                     if let Some(at) = initial_load.with(|load| {
-                                        load.seek(
-                                            pending_seek.get_untracked(),
-                                            mounted.resume_at,
-                                            duration,
-                                        )
+                                        load.seek(requested, mounted.resume_at, duration)
                                     }) {
                                         position.set((0.0, duration));
-                                        let target = transport::initial_seek(at);
+                                        let target = if at == 0.0
+                                            && requested.unwrap_or(mounted.resume_at) > 0.0
+                                        {
+                                            Some(0.0)
+                                        } else {
+                                            transport::initial_seek(at)
+                                        };
                                         pending_seek.set(target);
                                         if target.is_none() {
                                             buffering.set(
