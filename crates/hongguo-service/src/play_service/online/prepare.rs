@@ -183,6 +183,10 @@ pub async fn prefetch_stream(
     if vid.is_empty() || bytes == 0 {
         return Ok(());
     }
+    let _permit = PREFETCH_SLOTS
+        .acquire()
+        .await
+        .expect("预取信号量常驻到进程结束");
     crate::cold_start::wait(state).await?;
     let c = cache();
     // 预取与起播共用内置解码约束，缓存中不放入无法播放的流。
@@ -258,11 +262,6 @@ pub fn schedule_next_episode_prefetch(
     };
     let progress_key = format!("{series_id}:{next_vid_index}");
     crate::runtime::spawn(async move {
-        // 等位期间当前集可能已经开播并自己取流；prefetch_stream 的幂等闸会让排队者直接退出。
-        let _permit = PREFETCH_SLOTS
-            .acquire()
-            .await
-            .expect("预取信号量常驻到进程结束");
         if let Err(e) = prefetch_stream(&state, &vid, &progress_key, bytes).await {
             log::warn!("[Online] 第 {next_vid_index} 集预取失败（忽略，播到时现场取）: {e}");
         }

@@ -128,6 +128,42 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                 .cloned()
         })
     });
+    let ahead = computed(move || {
+        if !active.get() {
+            return Vec::new();
+        }
+        channels.with(|channels| {
+            channels
+                .get(&channel.get())
+                .map(|page| {
+                    page.items
+                        .iter()
+                        .skip(page.index + 1)
+                        .take(hongguo_service::play_service::DEFAULT_PREFETCH_COUNT as usize)
+                        .map(|item| item.series_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+    });
+    resource(
+        move || {
+            let ids = ahead.get();
+            (!ids.is_empty()).then(|| (ids, session.identity()))
+        },
+        move |(ids, _), _| {
+            let session = session.with(|session| session.clone());
+            bridge::request(async move {
+                let personal = session.personal.read(&session.state).await?;
+                hongguo_service::play_service::feed::prefetch(
+                    &session.state,
+                    ids,
+                    personal.history.clone(),
+                )
+                .await
+            })
+        },
+    );
     let explicit = signal(None::<(String, u32)>);
     effect(move || {
         if let Some((id, _)) = explicit.get()

@@ -2,6 +2,7 @@
 
 use crate::app_state::AppState;
 
+pub mod feed;
 pub mod local;
 pub mod online;
 pub mod position;
