@@ -8,6 +8,7 @@ use crate::{
 };
 use nsh_base::theme;
 use nsh_core::prelude::*;
+mod exit;
 mod mobile_catalog;
 mod mobile_menu;
 mod mobile_preferences;
@@ -375,6 +376,7 @@ pub(crate) fn shell_with_theme(
             move || window().width.0 < 768.0 && !chrome_hidden(nav) && !portrait_mode(nav),
             move || desktop_bottom_nav(nav),
         ))
+        .child(exit::confirmation())
 }
 
 fn mobile_tabs_visible(nav: Navigation) -> bool {
