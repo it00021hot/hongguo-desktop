@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, join, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { auditMacosBundle, auditWindowsBundle } from './nsh-native-media.mjs';
@@ -32,6 +42,32 @@ function artifact(from, name) {
   if (statSync(from).size === 0) throw new Error(`Empty release artifact: ${from}`);
   copyFileSync(from, join(output, name));
   artifacts.push(name);
+}
+
+function diskImage(bundle, name) {
+  const staging = mkdtempSync(join(tmpdir(), 'guava-dmg-'));
+  try {
+    const staged = join(staging, `${app.name}.app`);
+    run('ditto', [bundle, staged]);
+    run('codesign', ['--verify', '--deep', '--strict', staged]);
+    symlinkSync('/Applications', join(staging, 'Applications'));
+    const path = join(output, name);
+    run('hdiutil', [
+      'create',
+      '-volname',
+      app.nativeHost.displayNames['zh-CN'],
+      '-srcfolder',
+      staging,
+      '-format',
+      'UDZO',
+      '-ov',
+      path,
+    ]);
+    run('hdiutil', ['verify', path]);
+    artifacts.push(name);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 
 if (target.os === 'win32') {
@@ -69,6 +105,7 @@ if (target.os === 'win32') {
   const name = `${stem}.tar.gz`;
   run('tar', ['-czf', join(output, name), '-C', source, `${app.name}.app`]);
   artifacts.push(name);
+  diskImage(bundle, `${stem}.dmg`);
 }
 const manifest = `${stem}.json`;
 writeFileSync(
@@ -80,6 +117,7 @@ writeFileSync(
       id: app.id,
       triple,
       commit: run('git', ['rev-parse', 'HEAD']),
+      dirty: run('git', ['status', '--porcelain', '--untracked-files=no']).length > 0,
       signing: target.os === 'win32' ? 'unsigned' : 'ad-hoc-not-notarized',
       artifacts,
     },

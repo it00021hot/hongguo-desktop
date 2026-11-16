@@ -55,6 +55,7 @@ if (values.artifacts) {
     const manifest = JSON.parse(readFileSync(join(values.artifacts, manifestName), 'utf8'));
     if (
       manifest.commit !== sha ||
+      manifest.dirty !== false ||
       manifest.version !== app.version ||
       manifest.build !== app.build ||
       manifest.id !== app.id ||
@@ -63,7 +64,9 @@ if (values.artifacts) {
     )
       throw new Error(`Artifact provenance mismatch: ${target.platform}`);
     const expected =
-      target.os === 'win32' ? [`${stem}-setup.exe`, `${stem}-portable.zip`] : [`${stem}.tar.gz`];
+      target.os === 'win32'
+        ? [`${stem}-setup.exe`, `${stem}-portable.zip`]
+        : [`${stem}.tar.gz`, `${stem}.dmg`];
     if (JSON.stringify(manifest.artifacts) !== JSON.stringify(expected))
       throw new Error(`Artifact list mismatch: ${target.platform}`);
     const checksumPath = join(values.artifacts, `SHA256SUMS-${target.platform}.txt`);

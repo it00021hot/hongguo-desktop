@@ -13,7 +13,9 @@ Windows 使用固定 Inno Setup 6.7.4 与 SHA-256 校验的官方中文翻译。
 - `guava-0.7.0-windows-x86_64-setup.exe`
 - `guava-0.7.0-windows-x86_64-portable.zip`
 - `guava-0.7.0-macos-aarch64.tar.gz`
+- `guava-0.7.0-macos-aarch64.dmg`
 - `guava-0.7.0-macos-x86_64.tar.gz`
+- `guava-0.7.0-macos-x86_64.dmg`
 
 便携包与 Mac 归档包含 NSH 装配的原生依赖、许可证和对应源码材料；Mac 在上传 artifact 前归档，保留签名依赖的权限及符号链接。发布步骤重新核验所有 SHA-256，不混用上次构建产物。
 
