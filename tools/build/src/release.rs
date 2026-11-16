@@ -189,9 +189,11 @@ pub fn assets(args: &[String]) -> Result<()> {
         .iter()
         .find(|t| t.triple == triple)
         .context("Unsupported desktop release target")?;
+    // Windows 审计是纯文件解析，交叉宿主可执行；macOS 审计依赖 PlistBuddy、
+    // ditto、hdiutil 与 codesign，只能在 macOS 上运行。
     ensure!(
-        env::consts::OS == target.os,
-        "Release artifacts require their native runner"
+        env::consts::OS == target.os || target.os == "windows",
+        "macOS release artifacts require their native runner"
     );
     let source = absolute(arg(args, 1)?)?;
     let destination = absolute(arg(args, 2)?)?;

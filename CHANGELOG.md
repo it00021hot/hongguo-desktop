@@ -5,11 +5,11 @@
 ## 发版约定
 
 - 每个版本发 tag 前先补上本文件对应 `## [x.y.z]` 段落，作为 GitHub Release 说明素材
-  （NSH 桌面发版流程提取对应版本段落，并创建草稿 Release；应用内自动更新尚未接入）。
+  （NSH 桌面发版流程提取对应版本段落，校验全部桌面产物后正式发布；应用内自动安装尚未接入）。
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
-## [0.7.0] - 2026-11-16
+## [0.7.0] - 2026-11-17
 
 ### ✨ 新增
 
@@ -22,11 +22,13 @@
 - 0.6.x 升级到 0.7.0 需手动下载安装；新版“检查更新”读取 GitHub 发布版本并打开下载页，不再依赖旧 Tauri 更新清单，也不自动安装。
 - 优化视频解码队列、帧缓冲与 GPU 资源复用，按设备可用并行度分配解码线程预算。
 - 网络不稳定时等待一定的压缩数据储备再恢复播放，减少频繁播放、缓冲交替。
+- 恢复推荐流后续剧目预取，遵循时段、数量和字节预算，优先保障当前播放。
 
 ### 🐛 修复
 
 - 修复已看完集数重播时被跳过、重启后手选清晰度丢失，以及关闭后台暂停后仍偶发暂停的问题。
 - 修复纯文字搜索联想误入详情、弹幕表情显示不完整及窗口关闭时缺少退出确认的问题。
+- 修复切集时旧解码会话未及时释放造成的起播阻塞，停用后归还线程预算并清理待呈现帧。
 
 English: NSH desktop UI, new Guava icons and tray menu, Chinese Windows installer, playback resource and buffering improvements, and fixes for replay, saved quality, background playback, search suggestions, emoji clipping and quit confirmation.
 

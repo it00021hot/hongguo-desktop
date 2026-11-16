@@ -25,6 +25,7 @@ pub fn build(args: &[String]) -> Result<()> {
         Some(value) => value.clone(),
         None if target == "ios" => "aarch64-apple-ios".into(),
         None if target == "ios-simulator" => "aarch64-apple-ios-sim".into(),
+        None if target == "windows" => media::desktop_triple(target, "x86_64")?,
         None => media::desktop_triple(target, env::consts::ARCH)?,
     };
     let prefix = sdk::prepare(&triple)?;
@@ -41,9 +42,11 @@ pub fn build(args: &[String]) -> Result<()> {
     if profile == "release" {
         cargo.push("--release".into());
     }
+    let cross_windows = target == "windows" && !cfg!(windows);
     let targeted = requested.is_some()
         || mobile
         || profile != "release"
+        || cross_windows
         || env::var_os("CARGO_BUILD_TARGET").is_some();
     if targeted {
         cargo.extend(words(&["--target", &triple]));
@@ -73,6 +76,10 @@ pub fn build(args: &[String]) -> Result<()> {
         )?);
         env.insert("SDKROOT".into(), sdk);
         env.insert("IPHONEOS_DEPLOYMENT_TARGET".into(), "16.0".into());
+    }
+    if cross_windows {
+        println!("Cross-building Windows MSVC through cargo-xwin");
+        cargo.insert(0, "xwin".into());
     }
     run("cargo", &cargo, &env, None)?;
     let mut built = absolute(env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()))?;

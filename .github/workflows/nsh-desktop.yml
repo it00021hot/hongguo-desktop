@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: macos-15-intel
             target: windows
             triple: x86_64-pc-windows-msvc
             args: ''
@@ -38,35 +38,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.triple }}
-      - uses: ilammy/msvc-dev-cmd@v1.13.0
-        if: runner.os == 'Windows'
       - uses: swatinem/rust-cache@v2.9.3
         with:
           key: nsh-desktop-${{ matrix.triple }}
           workspaces: |
             . -> target
             vendor/nsh -> ../../target/nsh-cli
+      - name: Prepare Windows cross compiler and installer
+        if: matrix.target == 'windows'
+        uses: ./.github/actions/windows-cross
+        with:
+          installer: 'true'
       - name: Prepare authenticated native SDK
-        shell: pwsh
         run: cargo build-tool setup '${{ matrix.triple }}'
-      - name: Prepare the pinned Chinese installer compiler
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/ci-prepare-windows.ps1
       - name: Build the repository NSH CLI
-        shell: pwsh
+        shell: bash
         run: |
           cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "$PWD/target/nsh-cli/debug" >> $env:GITHUB_PATH
+          echo "$PWD/target/nsh-cli/debug" >> "$GITHUB_PATH"
       - name: Package through NSH
-        shell: pwsh
-        run: |
-          $packageArgs = @('package', 'crates/hongguo-nsh', '--target', '${{ matrix.target }}', '--out', 'target/packages/${{ matrix.triple }}')
-          if ('${{ matrix.args }}') { $packageArgs += '${{ matrix.args }}'.Split(' ') }
-          nsh @packageArgs
+        shell: bash
+        run: nsh package crates/hongguo-nsh --target '${{ matrix.target }}' --out 'target/packages/${{ matrix.triple }}' ${{ matrix.args }}
       - name: Audit and archive release artifacts
-        shell: pwsh
         run: cargo build-tool release-assets '${{ matrix.triple }}' 'target/packages/${{ matrix.triple }}' 'target/release-assets/${{ matrix.triple }}'
       - uses: actions/upload-artifact@v7.0.2
         with:

@@ -37,9 +37,7 @@ fn main() -> Result<()> {
         "resign-ios" => return signing::resign(&args),
         _ => {}
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()?;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     env::set_current_dir(&root)?;
     match action.as_str() {
         "setup" => {

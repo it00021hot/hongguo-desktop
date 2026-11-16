@@ -1,12 +1,24 @@
 # NSH 桌面发版
 
-本流程面向 Windows x64、macOS Apple Silicon 与 Intel。Android 和 iOS 模拟器继续走普通 CI 构建验证，不进入桌面 Release。当前版本为 `0.7.0`、NSH build `2`。
+本流程面向 Windows x64、macOS Apple Silicon 与 Intel。移动端未正式发布，普通 CI 不再打包移动端产物。当前版本为 `0.7.0`、NSH build `2`。
 
 ## 检查与产物
 
-普通分支 CI 执行格式检查、版本/更新日志检查、三个桌面目标的工作区构建与严格 Clippy。桌面打包统一调用仓库构建的 NSH CLI；Windows 在 Windows runner 上构建，Mac 两种架构各用原生 runner。
+普通分支 CI、桌面打包与发版均使用 macOS runner。格式、版本与更新日志门禁保持不变，三个桌面目标仍执行完整工作区构建与严格 Clippy：
 
-Windows 使用固定 Inno Setup 6.7.4 与 SHA-256 校验的官方中文翻译。安装器、桌面/开始菜单、卸载列表显示“番果”。默认安装路径、`com.guava.app` 与数据目录沿用现值。
+| 目标 | Runner | 构建与打包 |
+| --- | --- | --- |
+| Windows x64 | `macos-15-intel` | cargo-xwin 交叉编译 MSVC，Wine 执行 Inno Setup |
+| macOS Apple Silicon | `macos-15` | 原生编译、NSH 签名与 DMG |
+| macOS Intel | `macos-15-intel` | 原生编译、NSH 签名与 DMG |
+
+Windows 的检查与打包复用 `.github/actions/windows-cross`：LLVM 19、cargo-xwin 0.23.1、共享 MSVC SDK 缓存，保留静态 CRT、x86-64 指令基线和 8 MiB 主线程栈。交叉构建始终显式指定目标，防止从错误目录收集宿主产物。Windows 任务选择 Intel Mac，Wine 无需 Rosetta。
+
+安装包步骤从固定来源下载 Wine 11.0_1、Inno Setup 6.7.4 及官方中文翻译，逐项核验 SHA-256；使用 runner 临时目录中的 Wine prefix，不写入应用业务数据。`iscc` 入口通过 `winepath` 转换脚本和输出路径，NSH 仍负责安装脚本生成和装包。Wine 只运行构建工具，不作为客户端依赖。macOS 沿用 Apple 的 `codesign`、`sips`、`iconutil`、`ditto` 和 `hdiutil`，签名与镜像审计完整保留。
+
+Windows 交叉构建需要资源编译器：`crates/hongguo-nsh/build.rs` 在编译期把 `assets/icons/icon.ico` 与 DPI manifest 嵌入 exe（CI 用 llvm-rc shim，本机用既有 rc.exe 配置），turso 的版本资源同样依赖；PE 审计强制校验图标与 manifest 资源存在。NSH 交叉打包时提示“exe 使用默认图标”是它不知道编译期资源的误报，可忽略。
+
+Windows 安装器使用固定 Inno Setup 6.7.4 与 SHA-256 校验的官方中文翻译。安装器、桌面/开始菜单、卸载列表显示“番果”。默认安装路径、`com.guava.app` 与数据目录沿用现值。
 
 每个平台生成带版本和架构的产物、来源/签名状态 JSON 与 SHA-256 清单：
 
@@ -23,13 +35,13 @@ Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未
 
 旧 Tauri 客户端使用 `/releases/latest/download/latest.json`。新 Release 附带从 `v0.6.6` 获取并核验固定 SHA-256 的原始清单，冻结旧更新通道于 0.6.6，保留原包地址和签名，避免 Latest 切换后旧入口返回 404。该清单不提供 0.7.0 自动升级；旧用户须手动安装新版。不要将 Inno 安装器伪装成旧 NSIS 更新包，也不要伪造更新签名。
 
-## 创建草稿
+## 发布流程
 
 1. 确认 `Cargo.toml` 工作区版本、`Cargo.lock` 所有工作区成员版本与 `crates/hongguo-nsh/nsh.json` 一致；NSH build 单调增加，更新 `CHANGELOG.md` 对应段落。
 2. 在本机执行 `cargo build-tool release-preflight`，通过构建、严格检查和实际安装/播放验收后合入发版提交。
-3. 用户确认后推送该提交和对应 `v0.7.0` tag。tag 触发 `NSH Desktop Release`；也可手动运行该 workflow，填写已存在的 tag。
-4. 流程验证 tag、版本、更新日志及实际包元数据，使用同一提交完成全部桌面检查和打包，然后创建 **draft** GitHub Release。重复运行时发现已有 Release 会失败，不覆盖现有附件。
-5. 检查草稿附件、来源与校验和后，按用户明确的发布授权正式公开；未获得授权时保留草稿。跨平台安装与播放的真实验收状态须如实说明。
+3. 获得发布授权后推送合入 `main` 的提交和对应 `v0.7.0` tag。tag push 触发 `NSH Desktop Release`，所有门禁通过后自动公开为最新正式版本。
+4. 流程验证 tag、版本、更新日志及实际包元数据，使用同一提交完成全部桌面检查和打包，校验来源与 SHA-256 并保留旧版更新清单，再创建草稿并正式公开。检查失败时不会公开 Release；重复运行发现已有 Release 会失败，不覆盖现有附件。
+5. 手动运行 workflow 时填写已存在的 tag，默认只生成草稿；勾选 `publish` 才正式公开。跨平台安装与播放的真实验收状态须如实说明。
 
 0.7.0 默认不迁移旧版数据。手动复制桌面旧数据库的默认路径、重命名及旁路日志处理见 [README 迁移说明](../README.md#旧版数据)；发布说明必须保留这一升级提示。
 
@@ -37,4 +49,6 @@ Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未
 
 ## English
 
-The NSH desktop pipeline builds native Windows x64, Apple Silicon and Intel macOS packages. A version tag runs the shared CI checks and creates a **draft** release with versioned binaries, provenance/signing metadata and SHA-256 manifests. Windows remains unsigned; macOS uses ad hoc signing without notarization. Publishing the draft and real-device installation/playback acceptance remain manual. Mobile validation stays in regular CI and is excluded from desktop releases.
+All desktop CI, packaging and draft-release jobs use macOS runners. Intel Mac runners cross-compile Windows x64 through LLVM 19 and cargo-xwin 0.23.1; the shared `windows-cross` action also prepares checksum-verified Wine 11.0_1 and Inno Setup 6.7.4 when installers are needed. It uses a temporary Wine prefix and converts installer paths with `winepath`. Wine is a build tool only. Apple Silicon and Intel macOS packages use their respective native runners and Apple's signing and DMG tools. All three targets retain workspace builds and strict Clippy checks; Windows keeps its MSVC target, static CRT, baseline x86-64 instructions, 8 MiB stack and PE audit. Cross-compilation does not validate Windows runtime behavior.
+
+A version tag runs the shared CI and publishes the release only after all target artifacts, provenance and SHA-256 manifests pass verification. Assets are staged in a draft before publication; failed checks do not publish a release. Manual runs keep a draft unless `publish` is selected. Windows remains unsigned; macOS uses ad hoc signing without notarization. Real-device installation/playback acceptance remains manual. Mobile is unreleased, so CI no longer packages mobile artifacts.

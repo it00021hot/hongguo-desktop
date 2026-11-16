@@ -9,6 +9,10 @@ on:
         description: Existing release tag, for example v0.7.0
         type: string
         required: true
+      publish:
+        description: Publish after all artifact checks pass (tag pushes publish automatically)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,7 +23,7 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     outputs:
       tag: ${{ steps.metadata.outputs.tag }}
       sha: ${{ steps.metadata.outputs.sha }}
@@ -41,11 +45,10 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       source_ref: ${{ needs.validate.outputs.sha }}
-      desktop_only: true
 
-  draft:
+  release:
     needs: [validate, ci]
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     permissions:
       contents: write
     steps:
@@ -71,9 +74,9 @@ jobs:
           LEGACY_UPDATE_SHA256: d36bac7c56fc7b5c25e72c14aa7faa8ee661cd8a88cf039f1f1cc64815a44fe9
         run: |
           gh release download "$LEGACY_UPDATE_TAG" --pattern latest.json --dir "$RUNNER_TEMP/legacy-updater"
-          echo "$LEGACY_UPDATE_SHA256  $RUNNER_TEMP/legacy-updater/latest.json" | sha256sum -c -
+          echo "$LEGACY_UPDATE_SHA256  $RUNNER_TEMP/legacy-updater/latest.json" | shasum -a 256 -c -
           cp "$RUNNER_TEMP/legacy-updater/latest.json" artifacts/latest.json
-      - name: Create draft release without publishing
+      - name: Stage the verified release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -84,3 +87,10 @@ jobs:
             exit 1
           fi
           gh release create "$RELEASE_TAG" artifacts/* --repo "$GH_REPO" --verify-tag --draft --title "番果 $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+      - name: Publish the verified release
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --draft=false --latest
