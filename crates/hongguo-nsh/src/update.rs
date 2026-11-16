@@ -1,9 +1,14 @@
 use crate::{i18n::tr, ui};
 use nsh_core::prelude::*;
 
-const MANIFEST: &str =
-    "https://github.com/it00021hot/hongguo-desktop/releases/latest/download/latest.json";
+const RELEASE_API: &str = "https://api.github.com/repos/it00021hot/hongguo-desktop/releases/latest";
 const RELEASES: &str = "https://github.com/it00021hot/hongguo-desktop/releases/latest";
+
+#[derive(serde::Deserialize)]
+struct Release {
+    #[serde(rename = "tag_name")]
+    version: String,
+}
 
 pub(crate) fn card() -> View {
     let busy = signal(false);
@@ -100,22 +105,20 @@ pub(crate) fn card() -> View {
 }
 
 async fn check() -> Result<Option<String>, String> {
-    let response = fetch(MANIFEST).await?;
+    let request = HttpRequest::get(RELEASE_API)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", format!("guava/{}", crate::metadata().version));
+    let response = fetch(request).await?;
     if response.status() != 200 {
         return Err(format!("HTTP {}", response.status()));
     }
     newer_version(&response.text(), &crate::metadata().version)
 }
 
-fn newer_version(manifest: &str, current: &str) -> Result<Option<String>, String> {
-    let manifest: serde_json::Value =
-        serde_json::from_str(manifest).map_err(|error| error.to_string())?;
-    let version = manifest
-        .get("version")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "Missing release version".to_owned())?;
-    let candidate = semver::Version::parse(version.trim_start_matches('v'))
+fn newer_version(response: &str, current: &str) -> Result<Option<String>, String> {
+    let release: Release = serde_json::from_str(response).map_err(|error| error.to_string())?;
+    let candidate = semver::Version::parse(release.version.trim_start_matches('v'))
         .map_err(|error| error.to_string())?;
     let current = semver::Version::parse(current).map_err(|error| error.to_string())?;
-    Ok((candidate > current).then(|| version.to_owned()))
+    Ok((candidate > current).then_some(release.version))
 }

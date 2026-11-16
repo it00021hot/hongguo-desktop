@@ -455,7 +455,7 @@
     "installFailed": "Install failed: {error}",
     "noChangelog": "No release notes.",
     "releaseOpenFailed": "Could not open the release page",
-    "nshReleaseNote": "View the release page for available Native Shell packages."
+    "nshReleaseNote": "Download and install from the release page manually. Installation and previous-data migration are not automatic."
   },
   "settings": {
     "downloadDir": "Download folder",

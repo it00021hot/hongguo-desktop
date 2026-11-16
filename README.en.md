@@ -64,6 +64,8 @@ The application identifier is `com.guava.app`. Data lives in `%APPDATA%\guava` o
 
 ## Previous-version data
 
+Version 0.6.x cannot automatically upgrade to 0.7.0 through the old app; download and install it manually from Releases. The 0.7.0 update checker reads GitHub release versions and opens the download page; it does not install updates automatically.
+
 **0.7.0 does not migrate previous-version data automatically.** It starts with a separate database. Previous desktop versions using `hongguo.db` can be imported manually:
 
 | Platform | Default old database | Default new database |
