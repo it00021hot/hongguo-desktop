@@ -12,6 +12,7 @@ mod exit;
 mod mobile_catalog;
 mod mobile_menu;
 mod mobile_preferences;
+mod tray;
 pub(crate) use mobile_catalog::{mobile_catalog_header, mobile_channel_tab};
 
 #[derive(Clone, Copy)]
@@ -229,6 +230,8 @@ pub(crate) fn shell_with_theme(
             .child(menu.sheet(preferences));
     }
     crate::native_window::install();
+    let exit_requested = signal(false);
+    tray::install(exit_requested);
     let collapsed = signal(true);
     let pinned = signal(false);
     let is_pinned = move || {
@@ -376,7 +379,7 @@ pub(crate) fn shell_with_theme(
             move || window().width.0 < 768.0 && !chrome_hidden(nav) && !portrait_mode(nav),
             move || desktop_bottom_nav(nav),
         ))
-        .child(exit::confirmation())
+        .child(exit::confirmation(exit_requested))
 }
 
 fn mobile_tabs_visible(nav: Navigation) -> bool {

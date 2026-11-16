@@ -630,6 +630,7 @@
     "retry": "重试",
     "refresh": "刷新"
   },
+  "tray": { "name": "番果", "showWindow": "显示主窗口" },
   "window": {
     "minimize": "最小化",
     "maximize": "最大化",

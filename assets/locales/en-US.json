@@ -630,6 +630,7 @@
     "retry": "Retry",
     "refresh": "Refresh"
   },
+  "tray": { "name": "Guava", "showWindow": "Show main window" },
   "window": {
     "minimize": "Minimize",
     "maximize": "Maximize",

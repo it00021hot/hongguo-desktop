@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
-"""生成应用图标：官方 macOS 壳高清 logo + macOS 标准留白网格。
+"""生成应用图标：已确认的番果果实播放图标与 macOS 留白网格。
 
 只依赖 ImageMagick（`magick`）与 macOS 自带的 `iconutil`，不需要 Pillow——
 脚本会在缺工具时给出明确报错。
 
 ## 图形来源（assets/icons/source.png）
 
-官方 macOS 壳（`/Applications/红果短剧.app`）的 1024 原图——比官网
-`<link rel="icon">` 那张 40px 小图清晰得多（旧脚本把 40px 放大 25 倍，
-边缘糊成一块，Dock 里一眼就看出来）。提取方式（macOS 自带工具，可复现）：
-
-    iconutil -c iconset -o /tmp/hg.iconset \
-      "/Applications/红果短剧.app/Contents/Resources/iconfile.icns"
-    cp /tmp/hg.iconset/icon_512x512@2x.png assets/icons/source.png
-
-source.png 不存在时脚本会自己跑一遍上面的提取（见 extract_reference）。
+用户确认的圆润果实设计：暖白圆角底板、珊瑚橙果实、青绿叶片与浅色播放键。
+source.png 为独立图标原图；源文件缺失时明确失败，不从其他应用提取图标。
 
 ## 为什么要有留白
 
@@ -22,8 +15,7 @@ macOS 的应用图标有一套固定的「画布网格」：1024 画布里图形
 （四周各留 100），贴到 Dock 才和系统应用一样大。计算器/备忘录/Chrome
 实测一致——图形占画布 80.5%。官方壳与旧版我们的图标都是**满幅 1024**，
 没有留白，Dock 里就比别的应用大一圈。这里统一按标准网格重新摆位；
-源图自带的圆角（约 23%，与标准 22.5% 同量级）原样保留，不二次裁切——
-在已经圆角的图上再套圆角遮罩，边缘会被啃掉一圈毛边。
+导出时统一圆角边界，去掉生成源图在透明区域残留的零散像素。
 """
 
 from __future__ import annotations
@@ -41,7 +33,7 @@ SOURCE = ICON_DIR / "source.png"
 CANVAS = 1024
 # macOS 标准网格：图形本体占画布的比例（824/1024，四周各留 100）
 PLATE = 824
-REFERENCE_APP = Path("/Applications/红果短剧.app")
+CORNER_RADIUS_RATIO = 0.225
 # 应用图标的常用分辨率。
 PNG_SIZES = (32, 128, 256, 512, 1024)
 # macOS .icns 的标准档位（每种各带 @2x）
@@ -63,29 +55,16 @@ def require_tools() -> None:
         sys.exit(f"缺少工具：{', '.join(missing)}（brew install imagemagick）")
 
 
-def extract_reference() -> None:
-    """从官方壳 .icns 里提取 1024 原图（source.png 缺失时的兜底）。"""
-    icns = REFERENCE_APP / "Contents" / "Resources" / "iconfile.icns"
-    if not shutil.which("iconutil") or not icns.exists():
-        sys.exit(
-            f"缺少图标源 {SOURCE.relative_to(ROOT)}——"
-            "放一张 1024×1024 的 PNG 到该路径后再跑。"
-        )
-    with tempfile.TemporaryDirectory() as tmp:
-        iconset = Path(tmp) / "ref.iconset"
-        run(["iconutil", "-c", "iconset", "-o", str(iconset), str(icns)])
-        best = iconset / "icon_512x512@2x.png"
-        if not best.exists():
-            sys.exit(f"官方壳 .icns 里没有 1024 图（{iconset}）")
-        shutil.copyfile(best, SOURCE)
-    print(f"从官方壳提取图标源 → {SOURCE.relative_to(ROOT)}")
-
-
 def build_master() -> Path:
     """1024 画布 + 居中 824 图形（macOS 标准网格），落 /tmp 备用。"""
     out = Path(tempfile.mkdtemp()) / "master.png"
     plate = out.with_name("plate.png")
     magick(str(SOURCE), "-filter", "Lanczos", "-resize", f"{PLATE}x{PLATE}", out=plate)
+    mask = out.with_name("mask.png")
+    radius = PLATE * CORNER_RADIUS_RATIO
+    magick("-size", f"{PLATE}x{PLATE}", "xc:none", "-fill", "white", "-draw",
+           f"roundrectangle 0,0 {PLATE - 1},{PLATE - 1} {radius},{radius}", out=mask)
+    magick(str(plate), str(mask), "-compose", "CopyOpacity", "-composite", "-depth", "8", out=plate)
     magick("-size", f"{CANVAS}x{CANVAS}", "xc:none", str(plate), "-gravity", "center",
            "-composite", out=out)
     return out
@@ -137,7 +116,7 @@ def main() -> None:
     require_tools()
     ICON_DIR.mkdir(parents=True, exist_ok=True)
     if not SOURCE.exists():
-        extract_reference()
+        sys.exit(f"缺少已确认的图标源 {SOURCE.relative_to(ROOT)}")
     master = build_master()
     write_pngs(master)
     write_ico(master)

@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   copyFileSync,
   cpSync,
@@ -6,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -26,6 +28,7 @@ import { auditAndroidElf, verifyAndroidApk } from './nsh-android-audit.mjs';
 import { relinkEnvironment, finishRelink, copyAndroidRelinkHost } from './nsh-relink.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const ICON_RESOURCE_HASH_LENGTH = 12;
 const metadata = JSON.parse(readFileSync(join(root, 'crates/hongguo-nsh/nsh.json'), 'utf8'));
 const [action, target, profile = 'debug', requestedTriple = ''] = process.argv.slice(2);
 const release = profile === 'release';
@@ -288,6 +291,19 @@ function stage() {
           run('install_name_tool', ['-delete_rpath', match[1], binary]);
       }
       auditMacosBundle(destination, output);
+      const resources = join(destination, 'Contents/Resources');
+      const icon = join(resources, 'AppIcon.icns');
+      const iconHash = createHash('sha256')
+        .update(readFileSync(icon))
+        .digest('hex')
+        .slice(0, ICON_RESOURCE_HASH_LENGTH);
+      const iconName = `AppIcon-${iconHash}`;
+      renameSync(icon, join(resources, `${iconName}.icns`));
+      run('/usr/libexec/PlistBuddy', [
+        '-c',
+        `Set :CFBundleIconFile ${iconName}`,
+        join(destination, 'Contents/Info.plist'),
+      ]);
     }
   }
   const localized =
