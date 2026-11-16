@@ -4,16 +4,18 @@ use super::{
     privacy::{Effect, Privacy},
     wire::{Action, Request, Response, State},
 };
-use serde_json::Value;
 use std::time::{Duration, Instant};
-
-#[cfg(test)]
-#[path = "desktop_tests.rs"]
-mod tests;
 
 pub(super) const TICK_SECONDS: f64 = 0.04;
 const CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(3);
-type EventSink = Box<dyn Fn(&str, Value)>;
+pub(super) enum Event {
+    Applied(Response),
+    State(State),
+    Fullscreen { toggle: bool },
+    Failure(String),
+}
+
+type EventSink = Box<dyn Fn(Event)>;
 
 #[derive(Clone)]
 struct Pending {
@@ -34,6 +36,7 @@ pub(super) trait Window {
     fn capture(&self) -> Result<Capture, String>;
     fn apply(&self, plan: Plan) -> Result<(), String>;
     fn controls_hidden(&self, hidden: bool) -> Result<(), String>;
+    fn mini_controls_visible(&self, visible: bool) -> Result<(), String>;
     fn visible(&self, visible: bool, activate: bool) -> Result<(), String>;
     fn pinned(&self, pinned: bool) -> Result<(), String>;
 }
@@ -44,6 +47,7 @@ pub(super) struct Desktop {
     modes: Modes,
     privacy: Privacy,
     frameless: bool,
+    mini_controls_visible: bool,
     boss: bool,
     privacy_paused: bool,
     start: Instant,
@@ -52,19 +56,39 @@ pub(super) struct Desktop {
 }
 
 impl Desktop {
-    pub fn new(window: Box<dyn Window>, emit: impl Fn(&str, Value) + 'static) -> Self {
+    pub fn new(window: Box<dyn Window>, emit: impl Fn(Event) + 'static) -> Self {
         Self {
             window,
             emit: Box::new(emit),
             modes: Modes::default(),
             privacy: Privacy::default(),
             frameless: false,
+            mini_controls_visible: true,
             boss: false,
             privacy_paused: false,
             start: Instant::now(),
             pending: None,
             last: None,
         }
+    }
+    pub fn set_mini_controls_visible(&mut self, visible: bool) {
+        self.mini_controls_visible = visible;
+        if self.modes.mode == Mode::Mini
+            && self.window.attached()
+            && let Err(error) = self.window.mini_controls_visible(visible)
+        {
+            self.report(error);
+        }
+    }
+
+    fn sync_controls(&self, frameless: bool, mode: Mode) -> Result<(), String> {
+        self.window
+            .controls_hidden(frameless || mode == Mode::Mini)?;
+        if mode == Mode::Mini {
+            self.window
+                .mini_controls_visible(self.mini_controls_visible)?;
+        }
+        Ok(())
     }
     pub fn request(&mut self, request: Request) {
         let result = self.execute(&request);
@@ -86,7 +110,7 @@ impl Desktop {
         );
         if needs_windowed && capture.fullscreen {
             self.wait_for_fullscreen(request, false);
-            (self.emit)("exitFullscreen", Value::Null);
+            (self.emit)(Event::Fullscreen { toggle: false });
             return Ok(false);
         }
         let mut next = self.modes.clone();
@@ -107,8 +131,7 @@ impl Desktop {
             Action::Exit | Action::ToggleFullscreen => false,
             _ => self.frameless,
         };
-        self.window
-            .controls_hidden(frameless || next.mode == Mode::Mini)?;
+        self.sync_controls(frameless, next.mode)?;
         self.modes = next;
         self.frameless = frameless;
         match request.action {
@@ -119,7 +142,7 @@ impl Desktop {
             }
             Action::ToggleFullscreen => {
                 self.wait_for_fullscreen(request, !capture.fullscreen);
-                (self.emit)("toggleFullscreen", Value::Null);
+                (self.emit)(Event::Fullscreen { toggle: true });
                 return Ok(false);
             }
             _ => {}
@@ -168,9 +191,7 @@ impl Desktop {
         if self
             .last
             .is_some_and(|state| state.fullscreen && !capture.fullscreen)
-            && let Err(error) = self
-                .window
-                .controls_hidden(self.frameless || self.modes.mode == Mode::Mini)
+            && let Err(error) = self.sync_controls(self.frameless, self.modes.mode)
         {
             self.report(error);
         }
@@ -254,7 +275,7 @@ impl Desktop {
         let state = self.snapshot();
         if self.last != Some(state) {
             self.last = Some(state);
-            (self.emit)("state", serde_json::to_value(state).expect("window state"));
+            (self.emit)(Event::State(state));
         }
     }
     fn respond(&mut self, serial: u32, error: Option<String>) {
@@ -263,17 +284,13 @@ impl Desktop {
         }
         let state = self.snapshot();
         self.last = Some(state);
-        (self.emit)(
-            "applied",
-            serde_json::to_value(Response {
-                serial,
-                state,
-                error,
-            })
-            .expect("window response"),
-        );
+        (self.emit)(Event::Applied(Response {
+            serial,
+            state,
+            error,
+        }));
     }
     fn report(&self, error: String) {
-        (self.emit)("failure", Value::String(error));
+        (self.emit)(Event::Failure(error));
     }
 }

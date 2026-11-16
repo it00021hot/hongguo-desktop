@@ -11,15 +11,13 @@ mod prepare;
 mod progress;
 
 pub use fill::resume_fill;
-pub use plain::{fetch_plain, fetch_plain_with};
-pub use prepare::{
-    Prepared, ensure_stream_ready, prefetch_stream, prepare, schedule_next_episode_prefetch,
-};
+pub use plain::fetch_plain_with;
+pub use prepare::{Prepared, prefetch_stream, prepare, schedule_next_episode_prefetch};
 pub use progress::{OnlineProgressEvent, ProgressReporter, ProgressSink};
 
 use hongguo_stream::cache;
 
-/// 在线缓存现状（分条数、已填充字节），供缓存占用统计读。
+/// 在线缓存现状（条目数、数据面与解密计划的内存字节）。
 pub fn status() -> (usize, u64) {
     cache().status()
 }

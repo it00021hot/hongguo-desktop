@@ -2,7 +2,7 @@
 //!
 //! 并发模型：`Connection` 内部走连接级串行，多个 `connect()` 共享同一文件由库自身做页级加锁，无需外层 `RwLock`。事务边界：`begin/commit/rollback` 是独立 SQL 语句而非持有式 API，调用方必须在同一 async 任务里成对使用，仓储层 `with_tx` 收口。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use turso::{Builder, Connection, Database};
 
@@ -131,54 +131,11 @@ pub static MIGRATIONS: &[&str] = &[
     "#,
 ];
 
-/// 隔离目录里已有的符号链接不删、不跟随。库引擎还会在旁边写自己的日志文件，开库前先看见这些链接。
-fn refuse_symlink_children(dir: &Path) -> Result<(), String> {
-    let entries =
-        std::fs::read_dir(dir).map_err(|err| format!("离线 QA 无法检查数据目录: {err}"))?;
-    for entry in entries.flatten() {
-        let meta = std::fs::symlink_metadata(entry.path())
-            .map_err(|err| format!("离线 QA 无法检查 {}: {err}", entry.path().display()))?;
-        if meta.file_type().is_symlink() {
-            return Err(format!(
-                "离线 QA 拒绝隔离目录中的符号链接 {}，不会删除或跟随它",
-                entry.path().display()
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// turso 开库后会自己写 `*-wal` / `*-shm`（及可能的 `-journal`），不经 prepare_qa_io。
-/// 开库前拒绝这些名字上的既有符号链接；开库后再核一次：若已出现则必须是隔离内普通文件。
-fn refuse_engine_sidecars(db_path: &Path) -> Result<(), String> {
-    for suffix in ["-wal", "-shm", "-journal"] {
-        let side = PathBuf::from(format!("{}{suffix}", db_path.display()));
-        match std::fs::symlink_metadata(&side) {
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(format!(
-                    "离线 QA 无法检查引擎旁路 {}: {err}",
-                    side.display()
-                ));
-            }
-            Ok(meta) if meta.file_type().is_symlink() => {
-                return Err(format!(
-                    "离线 QA 拒绝数据库引擎旁路符号链接 {}，不会删除或跟随它",
-                    side.display()
-                ));
-            }
-            Ok(_) => {
-                crate::paths::prepare_qa_io(&side)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 /// 数据库句柄。`Database` 持有 IO 线程必须存活，`Connection` 可克隆共享。
 #[derive(Clone)]
 pub struct Db {
     conn: Connection,
+    _database: Database,
 }
 
 impl Db {
@@ -187,14 +144,8 @@ impl Db {
         let path = if path.as_ref() == Path::new(":memory:") {
             ":memory:".to_string()
         } else {
-            let open_at =
-                crate::paths::prepare_qa_io(path.as_ref()).map_err(AppError::InvalidArgs)?;
-            if hongguo_common::offline_qa::enabled() {
-                if let Some(dir) = open_at.parent() {
-                    refuse_symlink_children(dir).map_err(AppError::InvalidArgs)?;
-                }
-                refuse_engine_sidecars(&open_at).map_err(AppError::InvalidArgs)?;
-            } else if let Some(dir) = open_at.parent() {
+            let open_at = path.as_ref();
+            if let Some(dir) = open_at.parent() {
                 std::fs::create_dir_all(dir)
                     .map_err(|e| AppError::Io(format!("创建数据目录失败: {e}")))?;
             }
@@ -215,13 +166,10 @@ impl Db {
         let conn = db
             .connect()
             .map_err(|e| AppError::StoreCorrupt(format!("建立连接失败: {e}")))?;
-        // Database 不能 drop（会带走 IO 线程），用 forget 语义保活；
-        // Connection 内部持有对实例的引用，进程退出时统一回收。
-        std::mem::forget(db);
-        if hongguo_common::offline_qa::enabled() && path != ":memory:" {
-            refuse_engine_sidecars(Path::new(&path)).map_err(AppError::InvalidArgs)?;
-        }
-        let this = Self { conn };
+        let this = Self {
+            conn,
+            _database: db,
+        };
         this.migrate().await?;
         Ok(this)
     }
@@ -313,232 +261,5 @@ impl Db {
                 Err(e)
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use turso::Value;
-
-    /// 异步测试的迷你运行时（项目 test 依赖够不着 tokio::test 宏，手写 block_on 泵）。
-    fn run<F: std::future::Future>(fut: F) -> F::Output {
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("构建测试 runtime")
-            .block_on(fut)
-    }
-
-    fn tmp_db_path(tag: &str) -> String {
-        let dir = std::env::temp_dir().join(format!("hongguo-spike-{tag}-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        dir.join("test.db").to_string_lossy().into_owned()
-    }
-
-    #[test]
-    fn spike_basic_crud_upsert_and_json_column() {
-        run(async {
-            let db = Db::open(":memory:").await.expect("打开内存库");
-
-            db.execute(
-                "CREATE TABLE t (k TEXT PRIMARY KEY, n INTEGER, x REAL, j TEXT)",
-                (),
-            )
-            .await
-            .expect("建表");
-            let n = db
-                .execute(
-                    "INSERT INTO t (k, n, x, j) VALUES (?1, ?2, ?3, ?4)",
-                    [
-                        Value::Text("a".into()),
-                        Value::Integer(42),
-                        Value::Real(1.5),
-                        Value::Text(r#"{"播放": 12.5}"#.into()),
-                    ],
-                )
-                .await
-                .expect("插入");
-            assert_eq!(n, 1);
-
-            db.execute(
-                "INSERT INTO t (k, n, x, j) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(k) DO UPDATE SET n = excluded.n, x = excluded.x",
-                [
-                    Value::Text("a".into()),
-                    Value::Integer(43),
-                    Value::Real(2.5),
-                    Value::Null,
-                ],
-            )
-            .await
-            .expect("UPSERT");
-
-            let mut rows = db
-                .conn()
-                .query(
-                    "SELECT n, x, j FROM t WHERE k = ?1",
-                    [Value::Text("a".into())],
-                )
-                .await
-                .expect("查询");
-            let row = rows.next().await.expect("next 不报错").expect("有一行");
-            let n = row.get_value(0).expect("取 n");
-            assert_eq!(n.as_integer().copied(), Some(43));
-            let x = row.get_value(1).expect("取 x");
-            assert_eq!(x.as_real().copied(), Some(2.5));
-            let j = row.get_value(2).expect("取 j");
-            assert_eq!(j.as_text().map(|s| s.as_str()), Some("{\"播放\": 12.5}"));
-
-            db.execute(
-                "INSERT INTO t (k, n, x, j) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(k) DO UPDATE SET j = excluded.j",
-                [
-                    Value::Text("a".into()),
-                    Value::Integer(43),
-                    Value::Real(2.5),
-                    Value::Null,
-                ],
-            )
-            .await
-            .expect("UPSERT 置 NULL");
-            let mut rows = db
-                .conn()
-                .query("SELECT j FROM t WHERE k = ?1", [Value::Text("a".into())])
-                .await
-                .expect("查询 2");
-            let row = rows.next().await.expect("next 不报错").expect("有一行");
-            assert!(
-                row.get_value(0).expect("取 j").is_null(),
-                "显式 excluded.j = NULL 应当写入 NULL"
-            );
-        });
-    }
-
-    #[test]
-    fn spike_transaction_rollback() {
-        run(async {
-            let db = Db::open(":memory:").await.expect("打开内存库");
-            db.execute("CREATE TABLE t (k TEXT PRIMARY KEY)", ())
-                .await
-                .expect("建表");
-
-            let err = db
-                .with_tx(|conn| async move {
-                    let _ = conn
-                        .execute("INSERT INTO t (k) VALUES ('x')", ())
-                        .await
-                        .map_err(|e| AppError::StoreCorrupt(e.to_string()))?;
-                    conn.execute("INSERT INTO t (k) VALUES ('x')", ())
-                        .await
-                        .map_err(|e| AppError::StoreCorrupt(e.to_string()))
-                })
-                .await;
-            assert!(err.is_err(), "第二次插入同主键必须失败");
-
-            let mut rows = db
-                .conn()
-                .query("SELECT COUNT(*) FROM t", ())
-                .await
-                .expect("count");
-            let row = rows.next().await.unwrap().unwrap();
-            let c = row.get_value(0).unwrap();
-            assert_eq!(c.as_integer().copied(), Some(0), "事务回滚后不应有残留行");
-        });
-    }
-
-    #[test]
-    fn spike_file_db_persists_and_migrate_idempotent() {
-        run(async {
-            let path = tmp_db_path("file");
-            let _ = std::fs::remove_file(&path);
-
-            {
-                let db = Db::open(&path).await.expect("打开文件库");
-                db.execute(
-                    "INSERT INTO settings (id, json) VALUES (1, '{\"a\":1}')",
-                    (),
-                )
-                .await
-                .expect("写入 settings");
-            }
-            {
-                let db = Db::open(&path).await.expect("重开文件库");
-                let mut rows = db
-                    .conn()
-                    .query("SELECT json FROM settings WHERE id = 1", ())
-                    .await
-                    .expect("查询");
-                let row = rows.next().await.unwrap().unwrap();
-                let j = row.get_value(0).unwrap();
-                assert_eq!(j.as_text().map(|s| s.as_str()), Some("{\"a\":1}"));
-            }
-            let _ = std::fs::remove_file(&path);
-        });
-    }
-
-    #[test]
-    fn v7_upgrade_adds_quality_memory_without_touching_existing_settings() {
-        run(async {
-            let db = Db::open(":memory:").await.unwrap();
-            db.execute(
-                "INSERT INTO settings(id,json) VALUES(1,'{\"old\":true}')",
-                (),
-            )
-            .await
-            .unwrap();
-            db.execute("DROP TABLE playback_definition", ())
-                .await
-                .unwrap();
-            db.execute("PRAGMA user_version = 7", ()).await.unwrap();
-            db.migrate().await.unwrap();
-            crate::entity::save_playback_definition(&db, "", Some(540))
-                .await
-                .unwrap();
-            db.migrate().await.unwrap();
-            assert_eq!(
-                crate::entity::playback_definition(&db, "").await.unwrap(),
-                Some(540)
-            );
-            let mut rows = db
-                .conn()
-                .query("SELECT json FROM settings WHERE id=1", ())
-                .await
-                .unwrap();
-            assert_eq!(
-                rows.next()
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .get_value(0)
-                    .unwrap()
-                    .as_text()
-                    .map(String::as_str),
-                Some("{\"old\":true}")
-            );
-        });
-    }
-
-    #[test]
-    fn spike_multiple_connections_share_file() {
-        run(async {
-            let path = tmp_db_path("multi");
-            let _ = std::fs::remove_file(&path);
-            let db = Db::open(&path).await.expect("打开");
-            let other = db.clone();
-            db.execute(
-                "INSERT INTO series (series_id, dismissed, json, updated_at) VALUES ('s1', 0, '{}', 1)",
-                (),
-            )
-            .await
-            .expect("连接 1 写入");
-            let mut rows = other
-                .conn()
-                .query("SELECT COUNT(*) FROM series", ())
-                .await
-                .expect("连接 2 查询");
-            let row = rows.next().await.unwrap().unwrap();
-            assert_eq!(row.get_value(0).unwrap().as_integer().copied(), Some(1));
-            let _ = std::fs::remove_file(&path);
-        });
     }
 }

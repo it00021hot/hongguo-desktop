@@ -1,3 +1,4 @@
+mod buffering;
 mod cancellation;
 mod direct;
 mod response;
@@ -63,6 +64,7 @@ impl MediaServer {
         };
         let router = Router::new()
             .route("/media/{id}", get(response::serve))
+            .route("/media/{id}/audio", get(response::serve_audio))
             .with_state(routes.clone());
         let task = hongguo_service::runtime::spawn(async move {
             if let Err(error) = axum::serve(listener, router).await {
@@ -70,11 +72,6 @@ impl MediaServer {
             }
         });
         Ok(Self { routes, task })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn file(&self, path: &Path) -> Result<MediaLease, String> {
-        self.publish(uuid::Uuid::new_v4().to_string(), Source::file(path)?, None)
     }
 
     pub(crate) fn playback_file(&self, path: &Path) -> Result<MediaLease, String> {
@@ -87,15 +84,15 @@ impl MediaServer {
 
     fn register(&self, source: Source) -> Result<MediaLease, String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let session = Arc::new(
-            hongguo_softdec::DirectSession::open(Arc::new(source.clone()))
-                .map_err(|error| error.to_string())?,
+        let (source, codec) = source.prepare()?;
+        let lease = self.publish(id, source, None)?;
+        let (stream_entries, stream_bytes) = hongguo_service::play_service::online::status();
+        log::debug!(
+            "[NSH media] sourceId={} stage=registered codec={codec} imageCacheBytes={} streamEntries={stream_entries} streamMemoryBytes={stream_bytes}",
+            lease.id,
+            nsh_core::image::budget().used()
         );
-        let frames = hongguo_nsh_video_api::frames::register_frames(
-            &id,
-            Arc::new(direct::Frames::new(session.clone())),
-        )?;
-        self.publish(id, source.audio(session), Some(frames))
+        Ok(lease)
     }
 
     fn publish(
@@ -109,11 +106,12 @@ impl MediaServer {
             .lock()
             .map_err(|_| "media routes lock poisoned")?
             .insert(id.clone(), source);
+        let url = format!("http://{}/media/{id}", self.routes.authority);
         Ok(MediaLease {
-            url: format!("http://{}/media/{id}", self.routes.authority),
+            url,
             id,
             sources: self.routes.sources.clone(),
-            frames,
+            frames: Mutex::new(frames),
         })
     }
 }
@@ -134,22 +132,105 @@ pub(crate) struct MediaLease {
     id: String,
     url: String,
     sources: Arc<Mutex<HashMap<String, Source>>>,
-    frames: Option<hongguo_nsh_video_api::frames::FrameRegistration>,
+    frames: Mutex<Option<hongguo_nsh_video_api::frames::FrameRegistration>>,
 }
 
 impl MediaLease {
+    pub(crate) fn set_playback_rate(&self, rate: f32) -> Result<(), String> {
+        let sources = self
+            .sources
+            .lock()
+            .map_err(|_| "media routes lock poisoned")?;
+        let source = sources
+            .get(&self.id)
+            .ok_or("media source is no longer registered")?;
+        source.set_playback_rate(rate);
+        Ok(())
+    }
+
+    pub(crate) fn prepare_codec_extension(&self, position_secs: f64) -> Result<(), String> {
+        let needs_extension = {
+            let sources = self
+                .sources
+                .lock()
+                .map_err(|_| "media routes lock poisoned")?;
+            let source = sources
+                .get(&self.id)
+                .ok_or("media source is no longer registered")?;
+            source.precision_extension
+                || source
+                    .codec
+                    .as_deref()
+                    .is_some_and(hongguo_bytevc2::is_bytevc2)
+        };
+        if needs_extension {
+            self.enable_codec_extension(position_secs)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn url(&self) -> &str {
         &self.url
     }
 
-    pub(crate) fn frame_source(&self) -> Option<&str> {
-        self.frames.as_ref().map(|frames| frames.url())
+    pub(crate) fn frame_source(&self) -> Option<String> {
+        self.frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(|frames| frames.url().to_owned())
+    }
+
+    pub(crate) fn enable_codec_extension(&self, position_secs: f64) -> Result<String, String> {
+        let mut registered = self
+            .frames
+            .lock()
+            .map_err(|_| "frame registration lock poisoned")?;
+        if let Some(frames) = registered.as_ref() {
+            return Ok(frames.url().to_owned());
+        }
+        let source = self
+            .sources
+            .lock()
+            .map_err(|_| "media routes lock poisoned")?
+            .get(&self.id)
+            .cloned()
+            .ok_or("media source is no longer registered")?;
+        if !source.codec.as_deref().is_some_and(|codec| {
+            hongguo_bytevc2::is_bytevc2(codec) || matches!(codec, "hvc1" | "hev1")
+        }) {
+            return Err("no codec extension for this native video format".into());
+        }
+        let session = Arc::new(
+            hongguo_playback::PlaybackSession::open(
+                Arc::new(source.clone()),
+                hongguo_playback::SessionConfig {
+                    defer_decoder_binding: true,
+                    start_position_secs: position_secs,
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| error.to_string())?,
+        );
+        let audio_url = source.audio_view().map(|_| format!("{}/audio", self.url));
+        let frames = hongguo_nsh_video_api::frames::register_frames(
+            &self.id,
+            Arc::new(direct::Frames::new(session, audio_url)),
+        )?;
+        let url = frames.url().to_owned();
+        *registered = Some(frames);
+        Ok(url)
     }
 }
 
 impl Drop for MediaLease {
     fn drop(&mut self) {
-        drop(self.frames.take());
+        drop(
+            self.frames
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take(),
+        );
         if let Ok(mut sources) = self.sources.lock()
             && let Some(source) = sources.remove(&self.id)
         {
@@ -157,7 +238,3 @@ impl Drop for MediaLease {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/media.rs"]
-mod tests;

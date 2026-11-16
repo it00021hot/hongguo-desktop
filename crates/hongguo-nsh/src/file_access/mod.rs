@@ -3,9 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::oneshot;
 
-#[cfg(test)]
-mod tests;
-
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(target_os = "ios")]

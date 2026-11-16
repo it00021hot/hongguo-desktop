@@ -1,6 +1,6 @@
 //! Standalone desktop chrome, using NSH's public window contract only.
 use nsh_core::{
-    desktop::{TitleBarStyle, WindowFrame},
+    desktop::{TitleBarOptions, TitleBarStyle, WindowAttributes, WindowFrame},
     element::desktop,
     prelude::*,
 };
@@ -10,16 +10,25 @@ pub(crate) fn install() {
         return;
     }
     let content = window();
-    desktop::set_title_bar(TitleBarStyle::Hidden, Some(px(44.0)));
+    set_title_bar(TitleBarStyle::Hidden);
     // AppKit expands the content under its former title bar. Preserve the
     // requested viewport as the new outer frame, without guessing decorations.
     if matches!(os(), nsh_core::platform::Os::MacOs) {
-        desktop::set_frame(WindowFrame {
+        desktop::current_window().set_bounds(WindowFrame {
             width: Some(content.width),
             height: Some(content.height),
             ..Default::default()
         });
     }
+}
+
+pub(crate) fn set_title_bar(style: TitleBarStyle) {
+    let mut title_bar = TitleBarOptions::default();
+    title_bar.style = style;
+    title_bar.height = Some(px(44.0));
+    let mut attributes = WindowAttributes::default();
+    attributes.title_bar = Some(title_bar);
+    desktop::current_window().set(attributes);
 }
 
 pub(crate) fn leading_inset() -> Points {

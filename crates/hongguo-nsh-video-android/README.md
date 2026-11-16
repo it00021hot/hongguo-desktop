@@ -1,22 +1,101 @@
-# Android 像素播放器
+# Android native playback
 
-视频由共享 Rust 解码会话提供不可变 BGRA8 帧，本 crate 上传到 GLES 的 RGBA 纹理，再经共享 `hongguo-enhancement::Pipeline` 呈现。原画与增强使用同一条 GPU 输出；关闭增强仍呈现同一份内置解码帧。Java 的 `MediaPlayer` 仅播放音轨、提供时钟，不绑定视频 Surface。
+The widget controls the shared `hongguo-playback` session. AAC/tempo decoding and
+the AAudio PCM clock belong to that session; Java owns audio focus, noisy-route
+interruption and lifecycle. There is no MediaPlayer or HTTP audio-track view.
+Real UI control claims the frame consumer; delayed controls, seek, presentation,
+decoder admission and faults use the consumer-owned operations.
 
-关键边界：
+Software frames upload their unsigned native YUV planes directly to the shared
+converter. An 8-bit hardware candidate requires Android API29 hardware codec
+classification and `GL_EXT_YUV_target`. The external YUV sampler must succeed;
+the extension specifies a draw-time error for a non-YUV image. It is not sampled
+through an opaque YUV-to-RGB conversion.
 
-- 有 source 时必须提供 `frameSource` 租约地址。关闭消费者只关闭自身租约；代际变化撤销旧消费者后再应用新 source。
-- 首帧实际 GPU 提交完成且音轨已 prepared 才放行声音。BGRA 转 RGBA 显式交换红蓝通道并跳过 stride padding。
-- Android 匿名音频 seek callback 串行匹配，保留最新排队请求。音频完成后按实际位置重置 Rust 解码代际，只有新代 GPU 帧呈现后才发 `Seeked`，并恢复 mailbox 中最新暂停、音量与速率意图。
-- 设置及 viewport 改动复用上一张不可变帧；GPU 完成前不覆盖上传纹理。旧设置完成不会成为新设置的 Ready。
-- 增强失败后继续呈现原画；原画 GPU 路径失败时暂停音频并发出错误。失活后停止帧轮询，销毁前先关闭帧消费者和音频播放器，再停工作线程。
-- 未知系统时长通过 `durationMs: null` 表示，不制造 0 时长或虚构全长。HTTP/缓存、业务续播、下载和账号处理不在本 crate。
+An opaque SurfaceTexture never proves 10-bit storage. A Main10 frame requests an
+API33+ P010 ImageReader device generation instead. Each acquired image must have
+an actual P010 HardwareBuffer, valid matching crop, and usable GPU dimensions.
+The borrowed AHardwareBuffer becomes an EGLImage, sampled directly as raw YUV
+into R16UI planes. Image, HardwareBuffer, EGLImage, native frame and decoder device
+leases survive GPU completion; error-path retirement also completes pending GL
+reads before returning an ImageReader buffer. There is no CPU pixel readback.
+The 8-bit SurfaceTexture is likewise retained until a context-local finish before
+final release, including failures before a WGPU retirement fence was registered.
+Missing classification/format/import capabilities reject the hardware candidate
+and recover the same stream through the built-in software decoder.
 
-## 定向验证
+The common converter preserves source precision through linear FP16 working
+textures, optional enhancement, and final output mapping. Without enhancement,
+no enhancement pipeline or extra normalization copy is created. SDR uses final
+UNORM dithering. A capable HDR display can instead use a below-window SurfaceView:
+the GLES instance verifies actual RGBA16F component sizes/type and scRGB extensions,
+the configured EGL window colorspace, native RGBA16F format and linear scRGB
+dataspace. The final shader retains negative and above-one scRGB values. Display
+capabilities supply the luminance target; an SDR source leaves the HDR layer.
+Missing/invalid capability selects SDR without first opening a decoder.
 
-仓库根执行纯数据和架构回归：
+Separate HDR surfaces are admitted only under a stable rectangular NSH hierarchy.
+Canvas shaders/transitions, masks, rounded ancestor clipping, ancestor transforms
+or partial opacity select TextureView composition. Intersecting sibling overlays
+and their descendants also reject post-layout transforms, opacity transitions or
+shader/mask composition; ordinary rounded overlay buttons remain allowed. The
+check excludes the video's own output child. This fallback is temporary: an HDR
+source returns to SurfaceView when the hierarchy stabilizes. A float-capable
+display can first initialize a FULL-range F16 SDR window during UI transitions,
+so restoring HDR retains that same device. Only a real EGL/output capability
+failure disables further HDR attempts for the current source. The HDR layer never uses `setZOrderOnTop`;
+controls/dialogs stay above it. Changing only the output window retains the same
+GLES device and MediaCodec input surface, without spending decoder recovery budget.
+An already-float instance uses a separate SDR window with
+`EGL_GL_COLORSPACE_LINEAR_KHR` and `ADATASPACE_SRGB_LINEAR` (**FULL** range).
+HDR retains `EGL_GL_COLORSPACE_SCRGB_LINEAR_EXT` and
+`ADATASPACE_SCRGB_LINEAR` (**EXTENDED**). The actual colorspace and dataspace are
+checked after each configure. The Android window compositor supplies final SDR
+encoding; the SDR window is not tagged as extended HDR.
+Khronos deliberately leaves external-YUV chroma upsampling to
+the driver; device color/chroma golden comparisons remain required.
 
-```sh
-cargo test -p hongguo-nsh-video-android --test pixel_bytes --test softdec_only
-```
+Android uses **80 as a normalization reference** for both UNORM sRGB and floating
+linear SDR output. This makes SDR white 1.0 in either path; it is not a measurement
+of the panel's white luminance, which is unknown. `convert` and `map_output` share
+that same target. The common `DisplayTarget::sdr()` default uses a 100 reference;
+SDR input retains the same relative black/gray/white, while Android's HDR-to-SDR
+curve uses the shared 80 reference for both outputs. Physical HDR-to-SDR goldens
+still require a device. HDR uses the scRGB 80-nit reference and the display's
+advertised HDR peak; neither claims the current physical brightness was measured.
+See Android's [DataSpace definitions](https://developer.android.com/reference/android/hardware/DataSpace#DATASPACE_SRGB_LINEAR),
+[KHR linear EGL colorspace](https://registry.khronos.org/EGL/extensions/KHR/EGL_KHR_gl_colorspace.txt),
+and AOSP's [EGL wrapper](https://android.googlesource.com/platform/frameworks/native/+/refs/tags/android-14.0.0_r1/opengl/libs/EGL/egl_platform_entries.cpp).
+The wrapper initially maps linear EGL to UNKNOWN, so the explicit native-window
+FULL-range tag and its readback are necessary. Native-window tags persist across
+swaps; the wrapper sets them at window creation, not each swap.
 
-`tests/PixelDirectGateTest.java` 验证首帧、缓冲、seek 代际及关闭门控。Android 交叉 strict、Java 编译和真实业务 APK 的像素验收分别记录，不能把静态测试或编译通过称为设备运行通过。
+The controlled same-version WGPU HAL patch associates an explicit unique token
+with the actual EGL swap. TextureView callbacks and real display pulses check that
+exact token, source epoch and output-surface version before acknowledging the frame.
+Surface changes invalidate both native pending presentation and already-queued Java
+callbacks without retiring GPU image leases early. SurfaceView instead
+requires the matching token recorded after successful final EGL window swap, with
+an active valid surface. GPU completion alone cannot release audio. These are buffer
+consumption/window submission contracts, not physical scanout measurements. Optional
+physical-present/power measurements are unavailable. Android API28's CDD requires the presentation-time
+extension; missing/rejected tokens are explicit failures. See
+[`UPSTREAM.md`](../../vendor/wgpu-hal/UPSTREAM.md) for the patch and removal plan.
+
+Choreographer supplies real display pulses while playing or awaiting a first
+frame/seek/recovery image. Stable paused widgets block on the mailbox. GPU fence
+retirement alone uses a temporary bounded poll; decoder image callbacks also wake
+the worker. A retained output window survives resize and inactive props, avoiding
+unnecessary decoder generations. A real GPU loss pauses the clock, rebuilds the
+renderer, and consumes the shared recovery budget through the appropriate device
+or presentation-recovery operation.
+
+An explicit empty video edit hides the retained media image behind black and does
+not wait for a nonexistent first frame. The UI's play intent reaches the core while
+the core's holding state gates the actual PCM clock. Natural video tails still hold
+the last image.
+
+Verified here: Android API28 Rust cross-checks, strict Android renderer Clippy,
+API37 Java SDK compilation, and pure Java stale-epoch/exact-token gates. Physical
+Android MediaCodec/P010/AAudio playback, HDR display, visual goldens, refresh-rate
+behavior, device loss and energy measurements are separate device QA gates.

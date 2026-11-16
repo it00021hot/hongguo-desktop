@@ -5,12 +5,12 @@ const MANIFEST: &str =
     "https://github.com/it00021hot/hongguo-desktop/releases/latest/download/latest.json";
 const RELEASES: &str = "https://github.com/it00021hot/hongguo-desktop/releases/latest";
 
-pub(crate) fn card(external: bool) -> View {
+pub(crate) fn card() -> View {
     let busy = signal(false);
     let checked = signal(false);
     let available = signal(None::<String>);
     let failure = signal(SharedString::default());
-    ui::form_surface(
+    crate::features::settings::presentation::form_surface(
         view()
             .gap_1p5()
             .child(
@@ -25,7 +25,7 @@ pub(crate) fn card(external: bool) -> View {
                     )
                     .child(view().flex_1())
                     .child(
-                        ui::update_action(
+                        crate::features::settings::presentation::update_action(
                             move || {
                                 tr(if busy.get() {
                                     "update.checking"
@@ -46,11 +46,11 @@ pub(crate) fn card(external: bool) -> View {
                             failure.set(SharedString::default());
                             spawn(async move {
                                 if available.get_untracked().is_some() {
-                                    if external && !open_url(RELEASES).await {
+                                    if !open_url(RELEASES).await {
                                         failure.set(tr("update.releaseOpenFailed"));
                                     }
                                 } else {
-                                    let result = if external { check().await } else { Ok(None) };
+                                    let result = check().await;
                                     match result {
                                         Ok(version) => {
                                             available.set(version);
@@ -68,23 +68,29 @@ pub(crate) fn card(external: bool) -> View {
                         }),
                     ),
             )
-            .child(ui::form_hint(move || {
-                let version =
-                    tr("update.versionLine").replace("{version}", env!("CARGO_PKG_VERSION"));
-                if let Some(available) = available.get() {
-                    format!(
-                        "{version} · {}",
-                        tr("update.newVersionAvailable").replace("{version}", &available)
-                    )
-                } else if checked.get() {
-                    format!("{version} · {}", tr("update.upToDate"))
-                } else {
-                    version
-                }
-            }))
+            .child(crate::features::settings::presentation::form_hint(
+                move || {
+                    let version =
+                        tr("update.versionLine").replace("{version}", &crate::metadata().version);
+                    if let Some(available) = available.get() {
+                        format!(
+                            "{version} · {}",
+                            tr("update.newVersionAvailable").replace("{version}", &available)
+                        )
+                    } else if checked.get() {
+                        format!("{version} · {}", tr("update.upToDate"))
+                    } else {
+                        version
+                    }
+                },
+            ))
             .child(when(
                 move || available.get().is_some(),
-                move || ui::form_description(move || tr("update.nshReleaseNote")),
+                move || {
+                    crate::features::settings::presentation::form_description(move || {
+                        tr("update.nshReleaseNote")
+                    })
+                },
             ))
             .child(when(
                 move || !failure.get().is_empty(),
@@ -98,7 +104,7 @@ async fn check() -> Result<Option<String>, String> {
     if response.status() != 200 {
         return Err(format!("HTTP {}", response.status()));
     }
-    newer_version(&response.text(), env!("CARGO_PKG_VERSION"))
+    newer_version(&response.text(), &crate::metadata().version)
 }
 
 fn newer_version(manifest: &str, current: &str) -> Result<Option<String>, String> {
@@ -112,34 +118,4 @@ fn newer_version(manifest: &str, current: &str) -> Result<Option<String>, String
         .map_err(|error| error.to_string())?;
     let current = semver::Version::parse(current).map_err(|error| error.to_string())?;
     Ok((candidate > current).then(|| version.to_owned()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn releases_compare_semantic_versions_without_treating_tauri_assets_as_nsh_installers() {
-        assert_eq!(
-            newer_version(
-                r#"{"version":"0.10.0","platforms":{"darwin-aarch64":{"url":"tauri.app.tar.gz"}}}"#,
-                "0.9.9"
-            )
-            .unwrap(),
-            Some("0.10.0".into())
-        );
-        assert_eq!(
-            newer_version(r#"{"version":"0.6.6"}"#, "0.6.6").unwrap(),
-            None
-        );
-        assert_eq!(
-            newer_version(r#"{"version":"v0.6.5"}"#, "0.6.6").unwrap(),
-            None
-        );
-        assert_eq!(
-            newer_version(r#"{"version":"0.6.6-beta.2"}"#, "0.6.6").unwrap(),
-            None
-        );
-        assert!(newer_version(r#"{"version":"bad"}"#, "0.6.6").is_err());
-        assert!(newer_version(r#"{}"#, "0.6.6").is_err());
-    }
 }

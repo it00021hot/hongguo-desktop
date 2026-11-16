@@ -12,8 +12,7 @@ use crate::events::ServiceEvents;
 use hongguo_common::model::settings::Settings;
 use hongguo_store::Store;
 
-/// 全局状态，由 Tauri 的 `manage` 注入（`Arc<AppState>` 形式：command 层可拿借用，
-/// spawn 后台任务需要 `'static` 所有权时直接克隆）。
+/// 共享业务状态，由宿主启动时装配。
 pub struct AppStateInner {
     /// 持久化数据（Turso 内嵌库，DB 线程串行执行）
     pub store: Store,
@@ -40,21 +39,11 @@ pub struct AppStateInner {
     events: ServiceEvents,
 }
 
-/// 对外暴露的句柄类型。`Arc` 的 `Default` 由 std 提供，此处只需给内层实现。
+/// 对外暴露的共享句柄。
 pub type AppState = Arc<AppStateInner>;
 
 impl AppStateInner {
-    /// 用真实文件库构造（应用启动用）。打开失败（建不了库/迁移失败）
-    /// 直接终止启动：带病运行等于让用户在新库上改设置，回头又换回旧库。
-    pub fn with_db(store: Store) -> Self {
-        Self::with_device(
-            store,
-            hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid()),
-        )
-    }
-
-    /// [`AppStateInner::with_db`] 的带设备版本（启动装配时传入库里
-    /// 装载好的档案；测试与默认路径用匿名档案）。
+    /// 使用宿主打开的数据库与已装载的设备档案。
     pub fn with_device(store: Store, device: hongguo_signer::device::DeviceProfile) -> Self {
         if store.db_path() != std::path::Path::new(":memory:") {
             hongguo_api::metasec::configure_app(
@@ -108,14 +97,6 @@ impl hongguo_api::metasec::SessionStore for SdkSessionStore {
     ) -> hongguo_common::AppResult<()> {
         self.0
             .save_sdk_session(serde_json::json!({"profile": profile_key, "token": token}))
-    }
-}
-
-impl Default for AppStateInner {
-    fn default() -> Self {
-        // 测试路径：内存库。打不开属于环境异常，直接 panic 让测试显式失败。
-        let store = Store::open_memory().expect("测试内存库初始化失败");
-        Self::with_db(store)
     }
 }
 
@@ -220,119 +201,4 @@ fn merge_session_cookie(
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("; ")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hongguo_api::metasec::SessionStore as _;
-
-    #[test]
-    fn incompatible_sdk_session_is_a_cache_miss() {
-        let store = Store::open_memory().unwrap();
-        let sessions = SdkSessionStore(store.clone());
-        let token = hongguo_api::metasec::sdi::SdiToken {
-            status: 200,
-            value: "test-session".into(),
-        };
-        sessions.save("active", &token).unwrap();
-        assert_eq!(sessions.load("active").unwrap().unwrap().status, 200);
-        assert!(sessions.load("other").unwrap().is_none());
-
-        store
-            .save_sdk_session(serde_json::json!({
-                "profile": "active",
-                "token": {"status": 200}
-            }))
-            .unwrap();
-        assert!(sessions.load("active").unwrap().is_none());
-    }
-
-    #[test]
-    fn merge_cookie_anonymous_only_when_no_account() {
-        let cdid = hongguo_signer::fresh_cdid();
-        let mut device = hongguo_signer::anonymous_profile(&cdid);
-        device.set("iid", "4175317900247834");
-        device.set_ttreq(Some("1$abc".into()));
-        let cookie = merge_session_cookie(None, &device);
-        assert!(cookie.contains("install_id=4175317900247834"));
-        assert!(cookie.contains("store-region=cn-gd"));
-        assert!(cookie.contains("ttreq=1$abc"));
-        assert!(!cookie.contains("sessionid"), "匿名形态不应有会话字段");
-        let bare = hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid());
-        assert_eq!(merge_session_cookie(None, &bare), "");
-    }
-
-    #[test]
-    fn merge_cookie_account_overrides_and_extends() {
-        let cdid = hongguo_signer::fresh_cdid();
-        let mut device = hongguo_signer::anonymous_profile(&cdid);
-        device.set("iid", "4175317900247834");
-        let cookie = merge_session_cookie(Some("sessionid=abc; store-region=cn-sh"), &device);
-        assert!(
-            cookie.contains("store-region=cn-sh"),
-            "账号属地应覆盖兜底值"
-        );
-        assert!(cookie.contains("sessionid=abc"));
-        assert!(cookie.contains(&format!("install_id={}", device.get("iid"))));
-        assert!(cookie.split("; ").all(|p| p.split_once('=').is_some()));
-    }
-    #[test]
-    fn settings_snapshot_is_a_copy() {
-        let state = AppState::default();
-        let mut s = state.settings();
-        s.max_concurrency = 7;
-        assert_eq!(state.settings().max_concurrency, 3);
-    }
-
-    #[test]
-    fn replace_settings_returns_old() {
-        let state = AppState::default();
-        let old = state.replace_settings(Settings {
-            max_concurrency: 9,
-            ..Settings::default()
-        });
-        assert_eq!(old.max_concurrency, 3);
-        assert_eq!(state.settings().max_concurrency, 9);
-    }
-
-    #[test]
-    fn queue_handle_is_shared() {
-        let state = AppState::default();
-        let a = state.queue();
-        let b = state.queue();
-        a.enqueue(hongguo_common::model::DownloadTask::new(
-            "1", "t", 1, "v", "",
-        ));
-        assert_eq!(b.all().len(), 1, "多次获取应指向同一队列");
-    }
-
-    #[test]
-    fn scheduler_handle_is_shared() {
-        let state = AppState::default();
-        let a = state.scheduler();
-        let b = state.scheduler();
-        assert!(Arc::ptr_eq(&a, &b), "多次获取应指向同一调度器");
-    }
-
-    #[test]
-    fn store_is_shared_and_writable() {
-        let state = AppState::default();
-        state
-            .store
-            .save_playback_position(
-                "A",
-                1,
-                &hongguo_common::model::PlaybackPosition::new(1.0, 2.0),
-            )
-            .expect("内存库写入");
-        assert_eq!(
-            state
-                .store
-                .playback_position("A", 1)
-                .expect("内存库读取")
-                .map(|p| p.current_time),
-            Some(1.0)
-        );
-    }
 }

@@ -1,0 +1,21 @@
+[package]
+name = "hongguo-playback"
+description = "Shared indexed video decoding and native-clock playback sessions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+source-build = ["hongguo-bytevc2/source-build", "hongguo-hevc/source-build"]
+
+[dependencies]
+hongguo-common = { path = "../hongguo-common" }
+hongguo-video = { path = "../hongguo-video" }
+hongguo-media-types = { path = "../hongguo-media-types" }
+hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false, features = ["vvdec"] }
+hongguo-hevc = { path = "../hongguo-hevc" }
+hongguo-native-clock = { path = "../hongguo-native-clock" }
+parking_lot = "0.13"
+log = "0.4"

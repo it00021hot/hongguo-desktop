@@ -23,6 +23,18 @@ struct PixelVideo {
 }
 
 impl NativeComponent for PixelVideo {
+    fn needs_frames(&self) -> bool {
+        let props = self
+            .shared
+            .props
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        props.active
+            && props.source.is_some()
+            && self.shared.consumer_active.load(Ordering::Acquire)
+            && (!props.paused || self.shared.awaiting_presentation.load(Ordering::Acquire))
+    }
+
     fn draw(&self, dc: &ID2D1DeviceContext, size: (f32, f32)) {
         let result = self.controller.borrow_mut().draw(&self.shared, dc, size);
         if let Err(error) = result {
@@ -49,6 +61,7 @@ impl NativeComponent for PixelVideo {
             if *current == props {
                 return Ok(());
             }
+            self.shared.consumer_active.store(true, Ordering::Release);
             self.controller.borrow_mut().set_props(&props)?;
             let source_changed = current.source != props.source;
             *current = props;
@@ -86,6 +99,7 @@ impl NativeComponent for PixelVideo {
                 }
             }
             self.shared.context.redraw();
+            self.shared.context.request_frames();
             Ok(())
         })();
         if let Err(error) = result {
@@ -113,9 +127,14 @@ impl NativeComponent for PixelVideo {
             {
                 return Ok(());
             }
+            self.shared.consumer_active.store(true, Ordering::Release);
             self.controller.borrow_mut().seek(request, &props)?;
+            self.shared
+                .awaiting_presentation
+                .store(true, Ordering::Release);
             self.shared.clear_frames();
             self.shared.context.redraw();
+            self.shared.context.request_frames();
             Ok(())
         })();
         if let Err(error) = result {
@@ -141,12 +160,16 @@ impl PixelVideo {
             code: error.code(),
             detail: error.detail().to_owned(),
         });
+        self.shared.consumer_active.store(false, Ordering::Release);
+        self.shared.clear_frames();
     }
 }
 
 impl Drop for PixelVideo {
     fn drop(&mut self) {
+        self.controller.get_mut().stop();
         self.shared.stopped.store(true, Ordering::Release);
+        self.shared.wake_gpu.notify_all();
     }
 }
 
@@ -155,7 +178,7 @@ pub fn register(components: &Components) {
         COMPONENT_NAME,
         Rc::new(|context: ComponentContext| {
             let shared = Shared::new(context);
-            for (name, worker) in [("hongguo-video-gpu", true), ("hongguo-video-frames", false)] {
+            for (name, worker) in [("hongguo-video-gpu", true), ("hongguo-video-retire", false)] {
                 let state = shared.clone();
                 if let Err(error) = std::thread::Builder::new()
                     .name(name.into())
@@ -163,22 +186,8 @@ pub fn register(components: &Components) {
                         if worker {
                             crate::gpu_worker::run(state);
                         } else {
-                            while !state.stopped.load(Ordering::Acquire) {
-                                let props = state
-                                    .props
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .clone();
-                                if props.active && props.source.is_some() {
-                                    state.context.redraw();
-                                }
-                                std::thread::sleep(if props.paused {
-                                    Duration::from_millis(u64::from(
-                                        props.progress_interval_ms.min(250),
-                                    ))
-                                } else {
-                                    Duration::from_millis(16)
-                                });
+                            while state.reap() || !state.stopped.load(Ordering::Acquire) {
+                                std::thread::sleep(Duration::from_millis(16));
                             }
                         }
                     })

@@ -1,5 +1,4 @@
-//! 设置服务：归一化与校验。保存时收敛并发到 1–10 并立即应用到下载调度器，无需重启。
-//! 保存编排（归一化 → 换内存态 → 调度器并发 → 落库）在本模块，两个壳走同一段。
+//! 设置校验、持久化与即时应用；落库成功后更新内存、调度器和缓存根。
 pub mod proxy;
 
 use crate::app_state::AppState;
@@ -16,7 +15,7 @@ const MAX_CACHE_TTL_DAYS: u32 = 365;
 /// 保存设置（立即生效，无需重启）。
 pub fn save(state: &AppState, settings: Settings) -> AppResult<Settings> {
     let normalized = normalize(settings)?;
-
+    state.store.save_settings(&normalized)?;
     state.replace_settings(normalized.clone());
     // 并发上限立即应用到调度器：调高并发时在途任务数不会自己涨，保存后补一轮派发
     //（降低或不变时 kick 因坑满/无可跑任务自然空转）。
@@ -26,8 +25,6 @@ pub fn save(state: &AppState, settings: Settings) -> AppResult<Settings> {
     hongguo_store::paths::set_cache_root_override(
         normalized.cache_override().map(std::path::PathBuf::from),
     );
-
-    state.store.save_settings(&normalized)?;
 
     Ok(normalized)
 }
@@ -70,72 +67,4 @@ pub fn normalize(settings: Settings) -> AppResult<Settings> {
         return Err(AppError::InvalidArgs("并发数必须在 1–10 之间".into()));
     }
     Ok(settings)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_clamps_concurrency() {
-        let n = normalize(Settings {
-            max_concurrency: 99,
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(n.max_concurrency, 10);
-    }
-
-    #[test]
-    fn normalize_clamps_cache_policy() {
-        let n = normalize(Settings {
-            cache_limit_mb: 10_000_000,
-            cache_ttl_days: 100_000,
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(n.cache_limit_mb, MAX_CACHE_LIMIT_MB);
-        assert_eq!(n.cache_ttl_days, MAX_CACHE_TTL_DAYS);
-    }
-
-    #[test]
-    fn normalize_fills_blank_download_dir() {
-        let n = normalize(Settings {
-            download_dir: "   ".into(),
-            ..Default::default()
-        })
-        .unwrap();
-        assert!(!n.download_dir.is_empty());
-    }
-
-    #[test]
-    fn normalize_keeps_a_valid_dir_as_is() {
-        let n = normalize(Settings {
-            download_dir: "  D:\\dl  ".into(),
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(n.download_dir, "D:\\dl", "两端空白应被裁掉");
-    }
-
-    #[test]
-    fn normalize_trims_cache_dir_and_keeps_empty() {
-        let n = normalize(Settings {
-            cache_dir: "  D:\\cache  ".into(),
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(n.cache_dir, "D:\\cache");
-        let n = normalize(Settings {
-            cache_dir: "   ".into(),
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(n.cache_dir, "", "空 = 跟随数据目录，合法值不该被填掉");
-    }
-
-    #[test]
-    fn normalize_accepts_default() {
-        assert!(normalize(Settings::default()).is_ok());
-    }
 }

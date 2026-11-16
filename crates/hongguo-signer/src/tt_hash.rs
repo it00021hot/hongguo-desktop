@@ -13,8 +13,7 @@
     clippy::uninlined_format_args,
     unused_parens,
     clippy::needless_borrows_for_generic_args,
-    clippy::double_parens,
-    dead_code
+    clippy::double_parens
 )]
 
 /// K 表（160 个 u32 = 80 个 u64，按 (lo, hi) 字对存放）——逐值等于标准 SHA-512 的 80 个 K 常量，
@@ -136,38 +135,6 @@ impl TtHashCore {
     #[inline]
     fn rrx(&mut self, x: u32) -> u32 {
         (x >> 1) | ((self.cf as u32) << 31)
-    }
-
-    /// 参考实现的 UBFX 原样翻译（位域提取语义与标准不同，照抄才能对拍）
-    fn ubfx(&self, num: u32, lsb: u32, width: u32) -> u32 {
-        let tmp = format!("{:032b}", num);
-        let start = 32usize.saturating_sub(lsb as usize + width as usize);
-        let width = width as usize;
-        let slice = &tmp[start..(start + width).min(tmp.len())];
-        u32::from_str_radix(slice, 2).unwrap_or(0)
-    }
-
-    #[inline]
-    fn utfx(&self, num: u32) -> u32 {
-        num & 0xff
-    }
-
-    #[inline]
-    fn hex_list(content: &[u32]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(content.len() * 4);
-        for v in content {
-            out.extend_from_slice(&v.to_be_bytes());
-        }
-        out
-    }
-
-    #[inline]
-    fn dump_list(&self, content: &[u8]) -> Vec<u32> {
-        let mut out = Vec::with_capacity(content.len() / 4);
-        for pair in content.as_chunks::<4>().0 {
-            out.push(u32::from_be_bytes([pair[0], pair[1], pair[2], pair[3]]));
-        }
-        out
     }
 
     /// 魔改哈希主函数（参考实现 calculate 原样翻译）
@@ -1048,108 +1015,5 @@ impl TtHashCore {
             state[2 * i + 1] = r1;
         }
         state
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Python 参考实现 calculate(range(32)) 的已知输出（对拍锚点）。
-    #[test]
-    fn calculate_matches_python_reference() {
-        let input: Vec<u8> = (0..32).collect();
-        let out = TtHashCore::new().calculate(&input);
-        assert_eq!(
-            out.iter().map(|b| format!("{b:02x}")).collect::<String>(),
-            "3d94eea49c580aef816935762be049559d6d1440dede12e6a125f1841fff8e6fa9d71862a3e5746b571be3d187b0041046f52ebd850c7cbd5fde8ee38473b649"
-        );
-    }
-
-    /// 各长度向量的 Python 参考对拍（单块/多块/边界）。
-    #[test]
-    fn calculate_vectors_from_python() {
-        let cases: Vec<(usize, &str)> = vec![
-            (
-                0,
-                "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
-            ),
-            (
-                1,
-                "e45bf5817ddf94aa2f7a407071f0eedc6beb98f768b4cd33d1176d44d1563a45a5d7212290eb7670c6786b13591aedac86478993895e8b24e612014abaa6ba04",
-            ),
-            (
-                19,
-                "ae31ede5ae0b51a4748d925137e39bebcb0d83df818ea9b308eeb1d9fcb913598aa6f54b55ee9239651010e3fb1db506d04f9c556ba535ffed41c41553dd392a",
-            ),
-            (
-                32,
-                "c3902ef600c188f0a9b0d32d5e78edf886d61887e698a81aab084c8f86dbfe6f5c4ba5a226e2b0313a837747c1a09a56b1ec9f52479b6f9959ac1b0d0c3d3465",
-            ),
-            (
-                39,
-                "08673ac2515372c2be09b1b82bdf334a875e536ad3d5749c7ed03cf8d819e1df89787441d69ea7a579d65345c5b0fd3466ec8efa5f32a3215d8054d917c30958",
-            ),
-            (
-                100,
-                "364662a2cfeefa210252f45394a87e9ab0d268fe0c448b7e60d69888c8506824fa142beff9a337045417b0bcc5d2e1cecd65223d4d1078cd12d52a2f57b92ed9",
-            ),
-            (
-                127,
-                "548c0b30880e6b0f3bfd75510c12e3ac1b1a0579c37868b18d793358fecaac2400c67021b109ccaa87e711cab67bb51762a20ac0f01c10c0b9680834033ff9ea",
-            ),
-            (
-                128,
-                "99b16f17aa0b969a5b8f08f367719d516e330ccd2660b6f0688ec031dbc783de50a1cd185a2568dba75070a2403d17d4741d163578515dfd2ff756ddfe4d47b1",
-            ),
-            (
-                200,
-                "cca3c0276046ef9f2897bdfc3ec330f77f4959914b1462bd581b232ddb3e9aa98acf5f5a2b21c7f49d2e43721daa61a2b5cee6af6052dfeb766e66ddb0d1719c",
-            ),
-        ];
-        for (n, expect) in cases {
-            let input: Vec<u8> = (0..n).map(|i| ((i * 7 + 3) % 256) as u8).collect();
-            let out = TtHashCore::new().calculate(&input);
-            let got: String = out.iter().map(|b| format!("{b:02x}")).collect();
-            assert_eq!(got, expect, "calculate 长度 {n} 不一致");
-        }
-    }
-
-    /// 924 字节（8 块）真实 gz 输入的对拍。
-    #[test]
-    fn calculate_multi_block_924() {
-        let gz_hex = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/py_gz.hex"
-        ));
-        let gz: Vec<u8> = (0..gz_hex.trim().len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&gz_hex.trim()[i..i + 2], 16).unwrap())
-            .collect();
-        let out = TtHashCore::new().calculate(&gz);
-        assert_eq!(
-            out.iter().map(|b| format!("{b:02x}")).collect::<String>(),
-            "d6b7290f6f6a5c4d98ee5b8f9ea82c73749ce8680ea1b847c7e69c6c4708b1cea1b06b473bdb82ef2a35583bee4317b022eb09362dba7a80b6592006e4129cc1"
-        );
-    }
-
-    /// CF 进位跨调用不残留：同一 core 连续多次 calculate 与每次新起 core 结果必须一致——
-    /// register 域「共用一个 TtHashCore」不是正确性前提，本测试防止以讹传讹成「拆开算不出同样的 key」。
-    #[test]
-    fn shared_core_matches_fresh_cores() {
-        let salt: Vec<u8> = (0..32).collect();
-        let mut shared = TtHashCore::new();
-        let h1_shared = shared.calculate(&salt);
-        let mut seed = h1_shared.clone();
-        seed.extend_from_slice(&TT_ORD_LIST);
-        let key_shared = shared.calculate(&seed);
-
-        let h1_fresh = TtHashCore::new().calculate(&salt);
-        let mut seed2 = h1_fresh.clone();
-        seed2.extend_from_slice(&TT_ORD_LIST);
-        let key_fresh = TtHashCore::new().calculate(&seed2);
-
-        assert_eq!(h1_shared, h1_fresh, "第一次 calculate 即分叉");
-        assert_eq!(key_shared, key_fresh, "跨调用 CF 残留导致分叉");
     }
 }

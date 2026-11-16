@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use hongguo_common::{AppError, AppResult};
 use parking_lot::Mutex;
 use serde::Serialize;
-use tokio::sync::{Notify, watch};
+use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
 use crate::app_state::AppState;
@@ -63,7 +63,6 @@ impl RegistrationStatus {
 pub(crate) struct RegistrationRun {
     first: watch::Sender<Option<Registration>>,
     abort: Mutex<Option<AbortHandle>>,
-    pub wake: Notify,
 }
 
 impl RegistrationRun {
@@ -72,7 +71,6 @@ impl RegistrationRun {
         Self {
             first,
             abort: Mutex::new(None),
-            wake: Notify::new(),
         }
     }
 
@@ -131,12 +129,12 @@ impl RegistrationCoordinator {
         self.status.send_replace(status);
     }
 
-    pub fn claim(&self, startup: bool) -> Option<(Arc<RegistrationRun>, bool)> {
+    pub fn claim(&self) -> Option<(Arc<RegistrationRun>, bool)> {
         let mut active = self.active.lock();
         if let Some(run) = active.as_ref() {
             return Some((run.clone(), false));
         }
-        if startup && self.status().phase != RegistrationPhase::Idle {
+        if self.status().phase != RegistrationPhase::Idle {
             return None;
         }
         let run = Arc::new(RegistrationRun::new());

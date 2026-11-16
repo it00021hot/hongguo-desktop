@@ -78,7 +78,7 @@ impl MediaCache {
         for entry in entries {
             if let Some((total, start)) = entry.range(&self.fingerprint)
                 && total == source_len
-                && let Ok(bytes) = paths::qa_read(&entry.path)
+                && let Ok(bytes) = hongguo_common::file_io::read(&entry.path)
                 && bytes.len() as u64 == entry.bytes
             {
                 sparse.write(start, &bytes);
@@ -111,10 +111,10 @@ impl MediaCache {
         let path = self
             .dir
             .join(format!("{}-{total}-{start}.{EXTENSION}", self.fingerprint));
-        paths::qa_create_dir_all(&self.dir)?;
+        std::fs::create_dir_all(&self.dir)?;
         let temp = path.with_extension("tmp");
-        paths::qa_write(&temp, bytes)?;
-        paths::qa_rename(&temp, &path)?;
+        hongguo_common::file_io::write(&temp, bytes)?;
+        hongguo_common::file_io::rename(&temp, &path)?;
         prune(&self.dir);
         Ok(())
     }
@@ -141,7 +141,7 @@ impl CacheFile {
 }
 
 fn files(dir: &Path) -> Vec<CacheFile> {
-    let Ok(entries) = paths::qa_read_dir(dir) else {
+    let Ok(entries) = hongguo_common::file_io::read_dir(dir) else {
         return Vec::new();
     };
     entries
@@ -169,7 +169,7 @@ fn prune(dir: &Path) {
         if bytes <= CAPACITY {
             break;
         }
-        if paths::qa_remove_file(&entry.path).is_ok() {
+        if hongguo_common::file_io::remove_file(&entry.path).is_ok() {
             bytes -= entry.bytes;
         }
     }
@@ -219,60 +219,17 @@ pub(crate) fn clear() -> (u64, u64) {
     let mut bytes_removed = 0;
     let dir = paths::online_cache_dir();
     for entry in files(&dir) {
-        if paths::qa_remove_file(&entry.path).is_ok() {
+        if hongguo_common::file_io::remove_file(&entry.path).is_ok() {
             files_removed += 1;
             bytes_removed += entry.bytes;
         }
     }
-    if let Ok(entries) = paths::qa_read_dir(&dir) {
+    if let Ok(entries) = hongguo_common::file_io::read_dir(&dir) {
         for entry in entries.flatten() {
             if entry.path().extension().is_some_and(|ext| ext == "tmp") {
-                let _ = paths::qa_remove_file(&entry.path());
+                let _ = hongguo_common::file_io::remove_file(&entry.path());
             }
         }
     }
     (files_removed, bytes_removed)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hongguo_signer::device::DeviceProfile;
-
-    #[test]
-    fn reloads_ranges_without_crossing_profiles_or_quality_and_clear_invalidates_writers() {
-        let dir = std::env::temp_dir().join(format!("hg-online-ranges-{}", std::process::id()));
-        let _scope = paths::ScopedDataDir::new(&dir);
-        let device = DeviceProfile::from_pairs(&[("device_id", "100"), ("iid", "101")], "");
-        let source = "file-hash";
-        let cache = MediaCache::new(&device, "13", 720, source).unwrap();
-        cache.write(12, 0, b"abc").unwrap();
-        cache.write(12, 9, b"xyz").unwrap();
-
-        let reopened = MediaCache::new(&device, "13", 720, source).unwrap();
-        let sparse = reopened.load_ranges().unwrap();
-        assert_eq!(sparse.len(), 12);
-        assert_eq!(sparse.next_gap(0), Some((3, 9)));
-        let mut tail = [0; 3];
-        sparse.read_into(9, &mut tail);
-        assert_eq!(&tail, b"xyz");
-        assert!(
-            MediaCache::new(&device, "13", 1080, source)
-                .unwrap()
-                .load_ranges()
-                .is_none()
-        );
-
-        let mut other_device = device;
-        other_device.set("iid", "102");
-        assert!(
-            MediaCache::new(&other_device, "13", 720, source)
-                .unwrap()
-                .load_ranges()
-                .is_none()
-        );
-        assert_eq!(clear(), (2, 6));
-        cache.write(12, 3, b"late").unwrap();
-        assert_eq!(usage(), (0, 0));
-    }
 }

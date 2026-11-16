@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "sdkVersion": "native-codecs-v2-20261114",
+  "target": {
+    "triple": "aarch64-apple-ios-sim",
+    "arch": "aarch64",
+    "os": "ios",
+    "minimumOs": "16.0",
+    "crt": "system",
+    "cxxRuntime": "libc++",
+    "cpuBaseline": "armv8-a",
+    "cppAbi": "itanium"
+  },
+  "recipe": {
+    "target": {
+      "triple": "aarch64-apple-ios-sim",
+      "arch": "aarch64",
+      "os": "ios",
+      "minimumOs": "16.0",
+      "crt": "system",
+      "cxxRuntime": "libc++",
+      "cpuBaseline": "armv8-a",
+      "cppAbi": "itanium"
+    },
+    "hevc": {
+      "source": {
+        "version": "1.1.3",
+        "commit": "ba62bf4cfb3242f3bf0a45617ff09e35236e4d82",
+        "url": "https://codeload.github.com/strukturag/libde265/tar.gz/ba62bf4cfb3242f3bf0a45617ff09e35236e4d82",
+        "sha256": "7ffe3220bba8282cc6d4a2bcf36ac1b6d2899f402c335f7df377317414a025b1"
+      },
+      "build": {
+        "options": [
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DBUILD_SHARED_LIBS=OFF",
+          "-DENABLE_DECODER=OFF",
+          "-DENABLE_ENCODER=OFF",
+          "-DENABLE_SDL=OFF",
+          "-DENABLE_SHERLOCK265=OFF",
+          "-DENABLE_INTERNAL_DEVELOPMENT_TOOLS=OFF",
+          "-DWITH_FUZZERS=OFF",
+          "-DCMAKE_INSTALL_PREFIX=/Users/milo/projects/hongguo-desktop/target/native-codec-build/aarch64-apple-ios-sim-KK5DOi/install",
+          "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_OSX_DEPLOYMENT_TARGET=16.0",
+          "-DCMAKE_INSTALL_NAME_DIR=@rpath",
+          "-DCMAKE_SYSTEM_NAME=iOS",
+          "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
+        ],
+        "compiler": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+      }
+    },
+    "vvdec": {
+      "source": {
+        "version": "3.2.1",
+        "sha256": "5c334557a33cd93e981b84ba0e77126ef970a38e2481b67f0475db40f75379b8",
+        "vendoredTreeSha256": "83fc81e145afc9a733dd072786cc0c4cb6fbc1949a65c0cd93c2209afce4bb95"
+      },
+      "build": {
+        "provenance": "existing-cmake-output",
+        "cmakeCacheSha256": "805140207212505213add3714d831867c4b8bf3faf707b8bf3710e39ee77edcc",
+        "flagsSha256": "226d0b1483de9b71390bedca640f608eacf7961d2e6b749c4b137880d68e6395",
+        "inspectionPath": "build-info/library-inspection.json"
+      },
+      "target": {
+        "triple": "aarch64-apple-ios-sim",
+        "arch": "aarch64",
+        "os": "ios",
+        "minimumOs": "16.0",
+        "crt": "system",
+        "cxxRuntime": "libc++",
+        "cpuBaseline": "armv8-a",
+        "cppAbi": "itanium"
+      }
+    }
+  },
+  "recipeSha256": "4a6ebe20afaae0dfd4d9172818b42647686a39fe2039ea3bebdfdd5361b45718",
+  "components": {
+    "hevc": {
+      "version": "1.1.3",
+      "sourceSha256": "7ffe3220bba8282cc6d4a2bcf36ac1b6d2899f402c335f7df377317414a025b1",
+      "manifestPath": "libde265-1.1.3/manifest.json"
+    },
+    "vvdec": {
+      "version": "3.2.1",
+      "sourceSha256": "5c334557a33cd93e981b84ba0e77126ef970a38e2481b67f0475db40f75379b8",
+      "manifestPath": "vvdec-3.2.1/manifest.json"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "libde265-1.1.3/build-info/build-evidence.json",
+      "sha256": "4ee934ff052008fed0bc2204354e95f1c38c3787b739cc24759eaad85fc8b7a4",
+      "byteLength": 1906
+    },
+    {
+      "path": "libde265-1.1.3/build-info/CMakeCache.txt",
+      "sha256": "d412383d2d01ef7c9da9bdf980b505f886f760b4c75f131034f1ace8c79dbc57",
+      "byteLength": 20916
+    },
+    {
+      "path": "libde265-1.1.3/build-info/compile_commands.json",
+      "sha256": "8b12243ac4d8d205aa6a78cda23ba96f4e9ebf79112b7758e710013bf8965083",
+      "byteLength": 54671
+    },
+    {
+      "path": "libde265-1.1.3/build-info/library-inspection.json",
+      "sha256": "9f755a62bae56cfc2b07725408013c095d9ffeb4a057c2054d5bfc28805df477",
+      "byteLength": 20133
+    },
+    {
+      "path": "libde265-1.1.3/include/libde265/de265-version.h",
+      "sha256": "d7186bf679b8a51c8776f0eb68df6fa687ffa12d9140b775de49a35fa2e7978c",
+      "byteLength": 1117
+    },
+    {
+      "path": "libde265-1.1.3/include/libde265/de265.h",
+      "sha256": "0f06f06717076a0535c5e967a4fd8fdc9bd3b57d7f5a1d6fc2d0b9a89ef735b7",
+      "byteLength": 21129
+    },
+    {
+      "path": "libde265-1.1.3/lib/libde265.a",
+      "sha256": "1ec699232035a8739fa0fe42e1c9a542988a7e9dcc09d3dca7909507fcb6ece1",
+      "byteLength": 676968
+    },
+    {
+      "path": "libde265-1.1.3/licenses/AUTHORS",
+      "sha256": "0cc86790616c939cbf1d422790160fde068205b9771e687bd8572afe417a0c8f",
+      "byteLength": 213
+    },
+    {
+      "path": "libde265-1.1.3/licenses/COPYING",
+      "sha256": "02cc1585a20677992e0ba578fa692635dc193735f2691dc81de924b51c4e8020",
+      "byteLength": 44339
+    },
+    {
+      "path": "libde265-1.1.3/manifest.json",
+      "sha256": "c28e02a2593a5455d9f8f9556d89421a975b60a79a097c2ea382ba31a699ec15",
+      "byteLength": 3324
+    },
+    {
+      "path": "libde265-1.1.3/sources/libde265-1.1.3.tar.gz",
+      "sha256": "7ffe3220bba8282cc6d4a2bcf36ac1b6d2899f402c335f7df377317414a025b1",
+      "byteLength": 325972
+    },
+    {
+      "path": "vvdec-3.2.1/bindings.rs",
+      "sha256": "f00bfe351d775d1c35e2887756457741a90e2e2e356b8177bce1d1d3388ebc43",
+      "byteLength": 30675
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/CMakeCache.txt",
+      "sha256": "805140207212505213add3714d831867c4b8bf3faf707b8bf3710e39ee77edcc",
+      "byteLength": 24187
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/compiler-configuration.txt",
+      "sha256": "226d0b1483de9b71390bedca640f608eacf7961d2e6b749c4b137880d68e6395",
+      "byteLength": 2633
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/library-inspection.json",
+      "sha256": "dff0705428f8e01d7996e81926c8a6afdc33615c8c781ed722d1ac4b851d3b0e",
+      "byteLength": 766
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/source-inventory.json",
+      "sha256": "0432d651ea7c188e599befa6875d92b6328bb4249ee60ae241c8bc3413f4551d",
+      "byteLength": 127181
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/sei.h",
+      "sha256": "7ae3088c29c8daeb092b538123ea5a746d02172e53db6047a5bfcd1f3c3d2aac",
+      "byteLength": 15092
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/version.h",
+      "sha256": "403d15b5ba0d1a23114d0b6c4eb63c48dc8188a1dd8460a53974b0b4e541b7a0",
+      "byteLength": 2464
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/vvdec.h",
+      "sha256": "01287033209c9963e2836945b3dafd01526d6078b13ae3b0d35836511e75e669",
+      "byteLength": 32150
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/vvdecDecl.h",
+      "sha256": "e8b0b41e8c675b1b75bf8bca0340e73cf78d74edb270408430279bb413064705",
+      "byteLength": 2660
+    },
+    {
+      "path": "vvdec-3.2.1/lib/libvvdec.a",
+      "sha256": "c0c145fc08ea48c9e604d0dbd4f1f4af0871f9328308db3690ac002fba73eb05",
+      "byteLength": 4619192
+    },
+    {
+      "path": "vvdec-3.2.1/licenses/AUTHORS.md",
+      "sha256": "2a81d85d9efa0f41496249210577477bc2c67456c033fc387f155c88581a56d5",
+      "byteLength": 582
+    },
+    {
+      "path": "vvdec-3.2.1/licenses/LICENSE.txt",
+      "sha256": "10f312cabfab7f9afdd96957f84deb84f81cc52390550ded77c1bbc393685da8",
+      "byteLength": 1768
+    },
+    {
+      "path": "vvdec-3.2.1/licenses/SIMDe-COPYING",
+      "sha256": "75ce0a8c5a7bff42fbd6f8f3b469b518132132c4f4948fb8d02b1ccb5d0df9d8",
+      "byteLength": 1077
+    },
+    {
+      "path": "vvdec-3.2.1/manifest.json",
+      "sha256": "b41dde9bef9da8ee23c4ecdd17b35e19da87ff82e93a648a786489b08dcbcd0b",
+      "byteLength": 3135
+    },
+    {
+      "path": "vvdec-3.2.1/SOURCE.md",
+      "sha256": "f9194bcd064406eb57a2eff237a3b265a8815873aa5ae207f31a5112e0929ff1",
+      "byteLength": 1250
+    }
+  ]
+}

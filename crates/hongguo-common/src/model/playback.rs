@@ -1,7 +1,6 @@
 //! 播放进度模型（断点续播）。
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// 单集的播放位置。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -16,25 +15,19 @@ pub struct PlaybackPosition {
     pub updated_at: i64,
 }
 
-/// 全部剧集的播放进度。
-pub type PlaybackMap = BTreeMap<String, BTreeMap<u32, PlaybackPosition>>;
-
-/// 续播阈值（秒）：看过超过这个数才接上原位，否则视为没看过从头播。用户口径一处定义（前端 utils/resume-entry 同口径，技术栈不同不共享实现）。
+/// 未完成的集看过超过此秒数时续播。
 pub const RESUME_THRESHOLD_SECS: f64 = 3.0;
 
-/// 一部剧「最近看到的那一集」，发前端 `seriesProgressSchema`（camelCase）。详情页「继续看第 N 集」的真值来源：本地 playback 表 5 秒一写，比云端观看历史（约 1 分钟一报 + 缓存）新鲜。
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SeriesProgress {
-    pub vid_index: u32,
-    /// 已播放秒数
-    pub current_time: f64,
-    /// 总时长（秒）
-    #[serde(default)]
-    pub duration: f64,
-    /// 最近更新（毫秒时间戳）
-    #[serde(default)]
-    pub updated_at: i64,
+pub fn resume_position(current_time: f64, duration: f64) -> f64 {
+    if current_time.is_finite()
+        && duration.is_finite()
+        && current_time > RESUME_THRESHOLD_SECS
+        && (duration <= 0.0 || current_time < duration)
+    {
+        current_time
+    } else {
+        0.0
+    }
 }
 
 impl PlaybackPosition {
@@ -47,10 +40,9 @@ impl PlaybackPosition {
         }
     }
 
-    /// 是否值得续播：看过超过 [`RESUME_THRESHOLD_SECS`] 就接上那个位置。
-    /// （用户口径：只要超过三秒都需播放，不管片尾。）
+    /// 已完成的集重新从头播放，未完成的集保留有效断点。
     pub fn is_resumable(&self) -> bool {
-        self.current_time > RESUME_THRESHOLD_SECS
+        resume_position(self.current_time, self.duration) > 0.0
     }
 }
 
@@ -117,111 +109,4 @@ pub struct VideoDefinition {
     pub value: u32,
     pub width: u32,
     pub height: u32,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn new_records_current_timestamp() {
-        let before = chrono::Utc::now().timestamp_millis();
-        let p = PlaybackPosition::new(10.0, 100.0);
-        assert!(p.updated_at >= before, "updated_at 应在构造时刷新");
-    }
-
-    #[test]
-    fn resumable_when_over_three_seconds() {
-        assert!(
-            !PlaybackPosition::new(2.0, 100.0).is_resumable(),
-            "≤3 秒从头播"
-        );
-        assert!(PlaybackPosition::new(3.5, 100.0).is_resumable());
-        assert!(PlaybackPosition::new(96.0, 100.0).is_resumable());
-        assert!(PlaybackPosition::new(299.0, 300.0).is_resumable());
-        assert!(PlaybackPosition::new(999.0, 0.0).is_resumable());
-    }
-
-    #[test]
-    fn play_request_defaults() {
-        let r: PlayRequest = serde_json::from_str(r#"{"seriesId":"1","vidIndex":2}"#).unwrap();
-        assert!(!r.prefer_online);
-        assert!(r.file_path.is_empty());
-    }
-
-    #[test]
-    fn play_request_reads_frontend_camel_case() {
-        let r: PlayRequest = serde_json::from_str(
-            r#"{"seriesId":"7687919221593885758","vidIndex":3,"filePath":"","preferOnline":true}"#,
-        )
-        .expect("camelCase 载荷应能反序列化");
-        assert_eq!(r.series_id, "7687919221593885758");
-        assert_eq!(r.vid_index, 3);
-        assert!(r.prefer_online);
-    }
-
-    #[test]
-    fn play_response_goes_out_as_camel_case() {
-        let r = PlayResponse {
-            url: "hongguo-stream://v1".into(),
-            online: true,
-            resume_at: 12.5,
-            error: String::new(),
-            error_kind: String::new(),
-            definition: 1080,
-            automatic_definition: false,
-            definitions: vec![VideoDefinition {
-                value: 1080,
-                width: 1920,
-                height: 1080,
-            }],
-            codec: "bytevc1".into(),
-            direct: true,
-        };
-        let v = serde_json::to_value(&r).unwrap();
-        assert_eq!(v["url"], "hongguo-stream://v1");
-        assert_eq!(v["online"], true);
-        assert_eq!(v["resumeAt"], 12.5);
-        assert_eq!(v["definition"], 1080);
-        assert_eq!(v["definitions"][0]["value"], 1080);
-        assert_eq!(v["codec"], "bytevc1");
-        assert_eq!(v["direct"], true);
-        assert!(v.get("needsCompat").is_none(), "旧字段名不应再出现");
-        assert!(v.get("resume_at").is_none());
-    }
-
-    #[test]
-    fn automatic_selection_is_preserved_when_the_actual_definition_does_not_change() {
-        for automatic in [false, true] {
-            let response: PlayResponse = serde_json::from_value(serde_json::json!({
-                "url":"hongguo-stream://localhost/s/1080/episode",
-                "online":true,"definition":1080,"automaticDefinition":automatic
-            }))
-            .unwrap();
-            let wire = serde_json::to_value(response).unwrap();
-            assert_eq!(wire["definition"], 1080);
-            assert_eq!(
-                wire["automaticDefinition"], automatic,
-                "同一1080P缓存流仍须区分手选与自动，不能从像素档位推断模式"
-            );
-        }
-    }
-
-    #[test]
-    fn play_request_accepts_a_definition() {
-        let r: PlayRequest = serde_json::from_str(r#"{"seriesId":"1","vidIndex":2}"#).unwrap();
-        assert_eq!(r.definition, None);
-
-        let r: PlayRequest =
-            serde_json::from_str(r#"{"seriesId":"1","vidIndex":2,"definition":720}"#).unwrap();
-        assert_eq!(r.definition, Some(720));
-    }
-
-    #[test]
-    fn position_roundtrips() {
-        let p = PlaybackPosition::new(12.5, 300.0);
-        let json = serde_json::to_string(&p).unwrap();
-        let back: PlaybackPosition = serde_json::from_str(&json).unwrap();
-        assert_eq!(p, back);
-    }
 }

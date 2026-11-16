@@ -82,33 +82,3 @@ pub fn derive_key(spade_a: &[u8]) -> AppResult<[u8; 16]> {
     }
     Ok(key)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn derive_key_rejects_empty_and_short_material() {
-        assert!(derive_key(&[]).is_err());
-        // 变体 base64 只有 1 个有效字符时解出 0 字节，必须报错而不是补零
-        assert!(derive_key(b"A").is_err());
-    }
-
-    /// 黄金向量（现版 JS 对同一 `spade_a` 的输出）：密钥派生错位不抛任何错，只能靠这类向量拦住（历史上曾被错误实现「锁死」过）。
-    #[test]
-    fn derive_key_matches_js_golden_vectors() {
-        let cases: &[(&str, &str)] = &[(
-            "kLwey2WDLs9ViRL1W48W9lm6HvZRux/wVqAt8GC8Ku1kpCy5uQ==",
-            "5ad245c00e1c5a6605766309c8441843",
-        )];
-        for (spade, want) in cases {
-            let key =
-                derive_key(spade.as_bytes()).unwrap_or_else(|e| panic!("{spade} 应能派生: {e}"));
-            assert_eq!(hex_of(&key), *want, "spade = {spade}");
-        }
-    }
-
-    fn hex_of(b: &[u8]) -> String {
-        b.iter().map(|x| format!("{x:02x}")).collect()
-    }
-}

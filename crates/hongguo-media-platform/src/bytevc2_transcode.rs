@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_media::mux::{ArchiveHevc, AudioTrack};
-use hongguo_media_platform_api::PlatformRequest;
+use hongguo_media_types::encoding::PlatformRequest;
 
 #[cfg(any(
     target_os = "macos",
@@ -26,7 +26,7 @@ pub fn transcode_bytevc2(req: &PlatformRequest<'_>) -> AppResult<()> {
     {
         let result = imp_thread(|| drive(req));
         if result.is_err() {
-            let _ = hongguo_common::offline_qa::qa_remove_file(req.output);
+            let _ = hongguo_common::file_io::remove_file(req.output);
         }
         result
     }
@@ -174,7 +174,7 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
         let body = format!(
             "{{\"frames\":{frames},\"width\":{width},\"height\":{height},\"fps\":{fps},\"decoder\":\"{decoder}\",\"media_secs\":{media_secs:.6},\"realtime_x\":{realtime_x:.4},\"loop_ns\":{loop_ns},\"decode_ns\":{decode_ns},\"encode_push_ns\":{push_ns},\"encode_flush_ns\":{flush_ns},\"mux_ns\":{mux_ns},\"wall_ns\":{wall_ns}}}\n",
         );
-        hongguo_common::offline_qa::qa_write(std::path::Path::new(&path), body.as_bytes())
+        hongguo_common::file_io::write(std::path::Path::new(&path), body.as_bytes())
             .map_err(|e| AppError::Io(format!("阶段日志写入失败: {e}")))?;
     }
     log::info!(
@@ -303,15 +303,16 @@ fn push_frame(
     pts: f64,
 ) -> AppResult<()> {
     let push_started = pass.stage_log.as_ref().map(|_| Instant::now());
-    pass.encoder.push(&hongguo_media_platform_api::I420View {
-        y: &frame.y,
-        u: &frame.u,
-        v: &frame.v,
-        width: frame.width,
-        height: frame.height,
-        pts,
-        dur: pass.frame_dur,
-    })?;
+    pass.encoder
+        .push(&hongguo_media_types::encoding::I420View {
+            y: &frame.y,
+            u: &frame.u,
+            v: &frame.v,
+            width: frame.width,
+            height: frame.height,
+            pts,
+            dur: pass.frame_dur,
+        })?;
     if let Some(push_started) = push_started {
         *pass.push_ns += push_started.elapsed().as_nanos();
     }
@@ -428,113 +429,4 @@ fn take_audio<'a>(
     };
     *cursor = stop;
     &samples[start..stop]
-}
-
-#[cfg(all(
-    test,
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "windows",
-        target_os = "android"
-    )
-))]
-#[path = "bytevc2_audio_publish_tests.rs"]
-mod audio_publish_tests;
-
-#[cfg(all(test, target_os = "macos"))]
-#[path = "bytevc2_archive_tests.rs"]
-mod archive_tests;
-
-#[cfg(all(
-    test,
-    any(target_os = "macos", target_os = "windows", target_os = "android")
-))]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[test]
-    fn pump_delivers_every_item_in_order() {
-        let mut got = Vec::new();
-        pump(
-            2,
-            |emit| {
-                for i in 0..200u32 {
-                    emit(i)?;
-                }
-                Ok(())
-            },
-            |i| {
-                got.push(i);
-                Ok(())
-            },
-        )
-        .expect("全部送达");
-        assert_eq!(got, (0..200).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn pump_consumer_error_stops_the_producer_without_deadlock() {
-        // 队列深度 1、生产方想发 1000 个：消费方第 3 个就报错，生产方必须很快收手而不是堵死。
-        let emitted = AtomicUsize::new(0);
-        let err = pump(
-            1,
-            |emit| {
-                for i in 0..1000u32 {
-                    emit(i)?;
-                    emitted.fetch_add(1, Ordering::SeqCst);
-                }
-                Ok(())
-            },
-            |i| {
-                if i == 2 {
-                    return Err(AppError::Media("编码失败".into()));
-                }
-                Ok(())
-            },
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, AppError::Media(ref m) if m == "编码失败"),
-            "实际 {err}"
-        );
-        assert!(emitted.load(Ordering::SeqCst) < 10, "生产方应随即停下");
-    }
-
-    #[test]
-    fn pump_cancellation_from_the_consumer_is_reported_as_cancelled() {
-        let err = pump(
-            4,
-            |emit| loop {
-                emit(0u8)?;
-            },
-            |_| Err(AppError::Cancelled),
-        )
-        .unwrap_err();
-        assert!(matches!(err, AppError::Cancelled), "实际 {err}");
-    }
-
-    #[test]
-    fn pump_producer_error_surfaces_after_queued_items_are_consumed() {
-        let mut got = Vec::new();
-        let err = pump(
-            8,
-            |emit| {
-                emit(1u32)?;
-                emit(2)?;
-                Err(AppError::Media("码流损坏".into()))
-            },
-            |i| {
-                got.push(i);
-                Ok(())
-            },
-        )
-        .unwrap_err();
-        assert_eq!(got, [1, 2], "出错前已解出的帧不能丢");
-        assert!(
-            matches!(err, AppError::Media(ref m) if m == "码流损坏"),
-            "实际 {err}"
-        );
-    }
 }

@@ -2,7 +2,7 @@
 
 use crate::app_state::AppState;
 
-mod feed;
+pub mod feed;
 pub mod local;
 pub mod online;
 pub mod position;
@@ -10,7 +10,6 @@ mod prefetch;
 pub(crate) mod resolution;
 pub mod resume;
 
-pub use feed::prefetch_feed;
 pub use hongguo_api::prefetch_policy::DEFAULT_PREFETCH_COUNT;
 pub(crate) use prefetch::PrefetchCache;
 pub use prefetch::prefetch_budget;

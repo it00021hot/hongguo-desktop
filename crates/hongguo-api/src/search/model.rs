@@ -21,8 +21,7 @@ pub struct SuggestItem {
     /// 无高亮信息为空，前端整体按普通文本渲染）
     #[serde(default)]
     pub parts: Vec<SuggestPart>,
-    /// 对应剧集 id（= keyword；无 video_data 的纯词联想为空串，
-    /// 前端回落为「以该词发起搜索」）
+    /// 对应剧集 id（video_data.series_id）；纯词联想为空串，选择后提交搜索。
     #[serde(default)]
     pub series_id: String,
     #[serde(default)]

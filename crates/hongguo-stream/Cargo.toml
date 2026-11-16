@@ -15,8 +15,3 @@ hongguo-video = { path = "../hongguo-video" }
 # 条目锁与 LRU 时间戳；本 crate 全程同步，不引异步运行时。
 parking_lot = "0.13"
 log = "0.4"
-
-[dev-dependencies]
-# 渐进流的用例要构造真实 MP4 样本（streaming_tests::assemble），开启
-# hongguo-video 的测试辅助模块；生产构建不带该 feature。
-hongguo-video = { path = "../hongguo-video", features = ["test-support"] }

@@ -29,9 +29,6 @@ hongguo-media-platform = { path = "../hongguo-media-platform" }
 hongguo-stream = { path = "../hongguo-stream" }
 # MP4 容器解析（play_service 造解密计划：SparseBuffer / StreamingPlan）。
 hongguo-video = { path = "../hongguo-video" }
-# 自定义协议的供数逻辑（play_service 构造 WebView 播放 URL：local_play_url /
-# stream_url——service→protocol 正向边，方向向下无环，见方案 §4.2 修正注）。
-hongguo-protocol = { path = "../hongguo-protocol" }
 log = "0.4"
 parking_lot = "0.13"
 serde = { version = "1", features = ["derive"] }
@@ -49,9 +46,3 @@ reqwest = { version = "0.13", default-features = false, features = [
     "rustls",
     "gzip",
 ] }
-
-[dev-dependencies]
-# 本 crate 的测试要构造 MP4 样本，开启 hongguo-video 的测试辅助模块。
-hongguo-video = { path = "../hongguo-video", features = ["test-support"] }
-# 落盘用例要把数据目录重定向到临时目录（不能写进用户真实 %APPDATA%）。
-hongguo-store = { path = "../hongguo-store", features = ["test-support"] }

@@ -1,4 +1,5 @@
-use super::{motion::FAST_MS, radii};
+use crate::ui::motion::FAST_MS;
+use crate::ui::radii;
 use nsh_base::theme;
 use nsh_core::{element::ImageSrc, prelude::*};
 

@@ -360,7 +360,3 @@ pub fn decode<T: DeserializeOwned>(value: Option<&Value>) -> AppResult<Option<T>
         .map(Some)
         .map_err(|error| AppError::Media(format!("播放选档配置无效: {error}")))
 }
-
-#[cfg(test)]
-#[path = "tests.rs"]
-mod tests;

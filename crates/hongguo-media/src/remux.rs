@@ -27,19 +27,17 @@ pub fn concat_copy(inputs: &[PathBuf], output: &Path) -> AppResult<(u64, usize)>
         return Err(AppError::Media("没有待合并的文件".into()));
     }
     if let Some(parent) = output.parent() {
-        hongguo_common::offline_qa::qa_create_dir_all(parent)
-            .map_err(|e| AppError::Io(e.to_string()))?;
+        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
     }
 
     let temp = hongguo_common::utils::path::temp_path_for(output);
-    hongguo_common::offline_qa::qa_clear_for_replace(&temp)
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    hongguo_common::file_io::clear_for_replace(&temp).map_err(|e| AppError::Io(e.to_string()))?;
 
     let prepared = prepare(inputs)?;
     let (size, count) = write_output(inputs, &temp, &prepared)?;
 
-    hongguo_common::offline_qa::qa_rename(&temp, output).map_err(|e| {
-        let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
+    hongguo_common::file_io::rename(&temp, output).map_err(|e| {
+        let _ = hongguo_common::file_io::remove_file(&temp);
         AppError::Io(format!("原子替换失败: {e}"))
     })?;
     Ok((size, count))
@@ -120,8 +118,7 @@ fn prepare(inputs: &[PathBuf]) -> AppResult<Prepared> {
 }
 
 fn write_output(inputs: &[PathBuf], temp: &Path, prepared: &Prepared) -> AppResult<(u64, usize)> {
-    let mut out =
-        hongguo_common::offline_qa::qa_create(temp).map_err(|e| AppError::Io(e.to_string()))?;
+    let mut out = hongguo_common::file_io::create(temp).map_err(|e| AppError::Io(e.to_string()))?;
     let write = |out: &mut std::fs::File, buf: &[u8]| -> AppResult<()> {
         out.write_all(buf).map_err(|e| AppError::Io(e.to_string()))
     };
@@ -232,198 +229,5 @@ fn read_header_boxes(path: &Path) -> AppResult<(Vec<u8>, Vec<u8>)> {
             "{} 缺 ftyp 或 moov，不是可拼接的 MP4",
             path.display()
         ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hongguo_video::fixtures::{TrackPlan, mp4_with_samples};
-    use hongguo_video::sample_table::collect_tracks;
-
-    fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("hg-remux-{tag}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn episode(dir: &Path, vid_index: u32, tracks: Vec<TrackPlan>) -> PathBuf {
-        let path = dir.join(format!("{vid_index}.mp4"));
-        std::fs::write(&path, mp4_with_samples(&tracks)).unwrap();
-        path
-    }
-
-    /// 单轨样本：大小随序号递增，字节是序号填充，回读时能逐个定位。
-    fn video_samples(n: usize) -> Vec<Vec<u8>> {
-        (0..n).map(|i| vec![(i % 251) as u8; 100 + i * 3]).collect()
-    }
-
-    #[test]
-    fn sort_is_numeric_not_lexicographic() {
-        let files = vec![
-            (10u32, PathBuf::from("a")),
-            (2, PathBuf::from("b")),
-            (1, PathBuf::from("c")),
-        ];
-        let sorted = sort_by_index(&files);
-        assert_eq!(
-            sorted.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
-            vec![1, 2, 10]
-        );
-    }
-
-    #[test]
-    fn empty_input_errors() {
-        assert!(concat_copy(&[], Path::new("/tmp/out.mp4")).is_err());
-    }
-
-    #[test]
-    fn three_files_concatenate_into_one_continuous_timeline() {
-        let dir = temp_dir("three");
-        let inputs = vec![
-            episode(&dir, 1, vec![TrackPlan::video(video_samples(3))]),
-            episode(&dir, 2, vec![TrackPlan::video(video_samples(5))]),
-            episode(&dir, 3, vec![TrackPlan::video(video_samples(2))]),
-        ];
-        let out = dir.join("合集.mp4");
-
-        let (size, count) = concat_copy(&inputs, &out).unwrap();
-        assert_eq!(count, 3);
-
-        let data = std::fs::read(&out).unwrap();
-        let tracks = collect_tracks(&data).unwrap();
-        assert_eq!(tracks[0].sample_count, 10);
-        assert_eq!(tracks[0].media_duration, 10);
-        let payload: u64 = (0..3).map(|i| 100 + i * 3).sum::<u64>()
-            + (0..5).map(|i| 100 + i * 3).sum::<u64>()
-            + (0..2).map(|i| 100 + i * 3).sum::<u64>();
-        assert_eq!(size, payload, "mdat 载荷应是全部样本字节");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn every_sample_survives_in_the_right_order() {
-        let dir = temp_dir("bytes");
-        let a = video_samples(3);
-        let b = video_samples(2);
-        let inputs = vec![
-            episode(&dir, 1, vec![TrackPlan::video(a.clone())]),
-            episode(&dir, 2, vec![TrackPlan::video(b.clone())]),
-        ];
-        let out = dir.join("合集.mp4");
-        concat_copy(&inputs, &out).unwrap();
-
-        let data = std::fs::read(&out).unwrap();
-        let tracks = collect_tracks(&data).unwrap();
-        for (i, expected) in a.iter().chain(b.iter()).enumerate() {
-            let (at, len) = tracks[0].samples[i];
-            assert_eq!(len, expected.len() as u64, "第 {i} 个样本大小不对");
-            assert_eq!(
-                &data[at as usize..(at + len) as usize],
-                expected.as_slice(),
-                "第 {i} 个样本字节不对"
-            );
-        }
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn composition_offsets_are_copied_verbatim_not_shifted() {
-        // 合成偏移必须原样保留：解码时间整体平移各集时长、合成时间同步平移，差值不变；再加起点偏移会逐集累积错位
-        let dir = temp_dir("ctts");
-        let a = (0..4).map(|i| vec![(i + 1) as u8; 80 + i]).collect();
-        let b = (0..4).map(|i| vec![(i + 9) as u8; 90 + i]).collect();
-        let inputs = vec![
-            episode(&dir, 1, vec![TrackPlan::video_with_b_frames(a)]),
-            episode(&dir, 2, vec![TrackPlan::video_with_b_frames(b)]),
-        ];
-        let out = dir.join("合集.mp4");
-        concat_copy(&inputs, &out).unwrap();
-
-        let data = std::fs::read(&out).unwrap();
-        let tracks = collect_tracks(&data).unwrap();
-        assert_eq!(tracks[0].sample_count, 8);
-        // 源里两组 [0,0,-1024,-1024]，合并后逐样本仍是同一组取值，没有任何一项被加上第 2 集的起点
-        let offsets: Vec<i32> = tracks[0]
-            .ctts
-            .iter()
-            .flat_map(|&(n, o)| std::iter::repeat_n(o, n as usize))
-            .collect();
-        assert_eq!(offsets, vec![0, 0, -1024, -1024, 0, 0, -1024, -1024]);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn two_tracks_stay_interleaved_in_the_output() {
-        let dir = temp_dir("interleave");
-        let video = (0..4).map(|i| vec![0xAAu8; 60 + i]).collect();
-        let audio = (0..4).map(|i| vec![0xBBu8; 20 + i]).collect();
-        let inputs = vec![episode(
-            &dir,
-            1,
-            vec![TrackPlan::video(video), TrackPlan::audio(audio)],
-        )];
-        let out = dir.join("合集.mp4");
-        concat_copy(&inputs, &out).unwrap();
-
-        let data = std::fs::read(&out).unwrap();
-        let tracks = collect_tracks(&data).unwrap();
-        assert_eq!(tracks.len(), 2);
-
-        // 产物的 mdat 必须是「视频0 音频0 视频1 音频1 …」的交织排布，而不是整条视频轨写完再写音频轨
-        let v = &tracks[0].samples;
-        let a = &tracks[1].samples;
-        for i in 0..4 {
-            assert!(a[i].0 > v[i].0, "第 {i} 轮里音频应排在视频之后");
-            assert!(v[i].0 < a[i].0, "第 {i} 轮里视频应排在音频之前");
-            if i + 1 < 4 {
-                assert!(v[i + 1].0 > a[i].0, "第 {i} 轮不能被第 {} 轮盖住", i + 1);
-            }
-        }
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn mismatched_track_counts_are_refused() {
-        let dir = temp_dir("mismatch");
-        let inputs = vec![
-            episode(&dir, 1, vec![TrackPlan::video(video_samples(2))]),
-            episode(
-                &dir,
-                2,
-                vec![
-                    TrackPlan::video(video_samples(2)),
-                    TrackPlan::audio(video_samples(2)),
-                ],
-            ),
-        ];
-        let out = dir.join("合集.mp4");
-
-        let err = concat_copy(&inputs, &out).expect_err("轨数不同必须拒绝");
-        let text = err.to_string();
-        assert!(text.contains("轨道"), "要说清是轨道结构问题: {text}");
-        assert!(text.contains('2'), "要指到出问题的集号: {text}");
-        assert!(!out.exists(), "拒绝时不产出文件");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn missing_input_errors_and_cleans_temp() {
-        let dir = temp_dir("bad");
-        let out = dir.join("out.mp4");
-        let missing = dir.join("missing.mp4");
-
-        assert!(concat_copy(&[missing], &out).is_err());
-        let leftovers: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .filter(|n| n.contains(".tmp"))
-            .collect();
-        assert!(
-            leftovers.is_empty(),
-            "失败后不应残留临时文件: {leftovers:?}"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

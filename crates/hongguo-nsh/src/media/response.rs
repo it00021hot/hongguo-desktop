@@ -9,6 +9,33 @@ use hongguo_stream::range::{RangeSpec, parse_range};
 
 const CHUNK_BYTES: u64 = 256 * 1024;
 
+pub(super) async fn serve_audio(
+    State(routes): State<Routes>,
+    Path(id): Path<String>,
+    method: Method,
+    headers: HeaderMap,
+) -> Response {
+    let source = match routes.source(&id, &headers) {
+        Ok(source) => match source.audio_view() {
+            Some(source) => source,
+            None => return StatusCode::NOT_FOUND.into_response(),
+        },
+        Err(status) => return status.into_response(),
+    };
+    let Some(total) = source.len() else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    bounded(
+        source,
+        method,
+        headers
+            .get(header::RANGE)
+            .and_then(|value| value.to_str().ok()),
+        0,
+        total,
+    )
+}
+
 pub(super) async fn serve(
     State(routes): State<Routes>,
     Path(id): Path<String>,

@@ -10,7 +10,7 @@ use nsh_android_runtime::{
 };
 
 nsh_android_runtime::ui_sets!(vec![nsh_base::registry(), hongguo_nsh::registry()]);
-nsh_android_runtime::main!(Root::of::<hongguo_nsh::App>().app_id("com.hongguo.nsh"));
+nsh_android_runtime::main!(Root::of::<hongguo_nsh::App>().app_id(&hongguo_nsh::metadata().id));
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_hongguo_nsh_MainActivity_initialize(

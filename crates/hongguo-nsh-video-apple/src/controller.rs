@@ -4,24 +4,55 @@ use objc2::rc::Retained;
 use objc2_quartz_core::{CAMetalLayer, CATransaction};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     mpsc::{SyncSender, TrySendError},
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Viewport {
     pub width_px: u32,
     pub height_px: u32,
     pub width_points: f64,
     pub height_points: f64,
     pub scale_factor: f64,
+    pub edr_headroom: f32,
+}
+
+impl Default for Viewport {
+    fn default() -> Self {
+        Self {
+            width_px: 0,
+            height_px: 0,
+            width_points: 0.0,
+            height_points: 0.0,
+            scale_factor: 1.0,
+            edr_headroom: 1.0,
+        }
+    }
+}
+
+impl Viewport {
+    pub fn color_target(self) -> hongguo_video_color::DisplayTarget {
+        hongguo_video_color::DisplayTarget {
+            primaries: hongguo_video_color::Primaries::BT709,
+            sdr_white_nits: hongguo_video_color::SCRGB_WHITE_NITS,
+            peak_nits: hongguo_video_color::SCRGB_WHITE_NITS * self.edr_headroom,
+            encoding: hongguo_video_color::OutputEncoding::LinearScRgb,
+            gamut_mapping: false,
+        }
+    }
 }
 
 pub(crate) struct Mailbox {
     pub props: VideoProps,
     pub viewport: Viewport,
-    pub seek: Option<Seek>,
+    pub seek: Option<SeekCommand>,
     pub revision: u64,
+}
+
+pub(crate) struct SeekCommand {
+    pub request: Seek,
+    pub generation: Option<u64>,
 }
 
 pub(crate) struct Shared {
@@ -29,12 +60,15 @@ pub(crate) struct Shared {
     pub stop: AtomicBool,
     pub stopped: AtomicBool,
     pub control: Mutex<Option<(String, crate::control::PlaybackControl)>>,
+    pub display_clock_active: AtomicBool,
+    pub surface_visible: AtomicBool,
+    pub display_deadline: AtomicU64,
+    pub preferred_frame_rate: AtomicU32,
 }
 
 impl Shared {
     pub fn reconcile_playback(&self, source_id: &str) {
-        // Serialize with UI pause/rate writes and read the latest intent after a
-        // seek. AVPlayer itself pauses at EOF without changing our desired props.
+        // Reconcile the current UI intent after the first frame has reached the GPU.
         let held = self
             .control
             .lock()
@@ -53,7 +87,7 @@ impl Shared {
         {
             control.pause();
         } else {
-            control.apply(&props);
+            control.reconcile(&props);
         }
     }
 }
@@ -82,6 +116,26 @@ pub struct PlayerController {
 }
 
 impl PlayerController {
+    pub fn set_display_clock_active(&self, active: bool) {
+        self.shared
+            .display_clock_active
+            .store(active, Ordering::Release);
+    }
+    pub fn preferred_frame_rate(&self) -> u32 {
+        self.shared.preferred_frame_rate.load(Ordering::Acquire)
+    }
+    pub fn set_surface_visible(&self, visible: bool) {
+        if self.shared.surface_visible.swap(visible, Ordering::AcqRel) != visible {
+            let _ = self.wake.try_send(());
+        }
+    }
+    pub fn display_tick(&self, deadline: f64) -> Result<(), OutputError> {
+        self.shared
+            .display_deadline
+            .store(deadline.to_bits(), Ordering::Release);
+        self.wake()
+    }
+
     pub fn spawn(
         metal: Retained<CAMetalLayer>,
         emit: impl Fn(VideoEvent) + Send + Sync + 'static,
@@ -96,14 +150,25 @@ impl PlayerController {
             stop: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
             control: Mutex::new(None),
+            display_clock_active: AtomicBool::new(false),
+            surface_visible: AtomicBool::new(true),
+            display_deadline: AtomicU64::new(0),
+            preferred_frame_rate: AtomicU32::new(0),
         });
         let (wake, receiver) = std::sync::mpsc::sync_channel(1);
+        let completion_wake = wake.clone();
         let worker = shared.clone();
         let layers = Layers { metal };
         std::thread::Builder::new()
             .name("hongguo-pixel-video".into())
             .spawn(move || {
-                crate::worker::run(worker.clone(), layers, receiver, Arc::new(emit));
+                crate::worker::run(
+                    worker.clone(),
+                    layers,
+                    receiver,
+                    completion_wake,
+                    Arc::new(emit),
+                );
                 worker.stopped.store(true, Ordering::Release);
             })
             .map_err(|error| OutputError::new(ErrorCode::DecoderUnavailable, error.to_string()))?;
@@ -129,8 +194,7 @@ impl PlayerController {
                 "invalid native video state",
             ));
         }
-        // Serializes publication with the initial AVPlayer control handoff. No GPU work
-        // or asynchronous operation holds this lock; a pause cannot wait for compilation.
+        // Control publication never waits for GPU compilation or device I/O.
         let control = self.shared.control.lock().map_err(poisoned)?;
         let old = {
             let mut mailbox = self.shared.mailbox.lock().map_err(poisoned)?;
@@ -171,6 +235,13 @@ impl PlayerController {
             width_points,
             height_points,
             scale_factor,
+            edr_headroom: self
+                .shared
+                .mailbox
+                .lock()
+                .map_err(poisoned)?
+                .viewport
+                .edr_headroom,
         };
         if !width_points.is_finite()
             || !height_points.is_finite()
@@ -203,6 +274,7 @@ impl PlayerController {
             ));
         }
         {
+            let control = self.shared.control.lock().map_err(poisoned)?;
             let mut mailbox = self.shared.mailbox.lock().map_err(poisoned)?;
             if mailbox
                 .props
@@ -212,9 +284,44 @@ impl PlayerController {
             {
                 return Ok(());
             }
-            mailbox.seek = Some(request);
+            let generation = if let Some((_, control)) =
+                control.as_ref().filter(|(id, _)| *id == request.source_id)
+            {
+                control.apply(&mailbox.props);
+                let Some(generation) = control
+                    .frames
+                    .seek_if_owner(request.position_ms)
+                    .map_err(|error| OutputError::new(ErrorCode::SeekFailed, error))?
+                else {
+                    return Ok(());
+                };
+                Some(generation)
+            } else {
+                None
+            };
+            mailbox.seek = Some(SeekCommand {
+                request,
+                generation,
+            });
             mailbox.revision = mailbox.revision.wrapping_add(1);
         }
+        self.wake()
+    }
+
+    pub fn set_display_headroom(&self, headroom: f32) -> Result<(), OutputError> {
+        if !headroom.is_finite() || headroom < 1.0 {
+            return Err(OutputError::new(
+                ErrorCode::InvalidProps,
+                "invalid EDR display headroom",
+            ));
+        }
+        let mut mailbox = self.shared.mailbox.lock().map_err(poisoned)?;
+        if mailbox.viewport.edr_headroom == headroom {
+            return Ok(());
+        }
+        mailbox.viewport.edr_headroom = headroom;
+        mailbox.revision = mailbox.revision.wrapping_add(1);
+        drop(mailbox);
         self.wake()
     }
 
@@ -231,10 +338,6 @@ impl PlayerController {
             player.pause();
         }
         let _ = self.wake.try_send(());
-    }
-
-    pub fn is_stopped(&self) -> bool {
-        self.shared.stopped.load(Ordering::Acquire)
     }
 
     pub fn source_is_playing(&self, source_id: &str) -> bool {

@@ -151,11 +151,11 @@ impl ArchiveHevc {
         }
         let moov = build_moov(&mvhd, &tracks, &offsets, wide);
         let temp = hongguo_common::utils::path::temp_path_for(&self.path);
-        hongguo_common::offline_qa::qa_clear_for_replace(&temp).map_err(io)?;
-        let source = hongguo_common::offline_qa::prepare_qa_io(&self.path).map_err(AppError::Io)?;
+        hongguo_common::file_io::clear_for_replace(&temp).map_err(io)?;
+        let source = self.path.clone();
         let mut input = std::fs::File::open(source).map_err(io)?;
         let result = (|| {
-            let mut output = hongguo_common::offline_qa::qa_create(&temp).map_err(io)?;
+            let mut output = hongguo_common::file_io::create(&temp).map_err(io)?;
             output.write_all(&ftyp).map_err(io)?;
             output.write_all(&moov).map_err(io)?;
             output
@@ -177,14 +177,14 @@ impl ArchiveHevc {
         drop(input);
         match result {
             Ok(length) => {
-                hongguo_common::offline_qa::qa_rename(&temp, &self.path).map_err(|error| {
-                    let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
+                hongguo_common::file_io::rename(&temp, &self.path).map_err(|error| {
+                    let _ = hongguo_common::file_io::remove_file(&temp);
                     io(error)
                 })?;
                 Ok(length)
             }
             Err(error) => {
-                let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
+                let _ = hongguo_common::file_io::remove_file(&temp);
                 Err(error)
             }
         }

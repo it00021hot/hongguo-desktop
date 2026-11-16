@@ -1,6 +1,10 @@
 package com.hongguo.nsh;
 
 import android.content.Context;
+import android.content.BroadcastReceiver;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Build;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -11,7 +15,23 @@ final class PixelAudio {
     private AudioFocusRequest request;
     private boolean held;
     boolean interrupted;
-    PixelAudio(PixelPlayback playback) { this.playback = playback; }
+    private boolean registered;
+    private final BroadcastReceiver noisy = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
+                interrupted = true;
+                playback.interruptAudio();
+            }
+        }
+    };
+    PixelAudio(PixelPlayback playback) {
+        this.playback = playback;
+        IntentFilter filter = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
+        if (Build.VERSION.SDK_INT >= 33) playback.activity.registerReceiver(noisy, filter, Context.RECEIVER_NOT_EXPORTED);
+        else playback.activity.registerReceiver(noisy, filter);
+        registered = true;
+    }
+    boolean granted() { return held; }
     void update(boolean wanted) {
         if (!wanted) { abandon(); return; }
         if (held) return;
@@ -30,8 +50,7 @@ final class PixelAudio {
         } else {
             interrupted = true;
             if (change == AudioManager.AUDIOFOCUS_LOSS) held = false;
-            try { if (playback.player != null && playback.prepared && playback.player.isPlaying()) playback.player.pause(); }
-            catch (RuntimeException error) { playback.error("decoderFailed", "MediaPlayer audio interruption failed"); }
+            playback.interruptAudio();
         }
     }
     void abandon() {
@@ -39,5 +58,9 @@ final class PixelAudio {
         if (manager != null && request != null) manager.abandonAudioFocusRequest(request);
         held = false;
         interrupted = false;
+    }
+    void release() {
+        abandon();
+        if (registered) { playback.activity.unregisterReceiver(noisy); registered = false; }
     }
 }

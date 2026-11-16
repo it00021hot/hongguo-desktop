@@ -80,30 +80,3 @@ pub struct FollowUpdatePage {
     pub cursor: String,
     pub has_more: bool,
 }
-
-/// 评论 @ 提及候选里的一条（relation/list 的 ugc_user_list 摘要；
-/// 列表含官方 AI bot「小果」）。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MentionUser {
-    pub user_id: String,
-    #[serde(default)]
-    pub user_name: String,
-    #[serde(default)]
-    pub avatar: String,
-    /// true = 官方 AI bot（@ 它会触发 AI 回复）
-    #[serde(default)]
-    pub is_ai_bot: bool,
-}
-
-/// AI 提及的草稿：被提及用户与 AI 上下文评论（官方
-/// aibot_mention_context = 最近评论 id 的嵌套数组）。
-pub struct CommentMention {
-    /// 被提及用户 uid（relation/list 条目；AI bot「小果」即 is_ai_bot）
-    pub user_id: String,
-    /// 被提及用户昵称——text 前缀与 rich_text 段文本都是 `@昵称\u{FFFC}`
-    /// （对「小果」即 `@小果\u{FFFC}`，@ 普通用户不能张冠李戴成「小果」）
-    pub user_name: String,
-    /// AI 上下文评论 id（面板最近评论优先）
-    pub comment_ids: Vec<String>,
-}

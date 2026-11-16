@@ -1,4 +1,5 @@
-use super::motion::{FAST_MS, PRESS_SCALE};
+use crate::ui::motion::FAST_MS;
+use crate::ui::motion::PRESS_SCALE;
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
@@ -16,11 +17,11 @@ pub(crate) fn button(
     surface(variant).child(text(label).text_sm().font_weight(FontWeight::MEDIUM))
 }
 
-pub(super) fn surface(variant: ButtonVariant) -> nsh_base::ButtonElement {
+pub(crate) fn surface(variant: ButtonVariant) -> nsh_base::ButtonElement {
     surface_height(variant, 36.0)
 }
 
-pub(super) fn surface_height(
+pub(crate) fn surface_height(
     variant: ButtonVariant,
     desktop_height: f32,
 ) -> nsh_base::ButtonElement {
@@ -30,7 +31,7 @@ pub(super) fn surface_height(
         .py_2()
         .items_center()
         .justify_center()
-        .rounded(super::radii::control())
+        .rounded(crate::ui::radii::control())
         .bg(move || match variant {
             ButtonVariant::Primary => theme().primary,
             ButtonVariant::Secondary => theme().secondary,
@@ -79,7 +80,7 @@ pub(crate) fn field(label: impl IntoReactive<SharedString>) -> nsh_base::Input {
         .px_3()
         .py_2()
         .text_sm()
-        .rounded(super::radii::control())
+        .rounded(crate::ui::radii::control())
         .border_1()
         .border_color(move || theme().input)
         .bg(move || theme().background.opacity(0.0))
@@ -112,7 +113,6 @@ pub(crate) fn form_with_scroll(content: impl IntoElement, scroller: Scroll) -> V
         .bg(move || theme().background)
         .child(
             scroller
-                .test_id("form-scroll")
                 .flex_1()
                 .bg(move || theme().background)
                 .keyboard_taps(nsh_core::KeyboardTaps::Handled)
@@ -140,7 +140,7 @@ pub(crate) fn refresh_shade(refreshing: impl IntoReactive<bool>) -> View {
             if reduce_motion() {
                 0.0
             } else {
-                super::motion::CHROME_MS
+                crate::ui::motion::CHROME_MS
             }
         })
 }

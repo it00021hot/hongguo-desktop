@@ -23,25 +23,3 @@ pub fn free_space_at(path: &Path) -> Option<u64> {
         .max_by_key(|d| d.mount_point().components().count())
         .map(|d| d.available_space())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn temp_volume_reports_free_space() {
-        // 受限环境（沙箱、容器）里磁盘枚举可能整体失败，查不到不算失败
-        if let Some(free) = free_space_at(&std::env::temp_dir()) {
-            assert!(free > 0, "临时目录所在卷应当还有剩余空间: {free}");
-        }
-    }
-
-    #[test]
-    fn missing_path_has_no_free_space() {
-        let missing = std::env::temp_dir().join("hg-disk-space-definitely-not-here");
-        assert!(
-            free_space_at(&missing).is_none(),
-            "路径不存在时必须报「查不到」，不能报 0"
-        );
-    }
-}

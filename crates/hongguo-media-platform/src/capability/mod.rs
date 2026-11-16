@@ -1,4 +1,4 @@
-//! 解码能力探测：回答「当前机器能不能硬编、有没有 ffmpeg、会选哪条路」——实际的分流执行在壳内 `service::transcode_service::pipeline`。
+//! 平台归档编码与 ByteVC2 解码能力。
 
 pub mod bytevc2;
 pub mod probe;

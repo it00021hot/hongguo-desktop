@@ -6,8 +6,8 @@ use std::time::Instant;
 use hongguo_common::{AppError, AppResult};
 use hongguo_video::sample_table::TrackInfo;
 
-use hongguo_media_platform_api::PlatformRequest;
-use hongguo_media_platform_api::video::bitrate_for;
+use hongguo_media_types::encoding::PlatformRequest;
+use hongguo_media_types::encoding::bitrate_for;
 
 use super::decode::Decompressor;
 use super::encode::Compressor;
@@ -18,7 +18,7 @@ use super::pixel::{CmSb, Pb, Transfer};
 pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
-    if !hongguo_media::hevc::is_hevc(&video.info.codec) {
+    if !hongguo_video::hevc::is_hevc(&video.info.codec) {
         return None;
     }
     Some(run(req, &demuxed, &video.info))
@@ -119,7 +119,7 @@ fn run(
     let started = Instant::now();
 
     // 1) 参数集与源时间轴：hvcC 里可能混着非参数集 NAL（实测 libx265 会把两 KB 的 SEI 塞进 hvcC），格式描述只收 VPS/SPS/PPS，其余剔除
-    let (raw_sets, _) = hongguo_media::hevc::read_parameter_set_nalus(req.input, video)?;
+    let (raw_sets, _) = hongguo_video::hevc::read_parameter_set_nalus(req.input, video)?;
     let parameter_sets: Vec<Vec<u8>> = raw_sets
         .into_iter()
         .filter(|n| !n.is_empty() && matches!((n[0] >> 1) & 0x3f, 32..=34))

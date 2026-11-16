@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-media-platform-windows"
-description = "红果桌面版 Windows 平台原生化：Media Foundation 硬编/硬解 + WIC 静图（契约见 hongguo-media-platform-api）"
+description = "红果桌面版 Windows 平台原生化：Media Foundation 硬编/硬解 + WIC 静图（契约见 hongguo-media-types::encoding）"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ authors.workspace = true
 
 [dependencies]
 # 统一契约：帧载体 / 解码器 trait / PlatformRequest / bitrate_for。
-hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
+hongguo-media-types = { path = "../hongguo-media-types" }
 # 共用底座：统一错误（AppError / AppResult）。
 hongguo-common = { path = "../hongguo-common" }
 # 纯 Rust 编解码核心：解复用 / 参数集读取 / 音轨直通 / 封装（转码管线复用）。
@@ -24,10 +24,7 @@ jpeg-encoder = "0.7.1"
 # 本 crate 只在 Windows 目标上编译出内容（其余目标为空壳）；平台专属依赖
 # 全部进本表，macOS 宿主上连依赖都不构建。
 #
-# 选 windows crate 而不是手写虚表：MF 是 COM API（接口经虚表调用），手排
-# 虚表槽位错一个就是运行期崩到错误函数上。0.62 已在依赖图里（tauri/wry/
-# sysinfo 传递引入），声明为直接依赖不新增外部 crate，feature 按需裁剪
-# 只编译用到的接口。
+# Windows COM 绑定与 NSH、wgpu 统一使用 0.62。
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Media_MediaFoundation",
@@ -40,7 +37,3 @@ windows = { version = "0.62", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Memory",
 ] }
-
-[features]
-# 门面 test-support 转发：跨 crate 的软件 HEVC 编码验证入口。
-test-support = []

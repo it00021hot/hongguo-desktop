@@ -7,24 +7,27 @@ license.workspace = true
 publish = false
 autotests = false
 
+[features]
+source-build = ["hongguo-playback/source-build"]
+
 [build-dependencies]
 embed-resource = "=3.0.12"
+serde_json = "1"
 
 [dependencies]
 nsh-core.workspace = true
 nsh-base.workspace = true
 env_logger = "0.11"
-hongguo-api = { path = "../hongguo-api" }
 hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false }
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
 hongguo-common = { path = "../hongguo-common" }
-hongguo-media = { path = "../hongguo-media" }
-hongguo-media-platform = { path = "../hongguo-media-platform" }
+hongguo-video = { path = "../hongguo-video" }
 hongguo-service = { path = "../hongguo-service" }
-hongguo-softdec = { path = "../hongguo-softdec" }
+hongguo-playback = { path = "../hongguo-playback" }
+hongguo-native-clock = { path = "../hongguo-native-clock" }
+hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-store = { path = "../hongguo-store" }
 hongguo-stream = { path = "../hongguo-stream" }
-hongguo-protocol = { path = "../hongguo-protocol" }
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -35,23 +38,14 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 
-[dev-dependencies]
-nsh-engine.workspace = true
-nsh-testing.workspace = true
-reqwest = { version = "0.13", default-features = false }
-
 [target.'cfg(target_os = "macos")'.dependencies]
 hongguo-nsh-video-macos = { path = "../hongguo-nsh-video-macos" }
 nsh-platform-macos.workspace = true
-global-hotkey = "0.8"
 block2 = "0.6"
-objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 hongguo-nsh-video-windows = { path = "../hongguo-nsh-video-windows" }
 nsh-platform-windows.workspace = true
-global-hotkey = "0.8"
-windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 hongguo-nsh-video-ios = { path = "../hongguo-nsh-video-ios" }
@@ -60,4 +54,3 @@ objc2 = "0.6"
 objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "block2", "UIView", "UIViewController", "UIWindow", "UIWindowScene", "UIWindowSceneGeometry", "UIWindowSceneGeometryPreferences", "UIWindowSceneGeometryPreferencesIOS", "UIOrientation", "UIScene", "UIDocumentPickerViewController"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSString", "NSRunLoop", "NSTimer"] }
 block2 = "0.6"
-objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }

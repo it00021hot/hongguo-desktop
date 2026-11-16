@@ -1,0 +1,604 @@
+//! The view's ProseMirror and Tiptap features: the gap cursor (arrows reach
+//! it, typing and Enter open a textblock there), exitable marks,
+//! placeholders by type, task items' checkboxes and the default image.
+//!
+//! Positions: in `ab` + two `stock` atoms, `ab` is 1..3, the atoms 4..5 and
+//! 5..6, the gap between them 5.
+
+use nsh_base::rich_editor::model::{AttrSpec, NodeSpec};
+
+use super::*;
+
+fn focus_start(app: &mut Headless) {
+    app.type_text("id:editor", "").unwrap();
+    keys(app, &["ctrl+home"]);
+    see(app, "Sel 1-1");
+}
+
+fn two_atoms() -> Value {
+    json!({"type": "doc", "content": [
+        {"type": "paragraph", "content": [{"type": "text", "text": "ab"}]},
+        {"type": "stock", "attrs": {"symbol": "A"}},
+        {"type": "stock", "attrs": {"symbol": "B"}},
+    ]})
+}
+
+#[test]
+fn arrows_reach_the_gap_between_atoms() {
+    let mut app = start(two_atoms());
+    focus_start(&mut app);
+    keys(&mut app, &["end", "right"]);
+    see(&mut app, "Sel 4-5");
+    keys(&mut app, &["right"]);
+    see(&mut app, "Sel 5-5");
+    // On past the last atom: into the trailing paragraph (Tiptap's
+    // trailing node), 6..8.
+    keys(&mut app, &["right", "right"]);
+    see(&mut app, "Sel 7-7");
+    keys(&mut app, &["left"]);
+    see(&mut app, "Sel 5-6");
+}
+
+#[test]
+fn a_mention_shows_its_text_and_is_one_position() {
+    let mut app = start(json!({"type": "doc", "content": [
+        {"type": "paragraph", "content": [
+            {"type": "text", "text": "hi "},
+            {"type": "mention", "attrs": {"id": "a", "label": "Alice"}},
+            {"type": "text", "text": "!"},
+        ]},
+    ]}));
+    // Its `render_text`, in the line with the text around it.
+    see(&mut app, "hi @Alice!");
+    focus_start(&mut app);
+    // `hi ` is 1..4, the mention 4..5: the caret steps over it at once.
+    keys(&mut app, &["right", "right", "right"]);
+    see(&mut app, "Sel 4-4");
+    keys(&mut app, &["right"]);
+    see(&mut app, "Sel 5-5");
+}
+
+#[test]
+fn typing_at_a_gap_cursor_opens_a_paragraph() {
+    let mut app = start(two_atoms());
+    focus_start(&mut app);
+    keys(&mut app, &["end", "right", "right"]);
+    see(&mut app, "Sel 5-5");
+    app.type_text("id:editor", "z").unwrap();
+    see(&mut app, "Types paragraph,stock,paragraph,stock,paragraph");
+    see(&mut app, &doc("ab|@|z|@|"));
+}
+
+#[test]
+fn enter_at_a_gap_cursor_opens_a_paragraph() {
+    let mut app = start(two_atoms());
+    focus_start(&mut app);
+    keys(&mut app, &["end", "right", "right"]);
+    see(&mut app, "Sel 5-5");
+    keys(&mut app, &["enter"]);
+    see(&mut app, "Types paragraph,stock,paragraph,stock,paragraph");
+    see(&mut app, "Sel 6-6");
+}
+
+/// A schema whose marks are all exitable and with a `todo` task item and
+/// a `picture` image leaf.
+fn feature_schema() -> Schema {
+    let mut spec = starter::schema_spec();
+    for (_, mark) in &mut spec.marks {
+        mark.exitable = true;
+    }
+    let mut todo = NodeSpec::default();
+    todo.group = Some("block".into());
+    todo.content = Some("paragraph".into());
+    let mut checked = AttrSpec::default();
+    checked.default = Some(json!(false));
+    todo.attrs = vec![("checked".into(), checked)];
+    todo.extra.insert("render".into(), json!("task"));
+    spec.nodes.push(("todo".into(), todo));
+    let mut picture = NodeSpec::default();
+    picture.group = Some("block".into());
+    picture.atom = true;
+    let mut src = AttrSpec::default();
+    src.default = Some(json!(""));
+    let mut size = AttrSpec::default();
+    size.default = Some(json!(40));
+    picture.attrs = vec![
+        ("src".into(), src.clone()),
+        ("alt".into(), src),
+        ("width".into(), size.clone()),
+        ("height".into(), size),
+    ];
+    picture.extra.insert("render".into(), json!("image"));
+    spec.nodes.push(("picture".into(), picture));
+    Schema::new(spec).unwrap()
+}
+
+#[derive(Clone, PartialEq, Props)]
+struct FeaturesProps {
+    session: Option<EditorSession>,
+    editable: bool,
+}
+
+/// An editor with placeholders, showing the document's JSON and its count
+/// of text nodes.
+#[component]
+fn Features(props: FeaturesProps) -> impl IntoElement {
+    let session = props.session.clone().expect("a session");
+    let read = {
+        let session = session.clone();
+        move || {
+            let doc = session.state().doc().clone();
+            let mut texts = 0;
+            doc.descendants(&mut |n, _, _, _| {
+                texts += usize::from(n.is_text());
+                true
+            });
+            (doc.to_json().to_string(), texts, doc_text(&doc))
+        }
+    };
+    let shown = signal(read());
+    // What the session answers about the view, asked on the engine thread
+    // after each change.
+    let answers = signal(String::new());
+    let asked = session.clone();
+    let ask = move || {
+        let caret = asked.coords_at_pos(asked.state().selection().head());
+        let back = caret.and_then(|b| {
+            asked.pos_at_coords(b.origin + nsh_core::geometry::point(px(0.0), b.size.height / 2.0))
+        });
+        format!(
+            "Geometry {} {:?} {}",
+            caret.is_some(),
+            back,
+            asked.is_focused()
+        )
+    };
+    view()
+        .child(
+            view().test_id("editor").w(px(600.0)).h(px(400.0)).child(
+                rich_editor()
+                    .editor(session)
+                    .editable(props.editable)
+                    .placeholder("Write here")
+                    .placeholders(std::collections::BTreeMap::from([(
+                        "heading".to_owned(),
+                        "Title".to_owned(),
+                    )]))
+                    .show_only_current(false)
+                    // Room before the blocks for the task checkbox.
+                    .classes({
+                        let mut classes = nsh_base::rich_editor::view::RichEditorClasses::default();
+                        classes.content = Some("pl-8".into());
+                        classes.task_checkbox = Some("w-4 h-4".into());
+                        // A code block with a background and padding of its
+                        // own.
+                        classes.nodes = Some(std::collections::BTreeMap::from([(
+                            "codeBlock".to_owned(),
+                            "bg-muted px-4 py-2".to_owned(),
+                        )]));
+                        classes
+                    })
+                    .size_full()
+                    .on_change(move |_: &_| {
+                        shown.set(read());
+                        answers.set(ask());
+                    }),
+            ),
+        )
+        .child(text(move || format!("Json {}", shown.get().0)))
+        .child(text(move || format!("Texts {}", shown.get().1)))
+        .child(text(move || format!("Doc {:?}", shown.get().2)))
+        .child(text(move || answers.get()))
+        .child(text("Ready"))
+}
+
+fn start_features(doc: Value, editable: bool) -> Headless {
+    let schema = feature_schema();
+    let plugins = starter::plugins(&schema);
+    let doc = schema.node_from_json(&doc).unwrap();
+    let state =
+        EditorState::create(EditorStateConfig::new(schema).doc(doc).plugins(plugins)).unwrap();
+    let session = EditorSession::new(state, NodeViews::new());
+    let mut config = EngineConfig {
+        viewport: Size::new(px(800.0), px(900.0)),
+        ..EngineConfig::new(Root::new::<Features>(move || FeaturesProps {
+            session: Some(session.clone()),
+            editable,
+        }))
+    };
+    config.environment.os = Os::Linux;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).expect("the engine starts");
+    app.wait_for("text:Ready").unwrap();
+    app
+}
+
+#[test]
+fn arrow_right_leaves_an_exitable_mark_at_the_block_end() {
+    let mut app = start_features(
+        json!({"type": "doc", "content": [{"type": "paragraph", "content": [
+            {"type": "text", "text": "ab", "marks": [{"type": "bold"}]}
+        ]}]}),
+        true,
+    );
+    app.type_text("id:editor", "").unwrap();
+    keys(&mut app, &["ctrl+end", "right"]);
+    app.type_text("id:editor", "c").unwrap();
+    see(&mut app, &doc("abc"));
+    // "ab" bold and "c" plain: two texts.
+    see(&mut app, "Texts 2");
+}
+
+#[test]
+fn placeholders_follow_the_block_type() {
+    let mut app = start_features(
+        json!({"type": "doc", "content": [
+            {"type": "heading", "attrs": {"level": 1}},
+            {"type": "paragraph"},
+        ]}),
+        true,
+    );
+    see(&mut app, "\u{200b}Title");
+    see(&mut app, "\u{200b}Write here");
+}
+
+#[test]
+fn only_the_block_an_input_method_composes_in_hides_its_placeholder() {
+    let mut app = start_features(
+        json!({"type": "doc", "content": [
+            {"type": "heading", "attrs": {"level": 1}},
+            {"type": "paragraph"},
+        ]}),
+        true,
+    );
+    app.type_text("id:editor", "").unwrap();
+    keys(&mut app, &["ctrl+end"]);
+    see(&mut app, "\u{200b}Title");
+    see(&mut app, "\u{200b}Write here");
+    compose(&mut app, true, "ni");
+    see(&mut app, "ni");
+    app.wait_for_gone("text:\u{200b}Write here", Duration::from_secs(5))
+        .unwrap();
+    see(&mut app, "\u{200b}Title");
+}
+
+#[test]
+fn placeholders_hide_while_read_only() {
+    let mut app = start_features(
+        json!({"type": "doc", "content": [{"type": "paragraph"}]}),
+        false,
+    );
+    app.wait(std::time::Duration::from_millis(100)).unwrap();
+    assert!(!app.shows("\u{200b}Write here"));
+}
+
+#[test]
+fn a_task_checkbox_toggles_checked() {
+    let mut app = start_features(
+        json!({"type": "doc", "content": [{"type": "todo", "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "buy"}]}
+        ]}]}),
+        true,
+    );
+    app.press("role:checkbox").unwrap();
+    see_json(&mut app, "\"checked\":true");
+}
+
+fn see_json(app: &mut Headless, fragment: &str) {
+    let selector = format!("text:/{}/", regex_escape(fragment));
+    app.wait_for(&selector).unwrap();
+}
+
+fn regex_escape(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            let special = "\\.+*?()|[]{}^$/".contains(c);
+            special.then_some('\\').into_iter().chain([c])
+        })
+        .collect()
+}
+
+#[test]
+fn an_image_node_renders_an_image() {
+    let mut app = start_features(
+        json!({"type": "doc", "content": [
+            {"type": "paragraph"},
+            {"type": "picture", "attrs": {"src": "https://example.com/a.png", "alt": "A cat"}},
+        ]}),
+        true,
+    );
+    app.wait_for("label:A cat").unwrap();
+}
+
+#[test]
+fn the_session_answers_where_its_view_shows_it() {
+    let mut app = start_features(
+        json!({"type": "doc", "content": [{"type": "paragraph", "content": [
+            {"type": "text", "text": "ab"}
+        ]}]}),
+        true,
+    );
+    app.press("text:ab").unwrap();
+    app.type_text("id:editor", "c").unwrap();
+    // The caret's box, the position back at its left edge, and the focus.
+    app.wait_for("text:/^Geometry true Some\\(\\d\\) true$/")
+        .unwrap();
+}
+
+#[derive(Clone, PartialEq, Props)]
+struct PaddedProps {
+    session: Option<EditorSession>,
+}
+
+#[component]
+fn Padded(props: PaddedProps) -> impl IntoElement {
+    let session = props.session.clone().expect("a session");
+    let sel = {
+        let session = session.clone();
+        move || {
+            let state = session.state();
+            let s = state.selection();
+            format!("Sel {}-{} {}", s.from(), s.to(), session.is_focused())
+        }
+    };
+    let shown = signal(sel());
+    let (on_change, on_select, on_focus, on_blur) = (sel.clone(), sel.clone(), sel.clone(), sel);
+    view()
+        .child(
+            view().test_id("editor").child(
+                rich_editor()
+                    .editor(session)
+                    .w(px(300.0))
+                    .min_h(px(140.0))
+                    .p(px(12.0))
+                    .border(px(2.0))
+                    .on_change(move |_: &_| shown.set(on_change()))
+                    .on_selection_change(move |_: &_| shown.set(on_select()))
+                    .on_focus(move |_: &_| shown.set(on_focus()))
+                    .on_blur(move |_: &_| shown.set(on_blur())),
+            ),
+        )
+        .child(text(move || shown.get()))
+        .child(text("Ready"))
+}
+
+#[test]
+fn a_padded_root_keeps_the_sink_in_the_viewport_and_fills_its_height() {
+    use nsh_core::ViewKind;
+
+    let session = session(paragraphs(&["ab"]));
+    let mounted = session.clone();
+    let mut config = EngineConfig {
+        viewport: Size::new(px(800.0), px(900.0)),
+        ..EngineConfig::new(Root::new::<Padded>(move || PaddedProps {
+            session: Some(mounted.clone()),
+        }))
+    };
+    config.environment.os = Os::Linux;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).expect("the engine starts");
+    app.wait_for("text:Ready").unwrap();
+
+    let nodes = app.screen().layout_nodes();
+    let scroll = nodes
+        .iter()
+        .find(|n| n.kind == ViewKind::Scroll)
+        .expect("the editor's scroll view");
+    let sink = nodes
+        .iter()
+        .find(|n| n.kind == ViewKind::Input)
+        .expect("the editor's sink");
+    let content = nodes
+        .iter()
+        .find(|n| n.parent == scroll.id)
+        .expect("the editor's content box");
+
+    let inside = |outer: Bounds<Points>, inner: Bounds<Points>| {
+        let c = Point::new(
+            inner.origin.x + inner.size.width * 0.5,
+            inner.origin.y + inner.size.height * 0.5,
+        );
+        c.x >= outer.origin.x
+            && c.x <= outer.origin.x + outer.size.width
+            && c.y >= outer.origin.y
+            && c.y <= outer.origin.y + outer.size.height
+    };
+
+    // Border (2) + padding (12) on `root` insets the scroll viewport and
+    // the sink together, so pressing the sink's center (`nsh test` on a
+    // native host) hits `content` instead of the root's padding.
+    assert_eq!(scroll.bounds.origin, Point::new(px(14.0), px(14.0)));
+    assert_eq!(scroll.bounds.size, Size::new(px(272.0), px(112.0)));
+    assert_eq!(sink.bounds.origin.x, scroll.bounds.origin.x);
+    assert!(sink.bounds.origin.y >= scroll.bounds.origin.y);
+    assert_eq!(content.bounds, scroll.bounds);
+    assert!(inside(content.bounds, sink.bounds));
+
+    // Typing moves the sink right from the inset viewport's origin while
+    // keeping it inside `content`.
+    app.type_text("id:editor", "cd").unwrap();
+    see(&mut app, "Sel 3-3 true");
+    let nodes = app.screen().layout_nodes();
+    let moved_sink = nodes
+        .iter()
+        .find(|n| n.kind == ViewKind::Input)
+        .expect("the editor's sink");
+    assert!(moved_sink.bounds.origin.x > scroll.bounds.origin.x);
+    assert!(inside(content.bounds, moved_sink.bounds));
+
+    // Pressing in the lower blank area of a `minHeight` editor hits
+    // `content` and places the caret at the end of the document (`cdab`,
+    // 1..5).
+    keys(&mut app, &["home"]);
+    see(&mut app, "Sel 1-1 true");
+    app.press_at("text:cdab", Point::new(px(265.0), px(80.0)))
+        .unwrap();
+    see(&mut app, "Sel 5-5 true");
+}
+
+/// The selection's boxes drawn with text `text`: the views before it in
+/// its box (the text is drawn over them).
+fn selection_boxes(app: &Headless, text: &str) -> (Bounds<Points>, Vec<Bounds<Points>>) {
+    let nodes = app.screen().layout_nodes();
+    let i = nodes
+        .iter()
+        .position(|n| n.text.as_ref().is_some_and(|t| t.text.text == text))
+        .unwrap_or_else(|| panic!("no text {text}"));
+    let boxes = nodes[..i]
+        .iter()
+        .filter(|n| n.parent == nodes[i].parent && n.text.is_none())
+        .map(|n| n.bounds)
+        .collect();
+    (nodes[i].bounds, boxes)
+}
+
+#[test]
+fn selection_boxes_are_drawn_in_task_items_and_code_blocks() {
+    let mut app = start_features(
+        json!({"type": "doc", "content": [
+            {"type": "todo", "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "buy milk"}]}
+            ]},
+            {"type": "codeBlock", "content": [{"type": "text", "text": "let x"}]},
+        ]}),
+        true,
+    );
+    app.type_text("id:editor", "").unwrap();
+    keys(&mut app, &["ctrl+home", "ctrl+shift+end"]);
+    app.wait(Duration::from_millis(100)).unwrap();
+    // A code block's own background would hide boxes drawn under the
+    // blocks: each textblock draws its own under its text.
+    for text in ["buy milk", "let x"] {
+        let (text_box, boxes) = selection_boxes(&app, text);
+        assert_eq!(boxes.len(), 1, "one selection box under {text}");
+        let b = boxes[0];
+        // From the text's start (after a task's checkbox, inside a code
+        // block's padding), on its line, through its end.
+        assert_eq!(b.origin, text_box.origin, "{text}");
+        assert_eq!(b.size.height, text_box.size.height, "{text}");
+        assert!(b.size.width >= text_box.size.width, "{text}");
+    }
+}
+
+#[derive(Clone, PartialEq, Props)]
+struct InlineImageProps {
+    session: Option<EditorSession>,
+}
+
+/// An editor, a press that types at the start of the document, and a
+/// press that shows how far apart the session puts the caret before and
+/// after its inline image, and the position it finds just after the
+/// image.
+#[component]
+fn InlineImage(props: InlineImageProps) -> impl IntoElement {
+    let session = props.session.clone().expect("a session");
+    let shown = signal(String::new());
+    let (asked, typed) = (session.clone(), session.clone());
+    view()
+        .child(
+            view()
+                .test_id("editor")
+                .w(px(600.0))
+                .h(px(200.0))
+                .child(rich_editor().editor(session)),
+        )
+        .child(
+            view()
+                .on_press(move || {
+                    let mut tr = typed.state().tr();
+                    tr.insert_text("x", Some(1), Some(1));
+                    typed.dispatch(tr).unwrap();
+                })
+                .child(text("Type")),
+        )
+        .child(
+            view()
+                .on_press(move || {
+                    let mut image = 0;
+                    asked.state().doc().descendants(&mut |n, pos, _, _| {
+                        if n.ty().name() == "image" {
+                            image = pos;
+                        }
+                        true
+                    });
+                    let x = |pos| asked.coords_at_pos(pos).map_or(-1.0, |b| b.origin.x.0);
+                    let back = asked.coords_at_pos(image + 1).and_then(|b| {
+                        asked.pos_at_coords(b.origin + nsh_core::geometry::point(px(1.0), px(1.0)))
+                    });
+                    shown.set(format!(
+                        "Image {image} gap {} {:?}",
+                        (x(image + 1) - x(image)).round(),
+                        back.map(|p| p - image)
+                    ));
+                })
+                .child(text("Measure")),
+        )
+        .child(text(move || shown.get()))
+        .child(text("Ready"))
+}
+
+/// An app over `doc`, with the editor and the presses of `InlineImage`.
+fn inline_image_app(doc: serde_json::Value) -> Headless {
+    let schema = feature_schema();
+    let plugins = starter::plugins(&schema);
+    let doc = schema.node_from_json(&doc).unwrap();
+    let state =
+        EditorState::create(EditorStateConfig::new(schema).doc(doc).plugins(plugins)).unwrap();
+    let session = EditorSession::new(state, NodeViews::new());
+    let mut config = EngineConfig {
+        viewport: Size::new(px(800.0), px(900.0)),
+        ..EngineConfig::new(Root::new::<InlineImage>(move || InlineImageProps {
+            session: Some(session.clone()),
+        }))
+    };
+    config.environment.os = Os::Linux;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).expect("the engine starts");
+    app.wait_for("text:Ready").unwrap();
+    app
+}
+
+fn image_80() -> serde_json::Value {
+    json!({"type": "image", "attrs": {"src": "data:image/png;base64,", "width": 80, "height": 16}})
+}
+
+/// The caret on either side of an inline image is as far apart as the
+/// image is wide: the image's attachment character stands for its view,
+/// not for a character of the font.
+#[test]
+fn the_caret_steps_over_an_inline_images_width() {
+    // `ab` is 1..3, the image 3..4, `cd` 4..6.
+    let mut app = inline_image_app(
+        json!({"type": "doc", "content": [{"type": "paragraph", "content": [
+            {"type": "text", "text": "ab"},
+            image_80(),
+            {"type": "text", "text": "cd"},
+        ]}]}),
+    );
+    app.press("text:Measure").unwrap();
+    // 80 apart, and a point just after the image is after it.
+    see(&mut app, "Image 3 gap 80 Some(1)");
+    // Typing before it in its block moves it within the block.
+    app.press("text:Type").unwrap();
+    app.press("text:Measure").unwrap();
+    see(&mut app, "Image 4 gap 80 Some(1)");
+}
+
+/// An edit in an earlier block moves an inline image's position; the
+/// caret still steps over its width.
+#[test]
+fn the_caret_steps_over_an_inline_image_moved_by_an_edit_above() {
+    let mut app = inline_image_app(json!({"type": "doc", "content": [
+        {"type": "paragraph", "content": [{"type": "text", "text": "xy"}]},
+        {"type": "paragraph", "content": [
+            {"type": "text", "text": "ab"},
+            image_80(),
+            {"type": "text", "text": "cd"},
+        ]},
+    ]}));
+    app.press("text:Measure").unwrap();
+    see(&mut app, "Image 7 gap 80 Some(1)");
+    app.press("text:Type").unwrap();
+    app.press("text:Measure").unwrap();
+    see(&mut app, "Image 8 gap 80 Some(1)");
+}

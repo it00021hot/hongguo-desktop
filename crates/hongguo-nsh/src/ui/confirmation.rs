@@ -1,5 +1,7 @@
-use super::{ButtonVariant, button, motion::CHROME_MS};
 use crate::i18n::tr;
+use crate::ui::ButtonVariant;
+use crate::ui::button;
+use crate::ui::motion::CHROME_MS;
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
@@ -29,7 +31,6 @@ pub(crate) fn confirmation<E: IntoElement>(
             .on_cancel(move || open.set(false))
             .child(
                 view()
-                    .test_id("confirmation")
                     .flex_1()
                     .items_center()
                     .justify_center()
@@ -99,7 +100,7 @@ fn cancel() -> nsh_base::ButtonElement {
         .h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
         .px_4()
         .py_0()
-        .rounded(super::radii::control)
+        .rounded(crate::ui::radii::control)
         .border_1()
         .border_color(move || theme().input)
         .bg(move || {
@@ -118,7 +119,7 @@ fn cancel() -> nsh_base::ButtonElement {
                 if reduce_motion() {
                     1.0
                 } else {
-                    super::motion::PRESS_SCALE
+                    crate::ui::motion::PRESS_SCALE
                 }
             })
         })
@@ -128,7 +129,7 @@ fn cancel() -> nsh_base::ButtonElement {
             if reduce_motion() {
                 0.0
             } else {
-                super::motion::FAST_MS
+                crate::ui::motion::FAST_MS
             }
         })
         .child(

@@ -1,7 +1,0 @@
-{
-  "name": "Hongguo Playback Validation",
-  "id": "com.hongguo.nsh.playback-validation",
-  "rust": "../..",
-  "root": "App",
-  "theme": "../../theme.json"
-}

@@ -91,20 +91,6 @@ pub fn stop_task(state: &AppState, task_id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 重试单个任务（重置后立即触发调度）。
-pub fn retry_task(state: &AppState, task_id: &str) -> AppResult<DownloadTask> {
-    let task = state
-        .queue()
-        .retry(task_id)
-        .ok_or_else(|| AppError::NotFound(format!("任务 {task_id}")))?;
-    persist_tasks(&state.store, &state.queue(), "Download")?;
-    state
-        .events()
-        .publish(ServiceEvent::DownloadQueueChanged(QueueChangedEvent {}));
-    kick(state.clone());
-    Ok(task)
-}
-
 /// 批量重试（重置后立即触发调度）。
 pub fn retry_tasks(state: &AppState, task_ids: &[String]) -> AppResult<usize> {
     let n = state.queue().retry_many(task_ids);
@@ -126,7 +112,7 @@ pub fn delete_tasks(state: &AppState, task_ids: &[String], delete_files: bool) -
                 && task.is_done()
             {
                 let path = std::path::Path::new(&task.file_path);
-                if let Err(e) = hongguo_store::paths::qa_remove_file(path) {
+                if let Err(e) = hongguo_common::file_io::remove_file(path) {
                     failed.push(format!("{} ({e})", path.display()));
                 }
                 crate::download_service::worker::cleanup_temp(path);

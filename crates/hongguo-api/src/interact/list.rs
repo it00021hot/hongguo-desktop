@@ -2,10 +2,8 @@
 
 use serde_json::Value;
 
-use super::check_interact_code;
 use super::model::{
     BookshelfEntry, FollowUpdateItem, FollowUpdatePage, InteractionItem, InteractionState,
-    MentionUser,
 };
 use crate::client::ApiEnv;
 use crate::danmaku::LQ_API_ORIGIN;
@@ -15,64 +13,6 @@ use hongguo_common::{AppError, AppResult};
 const BOOKSHELF_LIST_PATH: &str = "/reading/bookapi/bookshelf/video/list/v";
 const UGC_MGET_PATH: &str = "/reading/ugc/action/mget/v";
 const FOLLOW_LIST_PATH: &str = "/novel/articleapi/relation/get_user_action/v1/";
-
-const COMMENT_SOURCE_AT_MENTION: i64 = 1511;
-
-/// 拉评论 @ 提及候选（relation/list）。官方列表含官方 AI bot「小果」
-/// （is_ai_bot=true）；`series_id` 同时进路径与 body。
-pub async fn fetch_mention_list(series_id: &str, env: &ApiEnv) -> AppResult<Vec<MentionUser>> {
-    let book_id: i64 = series_id
-        .parse()
-        .map_err(|_| AppError::InvalidArgs(format!("剧 id 不是数字: {series_id}")))?;
-    let payload = serde_json::json!({
-        "comment_source": COMMENT_SOURCE_AT_MENTION,
-        "target_user_id": series_id,
-        "aid": 8662,
-        "count": 20,
-        "relation_list_business_param": { "book_id": book_id },
-    });
-    let raw = serde_json::to_vec(&payload)
-        .map_err(|e| AppError::Media(format!("构造提及列表请求失败: {e}")))?;
-    let path = format!("/novel/commentapi/relation/list/{series_id}/v1/");
-    let bytes = crate::client::api_call_reading(LQ_API_ORIGIN, &path, Some(raw), &[], env).await?;
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析提及列表失败: {e}")))?;
-    check_interact_code(&value)?;
-    let mut items = Vec::new();
-    for raw in value
-        .pointer("/data/ugc_user_list")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        let user_id = raw
-            .pointer("/base_info/user_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if user_id.is_empty() {
-            continue;
-        }
-        items.push(MentionUser {
-            user_id,
-            user_name: raw
-                .pointer("/base_info/user_name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            avatar: raw
-                .pointer("/base_info/user_avatar")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            is_ai_bot: raw
-                .pointer("/base_info/is_ai_bot")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        });
-    }
-    Ok(items)
-}
 
 /// 拉追更列表一页（get_user_action `action_channel=9`）：`cursor` 传上页响应的
 /// `cursor` 原文，首页传空串。「是否已追」没有独立接口——拉第一页本地判成员。

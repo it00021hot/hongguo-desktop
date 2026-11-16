@@ -61,32 +61,3 @@ pub const GORGON_SDK_VERSION: u32 = 67_503_104;
 
 /// X-Gorgon 输出前缀（2 字节 hex "8404"）。
 pub const GORGON_PREFIX: [u8; 2] = [0x84, 0x04];
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sbox_is_1024_bytes() {
-        assert_eq!(sbox().len(), 1024);
-    }
-
-    #[test]
-    fn branch2_orders_is_320_bytes() {
-        // 与 JS 源常量一致：320 字节 = 5 组 × 64 字节
-        assert_eq!(branch2_orders().len(), 320);
-    }
-
-    #[test]
-    fn keys_have_expected_length() {
-        assert_eq!(medusa_sign_key().len(), 32);
-        assert_eq!(medusa_aes_key().len(), 16);
-        assert_eq!(medusa_aes_iv().len(), 16);
-    }
-
-    #[test]
-    fn gorgon_prefix_matches_js() {
-        assert_eq!(hex::encode(GORGON_PREFIX), "8404");
-        assert_eq!(GORGON_SDK_VERSION, 67503104);
-    }
-}

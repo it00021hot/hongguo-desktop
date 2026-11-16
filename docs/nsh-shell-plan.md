@@ -1,6 +1,8 @@
 # NSH 四端壳实施方案
 
-状态：方案已确认，正在实施。用户已明确选择纯 Rust 与独立移动端宿主。
+本文保留初始接入方案。当前主线仅保留 NSH 与纯 Rust 内核，Tauri/GPUI 壳已移除。
+2026-11-15 已将受控 NSH 源码与本机 CLI 更新至 0.5.1（224d9a7）；下文 0.5.0 与多壳描述为历史基线。
+现行接入与验证以 [NSH 开发说明](../.agents/skills/hongguo-dev/references/nsh.md) 为准。
 
 本轮目标：新增第三个独立壳，覆盖 Windows、macOS、Android、iOS。
 保持客户端直接调用红果官方 API 的工作方式；现有 Rust service 是本地业务内核，
@@ -8,29 +10,31 @@
 
 ## 1. 技术基线与已核实事实
 
-- 本机 `nsh --version` 已确认为 `0.4.0 (e626a8d)`。
+- 本机 `nsh --version` 已升级为 `0.5.0 (f4d68f7)`。
 - 实现采用纯 Rust 模式，从 `nsh init --template rust` 生成的工程接入根 workspace。
   Android/iOS 使用本仓库的独立宿主，在挂载 NSH 根组件前提供系统私有目录，
   不加入 TSX 启动层或 QuickJS。
-  NSH 依赖统一使用 0.4.0，与 CLI 对齐；依赖源以生成物和锁文件为准。
+  NSH 依赖统一使用 0.5.0，与 CLI 对齐；统一锁定官方发布提交
+  `f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1`。
   本机另有 NSH 源码目录，但其工作区版本不同且有未提交修改，不将它作为应用依赖源。
 - NSH 原生视频组件在 Apple 平台使用 AVPlayer，Android 使用 MediaPlayer，
   Windows 使用 Media Foundation。
   这些是播放后端，不代表自动支持所有红果流格式。
-- 0.4.0 的 Linux 文档仍明确列出视频倍速不支持，因此 Linux 整个平台延后，
+- 初版 0.4.0 的 Linux 文档列出视频倍速不支持，因此 Linux 整个平台延后，
   本轮不开发 Linux 播放适配或承担其验收。
 - `hongguo-service` 已无 UI 框架依赖，可以复用；现有 `hongguo-player`
   的真实实现仅覆盖 Windows/macOS，且画面挂接服务于既有壳，不能直接当作四端 NSH 播放器。
 - 现有平台转码实现覆盖 Windows/macOS/Android；本轮需补齐 iOS 的媒体能力。
 
-版本依据：[0.4.0 发布记录](https://github.com/longbridge/nsh/releases/tag/v0.4.0)、
-[0.4.0 Rust 模式](https://github.com/longbridge/nsh/blob/v0.4.0/website/docs/rust.md)、
-[0.4.0 视频后端](https://github.com/longbridge/nsh/blob/v0.4.0/website/docs/web-view-and-video.md)、
-[0.4.0 Linux 限制](https://github.com/longbridge/nsh/blob/v0.4.0/website/docs/linux.md)。
+版本依据：[0.5.0 发布记录](https://github.com/longbridge/nsh/releases/tag/v0.5.0)、
+[0.5.0 Rust 模式](https://github.com/longbridge/nsh/blob/v0.5.0/website/docs/rust.md)、
+[0.5.0 视频后端](https://github.com/longbridge/nsh/blob/v0.5.0/website/docs/web-view-and-video.md)。
+Android embedding SDK 已拆为独立发布资产，安装与校验方式见
+[NSH 开发说明](../.agents/skills/hongguo-dev/references/nsh.md)。
 
 ## 2. 分层与目录归属
 
-新增 `crates/hongguo-nsh/`，保持入口只装配，业务功能按域组织：
+当前 `crates/hongguo-nsh/` 保持入口只装配，业务功能按域组织；完整依赖边界见 [项目结构](project-structure.md)：
 
 ```text
 hongguo-nsh/
@@ -38,14 +42,15 @@ hongguo-nsh/
   DESIGN.md / theme.json
   src/
     lib.rs / main.rs
-    bootstrap/       启动、目录、数据库、设置和设备身份装载
-    bridge/          service 异步结果与业务事件接入 NSH 生命周期
-    ui/              基于 nsh-base 的应用样式组件与动效
-    pages/           推荐、搜索、详情、榜单、历史、设置等
-    player/          NSH 播放组件、控制与供数适配
-    platform/        窗口、移动端生命周期、目录与导出适配
-    i18n/            加载现有中英文资源
-  tests/
+    bootstrap.rs     目录、数据库、设置和设备身份装载
+    bridge.rs        service 异步结果接入 NSH 生命周期
+    shell/           窗口、顶栏与导航装配
+    navigation.rs    路由与导航状态
+    features/        功能页面、状态与专用 presentation
+    ui/              共享控件、图标与动效
+    media/           临时媒体 HTTP Range 供数及播放适配
+    window_modes/    原生窗口生命周期与模式
+    i18n.rs          加载现有中英文资源
 ```
 
 依赖方向：NSH 页面 → 本壳交互与状态 → 既有 service/api → store/signer/stream/media。
@@ -69,9 +74,9 @@ macOS/iOS 共用的 VideoToolbox 管线归 `hongguo-media-videotoolbox`，不复
 3. 订阅既有 `ServiceEvent`，将任务进度、登录和播放准备结果交给本壳状态。
    处理订阅溢出后的状态重读、页面退出、请求取消及旧结果覆盖新页面的问题。
 4. 持久化状态由 service/store 所有，页面临时状态由页面所有；进度事件不驱动整页重建。
-5. 桌面数据目录用独立的 `hongguo-nsh` 根，与另两个壳平级隔离。
+5. 桌面数据目录用独立的 `hongguo-nsh` 根，与其他数据根平级隔离。
    Android/iOS 在任何目录解析、注册缓存或开库之前设置 app 私有绝对数据根。
-6. 沿用 `src/locales/zh-CN.json` 与 `en-US.json`，新增文案同步两份。
+6. 语言文案在 `assets/locales/zh-CN.json` 与 `en-US.json`，新增文案同步两份。
    不复制出第三套翻译；先验证 Rust 侧资源装载和占位符格式，再接入页面。
 
 ## 4. 播放与媒体：先验证整条链路

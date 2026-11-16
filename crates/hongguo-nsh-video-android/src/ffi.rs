@@ -6,7 +6,7 @@ use hongguo_nsh_video_api::{Seek, VideoEvent, VideoProps};
 use jni::{
     JNIEnv,
     objects::{JObject, JString},
-    sys::{jint, jlong},
+    sys::{jboolean, jfloat, jint, jlong},
 };
 use ndk::native_window::NativeWindow;
 use std::{
@@ -91,9 +91,11 @@ pub fn viewport(
     surface: JObject<'_>,
     width: jint,
     height: jint,
-) -> Result<(), String> {
+    hdr_peak: jfloat,
+    float_output: jboolean,
+) -> Result<jlong, String> {
     let Some(player) = player(handle) else {
-        return Ok(());
+        return Ok(-1);
     };
     let window = if surface.is_null() {
         None
@@ -106,15 +108,26 @@ pub fn viewport(
     };
     let mut mailbox = player.mailbox.lock().expect("Android video mailbox");
     if mailbox.viewport.window != window {
-        mailbox.viewport.version = mailbox.viewport.version.wrapping_add(1);
+        mailbox.viewport.version = mailbox
+            .viewport
+            .version
+            .checked_add(1)
+            .ok_or("output generation exhausted")?;
     }
     mailbox.viewport.window = window;
     mailbox.viewport.width = u32::try_from(width).unwrap_or(0);
     mailbox.viewport.height = u32::try_from(height).unwrap_or(0);
+    mailbox.viewport.hdr_peak = if hdr_peak.is_finite() && (100.0..=10_000.0).contains(&hdr_peak) {
+        hdr_peak
+    } else {
+        0.0
+    };
     player.revision.fetch_add(1, Ordering::Release);
+    let version = mailbox.viewport.version;
+    mailbox.viewport.float_output = float_output != 0;
     drop(mailbox);
     player.wake();
-    Ok(())
+    i64::try_from(version).map_err(|_| "output generation exceeds JNI range".into())
 }
 pub fn event(
     env: &mut JNIEnv<'_>,
@@ -143,6 +156,12 @@ pub fn destroy(handle: jlong) {
     if let Some(player) = player {
         player.stop.store(true, Ordering::Release);
         player.close_direct();
+        player.wake();
+    }
+}
+
+pub fn frame_tick(handle: jlong) {
+    if let Some(player) = player(handle) {
         player.wake();
     }
 }

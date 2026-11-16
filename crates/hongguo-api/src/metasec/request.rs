@@ -12,7 +12,7 @@ use hongguo_signer::ticket::SignedRequest;
 use super::device::{rom_version, sdi_payload, signing_device};
 use super::sdi::{Codec, Entropy, SdiToken, append_bytes, append_signed};
 use super::{APP, MetaSec};
-use crate::client::{ApiEnv, refuse_external_send};
+use crate::client::ApiEnv;
 
 const SDI_ORIGIN: &str = "https://mssdk.zijieapi.com";
 const SDI_PATH: &str = "/sdi/get_token";
@@ -73,6 +73,13 @@ const SDI_PREFIX: &[&str] = &[
 ];
 
 thread_local! {
+    #[cfg_attr(
+        target_os = "android",
+        expect(
+            clippy::missing_const_for_thread_local,
+            reason = "Android TLS macro expansion triggers Clippy despite the const initializer"
+        )
+    )]
     static LADON: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -92,7 +99,6 @@ pub(crate) async fn sign_playback(
     headers: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<SignedRequest> {
-    refuse_external_send(origin)?;
     let metasec = MetaSec::required(client).await?;
     let (profile_key, session) = metasec.session(&env.device)?;
     let initial = session
@@ -172,7 +178,6 @@ async fn exchange(
     device: &DeviceProfile,
     token: Option<&str>,
 ) -> AppResult<SdiToken> {
-    refuse_external_send(SDI_ORIGIN)?;
     let codec = Codec {
         common_key: metasec.signer.common_key(),
         inner_key: metasec.signer.image().sdi_inner_key(),
@@ -237,7 +242,6 @@ fn sign(
     let query = query(device, request.ticket, request.sdk)?;
     let khronos = (request.ticket / 1000) as u32;
     let url = format!("{}{}?{query}", request.origin, request.path);
-    refuse_external_send(&url)?;
     let state = SignatureState::new(device, request.ticket, token, request.sdk);
     let context = RequestContext {
         device_id: device.get("device_id"),

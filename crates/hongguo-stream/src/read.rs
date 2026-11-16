@@ -6,7 +6,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::cache::StreamEntry;
-use crate::progressive::{EntryMode, read_plain_range, wait_for_entry};
+use crate::progressive::{EntryMode, read_plain_range, wait_for_entry, wait_plain_range};
 
 /// 一次字节读取的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,19 +63,9 @@ pub fn total_len(vid: &str, definition: u32) -> Option<u64> {
     (size > 0).then_some(size)
 }
 
-/// 读一段明文，数据未就绪时阻塞等待（最多 30s）。
-/// seek / 切集路径应改用 [`read_range_cancellable`]，否则旧位置的读取会拖住填充调度。
-pub fn read_range(
-    vid: &str,
-    definition: u32,
-    start: u64,
-    len: Option<u64>,
-) -> Result<StreamChunk, StreamReadError> {
-    read_range_inner(vid, definition, start, len, &|| false)
-}
-
-/// [`read_range`] 的可取消变体：等待期间逐片检查 `cancelled`，命中即注销
-/// 读者登记并立即返回 [`StreamReadError::Cancelled`]。
+/// 读一段明文，数据未就绪时阻塞等待（最多 30s）。等待期间逐片检查 `cancelled`，
+/// 命中即注销读者登记并立即返回 [`StreamReadError::Cancelled`]——seek / 切集路径
+/// 必须走这里，否则旧位置的读取会拖住填充调度。
 pub fn read_range_cancellable(
     vid: &str,
     definition: u32,
@@ -84,6 +74,28 @@ pub fn read_range_cancellable(
     cancelled: impl Fn() -> bool,
 ) -> Result<StreamChunk, StreamReadError> {
     read_range_inner(vid, definition, start, len, &cancelled)
+}
+
+/// Wait for compressed media coverage without copying or decrypting the payload.
+pub fn wait_range_cancellable(
+    vid: &str,
+    definition: u32,
+    start: u64,
+    end: u64,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), StreamReadError> {
+    let (lease, mode) = wait_for_entry(vid, definition, &cancelled)?;
+    let total = match &mode {
+        EntryMode::Whole => *lease.entry.size.lock(),
+        EntryMode::Progressive(progressive) => progressive.plain_len,
+    };
+    if start > end || end > total {
+        return Err(StreamReadError::OutOfRange { start: end, total });
+    }
+    if let EntryMode::Progressive(progressive) = mode {
+        wait_plain_range(&progressive, start, end, &lease, &cancelled)?;
+    }
+    Ok(())
 }
 
 fn read_range_inner(

@@ -1,8 +1,8 @@
 //! 已解码的 I420 帧 → Media Foundation HEVC。ByteVC2 不经过 ffmpeg。
 
 use hongguo_common::{AppError, AppResult};
-use hongguo_media_platform_api::video::bitrate_for;
-use hongguo_media_platform_api::{EncodedVideo, I420View};
+use hongguo_media_types::encoding::bitrate_for;
+use hongguo_media_types::encoding::{EncodedVideo, I420View};
 
 use super::decoder::Nv12Frame;
 use super::encoder::{Encoder, EncoderKind};

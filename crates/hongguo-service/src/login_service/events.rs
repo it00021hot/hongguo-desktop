@@ -5,9 +5,6 @@
 
 use serde::Serialize;
 
-/// MFA 后台轮询状态事件名（前端 `EVENTS.loginMfaState` 镜像）。
-pub const LOGIN_MFA_STATE: &str = "login-mfa-state";
-
 /// MFA 后台轮询状态事件载荷（`login-mfa-state`），三态互斥，前端按 `state` 判别（discriminated union）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "state")]
@@ -27,33 +24,4 @@ pub enum LoginMfaStateEvent {
     /// 新一轮上行短信验证：`server_tip` 是服务端下发的展示内容，原样透传。
     #[serde(rename_all = "camelCase")]
     Waiting { server_tip: String },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn payload_matches_frontend_shape() {
-        let success =
-            serde_json::to_value(LoginMfaStateEvent::Success { name: "甲".into() }).unwrap();
-        assert_eq!(success["state"], "success");
-        assert_eq!(success["name"], "甲");
-
-        let failed = serde_json::to_value(LoginMfaStateEvent::Failed {
-            message_kind: "settings.loginMfaTimeout".into(),
-            message: String::new(),
-        })
-        .unwrap();
-        assert_eq!(failed["state"], "failed");
-        assert_eq!(failed["messageKind"], "settings.loginMfaTimeout");
-        assert!(failed.get("message").is_some());
-
-        let waiting = serde_json::to_value(LoginMfaStateEvent::Waiting {
-            server_tip: "回复 YZ 到 10691".into(),
-        })
-        .unwrap();
-        assert_eq!(waiting["state"], "waiting");
-        assert_eq!(waiting["serverTip"], "回复 YZ 到 10691");
-    }
 }

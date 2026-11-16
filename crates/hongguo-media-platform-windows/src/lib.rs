@@ -1,7 +1,7 @@
 #![cfg(target_os = "windows")]
 //! Windows 平台原生实现：Media Foundation（[`mf`]）——HEVC 解码 → NV12 → HEVC 编码；
 //! WIC（[`cover`]）——HEIC 封面平台级静图解码（HEIF/HEVC 扩展在则走系统解码器，运行时探测、可失败静默）。
-//! 接口语义由 `hongguo-media-platform-api` 定义，门面 `hongguo-media-platform` 按编译目标选择本 crate（反向即 Cargo 依赖环）；其余目标上空壳编译（`#![cfg]` 剥掉全部内容）。
+//! 接口语义由 `hongguo-media-types::encoding` 定义，门面 `hongguo-media-platform` 按编译目标选择本 crate（反向即 Cargo 依赖环）；其余目标上空壳编译（`#![cfg]` 剥掉全部内容）。
 
 mod cover;
 mod mf;
@@ -13,10 +13,6 @@ pub use mf::transcode_hevc;
 
 /// 平台**硬编**编码器当前是否可用（含探测缓存）。
 pub use mf::hevc_hw_encoder_available;
-
-/// 仅测试构建 / 门面 test-support：强制软件编码器跑完整平台链路。
-#[cfg(any(test, feature = "test-support"))]
-pub use mf::transcode_hevc_for_tests;
 
 /// 平台编码层当前是否可用（含探测缓存）：硬编或 in-box 软编可建会话即真。
 pub fn encoder_available() -> bool {

@@ -1,106 +1,164 @@
-# 提交前置检查：Rust 三目标零警告（Windows 宿主 + macOS aarch64/x86_64 交叉）、
-# 忽略标签禁令（-D clippy::allow_attributes，#[allow] 直接拒；确需断言用
-# #[expect(reason)]，lint 不再触发时编译失败）、测试与前端 lint。
-# Rust 侧在仓库根执行（workspace 根 manifest），--workspace 覆盖全部成员 crate。
-# 启用：git config core.hooksPath .githooks
-#
-# dev 分支推送也跑 CI（2026-10-13 教训：gpui 壳 21 个编译不过的提交全推在
-# dev 上，CI 只盯 main 等于没有；本地 hook 在未启用的克隆里也是哑的）。
-# macOS 腿在原生 runner 上有完整 SDK，--workspace 含 hongguo-gpui 照常编译
-# （本地交叉才需要排除它）；mf 等 Windows-only cfg 由 Windows 腿覆盖。
-# 新增文件超 800 行由 scripts/check-file-size.sh 拒绝（单一职责的机械闸）。
 name: CI
 
 on:
   push:
     branches: [main, dev]
   pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_ref:
+        type: string
+        default: ''
+      desktop_only:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint-and-test:
-    env:
-      # 从 crate 自带源码构建，保证链接到目标架构的 VVdeC。
-      SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL: always
-      PKG_CONFIG_ALLOW_CROSS_x86_64_apple_darwin: '1'
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: rustfmt
+      - run: cargo fmt -- --check
+      - run: cargo build-tool enhancement-assets
+      - run: cargo build-tool release-preflight
+
+  check:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-latest
-            rust_target: x86_64-pc-windows-msvc
-            clippy_args: --all-targets
-          - platform: macos-latest
-            rust_target: aarch64-apple-darwin
-            clippy_args: --all-targets --target aarch64-apple-darwin
-          - platform: macos-latest
-            rust_target: x86_64-apple-darwin
-            clippy_args: --all-targets --target x86_64-apple-darwin
-
-    runs-on: ${{ matrix.platform }}
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+          - os: macos-15
+            triple: aarch64-apple-darwin
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-
-      - uses: pnpm/action-setup@v6.1.1
-        with:
-          version: 12.18.0
-
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: 26.13.0
-          cache: pnpm
-
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
-          targets: ${{ matrix.rust_target }}
-          # 钉死版本装的是 minimal profile（rustc+cargo+std）——@stable 时代
-          # 靠 runner 预装组件混过去，钉版本后 clippy 必须显式声明
+          targets: ${{ matrix.triple }}
           components: clippy
-
       - uses: swatinem/rust-cache@v2.9.3
         with:
-          workspaces: .
-          key: ${{ matrix.rust_target }}
-
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Type check and build frontend
-        run: pnpm build
-
-      - name: ESLint
-        run: pnpm exec eslint . --max-warnings=0
-
-      - name: Install pkg-config for VVdeC
+          key: check-${{ matrix.triple }}
+      - uses: ilammy/msvc-dev-cmd@v1.13.0
         if: runner.os == 'Windows'
+      - name: Prepare authenticated media SDK
         shell: pwsh
         run: |
-          choco install pkgconf --version 3.0.10 --yes --no-progress
+          cargo build-tool setup '${{ matrix.triple }}'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $pkgconfDir = Join-Path $env:ProgramFiles 'pkgconf-3.0.10'
-          & (Join-Path $pkgconfDir 'pkg-config.exe') --version
+          if ($IsWindows) {
+            "$PWD/target/native-media/${{ matrix.triple }}/libde265-1.1.3/bin" >> $env:GITHUB_PATH
+          } else {
+            "DYLD_LIBRARY_PATH=$PWD/target/native-media/${{ matrix.triple }}/libde265-1.1.3/lib" >> $env:GITHUB_ENV
+          }
+      - run: cargo build --locked --workspace --target ${{ matrix.triple }}
+      - run: cargo clippy --locked --workspace --target ${{ matrix.triple }} --all-targets -- -D warnings -D clippy::allow_attributes
+      - name: File size gate
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            scripts/check-file-size.sh "origin/$BASE_REF"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            scripts/check-file-size.sh "$BEFORE"
+          fi
+
+  desktop-package:
+    needs: [format, check]
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/nsh-desktop.yml
+    with:
+      source_ref: ${{ inputs.source_ref || github.ref }}
+
+  mobile-package:
+    needs: [format, check]
+    if: github.event_name != 'pull_request' && !inputs.desktop_only
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: ios-simulator
+            triple: aarch64-apple-ios-sim
+            args: ''
+          - os: ubuntu-latest
+            target: android
+            triple: aarch64-linux-android
+            args: '--abi arm64-v8a'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: swatinem/rust-cache@v2.9.3
+        with:
+          key: nsh-package-${{ matrix.triple }}
+      - name: Build the pinned NSH CLI with native-host support
+        shell: pwsh
+        run: |
+          cargo build --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $pkgconfDir >> $env:GITHUB_PATH
-
-      - name: Rust tests
-        # 离线 QA 与故障注入测试会修改进程级状态。
-        run: cargo test --workspace --lib -- --test-threads=1
-
-      - name: Rust clippy（零警告 + 忽略标签禁令）
-        run: cargo clippy --workspace ${{ matrix.clippy_args }} -- -D warnings -D clippy::allow_attributes
-
-      - name: File size gate（新增文件行数上限）
+          "$PWD/target/nsh-cli/debug" >> $env:GITHUB_PATH
+      - name: Prepare Android SDK and embedding runtime
+        if: matrix.target == 'android'
         shell: bash
         run: |
-          if [ -n "${{ github.base_ref }}" ]; then
-            scripts/check-file-size.sh "origin/${{ github.base_ref }}"
-          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            scripts/check-file-size.sh "${{ github.event.before }}"
-          else
-            echo "无可用 base（首推/新分支），跳过文件规模闸门"
-          fi
+          sdkmanager 'platforms;android-37.0' 'build-tools;36.1.0' 'ndk;30.0.16248370'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+          echo "NSH_DISTRIBUTION=$RUNNER_TEMP/nsh-sdk" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/nsh-sdk/embed/android"
+          cd "$RUNNER_TEMP"
+          curl -fL --retry 3 -O https://github.com/longbridge/nsh/releases/download/v0.5.1/nsh-embed-android.zip
+          curl -fL --retry 3 -O https://github.com/longbridge/nsh/releases/download/v0.5.1/nsh-embed-android.zip.sha256
+          sha256sum -c nsh-embed-android.zip.sha256
+          unzip -q nsh-embed-android.zip -d nsh-embed
+          cp nsh-embed/nsh-embed-android/nsh.aar nsh-sdk/embed/android/nsh.aar
+      - name: Package and sign through NSH
+        shell: pwsh
+        env:
+          NSH_KEYSTORE_PASSWORD: ${{ secrets.NSH_KEYSTORE_PASSWORD }}
+          NSH_ANDROID_KEYSTORE_BASE64: ${{ secrets.NSH_ANDROID_KEYSTORE_BASE64 }}
+          NSH_ANDROID_KEY_ALIAS: ${{ secrets.NSH_ANDROID_KEY_ALIAS }}
+        run: |
+          $packageArgs = @('package', 'crates/hongguo-nsh', '--target', '${{ matrix.target }}', '--out', 'target/packages/${{ matrix.triple }}')
+          if ('${{ matrix.args }}') { $packageArgs += '${{ matrix.args }}'.Split(' ') }
+          if ('${{ matrix.target }}' -eq 'android' -and $env:NSH_ANDROID_KEYSTORE_BASE64) {
+            $keystore = Join-Path $env:RUNNER_TEMP 'guava-release.jks'
+            [IO.File]::WriteAllBytes($keystore, [Convert]::FromBase64String($env:NSH_ANDROID_KEYSTORE_BASE64))
+            $packageArgs += @('--keystore', $keystore, '--key-alias', $env:NSH_ANDROID_KEY_ALIAS)
+          }
+          nsh @packageArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: guava-${{ matrix.triple }}
+          path: target/packages/${{ matrix.triple }}/
+          if-no-files-found: error

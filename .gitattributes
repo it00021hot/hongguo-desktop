@@ -7,6 +7,11 @@
 # eol=lf 表示工作区里也一律 LF，不只是入库时转换。
 * text=auto eol=lf
 
+# Preserve upstream source whitespace and unified-diff context lines.
+vendor/** -whitespace
+crates/hongguo-vvdec-sys/vendor/** -whitespace
+scripts/native-media-ffmpeg-*.patch -whitespace
+
 # 二进制：不做行尾转换，否则图标会被写坏
 *.png binary
 *.jpg binary

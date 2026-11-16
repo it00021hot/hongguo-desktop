@@ -1,5 +1,8 @@
 # REQ-HG-003 播放对齐交接
 
+> 排查与对照是在旧 Tauri 壳（已删除，备份分支 `codex/backup-tauri-final`）上做的；
+> 官方上报、预取、缓存结论仍有效，Tauri ByteVC2 直播与 WebView2 CDP 章节仅作历史背景。
+
 首轮状态（2026-11-10，Asia/Shanghai）：**原桌面设备档案已取到《全球死考》第 13 集并在 macOS Tauri 出画。** 需求见 [issue #20](https://github.com/it00021hot/hongguo-desktop/issues/20)。首轮分支为 `req-hg-003-official-apk-parity`，基线为 `3383873a020d385e2ddc9ba5ac6defc0b5fa267d`。
 
 ## `dev` 播放生命周期复查

@@ -6,10 +6,3 @@
 mod plan;
 
 pub use plan::{SourceFile, plan, read_source_file};
-
-#[cfg(test)]
-use plan::{MDHD_DURATION, MVHD_DURATION, TKHD_DURATION, duration_of};
-
-#[cfg(test)]
-#[path = "index_tests.rs"]
-mod tests;

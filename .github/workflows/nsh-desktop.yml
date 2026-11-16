@@ -1,0 +1,72 @@
+name: NSH Desktop Packages
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            triple: x86_64-pc-windows-msvc
+            args: ''
+          - os: macos-15
+            target: macos
+            triple: aarch64-apple-darwin
+            args: '--arch arm64'
+          - os: macos-15-intel
+            target: macos
+            triple: x86_64-apple-darwin
+            args: '--arch x86_64'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: ilammy/msvc-dev-cmd@v1.13.0
+        if: runner.os == 'Windows'
+      - uses: swatinem/rust-cache@v2.9.3
+        with:
+          key: nsh-desktop-${{ matrix.triple }}
+          workspaces: |
+            . -> target
+            vendor/nsh -> ../../target/nsh-cli
+      - name: Prepare authenticated native SDK
+        shell: bash
+        run: cargo build-tool setup '${{ matrix.triple }}'
+      - name: Prepare the pinned Chinese installer compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci-prepare-windows.ps1
+      - name: Build the repository NSH CLI
+        shell: bash
+        run: |
+          cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
+          echo "$PWD/target/nsh-cli/debug" >> "$GITHUB_PATH"
+      - name: Package through NSH
+        shell: bash
+        run: nsh package crates/hongguo-nsh --target '${{ matrix.target }}' ${{ matrix.args }} --out 'target/packages/${{ matrix.triple }}'
+      - name: Audit and archive release artifacts
+        shell: bash
+        run: cargo build-tool release-assets '${{ matrix.triple }}' 'target/packages/${{ matrix.triple }}' 'target/release-assets/${{ matrix.triple }}'
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: guava-desktop-${{ matrix.triple }}
+          path: target/release-assets/${{ matrix.triple }}/
+          if-no-files-found: error
+          retention-days: 14

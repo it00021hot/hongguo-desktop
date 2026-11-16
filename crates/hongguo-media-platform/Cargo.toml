@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-media-platform"
-description = "红果桌面版平台层编解码：MF / VT / WIC 平台硬编 + ffmpeg 执行 + 能力探测"
+description = "红果桌面版平台媒体编解码与能力探测"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,7 @@ authors.workspace = true
 # 共用底座：统一错误（AppError / AppResult）。
 hongguo-common = { path = "../hongguo-common" }
 # 统一契约：帧载体 / 解码器 trait / PlatformRequest（门面 re-export）。
-hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
+hongguo-media-types = { path = "../hongguo-media-types" }
 # 纯 Rust 编解码核心：Backend 标识与能力探测口径（capability 聚合用）。
 hongguo-media = { path = "../hongguo-media" }
 # ByteVC2 识别（四字码 / 线名）；解码能力探测在 capability::bytevc2。
@@ -21,32 +21,14 @@ parking_lot = "0.13"
 # DecodeCapability 序列化给前端徽标。
 serde = { version = "1", features = ["derive"] }
 
-# 编译期实现选择：门面只依赖「当前目标平台」的实现 crate。两个实现 crate
-# 各在异目标上空壳编译（内部 `#![cfg(target_os)]`），平台专属依赖全在各自
-# target 表里；调用方只认本门面。
+# 编译期实现选择：门面只依赖「当前目标平台」的实现 crate。实现 crate 各在
+# 异目标上空壳编译（内部 `#![cfg(target_os)]`），平台专属依赖全在各自 target
+# 表里；调用方只认本门面。Apple 双平台共用 videotoolbox 实现核，无独立壳。
 [target.'cfg(windows)'.dependencies]
 hongguo-media-platform-windows = { path = "../hongguo-media-platform-windows" }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-hongguo-media-platform-macos = { path = "../hongguo-media-platform-macos" }
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+hongguo-media-videotoolbox = { path = "../hongguo-media-videotoolbox" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 hongguo-media-platform-android = { path = "../hongguo-media-platform-android" }
-
-[target.'cfg(target_os = "ios")'.dependencies]
-hongguo-media-platform-ios = { path = "../hongguo-media-platform-ios" }
-
-[features]
-# 壳的跨层 e2e（src/testing/media_pipeline_e2e.rs）要调门面的测试通道
-# `platform::transcode_hevc_for_tests`——实现已分居平台 crate，本 feature
-# 转发到对应实现（对齐 hongguo-video 的 fixtures / hongguo-store 的
-# ScopedDataDir 先例）。生产构建不带，函数不编译。
-test-support = [
-    "hongguo-media-platform-macos/test-support",
-    "hongguo-media-platform-windows/test-support",
-    "hongguo-media-platform-android/test-support",
-    "hongguo-media-platform-ios/test-support",
-]
-
-[dev-dependencies]
-serde_json = "1"

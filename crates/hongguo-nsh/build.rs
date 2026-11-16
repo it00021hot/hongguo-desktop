@@ -3,7 +3,7 @@ use std::{env, fmt::Write, fs, path::PathBuf};
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("crate root"));
     windows_resources(&root);
-    let source = root.join("../../src/utils/danmaku-emoji-files.generated.ts");
+    let source = root.join("../../assets/emoji/catalog.txt");
     println!("cargo:rerun-if-changed={}", source.display());
     let table = fs::read_to_string(&source).expect("read shared emoji catalog");
     let mut generated = String::from("pub const SYSTEM: &[SystemEmoji] = &[\n");
@@ -22,7 +22,7 @@ fn main() {
             file.ends_with(".webp") && !file.contains(['/', '\\']),
             "emoji filename"
         );
-        let path = root.join("../../src/assets/emoji").join(file);
+        let path = root.join("../../assets/emoji").join(file);
         println!("cargo:rerun-if-changed={}", path.display());
         let bytes = fs::read(path).expect("read shared emoji asset");
         let mut uri = String::from("data:image/webp,");
@@ -49,15 +49,51 @@ fn windows_resources(root: &std::path::Path) {
     for path in [
         root.join("windows.rc"),
         root.join("windows.manifest"),
-        root.join("../hongguo-tauri-app/icons/icon.ico"),
+        root.join("nsh.json"),
+        root.join("../../assets/icons/icon.ico"),
     ] {
         println!("cargo:rerun-if-changed={}", path.display());
     }
-    embed_resource::compile_for(
-        root.join("windows.rc"),
-        ["hongguo-nsh"],
-        embed_resource::NONE,
+    let metadata: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("nsh.json")).expect("read NSH metadata"),
     )
-    .manifest_required()
-    .expect("compile required Windows application icon and manifest");
+    .expect("parse NSH metadata");
+    let escape = |value: &str| {
+        value
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    let manifest = fs::read_to_string(root.join("windows.manifest"))
+        .expect("read manifest template")
+        .replace(
+            "@NSH_APP_ID@",
+            &escape(metadata["id"].as_str().expect("NSH app ID")),
+        )
+        .replace(
+            "@NSH_APP_NAME@",
+            &escape(metadata["name"].as_str().expect("NSH app name")),
+        );
+    let output = PathBuf::from(env::var_os("OUT_DIR").expect("build output"));
+    let manifest_path = output.join("windows.manifest");
+    fs::write(&manifest_path, manifest).expect("write application manifest");
+    let resource = fs::read_to_string(root.join("windows.rc"))
+        .expect("read resource template")
+        .replace(
+            "@NSH_ICON@",
+            &root
+                .join("../../assets/icons/icon.ico")
+                .to_string_lossy()
+                .replace('\\', "/"),
+        )
+        .replace(
+            "@NSH_MANIFEST@",
+            &manifest_path.to_string_lossy().replace('\\', "/"),
+        );
+    let resource_path = output.join("windows.rc");
+    fs::write(&resource_path, resource).expect("write application resource");
+    embed_resource::compile_for(resource_path, ["hongguo-nsh"], embed_resource::NONE)
+        .manifest_required()
+        .expect("compile required Windows application icon and manifest");
 }

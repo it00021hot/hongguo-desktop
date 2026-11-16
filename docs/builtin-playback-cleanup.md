@@ -14,7 +14,7 @@ GPUI、Tauri、NSH 的 HEVC/ByteVC1/ByteVC2 均直接内置解码；失败明确
 
 ## 范围与归属
 
-- `hongguo-media-platform-api`：删除 `RateProfile`、`bitrate_for_profile` 及 `PlatformRequest.rate`，仅保留归档 `bitrate_for`（0.12 bit/像素/帧，0.8–12 Mbps）。移除无生产消费者的首段、提交及取消回调；归档 `on_progress` 保留。
+- `hongguo-media-types::encoding`（原 `hongguo-media-platform-api`，已并入媒体类型层）：删除 `RateProfile`、`bitrate_for_profile` 及 `PlatformRequest.rate`，仅保留归档 `bitrate_for`（0.12 bit/像素/帧，0.8–12 Mbps）。移除无生产消费者的首段、提交及取消回调；归档 `on_progress` 保留。
 - `hongguo-media-videotoolbox`、`media-platform-{windows,android}`：删除 profile 透传与播放低延迟分支，保持原 Archive 编码参数（包括 VT GOP250、非实时设置）、缩放、音频直通及收尾顺序。
 - `hongguo-media-platform`：删除 ffmpeg 播放质量档和 growing 播放输出分支；保留归档 ffmpeg 参数、临时文件原子替换及显式 debug fallback 策略。删除三个仅用于兼容播放的 example（`p03_ffmpeg_grow`、`p03_throughput`、`bytevc2_stages`）。
 - `hongguo-service::transcode_service::pipeline` 与 Tauri/MF 测试调用方：同步精简请求构造，不改四参归档入口。合并经 `merge_service::compat` 调用此入口；下载仍保存原编码，不引入播放转码。

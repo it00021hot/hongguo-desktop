@@ -8,9 +8,6 @@ mod hvcc;
 mod timing;
 mod track;
 
-#[cfg(test)]
-mod fixtures;
-
 use std::io::Write;
 use std::path::Path;
 
@@ -89,7 +86,7 @@ pub fn mux_hevc(
     if !frames[0].2
         || !hvcc::split(&frames[0].1)
             .into_iter()
-            .any(crate::hevc::is_random_access_nal)
+            .any(hongguo_video::hevc::is_random_access_nal)
     {
         return Err(AppError::Media("第一帧不是关键帧，产物没有同步起点".into()));
     }
@@ -177,16 +174,14 @@ pub fn mux_hevc(
 
     // 7) 落盘：[ftyp][moov][mdat]
     if let Some(parent) = output.parent() {
-        hongguo_common::offline_qa::qa_create_dir_all(parent)
-            .map_err(|e| AppError::Io(e.to_string()))?;
+        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
     }
     let temp = hongguo_common::utils::path::temp_path_for(output);
     // 上一轮崩在中途会留下半个临时文件。符号链接在解析阶段拒绝，不会删到外面。
-    hongguo_common::offline_qa::qa_clear_for_replace(&temp)
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    hongguo_common::file_io::clear_for_replace(&temp).map_err(|e| AppError::Io(e.to_string()))?;
     {
-        let mut file = hongguo_common::offline_qa::qa_create(&temp)
-            .map_err(|e| AppError::Io(e.to_string()))?;
+        let mut file =
+            hongguo_common::file_io::create(&temp).map_err(|e| AppError::Io(e.to_string()))?;
         let write = |file: &mut std::fs::File, buf: &[u8]| -> AppResult<()> {
             file.write_all(buf).map_err(|e| AppError::Io(e.to_string()))
         };
@@ -205,8 +200,8 @@ pub fn mux_hevc(
     let size = std::fs::metadata(&temp)
         .map_err(|e| AppError::Io(e.to_string()))?
         .len();
-    hongguo_common::offline_qa::qa_rename(&temp, output).map_err(|e| {
-        let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
+    hongguo_common::file_io::rename(&temp, output).map_err(|e| {
+        let _ = hongguo_common::file_io::remove_file(&temp);
         AppError::Io(format!("原子替换失败: {e}"))
     })?;
     Ok(size)
@@ -346,7 +341,3 @@ fn movie_duration(specs: &[TrackSpec]) -> u64 {
         .max()
         .unwrap_or(0)
 }
-
-#[cfg(test)]
-#[path = "mux/tests.rs"]
-mod tests;

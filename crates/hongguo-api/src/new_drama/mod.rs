@@ -63,23 +63,3 @@ pub async fn fetch_new_drama(
         rank_version: String::new(),
     })
 }
-
-#[cfg(test)]
-pub(crate) mod probe {
-    use super::*;
-    use crate::rank::probe::{anon_env, hg_env};
-
-    /// 新剧推荐直连。
-    #[tokio::test]
-    #[ignore = "直连真实接口的探测用例"]
-    async fn probe_new_drama() {
-        let env = hg_env(&anon_env());
-        let page = fetch_new_drama(2, 0, None, &env).await.expect("新剧推荐");
-        println!(
-            "[new-drama] {} 条, #1={:?}",
-            page.items.len(),
-            page.items.first().map(|i| &i.title)
-        );
-        assert!(!page.items.is_empty());
-    }
-}

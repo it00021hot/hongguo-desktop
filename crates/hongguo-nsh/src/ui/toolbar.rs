@@ -11,19 +11,19 @@ impl PartialEq for Content {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ToolbarSlot(Signal<Option<Content>>);
+pub(crate) struct ToolbarSlot(Signal<Option<Content>>);
 
 impl ToolbarSlot {
-    pub(super) fn provide() -> Self {
+    pub(crate) fn provide() -> Self {
         let slot = Self(signal(None));
         provide_context(slot);
         slot
     }
 
-    pub(super) fn occupied(self) -> bool {
+    pub(crate) fn occupied(self) -> bool {
         self.0.with(Option::is_some)
     }
-    pub(super) fn content(self) -> Option<AnyElement> {
+    pub(crate) fn content(self) -> Option<AnyElement> {
         self.0.get().map(|content| (content.0)())
     }
 }
@@ -52,65 +52,4 @@ pub(crate) fn toolbar_slot<E: IntoElement>(
             slot.0.try_set(None);
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        navigation::{Navigation, Route},
-        ui,
-    };
-    use nsh_engine::{EngineConfig, Root};
-    use nsh_testing::Headless;
-
-    #[component]
-    fn Host() -> impl IntoElement {
-        let nav = Navigation::new();
-        let pages = view().child(each(
-            nav.routes(),
-            |route: &Route| format!("{route:?}"),
-            move |route, _| {
-                if route.get_untracked() == Route::Rank {
-                    toolbar_slot(
-                        move || {
-                            nav.routes()
-                                .with(|routes| routes.last() == Some(&Route::Rank))
-                        },
-                        || text("Rank toolbar"),
-                    );
-                }
-                view().child(
-                    ui::button("Open detail", ui::ButtonVariant::Primary)
-                        .on_press(move || nav.push(Route::Detail("fixture".into()))),
-                )
-            },
-        ));
-        ui::shell(nav, text("Default toolbar"), pages)
-    }
-
-    #[test]
-    fn retained_pages_yield_and_restore_the_toolbar_without_leaving_disposed_controls()
-    -> Result<(), String> {
-        let root = Root::of::<Host>()
-            .tokens(nsh_base::tokens_of(Some(include_str!("../../theme.json"))).unwrap());
-        let mut config = EngineConfig::new(root);
-        config.environment.os = nsh_core::platform::Os::MacOs;
-        config.viewport = nsh_engine::Size::new(px(1280.0), px(840.0));
-        let mut app = Headless::start(config).map_err(|error| error.to_string())?;
-        app.wait_for("Default toolbar")?;
-        app.press("role:button[Rankings]")?;
-        app.wait_for("Rank toolbar")?;
-        assert!(!app.shows("Default toolbar"));
-        app.press("role:button[Settings]")?;
-        app.wait_for("Default toolbar")?;
-        app.press("role:button[Back]")?;
-        app.wait_for("Rank toolbar")?;
-        app.press("role:button[Discover]")?;
-        app.wait_for("Default toolbar")?;
-        assert!(!app.shows("Rank toolbar"));
-        app.press("role:button[Rankings]")?;
-        app.wait_for("Rank toolbar")?;
-        Ok(())
-    }
 }

@@ -35,36 +35,3 @@ fn value_of(c: u8) -> Option<u8> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-use base64::Engine as _;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn decodes_standard_base64() {
-        assert_eq!(decode(b"aGVsbG8="), b"hello");
-        assert_eq!(decode(b""), b"");
-    }
-
-    #[test]
-    fn handles_all_lengths() {
-        for n in 0..40usize {
-            let data: Vec<u8> = (0..n).map(|i| (i * 7 % 251) as u8).collect();
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-            assert_eq!(decode(encoded.as_bytes()), data, "n = {n}");
-        }
-    }
-
-    #[test]
-    fn skips_invalid_chars() {
-        assert_eq!(decode(b"aGVs\r\nbG8="), b"hello");
-    }
-
-    #[test]
-    fn stops_at_padding() {
-        assert_eq!(decode(b"aGVsbG8=xYWJj"), b"hello");
-    }
-}

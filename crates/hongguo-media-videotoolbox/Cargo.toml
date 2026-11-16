@@ -10,7 +10,7 @@ publish = false
 hongguo-common = { path = "../hongguo-common" }
 hongguo-media = { path = "../hongguo-media" }
 hongguo-video = { path = "../hongguo-video" }
-hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
+hongguo-media-types = { path = "../hongguo-media-types" }
 parking_lot = "0.13"
 log = "0.4"
 

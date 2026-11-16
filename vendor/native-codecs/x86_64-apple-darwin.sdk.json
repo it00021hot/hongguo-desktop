@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "sdkVersion": "native-codecs-v2-20261114",
+  "target": {
+    "triple": "x86_64-apple-darwin",
+    "arch": "x86_64",
+    "os": "macos",
+    "minimumOs": "14.0",
+    "crt": "system",
+    "cxxRuntime": "libc++",
+    "cpuBaseline": "x86-64",
+    "cppAbi": "itanium"
+  },
+  "recipe": {
+    "target": {
+      "triple": "x86_64-apple-darwin",
+      "arch": "x86_64",
+      "os": "macos",
+      "minimumOs": "14.0",
+      "crt": "system",
+      "cxxRuntime": "libc++",
+      "cpuBaseline": "x86-64",
+      "cppAbi": "itanium"
+    },
+    "hevc": {
+      "source": {
+        "version": "1.1.3",
+        "commit": "ba62bf4cfb3242f3bf0a45617ff09e35236e4d82",
+        "url": "https://codeload.github.com/strukturag/libde265/tar.gz/ba62bf4cfb3242f3bf0a45617ff09e35236e4d82",
+        "sha256": "7ffe3220bba8282cc6d4a2bcf36ac1b6d2899f402c335f7df377317414a025b1"
+      },
+      "build": {
+        "options": [
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DBUILD_SHARED_LIBS=ON",
+          "-DENABLE_DECODER=OFF",
+          "-DENABLE_ENCODER=OFF",
+          "-DENABLE_SDL=OFF",
+          "-DENABLE_SHERLOCK265=OFF",
+          "-DENABLE_INTERNAL_DEVELOPMENT_TOOLS=OFF",
+          "-DWITH_FUZZERS=OFF",
+          "-DCMAKE_INSTALL_PREFIX=/Users/milo/projects/hongguo-desktop/target/native-codec-build/x86_64-apple-darwin-GAyBS0/install",
+          "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+          "-DCMAKE_OSX_ARCHITECTURES=x86_64",
+          "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0",
+          "-DCMAKE_INSTALL_NAME_DIR=@rpath"
+        ],
+        "compiler": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+      }
+    },
+    "vvdec": {
+      "source": {
+        "version": "3.2.1",
+        "sha256": "5c334557a33cd93e981b84ba0e77126ef970a38e2481b67f0475db40f75379b8",
+        "vendoredTreeSha256": "83fc81e145afc9a733dd072786cc0c4cb6fbc1949a65c0cd93c2209afce4bb95"
+      },
+      "build": {
+        "provenance": "existing-cmake-output",
+        "cmakeCacheSha256": "3269c644e9b18e1763eb2940cf9f7720ac07dda9daf07aa055a82f1dbdc692c4",
+        "flagsSha256": "6e42d9b137c5d1202705bbc07aa6ff39741053286ac968bd73fccad4e6aa3f4b",
+        "inspectionPath": "build-info/library-inspection.json"
+      },
+      "target": {
+        "triple": "x86_64-apple-darwin",
+        "arch": "x86_64",
+        "os": "macos",
+        "minimumOs": "10.15",
+        "crt": "system",
+        "cxxRuntime": "libc++",
+        "cpuBaseline": "x86-64",
+        "cppAbi": "itanium"
+      }
+    }
+  },
+  "recipeSha256": "2b2d52c5d6b3d7df05553e4a8ebfa747d3582a440545b6b77a34dbee12fbd791",
+  "components": {
+    "hevc": {
+      "version": "1.1.3",
+      "sourceSha256": "7ffe3220bba8282cc6d4a2bcf36ac1b6d2899f402c335f7df377317414a025b1",
+      "manifestPath": "libde265-1.1.3/manifest.json"
+    },
+    "vvdec": {
+      "version": "3.2.1",
+      "sourceSha256": "5c334557a33cd93e981b84ba0e77126ef970a38e2481b67f0475db40f75379b8",
+      "manifestPath": "vvdec-3.2.1/manifest.json"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "libde265-1.1.3/build-info/build-evidence.json",
+      "sha256": "38b0be6cb58df1b30aac317a568bb850677493881e96ccacc8ab0849247274a6",
+      "byteLength": 1787
+    },
+    {
+      "path": "libde265-1.1.3/build-info/CMakeCache.txt",
+      "sha256": "ef9c1c8db299e4b5f0ff093ede6355a5a5995f8804f761c06ffe85f11f50efcf",
+      "byteLength": 20606
+    },
+    {
+      "path": "libde265-1.1.3/build-info/compile_commands.json",
+      "sha256": "68381becdf9c748f07727afbe4071b852a5621677a39ae301dd5421dacb9afe5",
+      "byteLength": 63272
+    },
+    {
+      "path": "libde265-1.1.3/build-info/library-inspection.json",
+      "sha256": "20227d3c7b150ce02c5aeadb7fbefbe1832f08aa82cb28ef1779d15b18eeb9fa",
+      "byteLength": 735
+    },
+    {
+      "path": "libde265-1.1.3/include/libde265/de265-version.h",
+      "sha256": "d7186bf679b8a51c8776f0eb68df6fa687ffa12d9140b775de49a35fa2e7978c",
+      "byteLength": 1117
+    },
+    {
+      "path": "libde265-1.1.3/include/libde265/de265.h",
+      "sha256": "0f06f06717076a0535c5e967a4fd8fdc9bd3b57d7f5a1d6fc2d0b9a89ef735b7",
+      "byteLength": 21129
+    },
+    {
+      "path": "libde265-1.1.3/lib/libde265.0.2.3.dylib",
+      "sha256": "7a56266dd4bd3764d0bb5b72598b43d0f5775e8157176f8fc5dfb95ca43c1376",
+      "byteLength": 582656
+    },
+    {
+      "path": "libde265-1.1.3/lib/libde265.0.dylib",
+      "sha256": "7a56266dd4bd3764d0bb5b72598b43d0f5775e8157176f8fc5dfb95ca43c1376",
+      "byteLength": 582656
+    },
+    {
+      "path": "libde265-1.1.3/lib/libde265.dylib",
+      "sha256": "7a56266dd4bd3764d0bb5b72598b43d0f5775e8157176f8fc5dfb95ca43c1376",
+      "byteLength": 582656
+    },
+    {
+      "path": "libde265-1.1.3/licenses/AUTHORS",
+      "sha256": "0cc86790616c939cbf1d422790160fde068205b9771e687bd8572afe417a0c8f",
+      "byteLength": 213
+    },
+    {
+      "path": "libde265-1.1.3/licenses/COPYING",
+      "sha256": "02cc1585a20677992e0ba578fa692635dc193735f2691dc81de924b51c4e8020",
+      "byteLength": 44339
+    },
+    {
+      "path": "libde265-1.1.3/manifest.json",
+      "sha256": "2a756c6fecaf023d81ba23add9265aac0b1020989b55f90a9461ed72543559fc",
+      "byteLength": 3588
+    },
+    {
+      "path": "libde265-1.1.3/sources/libde265-1.1.3.tar.gz",
+      "sha256": "7ffe3220bba8282cc6d4a2bcf36ac1b6d2899f402c335f7df377317414a025b1",
+      "byteLength": 325972
+    },
+    {
+      "path": "vvdec-3.2.1/bindings.rs",
+      "sha256": "5ecf50d44e7dd6cb47b0c86ac08dabbaa7e87f44580f1c1167eb70e3c33af958",
+      "byteLength": 30870
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/CMakeCache.txt",
+      "sha256": "3269c644e9b18e1763eb2940cf9f7720ac07dda9daf07aa055a82f1dbdc692c4",
+      "byteLength": 22774
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/compiler-configuration.txt",
+      "sha256": "6e42d9b137c5d1202705bbc07aa6ff39741053286ac968bd73fccad4e6aa3f4b",
+      "byteLength": 2289
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/library-inspection.json",
+      "sha256": "abbb059fef9ab106f99fb87698cc63e6dce2105c7df0f450830d6a9733c6344d",
+      "byteLength": 546
+    },
+    {
+      "path": "vvdec-3.2.1/build-info/source-inventory.json",
+      "sha256": "0432d651ea7c188e599befa6875d92b6328bb4249ee60ae241c8bc3413f4551d",
+      "byteLength": 127181
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/sei.h",
+      "sha256": "7ae3088c29c8daeb092b538123ea5a746d02172e53db6047a5bfcd1f3c3d2aac",
+      "byteLength": 15092
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/version.h",
+      "sha256": "403d15b5ba0d1a23114d0b6c4eb63c48dc8188a1dd8460a53974b0b4e541b7a0",
+      "byteLength": 2464
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/vvdec.h",
+      "sha256": "01287033209c9963e2836945b3dafd01526d6078b13ae3b0d35836511e75e669",
+      "byteLength": 32150
+    },
+    {
+      "path": "vvdec-3.2.1/include/vvdec/vvdecDecl.h",
+      "sha256": "e8b0b41e8c675b1b75bf8bca0340e73cf78d74edb270408430279bb413064705",
+      "byteLength": 2660
+    },
+    {
+      "path": "vvdec-3.2.1/lib/libvvdec.a",
+      "sha256": "2a12c9c55fdd49773de55b41cff616b352e7369a9032a607eb8681c902a30786",
+      "byteLength": 5206000
+    },
+    {
+      "path": "vvdec-3.2.1/licenses/AUTHORS.md",
+      "sha256": "2a81d85d9efa0f41496249210577477bc2c67456c033fc387f155c88581a56d5",
+      "byteLength": 582
+    },
+    {
+      "path": "vvdec-3.2.1/licenses/LICENSE.txt",
+      "sha256": "10f312cabfab7f9afdd96957f84deb84f81cc52390550ded77c1bbc393685da8",
+      "byteLength": 1768
+    },
+    {
+      "path": "vvdec-3.2.1/licenses/SIMDe-COPYING",
+      "sha256": "75ce0a8c5a7bff42fbd6f8f3b469b518132132c4f4948fb8d02b1ccb5d0df9d8",
+      "byteLength": 1077
+    },
+    {
+      "path": "vvdec-3.2.1/manifest.json",
+      "sha256": "7a5d3153802e2737f255b1c36c0bd2e0a7e6bbbed4a2f227f2f065341740cdcd",
+      "byteLength": 3134
+    },
+    {
+      "path": "vvdec-3.2.1/SOURCE.md",
+      "sha256": "f9194bcd064406eb57a2eff237a3b265a8815873aa5ae207f31a5112e0929ff1",
+      "byteLength": 1250
+    }
+  ]
+}

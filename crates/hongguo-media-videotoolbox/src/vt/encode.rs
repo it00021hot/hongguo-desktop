@@ -258,7 +258,7 @@ impl Compressor {
                 .parameter_sets
                 .as_ref()
                 .expect("sample format was read");
-            let mut annexb = hongguo_media::hevc::to_annexb(raw, *length_size);
+            let mut annexb = hongguo_video::hevc::to_annexb(raw, *length_size);
             if with_parameters {
                 annexb.splice(0..0, parameters.iter().copied());
             }

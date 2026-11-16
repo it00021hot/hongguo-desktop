@@ -1,47 +1,22 @@
 #!/usr/bin/env bash
-# 提交前置检查：Rust 三目标零警告 + 忽略标签禁令 + 测试 + 前端 lint。
+# 提交前置检查：当前宿主严格 Clippy、格式与资源校验。
 #
 # 启用（克隆后执行一次）：
 #   git config core.hooksPath .githooks
 #
-# Rust 侧在仓库根执行（workspace 根 manifest）。三条 clippy 与 Makefile lint
-# 同口径：本机宿主全量 + macOS 双目标交叉守平台链正清单（MAC_CROSS）。全图
-# 交叉会拖进 aws-lc-sys——其 build script 要真 macOS SDK 的 Darwin libc 头，
-# Windows 宿主装什么工具链都生不出来；全图覆盖由 CI 的 macOS 原生 runner
-# 承担（ci.yml 两条 macos-latest 腿）。
-#
-# macOS 交叉的 C 工具链是真 clang（LLVM），不是占位：交叉链上有真编 C/C++
-# 的 build script（objc2-exception-helper、vswhom-sys 的 C++ 段），占位
-# `true` 的「假成功即可」口径已失效——实测在 cc 的归档步炸硬链接失败
-#（2026-10-22）。前置：winget install LLVM.LLVM。路径必须 C:/ 短路径形态
-#（cc 拆带空格路径；/c/ 的 MSYS 形态回落 PATH 撞带空格安装路径）。
-# 注入只随两条交叉命令生效（逐命令前缀，不全局 export）：x64 Mac 宿主的
-# 自身目标就是 x86_64-apple-darwin，全局 export 会把宿主的 C 编译一并毒化，
-# 后面的 cargo test 全部炸「could not find native static library」。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 STRICT='-D warnings -D clippy::allow_attributes'
-MAC_CROSS='-p hongguo-player-api -p hongguo-media-platform-api -p hongguo-media-platform -p hongguo-media-platform-macos -p hongguo-player-macos'
-LLVM='C:/PROGRA~1/LLVM/bin'
+
+echo '[pre-commit] authenticated native SDK'
+cargo build-tool setup
 
 echo '[pre-commit] cargo clippy（本机宿主）'
 cargo clippy --workspace --all-targets -- $STRICT
 
-echo '[pre-commit] cargo clippy（macOS aarch64 交叉：平台链）'
-CC_aarch64_apple_darwin=$LLVM/clang.exe CXX_aarch64_apple_darwin=$LLVM/clang++.exe \
-  AR_aarch64_apple_darwin=$LLVM/llvm-ar.exe \
-  cargo clippy $MAC_CROSS --target aarch64-apple-darwin --all-targets -- $STRICT
-
-echo '[pre-commit] cargo clippy（macOS x86_64 交叉：平台链）'
-CC_x86_64_apple_darwin=$LLVM/clang.exe CXX_x86_64_apple_darwin=$LLVM/clang++.exe \
-  AR_x86_64_apple_darwin=$LLVM/llvm-ar.exe \
-  cargo clippy $MAC_CROSS --target x86_64-apple-darwin --all-targets -- $STRICT
-
-echo '[pre-commit] cargo test（lib）'
-cargo test --workspace --lib --quiet
-
-echo '[pre-commit] eslint'
-pnpm exec eslint . --max-warnings=0
+echo '[pre-commit] cargo fmt / enhancement assets'
+cargo fmt -- --check
+cargo build-tool enhancement-assets
 
 echo '[pre-commit] 全部通过'

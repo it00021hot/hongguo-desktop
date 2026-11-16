@@ -263,7 +263,7 @@ ByteVC2 的解码器绑定不暴露色彩标记，口径是按惯例推定的（
 **能否复用给 HEVC 软解**【代理报告】
 
 - 样本表：`stsz/stco/co64/stsc/stts/ctts(v0,v1)/stss/mdhd/elst(首个 edit)` 都已解析；`TrackInfo` 提供 `samples`、`sample_pts()`、`max_reorder_secs()`、`stss`。关键帧 seek 和显示时间轴够用。
-- `hvcC`：`hongguo_media::hevc::param_nalus_from_hvcc` 取参数集与 NAL 长度字节数，`to_annexb` 做长度前缀→Annex-B。**没有 SPS 比特流解析。**
+- `hvcC`：`hongguo_video::hevc::param_nalus_from_hvcc`（原 `hongguo_media::hevc`，现已下移到容器层） 取参数集与 NAL 长度字节数，`to_annexb` 做长度前缀→Annex-B。**没有 SPS 比特流解析。**
 - CENC：按整样本 AES-CTR 解密（8 字节 IV，不处理 subsample），支持任意明文区间按需解密；去保护时把 `encv` 改回 `frma` 里的原 fourcc。
 - 渐进 Range：解码器可以在流还在填充时读任意明文样本区间，现有 ByteVC2 直播放就是这样用的。
 

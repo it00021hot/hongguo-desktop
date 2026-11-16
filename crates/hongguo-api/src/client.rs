@@ -17,11 +17,6 @@ pub(crate) const SINFONLINEA_API_ORIGIN: &str = "https://api5-normal-sinfonlinea
 
 pub const SINFONLINEC_API_ORIGIN: &str = "https://api5-normal-sinfonlinec.fqnovel.com";
 
-pub const LF_API_ORIGIN: &str = "https://api5-normal-lf.fqnovel.com";
-
-/// 新通道取流 origin；失败回退 [`LQ_API_ORIGIN`]。
-pub const READING_API_ORIGIN: &str = "https://reading.snssdk.com";
-
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
 
 /// 与 service 的在线填充侧同源，改这里一处。
@@ -36,11 +31,7 @@ pub fn build_client(config: &hongguo_common::model::ProxyConfig) -> AppResult<re
     static CLIENTS: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, reqwest::Client>>,
     > = std::sync::OnceLock::new();
-    let key = if hongguo_common::offline_qa::enabled() {
-        "offline-qa".to_string()
-    } else {
-        config.resolved().unwrap_or_default()
-    };
+    let key = config.resolved().unwrap_or_default();
     let clients = CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut guard = clients
         .lock()
@@ -67,20 +58,13 @@ fn build_client_uncached(
 
     let mut builder = builder;
 
-    if hongguo_common::offline_qa::enabled() {
-        // 配置里的代理和默认重定向都能把 loopback 请求带到外部主机。开关打开时这两条都不走。
-        builder = builder.no_proxy().redirect(offline_redirect_policy());
-    } else {
-        match config.resolved() {
-            Some(url) => {
-                let proxy = Proxy::all(&url)
-                    .map_err(|e| AppError::Network(format!("代理地址无效: {e}")))?;
-                builder = builder.proxy(proxy);
-            }
-            None => {
-                builder = builder.no_proxy();
-            }
+    match config.resolved() {
+        Some(url) => {
+            let proxy =
+                Proxy::all(&url).map_err(|e| AppError::Network(format!("代理地址无效: {e}")))?;
+            builder = builder.proxy(proxy);
         }
+        None => builder = builder.no_proxy(),
     }
 
     builder
@@ -99,24 +83,6 @@ pub struct ApiEnv {
     pub x_tt_token: Option<String>,
 }
 
-impl ApiEnv {
-    /// 未登录默认环境（匿名游客档案）。不 `#[cfg(test)]` 门控：下游
-    /// crate 的测试要用。
-    pub fn anonymous(proxy: hongguo_common::model::ProxyConfig) -> Self {
-        Self {
-            proxy,
-            device: hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid()),
-            cookie: None,
-            x_tt_token: None,
-        }
-    }
-}
-
-/// 调用官方 App 接口，返回响应体字节。
-pub async fn api_call(pathname: &str, body: Option<Vec<u8>>, env: &ApiEnv) -> AppResult<Vec<u8>> {
-    api_call_full(hongguo_signer::API_ORIGIN, pathname, body, &[], env).await
-}
-
 /// 全参数形态（origin + 业务 query + body）。
 pub async fn api_call_full(
     origin: &str,
@@ -126,36 +92,6 @@ pub async fn api_call_full(
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
     api_call_full_with_headers(origin, pathname, body, biz_query, &[], env).await
-}
-
-/// reading 形态（gzip body）；空响应不重试不报错。
-pub async fn api_call_reading_once_allow_empty(
-    origin: &str,
-    pathname: &str,
-    body: Option<Vec<u8>>,
-    biz_query: &[(String, String)],
-    env: &ApiEnv,
-) -> AppResult<Vec<u8>> {
-    let mut headers = reading_headers();
-    let body = match body {
-        Some(raw) if !raw.is_empty() => {
-            headers.push(("Content-Encoding".into(), "gzip".into()));
-            Some(gzip_bytes(&raw)?)
-        }
-        other => other,
-    };
-    let client = build_client(&env.proxy)?;
-    let resp = send_once(
-        &client,
-        origin,
-        pathname,
-        body.as_deref(),
-        biz_query,
-        &headers,
-        env,
-    )
-    .await?;
-    Ok(resp.bytes)
 }
 
 const STORE_REGION: &str = "cn-gd";
@@ -337,12 +273,10 @@ pub(crate) async fn api_call_playback_v5(
         extra.push(("x-tt-token".into(), short));
     }
 
-    refuse_external(origin)?;
     let client = build_client(&env.proxy)?;
     let body = gzip_bytes(&payload)?;
     let signed =
         crate::metasec::sign_playback(&client, origin, pathname, &body, &extra, env).await?;
-    refuse_external(&signed.url)?;
     let mut req = client.post(&signed.url);
     for (k, v) in &signed.headers {
         req = req.header(k.as_str(), v.as_str());
@@ -513,7 +447,6 @@ pub async fn api_call_full_response(
 /// 请求视频 CDN 直链（下载与在线取流共用）：裸 UA 优先，403 补官网
 /// Referer 重试一次。
 pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<reqwest::Response> {
-    refuse_external(url)?;
     let send = |referer: bool| {
         let mut req = client
             .get(url)
@@ -576,7 +509,6 @@ const VIDEO_RANGE_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// `Range: bytes=0-0` 探测直链总长；CDN 不支持 Range（回 200）即 Err。
 pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u64> {
-    refuse_external(url)?;
     let resp = client
         .get(url)
         .timeout(VIDEO_RANGE_PROBE_TIMEOUT)
@@ -607,36 +539,12 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
 
 /// 取直链的一段密文（失败重试 3 次；CDN 忽略 Range 回 200 时按字节
 /// 切片自愈；403 补 Referer 重试一次）。
-fn offline_redirect_policy() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| {
-        if hongguo_common::offline_qa::parsed_url_forbidden(attempt.url()) {
-            attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
-        } else {
-            attempt.follow()
-        }
-    })
-}
-
-pub fn refuse_external_send(url: &str) -> AppResult<()> {
-    refuse_external(url)
-}
-
-fn refuse_external(url: &str) -> AppResult<()> {
-    if hongguo_common::offline_qa::external_url_forbidden(url) {
-        return Err(AppError::Network(
-            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub async fn get_video_range(
     client: &reqwest::Client,
     url: &str,
     start: u64,
     end: u64,
 ) -> AppResult<Vec<u8>> {
-    refuse_external(url)?;
     let mut last_err = None;
     for attempt in 0..STREAM_RETRY_ATTEMPTS {
         let started = std::time::Instant::now();
@@ -792,11 +700,6 @@ async fn send_once(
     extra_headers: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<ApiCallResponse> {
-    if hongguo_common::offline_qa::external_url_forbidden(origin) {
-        return Err(AppError::Network(
-            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
-        ));
-    }
     let mut extra: Vec<(String, String)> = extra_headers.to_vec();
     if let Some(c) = &env.cookie
         && !c.is_empty()
@@ -828,11 +731,6 @@ async fn send_once(
         ),
     };
 
-    if hongguo_common::offline_qa::external_url_forbidden(&signed.url) {
-        return Err(AppError::Network(
-            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
-        ));
-    }
     let mut req = match &signed.body {
         Some(bytes) => client.post(&signed.url).body(bytes.clone()),
         None => client.get(&signed.url),
@@ -872,294 +770,4 @@ async fn send_once(
         set_cookies,
         headers,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hongguo_common::model::ProxyConfig;
-    use hongguo_common::model::settings::ProxyMode;
-    use hongguo_signer::ticket::{sign_get, sign_post};
-
-    #[test]
-    fn range_cutter_slices_target_from_full_body() {
-        let body: Vec<u8> = (0..100u8).collect();
-        let mut cutter = RangeCutter::new(30, 49);
-        assert!(!cutter.push(&body[0..40]), "还差 10 字节");
-        assert!(cutter.push(&body[40..80]), "收满 20 字节即止");
-        assert_eq!(cutter.finish().unwrap(), &body[30..50]);
-    }
-
-    #[test]
-    fn range_cutter_from_zero_takes_head() {
-        let body: Vec<u8> = (0..255u8).collect();
-        let mut cutter = RangeCutter::new(0, 9);
-        assert!(cutter.push(&body));
-        assert_eq!(cutter.finish().unwrap(), &body[0..10]);
-    }
-
-    #[test]
-    fn range_cutter_short_body_gives_what_exists() {
-        let body: Vec<u8> = vec![9u8; 5];
-        let mut cutter = RangeCutter::new(0, 99);
-        cutter.push(&body);
-        assert_eq!(cutter.finish().unwrap(), body);
-    }
-
-    #[test]
-    fn range_cutter_start_beyond_body_is_error() {
-        let mut cutter = RangeCutter::new(50, 60);
-        cutter.push(&[1u8; 10]);
-        assert!(cutter.finish().is_err(), "起点都没落到，必须报错");
-    }
-
-    #[test]
-    fn retry_count_is_sane() {
-        assert!((1..=5).contains(&MAX_RETRIES));
-    }
-
-    #[test]
-    fn post_signature_always_has_body() {
-        let signed = sign_post(
-            "/x/v1/",
-            b"{}".to_vec(),
-            &ApiEnv::anonymous(ProxyConfig::default()).device,
-        );
-        assert!(signed.body.is_some(), "POST 签名必须带 body");
-    }
-
-    #[test]
-    fn get_signature_has_no_body() {
-        let signed = sign_get("/x/v1/", &ApiEnv::anonymous(ProxyConfig::default()).device);
-        assert!(signed.body.is_none(), "GET 签名不应带 body");
-    }
-
-    #[tokio::test]
-    async fn offline_userinfo_host_returns_before_send() {
-        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
-        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let err = get_video_stream(&client, "http://localhost:80@example.com/a")
-            .await
-            .expect_err("userinfo 里的 localhost 不是主机");
-        assert!(err.to_string().contains("离线 QA"));
-        let err = get_video_range(&client, "http://127.0.0.1:80@example.com/a", 0, 1)
-            .await
-            .expect_err("userinfo 里的 127.0.0.1 不是主机");
-        assert!(err.to_string().contains("离线 QA"));
-        match previous {
-            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
-            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
-        }
-    }
-
-    #[test]
-    fn client_builds_for_default_proxy() {
-        let _ = build_client(&ProxyConfig::default());
-    }
-
-    #[test]
-    fn direct_mode_builds_no_proxy_client() {
-        let _ = build_client(&ProxyConfig {
-            mode: ProxyMode::Direct,
-            url: "http://127.0.0.1:7890".into(),
-        });
-    }
-
-    #[test]
-    fn manual_mode_builds_client() {
-        let _ = build_client(&ProxyConfig {
-            mode: ProxyMode::Manual,
-            url: "http://127.0.0.1:7890".into(),
-        });
-    }
-
-    #[test]
-    fn invalid_proxy_url_errors() {
-        let err = build_client(&ProxyConfig {
-            mode: ProxyMode::Manual,
-            url: "not a valid url".into(),
-        });
-        assert!(err.is_err(), "非法代理地址应报错而不是静默忽略");
-    }
-
-    /// 起一个只服务有限次请求的本地 HTTP 服务（每连接一请求即关）。
-    fn serve_once(responses: Vec<&'static str>) -> std::net::SocketAddr {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            use std::io::{Read, Write};
-            for resp in responses {
-                let Ok((mut sock, _)) = listener.accept() else {
-                    return;
-                };
-                let mut buf = [0u8; 4096];
-                let _ = sock.read(&mut buf).unwrap();
-                let _ = sock.write_all(resp.as_bytes());
-            }
-        });
-        addr
-    }
-
-    /// 接一个请求、记下原始文本、回 200。返回给断言用。
-    fn read_request_from(listener: std::net::TcpListener) -> String {
-        use std::io::{Read, Write};
-        let (mut sock, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let n = sock.read(&mut buf).unwrap();
-        let text = String::from_utf8_lossy(&buf[..n]).to_string();
-        let _ =
-            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi");
-        text
-    }
-
-    #[tokio::test]
-    async fn video_stream_sends_bare_ua_first() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let observer = std::thread::spawn(move || read_request_from(listener));
-
-        let url = format!("http://{addr}/v.mp4");
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let resp = get_video_stream(&client, &url).await.expect("应成功");
-        assert!(resp.status().is_success());
-
-        let req = observer.join().unwrap();
-        assert!(!req.contains("Referer"), "首次请求不应带 Referer: {req}");
-        assert!(req.contains("GET /v.mp4"), "应请求指定路径: {req}");
-        assert!(
-            req.to_ascii_lowercase()
-                .contains("accept-encoding: identity"),
-            "视频流应禁用 HTTP 内容压缩，保持 MP4 原始字节: {req}"
-        );
-    }
-
-    #[tokio::test]
-    async fn video_range_requests_identity_encoding() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let observer = std::thread::spawn(move || read_request_from(listener));
-
-        let url = format!("http://{addr}/v.mp4");
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let bytes = get_video_range(&client, &url, 0, 1)
-            .await
-            .expect("测试服务器返回完整的两字节响应");
-        assert_eq!(bytes, b"hi");
-
-        let req = observer.join().unwrap().to_ascii_lowercase();
-        assert!(
-            req.contains("accept-encoding: identity"),
-            "视频 Range 请求必须保持原始字节: {req}"
-        );
-        assert!(req.contains("range: bytes=0-1"), "应保留 Range: {req}");
-    }
-
-    #[tokio::test]
-    async fn video_range_allows_a_slow_but_flowing_body() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            use std::io::{Read, Write};
-            let (mut sock, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 4096];
-            let _ = sock.read(&mut buf).unwrap();
-            let _ = sock.write_all(
-                b"HTTP/1.1 206 Partial Content\r\nContent-Length: 2\r\n\
-                  Content-Range: bytes 0-1/2\r\nConnection: close\r\n\r\n",
-            );
-            let _ = sock.flush();
-            let _ = sock.write_all(b"h");
-            let _ = sock.flush();
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            let _ = sock.write_all(b"i");
-        });
-
-        let url = format!("http://{addr}/v.mp4");
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let bytes = get_video_range(&client, &url, 0, 1)
-            .await
-            .expect("慢速但持续的响应应成功");
-        assert_eq!(bytes, b"hi");
-    }
-
-    #[tokio::test]
-    async fn video_stream_retries_with_referer_on_403() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let recorder = seen.clone();
-        std::thread::spawn(move || {
-            use std::io::{Read, Write};
-            for is_403 in [true, false] {
-                let Ok((mut sock, _)) = listener.accept() else {
-                    return;
-                };
-                let mut buf = [0u8; 4096];
-                let n = sock.read(&mut buf).unwrap();
-                let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                recorder.lock().unwrap().push(text);
-                let (status, body) = if is_403 {
-                    ("403 Forbidden", "")
-                } else {
-                    ("200 OK", "hi")
-                };
-                let _ = sock.write_all(
-                    format!(
-                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                    .as_bytes(),
-                );
-            }
-        });
-
-        let url = format!("http://{addr}/v.mp4");
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let resp = get_video_stream(&client, &url)
-            .await
-            .expect("补 Referer 的重试应成功");
-        assert!(resp.status().is_success());
-
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 2, "应恰好发生两次请求");
-        // http crate 会把头名转成小写发到线上，断言必须大小写不敏感
-        assert!(
-            !seen[0].to_ascii_lowercase().contains("referer"),
-            "首次请求不应带 Referer"
-        );
-        assert!(
-            seen[1].to_ascii_lowercase().contains("referer"),
-            "403 后的重试必须带 Referer"
-        );
-        assert!(
-            seen[1].contains(hongguo_signer::VIDEO_REFERER),
-            "Referer 应是官网地址: {}",
-            seen[1]
-        );
-    }
-
-    #[tokio::test]
-    async fn video_stream_reports_error_when_both_attempts_fail() {
-        let addr = serve_once(vec![
-            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        ]);
-        let url = format!("http://{addr}/v.mp4");
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let err = get_video_stream(&client, &url)
-            .await
-            .expect_err("两次都 403 应报错");
-        assert!(
-            err.to_string().contains("取流失败"),
-            "错误信息应说明是取流失败: {err}"
-        );
-    }
-
-    #[test]
-    fn host_of_extracts_host() {
-        assert_eq!(host_of("https://v.example.com/path?x=1"), "v.example.com");
-        assert_eq!(host_of("not-a-url"), "not-a-url");
-    }
 }

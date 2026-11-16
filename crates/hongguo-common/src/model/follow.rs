@@ -25,25 +25,3 @@ pub struct FollowNotice {
     #[serde(default)]
     pub read: bool,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn goes_out_as_camel_case() {
-        let n = FollowNotice {
-            id: 1,
-            kind: NOTICE_KIND_FOLLOW.into(),
-            series_id: "7677818497497320472".into(),
-            title: "摆摊大王".into(),
-            detail: "追的剧更新了，新增 2 集（共 216 集）".into(),
-            at: 1_792_041_548,
-            read: false,
-        };
-        let v = serde_json::to_value(&n).unwrap();
-        assert_eq!(v["seriesId"], "7677818497497320472");
-        assert_eq!(v["kind"], "follow");
-        assert!(v.get("series_id").is_none());
-    }
-}

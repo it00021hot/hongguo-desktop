@@ -5,8 +5,8 @@ use std::time::Instant;
 use hongguo_common::{AppError, AppResult};
 use hongguo_video::sample_table::TrackInfo;
 
-use hongguo_media_platform_api::PlatformRequest;
-use hongguo_media_platform_api::video::bitrate_for;
+use hongguo_media_types::encoding::PlatformRequest;
+use hongguo_media_types::encoding::bitrate_for;
 
 use super::decoder::{Decoder, Nv12Frame};
 use super::encoder::{Encoder, EncoderKind};
@@ -20,7 +20,7 @@ use super::scaler::Scaler;
 pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
-    if !hongguo_media::hevc::is_hevc(&video.info.codec) {
+    if !hongguo_video::hevc::is_hevc(&video.info.codec) {
         return None;
     }
     let kind = if hevc_hw_encoder_available() {
@@ -31,20 +31,6 @@ pub fn transcode_hevc(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
         return None;
     };
     Some(run_on_mf_thread(|| run(req, &demuxed, &video.info, kind)))
-}
-
-/// 仅测试构建：强制软件编码器跑完整链路（解码/Annex-B/封装/时间戳），
-/// 让没有硬编的 CI 也能验证管线本身。
-#[cfg(any(test, feature = "test-support"))]
-pub fn transcode_hevc_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
-    let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
-    let video = demuxed.video_track()?;
-    if !hongguo_media::hevc::is_hevc(&video.info.codec) {
-        return None;
-    }
-    Some(run_on_mf_thread(|| {
-        run(req, &demuxed, &video.info, EncoderKind::Software)
-    }))
 }
 
 /// 下一帧的显示时间：按升序时间轴逐帧取，重复/回退按半帧顶开。

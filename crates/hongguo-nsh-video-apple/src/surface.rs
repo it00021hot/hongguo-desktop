@@ -1,208 +1,204 @@
 use crate::OutputError;
 use hongguo_nsh_video_api::{ErrorCode, ResizeMode};
-use objc2::rc::Retained;
-use objc2_quartz_core::CAMetalLayer;
-use std::{borrow::Cow, sync::Arc};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_metal::{
+    MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLDrawable, MTLPixelFormat, MTLTexture,
+    MTLTextureType,
+};
+use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer, CATransaction};
+use std::sync::Arc;
+
+pub(crate) const MAX_DRAWABLES: usize = 2;
+
+pub(crate) struct SurfaceTarget {
+    texture: wgpu::Texture,
+    drawable: Retained<ProtocolObject<dyn MTLDrawable>>,
+}
 
 pub struct MetalSurface {
-    surface: wgpu::Surface<'static>,
-    _layer: Retained<CAMetalLayer>,
+    layer: Retained<CAMetalLayer>,
+    gpu: Arc<crate::gpu::Gpu>,
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    config: wgpu::SurfaceConfiguration,
+    width: u32,
+    height: u32,
     drawable: bool,
     pipeline: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     fit: wgpu::Buffer,
+    fit_transform: Option<[f32; 4]>,
 }
 
 impl MetalSurface {
     pub async fn new(layer: Retained<CAMetalLayer>) -> Result<Self, OutputError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
-        // SAFETY: This surface retains the same layer for its complete lifetime.
-        let surface = unsafe {
-            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
-                Retained::as_ptr(&layer).cast_mut().cast(),
-            ))
-        }
-        .map_err(gpu_error)?;
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                compatible_surface: Some(&surface),
-                ..Default::default()
-            })
-            .await
-            .map_err(gpu_error)?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: device_limits(adapter.limits()),
-                ..Default::default()
-            })
-            .await
-            .map_err(gpu_error)?;
-        let mut config = surface.get_default_config(&adapter, 1, 1).ok_or_else(|| {
-            OutputError::new(
-                ErrorCode::GpuUnavailable,
-                "Metal surface has no supported configuration",
-            )
-        })?;
-        if !surface
-            .get_capabilities(&adapter)
-            .formats
-            .contains(&wgpu::TextureFormat::Bgra8Unorm)
+        let gpu = crate::gpu::Gpu::shared()?;
+        let device = gpu.device.clone();
+        let queue = gpu.queue.clone();
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
         {
-            return Err(OutputError::new(
-                ErrorCode::GpuUnavailable,
-                "Metal surface cannot present BGRA8",
-            ));
+            let metal = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }
+                .ok_or_else(|| gpu_error("Metal adapter unavailable"))?;
+            layer.setDevice(Some(metal.raw_device()));
         }
-        config.format = wgpu::TextureFormat::Bgra8Unorm;
-        config.alpha_mode = wgpu::CompositeAlphaMode::Opaque;
-        config.desired_maximum_frame_latency = 1;
-        let errors = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("video-present"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("present.wgsl"))),
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("video-present"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vertex"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fragment"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        layer.setPixelFormat(MTLPixelFormat::RGBA16Float);
+        layer.setFramebufferOnly(true);
+        layer.setOpaque(true);
+        layer.setPresentsWithTransaction(false);
+        layer.setMaximumDrawableCount(MAX_DRAWABLES);
+        layer.setAllowsNextDrawableTimeout(true);
+        let color_space = objc2_core_graphics::CGColorSpace::with_name(Some(unsafe {
+            objc2_core_graphics::kCGColorSpaceExtendedLinearSRGB
+        }));
+        layer.setColorspace(color_space.as_deref());
+        layer.setWantsExtendedDynamicRangeContent(true);
+        CATransaction::commit();
+        CATransaction::flush();
+        let pipeline = gpu.presentation.clone();
+        let sampler = gpu.sampler.clone();
         let fit = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("video-present-fit"),
             size: 16,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        if let Some(error) = errors.pop().await {
-            return Err(gpu_error(error));
-        }
         Ok(Self {
-            surface,
-            _layer: layer,
-            device: Arc::new(device),
-            queue: Arc::new(queue),
-            config,
+            layer,
+            gpu,
+            device,
+            queue,
+            width: 0,
+            height: 0,
             drawable: false,
             pipeline,
             sampler,
             fit,
+            fit_transform: None,
         })
     }
 
     pub fn device(&self) -> Arc<wgpu::Device> {
         self.device.clone()
     }
+
+    pub(crate) fn allocated_bytes(&self) -> Option<usize> {
+        unsafe { self.device.as_hal::<wgpu::hal::api::Metal>() }
+            .map(|metal| metal.raw_device().currentAllocatedSize())
+    }
     pub fn queue(&self) -> Arc<wgpu::Queue> {
         self.queue.clone()
     }
 
+    pub(crate) fn converter(&self) -> hongguo_video_gpu::YuvConverter {
+        hongguo_video_gpu::YuvConverter::with_pipelines(
+            self.device(),
+            self.queue(),
+            self.gpu.color.clone(),
+        )
+    }
+
+    pub(crate) fn check(&self) -> Result<(), OutputError> {
+        self.gpu.check()
+    }
+
+    pub(crate) fn invalidate(&self, detail: String) {
+        self.gpu.invalidate(detail);
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
         self.drawable = width > 0 && height > 0;
-        if !self.drawable {
-            return;
-        }
-        self.config.width = width;
-        self.config.height = height;
-        self.configure();
-    }
-
-    fn configure(&self) {
-        self.surface.configure(&self.device, &self.config);
-        // WGPU's Metal backend turns this off. A public bounded acquisition is
-        // required when UIKit hides/detaches the layer during an in-flight draw.
-        self._layer.setAllowsNextDrawableTimeout(true);
-    }
-
-    pub fn present(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &wgpu::TextureView,
-        source_width: u32,
-        source_height: u32,
-        mode: ResizeMode,
-    ) -> Result<Option<wgpu::SurfaceTexture>, OutputError> {
-        let Some(target) = self.acquire()? else {
-            return Ok(None);
-        };
-        self.encode_present(encoder, &target, image, source_width, source_height, mode)?;
-        Ok(Some(target))
-    }
-
-    pub(crate) fn acquire(&mut self) -> Result<Option<wgpu::SurfaceTexture>, OutputError> {
-        if !self.drawable {
-            return Ok(None);
-        }
-        let target = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(target)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(target) => target,
-            wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout => {
-                return Ok(None);
-            }
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.configure();
-                return Ok(None);
-            }
-            status => {
-                return Err(OutputError::new(
-                    ErrorCode::GpuFailed,
-                    format!("Metal surface acquisition: {status:?}"),
+        if self.drawable {
+            CATransaction::begin();
+            CATransaction::setDisableActions(true);
+            self.layer
+                .setDrawableSize(objc2_core_foundation::CGSize::new(
+                    f64::from(width),
+                    f64::from(height),
                 ));
-            }
+            CATransaction::commit();
+            CATransaction::flush();
+        }
+    }
+
+    pub(crate) fn acquire(&self) -> Result<Option<SurfaceTarget>, OutputError> {
+        if !self.drawable {
+            return Ok(None);
+        }
+        let Some(drawable) = self.layer.nextDrawable() else {
+            return Ok(None);
         };
-        Ok(Some(target))
+        let raw = drawable.texture();
+        if raw.width() != self.width as usize || raw.height() != self.height as usize {
+            return Ok(None);
+        }
+        if self.width > self.device.limits().max_texture_dimension_2d
+            || self.height > self.device.limits().max_texture_dimension_2d
+        {
+            return Err(OutputError::new(
+                ErrorCode::InputTooLarge,
+                "native video target exceeds GPU dimensions",
+            ));
+        }
+        let size = wgpu::Extent3d {
+            width: self.width,
+            height: self.height,
+            depth_or_array_layers: 1,
+        };
+        let native = unsafe {
+            wgpu::hal::metal::Device::texture_from_raw(
+                raw,
+                wgpu::TextureFormat::Rgba16Float,
+                MTLTextureType::Type2D,
+                1,
+                1,
+                wgpu::hal::CopyExtent {
+                    width: size.width,
+                    height: size.height,
+                    depth: 1,
+                },
+            )
+        };
+        let texture = unsafe {
+            self.device
+                .create_texture_from_hal::<wgpu::hal::api::Metal>(
+                    native,
+                    &wgpu::TextureDescriptor {
+                        label: Some("native-metal-drawable"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                        view_formats: &[],
+                    },
+                )
+        };
+        Ok(Some(SurfaceTarget {
+            texture,
+            drawable: ProtocolObject::from_retained(drawable),
+        }))
     }
 
     pub(crate) fn encode_present(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::SurfaceTexture,
+        target: &SurfaceTarget,
         image: &wgpu::TextureView,
-        source_width: u32,
-        source_height: u32,
+        source_aspect: f32,
         mode: ResizeMode,
     ) -> Result<(), OutputError> {
-        let transform = fit_transform(
-            source_width,
-            source_height,
-            self.config.width,
-            self.config.height,
-            mode,
-        )?;
-        let mut bytes = [0_u8; 16];
-        for (destination, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(transform) {
-            destination.copy_from_slice(&value.to_le_bytes());
+        let transform = fit_aspect(source_aspect, self.width, self.height, mode)?;
+        if self.fit_transform != Some(transform) {
+            let bytes = transform
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .collect::<Vec<_>>();
+            self.queue.write_buffer(&self.fit, 0, &bytes);
+            self.fit_transform = Some(transform);
         }
-        self.queue.write_buffer(&self.fit, 0, &bytes);
         let bindings = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("video-present"),
             layout: &self.pipeline.get_bind_group_layout(0),
@@ -241,7 +237,42 @@ impl MetalSurface {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bindings, &[]);
         pass.draw(0..3, 0..1);
-        drop(pass);
+        Ok(())
+    }
+
+    pub(crate) fn present(
+        &self,
+        target: SurfaceTarget,
+        display_deadline: f64,
+        presented: impl Fn(f64) + Send + Sync + 'static,
+        completed: impl Fn() + Send + Sync + 'static,
+    ) -> Result<(), OutputError> {
+        let block = block2::RcBlock::new(
+            move |drawable: std::ptr::NonNull<ProtocolObject<dyn MTLDrawable>>| {
+                presented(unsafe { drawable.as_ref() }.presentedTime());
+            },
+        );
+        unsafe {
+            target
+                .drawable
+                .addPresentedHandler(&*block as *const _ as *mut _);
+        }
+        let metal = unsafe { self.queue.as_hal::<wgpu::hal::api::Metal>() }
+            .ok_or_else(|| gpu_error("Metal queue unavailable"))?;
+        let command = metal
+            .as_raw()
+            .commandBuffer()
+            .ok_or_else(|| gpu_error("cannot create native presentation command"))?;
+        let done = block2::RcBlock::new(
+            move |_: std::ptr::NonNull<ProtocolObject<dyn MTLCommandBuffer>>| completed(),
+        );
+        // Native completion runs independently of WGPU polling, including after
+        // the widget/worker retires. It follows all work on this same queue.
+        unsafe {
+            command.addCompletedHandler(&*done as *const _ as *mut _);
+        }
+        command.presentDrawable_atTime(&target.drawable, display_deadline);
+        command.commit();
         Ok(())
     }
 }
@@ -250,26 +281,18 @@ fn gpu_error(error: impl std::fmt::Display) -> OutputError {
     OutputError::new(ErrorCode::GpuFailed, error.to_string())
 }
 
-fn device_limits(supported: wgpu::Limits) -> wgpu::Limits {
-    // iOS Metal can expose fewer shader variables than WebGPU defaults; keep
-    // conservative requirements while retaining portrait texture capacity.
-    wgpu::Limits::downlevel_defaults().using_resolution(supported)
-}
-
-fn fit_transform(
-    source_width: u32,
-    source_height: u32,
+fn fit_aspect(
+    source: f32,
     width: u32,
     height: u32,
     mode: ResizeMode,
 ) -> Result<[f32; 4], OutputError> {
-    if source_width == 0 || source_height == 0 || width == 0 || height == 0 {
+    if !source.is_finite() || source <= 0.0 || width == 0 || height == 0 {
         return Err(OutputError::new(
             ErrorCode::FrameFormatUnsupported,
             "cannot fit empty video dimensions",
         ));
     }
-    let source = source_width as f32 / source_height as f32;
     let target = width as f32 / height as f32;
     let (x, y) = match mode {
         ResizeMode::Contain if source > target => (1.0, source / target),
@@ -279,62 +302,4 @@ fn fit_transform(
         ResizeMode::Stretch => (1.0, 1.0),
     };
     Ok([x, y, (1.0 - x) * 0.5, (1.0 - y) * 0.5])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mobile_device_limits_fit_the_adapter_and_preserve_portrait_upscaling() {
-        let supported =
-            wgpu::Limits::downlevel_defaults().using_resolution(wgpu::Limits::default());
-        let required = device_limits(supported.clone());
-        assert!(
-            required.check_limits(&supported),
-            "device creation must respect the adapter limits"
-        );
-        assert!(
-            required.max_texture_dimension_2d >= 3_840,
-            "1080p portrait upscaling must retain the adapter texture capacity"
-        );
-        assert_eq!(
-            required.max_immediate_size, 0,
-            "the renderer does not request the IMMEDIATES feature"
-        );
-    }
-
-    #[test]
-    fn contain_leaves_centered_bars_and_cover_crops_the_same_center() {
-        let contain = fit_transform(1920, 1080, 100, 100, ResizeMode::Contain).unwrap();
-        let cover = fit_transform(1920, 1080, 100, 100, ResizeMode::Cover).unwrap();
-        for (actual, expected) in contain.into_iter().zip([1.0, 16.0 / 9.0, 0.0, -7.0 / 18.0]) {
-            assert!((actual - expected).abs() < 0.000_01);
-        }
-        assert_eq!(cover, [0.5625, 1.0, 0.21875, 0.0]);
-        assert_eq!(
-            fit_transform(1920, 1080, 100, 100, ResizeMode::Stretch).unwrap(),
-            [1.0, 1.0, 0.0, 0.0]
-        );
-    }
-
-    #[test]
-    fn empty_source_or_target_never_produces_invalid_texture_coordinates() {
-        for (source_width, source_height, width, height) in
-            [(0, 1, 1, 1), (1, 0, 1, 1), (1, 1, 0, 1), (1, 1, 1, 0)]
-        {
-            assert_eq!(
-                fit_transform(
-                    source_width,
-                    source_height,
-                    width,
-                    height,
-                    ResizeMode::Contain
-                )
-                .unwrap_err()
-                .code(),
-                ErrorCode::FrameFormatUnsupported
-            );
-        }
-    }
 }

@@ -19,7 +19,6 @@ struct Request {
     reason: String,
     origin: String,
     pause: Duration,
-    startup: bool,
 }
 
 struct Job {
@@ -38,40 +37,17 @@ pub(super) async fn ensure(state: &AppState) {
     }
 }
 
-pub(super) async fn request(
-    state: &AppState,
-    reason: &str,
-    origin: &str,
-    pause: Duration,
-) -> Registration {
-    let run = start(
-        state,
-        Request {
-            reason: reason.into(),
-            origin: origin.into(),
-            pause,
-            startup: false,
-        },
-    )
-    .expect("显式注册请求总会取得任务");
-    run.first_result().await
-}
-
 fn startup_request() -> Request {
     Request {
         reason: "启动自动注册".into(),
         origin: hongguo_api::register::REGISTER_ORIGIN.into(),
         pause: Duration::from_millis(REGISTER_RETRY_MS),
-        startup: true,
     }
 }
 
 fn start(state: &AppState, request: Request) -> Option<Arc<RegistrationRun>> {
-    let (run, claimed) = state.registration.claim(request.startup)?;
+    let (run, claimed) = state.registration.claim()?;
     if !claimed {
-        if !request.startup {
-            run.wake.notify_one();
-        }
         return Some(run);
     }
     let job = Job {
@@ -88,7 +64,7 @@ async fn run_registration(mut job: Job, request: Request) {
     let Some(state) = job.state.upgrade() else {
         return;
     };
-    if let Some(result) = prepare(&state, request.startup) {
+    if let Some(result) = prepare(&state) {
         job.run.complete_first(result);
         job.finish();
         return;
@@ -110,18 +86,11 @@ async fn run_registration(mut job: Job, request: Request) {
             return;
         }
         drop(state);
-        tokio::select! {
-            () = tokio::time::sleep(request.pause) => {},
-            () = job.run.wake.notified() => {},
-        }
+        tokio::time::sleep(request.pause).await;
     }
 }
 
-fn prepare(state: &AppState, startup: bool) -> Option<Registration> {
-    if hongguo_common::offline_qa::enabled() {
-        log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
-        return Some(publish_refusal(state, "离线 QA 不发起注册"));
-    }
+fn prepare(state: &AppState) -> Option<Registration> {
     if let Some(refusal) = reuse_refusal(state) {
         let mut status = blocked_status(state, 0);
         status.set_failure(AppError::Rejected(
@@ -131,7 +100,7 @@ fn prepare(state: &AppState, startup: bool) -> Option<Registration> {
         return Some(refusal);
     }
     let meta = read_meta(&state.store);
-    if startup && hongguo_api::register::has_registered_ids(&state.device()) {
+    if hongguo_api::register::has_registered_ids(&state.device()) {
         if registration_blocked(&meta, now_ms()) {
             let _ = publish_refusal(state, "注册受限，继续复用已有设备身份");
         } else {
@@ -167,7 +136,7 @@ async fn attempt_registration(
     if registration_blocked(&meta, now_ms()) {
         return Outcome::Blocked(AppError::Rejected("注册限制仍有效".into()));
     }
-    if hongguo_common::offline_qa::enabled() || reuse_json_path().is_some() {
+    if reuse_json_path().is_some() {
         return Outcome::Blocked(AppError::Rejected("当前模式禁止注册".into()));
     }
     meta.last_register_attempt_ms = Some(now_ms());

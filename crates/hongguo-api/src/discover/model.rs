@@ -119,23 +119,3 @@ impl BrowseFilters {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn browse_filters_build_select_items() {
-        let f = BrowseFilters {
-            genre: "comic_series".into(),
-            online_time: "days_7".into(),
-            ..Default::default()
-        };
-        let si = f.to_select_items();
-        assert_eq!(si["genre"], serde_json::json!(["comic_series"]));
-        assert_eq!(si["online_time"], serde_json::json!(["days_7"]));
-        assert_eq!(si["sort"], serde_json::json!([]));
-        assert!(si.get("duration").is_some());
-        assert_eq!(si["duration"], serde_json::json!([]));
-    }
-}

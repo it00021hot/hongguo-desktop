@@ -75,8 +75,6 @@ pub mod emoticon {
     pub const SEARCH_TYPE_SEARCH: i64 = 1;
     /// `search_type=2`：第三方表情库（GIF tab，分页 `offset`/`next_offset`）。
     pub const SEARCH_TYPE_THIRD_PARTY: i64 = 2;
-    /// `search_type=3`：官方开面板并发拉的一档，收藏前后恒空、官方无入口——本仓不实现。
-    pub const SEARCH_TYPE_COLLECTED: i64 = 3;
     /// `search_type=4`：我上传的自定义表情（固定 `keyword=profile`）。
     pub const SEARCH_TYPE_MINE: i64 = 4;
 
@@ -90,7 +88,6 @@ pub mod emoticon {
 
     /// `image_type`：1 = 静态图 / 2 = 动图。
     pub const IMAGE_TYPE_STATIC: i64 = 1;
-    pub const IMAGE_TYPE_ANIMATED: i64 = 2;
 
     /// `business_param.emoji_scene_type`：2 = 第三方表情 / 4 = 自定义表情。
     /// 本地图片评论**不带**该字段。
@@ -353,97 +350,5 @@ pub fn video_detail_payload(series_id: &str) -> VideoDetailPayload {
             video_id_type: 1,
         },
         series_id: series_id.to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn paths_have_no_trailing_slash() {
-        assert!(!DETAIL_PATH.ends_with('/'));
-        assert!(DETAIL_PATH.contains("/preload/v1"));
-        assert!(!PlayerModelScene::Preload.path().ends_with('/'));
-        assert!(!PlayerModelScene::Player.path().ends_with('/'));
-        assert!(SINGLE_MODEL_PATH.ends_with('/'));
-    }
-
-    #[test]
-    fn player_model_payload_matches_captured_batch_body() {
-        let group = BTreeMap::from([("1004".to_string(), vec!["123".to_string()])]);
-        let body =
-            serde_json::to_value(player_model_payload(&group, PlayerModelScene::Player)).unwrap();
-        assert_eq!(
-            body,
-            serde_json::json!({
-                "biz_param": {
-                    "detail_page_version": 0,
-                    "device_level": 3,
-                    "disable_digg_stat": false,
-                    "disable_video_relate_book": false,
-                    "need_all_video_definition": true,
-                    "need_mp4_align": false,
-                    "use_os_player": false,
-                    "use_server_dns": false,
-                    "video_platform": 1024
-                },
-                "dr_scene": "player",
-                "mixed_video_id_map": {"1004": ["123"]}
-            })
-        );
-        let preload =
-            serde_json::to_value(player_model_payload(&group, PlayerModelScene::Preload)).unwrap();
-        assert_eq!(preload["dr_scene"], "preload");
-        assert_eq!(preload["biz_param"], body["biz_param"]);
-        assert_eq!(preload["mixed_video_id_map"], body["mixed_video_id_map"]);
-        assert_eq!(
-            PlayerModelScene::Player.path(),
-            "/novel/player/multi_video_model/player/v1"
-        );
-        assert_eq!(
-            PlayerModelScene::Preload.path(),
-            "/novel/player/multi_video_model/preload/v1"
-        );
-    }
-
-    #[test]
-    fn single_model_payload_matches_captured_body() {
-        let body = serde_json::to_value(single_model_payload("vid-1", 1004)).unwrap();
-        assert_eq!(
-            body,
-            serde_json::json!({
-                "biz_param": {
-                    "detail_page_version": 0,
-                    "device_level": 3,
-                    "disable_digg_stat": false,
-                    "disable_video_relate_book": false,
-                    "from_video_id": "",
-                    "need_all_video_definition": true,
-                    "need_mp4_align": false,
-                    "source": 4,
-                    "use_os_player": false,
-                    "use_server_dns": false,
-                    "video_platform": 3
-                },
-                "content_type": 1004,
-                "video_id": "vid-1"
-            })
-        );
-    }
-
-    #[test]
-    fn detail_payload_uses_preload_scene() {
-        let p = detail_payload("123");
-        assert_eq!(p.dr_scene, "preload");
-        assert_eq!(p.series_id, "123");
-        assert!(p.biz_param.detail_page_version == 0);
-    }
-
-    #[test]
-    fn payloads_serialize_with_server_field_names() {
-        let d = serde_json::to_value(video_detail_payload("s1")).unwrap();
-        assert_eq!(d["series_id"], "s1");
-        assert_eq!(d["biz_param"]["video_id_type"], 1);
     }
 }

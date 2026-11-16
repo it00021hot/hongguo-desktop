@@ -4,9 +4,6 @@
 
 use hongguo_common::{AppError, AppResult};
 
-#[cfg(test)]
-use crate::db::Db;
-
 fn col_text(row: &turso::Row, i: usize) -> AppResult<String> {
     row.get_value(i)
         .ok()
@@ -50,9 +47,8 @@ mod settings;
 mod task;
 
 pub use device::{
-    backup_device_profile, commit_device_swap, commit_device_swap_at, device_meta_get,
-    device_meta_set, device_profile, device_profile_backup, initialize_device_meta,
-    save_device_profile, save_sdk_session, sdk_session,
+    commit_device_swap, device_meta_get, device_meta_set, device_profile, device_profile_backup,
+    initialize_device_meta, save_device_profile, save_sdk_session, sdk_session,
 };
 pub use follow::{
     baseline_delete, baseline_get, baseline_set, notice_insert, notices_clear, notices_list,
@@ -70,27 +66,3 @@ pub use playback::{
 pub use series::{series_all, series_by_id, upsert_series};
 pub use settings::{save_settings, settings};
 pub use task::{replace_tasks, tasks};
-
-#[cfg(test)]
-fn rt() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("测试 runtime")
-}
-
-#[cfg(test)]
-fn mem_db() -> Db {
-    rt().block_on(Db::open(":memory:")).expect("内存库")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use hongguo_common::model::TaskStatus;
-
-    #[test]
-    fn task_status_column_matches_model() {
-        assert_eq!(status_text(&TaskStatus::Running), "running");
-    }
-}

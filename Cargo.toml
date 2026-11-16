@@ -1,4 +1,4 @@
-# 红果桌面版 —— Rust workspace 根（阶段 0：src-tauri 原地成为唯一 member）。
+# 红果桌面版 —— NSH 与共享业务内核的 Rust workspace。
 #
 # 本文件承载三件事，每件都「必须在根」：
 #   1. [workspace] members —— 自底向上拆分后逐个加入；
@@ -12,10 +12,15 @@
 # feature 解析语义会静默变化。
 resolver = "3"
 members = [
+    "tools/build",
     "crates/hongguo-api",
     "crates/hongguo-bytevc2",
     "crates/hongguo-common",
-    "crates/hongguo-gpui",
+    "crates/hongguo-hevc",
+    "crates/hongguo-native-clock",
+    "crates/hongguo-media-types",
+    "crates/hongguo-playback",
+    "crates/hongguo-vvdec-sys",
     "crates/hongguo-nsh",
     "crates/hongguo-nsh-android",
     "crates/hongguo-nsh-ios",
@@ -25,41 +30,28 @@ members = [
     "crates/hongguo-nsh-video-ios",
     "crates/hongguo-nsh-video-windows",
     "crates/hongguo-nsh-video-android",
-    "crates/hongguo-enhancement",
     "crates/hongguo-media",
     "crates/hongguo-media-platform",
-    "crates/hongguo-media-platform-api",
     "crates/hongguo-media-platform-android",
-    "crates/hongguo-media-platform-macos",
-    "crates/hongguo-media-platform-ios",
     "crates/hongguo-media-videotoolbox",
     "crates/hongguo-media-platform-windows",
     "crates/hongguo-video",
-    # 回放契约 + 系统播放器（门面 / macOS / Windows 实现）：
-    # 平台实现分 crate，壳只依赖门面。
-    "crates/hongguo-player",
-    "crates/hongguo-player-api",
-    "crates/hongguo-player-macos",
-    "crates/hongguo-player-windows",
-    "crates/hongguo-protocol",
+    "crates/hongguo-video-color",
+    "crates/hongguo-video-gpu",
     "crates/hongguo-service",
     "crates/hongguo-signer",
-    # 进程内软解直播放会话（HEVC / ByteVC2），两个壳共用。
-    "crates/hongguo-softdec",
     "crates/hongguo-store",
     "crates/hongguo-stream",
-    "crates/hongguo-tauri",
-    "crates/hongguo-tauri-app",
 ]
 # vendor/ 由 [patch.crates-io] 的 path 引用。位于 workspace 目录树内、被
 # path/patch 引用的包会被 Cargo 自动收成 member；若不排除，门禁会去 lint
 # 上游代码（clippy -D warnings 必挂），cargo test 也会跑它们的用例。
-exclude = ["vendor/*"]
+exclude = ["vendor/nsh", "vendor/wgpu-hal"]
 
-# 各 crate 共享的 package 字段：发版只改这里一处（另需改 package.json 与
-# tauri.conf.json），成员用 `xxx.workspace = true` 继承。
+# 各 crate 共享构建版本；应用元数据独立以 crates/hongguo-nsh/nsh.json 为准。
+# 成员用 `xxx.workspace = true` 继承。
 [workspace.package]
-version = "0.6.6"
+version = "0.7.0"
 edition = "2024"
 # MSRV 跟随当前 stable 工具链（1.99.1）。应用不是库，MSRV 只影响依赖解析。
 rust-version = "1.99.1"
@@ -67,44 +59,22 @@ license = "PolyForm-Noncommercial-1.0.0"
 authors = ["hongguo-desktop contributors"]
 
 [workspace.dependencies]
-nsh-core = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3" }
-nsh-base = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-platform-macos = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-platform-windows = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-android-runtime = { package = "nsh-platform-android", git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
-nsh-platform-ios = { git = "https://github.com/longbridge/nsh", rev = "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3", default-features = false }
+nsh-core = { path = "vendor/nsh/crates/nsh-core" }
+nsh-base = { path = "vendor/nsh/crates/nsh-base" }
+nsh-platform-macos = { path = "vendor/nsh/crates/nsh-platform-macos", default-features = false }
+nsh-platform-windows = { path = "vendor/nsh/crates/nsh-platform-windows", default-features = false }
+nsh-android-runtime = { package = "nsh-platform-android", path = "vendor/nsh/crates/nsh-platform-android", default-features = false }
+nsh-platform-ios = { path = "vendor/nsh/crates/nsh-platform-ios", default-features = false }
 
 [patch.crates-io]
-# gpui-pre-windows 0.3.12 的渲染器没有视频画面的落点，而系统播放器
-# （Media Foundation Media Engine 的 frame-server 模式）经 TransferVideoFrame
-# 把帧写进渲染器设备上的纹理，需要渲染器把它画出来——且必须与 GPUI 内容
-# 同画布（macOS 侧的对应结构是 AVPlayerLayer 插在 GPUIView 之下）。
-#
-# 补丁新增 `video_quad` 模块：视频纹理与 GPUI 内容画进同一张渲染目标
-# （上一代独立 DComp 视觉位方案的整类坑——跨画布半像素缝、两 swapchain
-# 错帧、z 序反直觉——在单画布下结构性不存在），并补上渲染器设备的
-# VIDEO_SUPPORT 与多线程保护（见 crates/hongguo-player-windows/src/view.rs）。
-# 待上游提供原生视频挂点后回收。
-gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
+wgpu-hal = { path = "vendor/wgpu-hal" }
 
 # CI 实测（Windows，2026-10）：fat LTO + 单 codegen 单元让 rustc 段 17-18 分钟，
 # 是发版流水线的大头。换 thin LTO + 默认并行单元后编译时间砍半以上；本项目的
 # 热点（编解码 SIMD、运行期指令集分发）都在独立 crate 里自带优化，自身代码是
 # 胶水层，跨 crate 全量优化收益本来就小。体积略涨（<5%），换发版速度值得。
 #
-# ⚠️ 绝不能加 panic = "abort"（2026-10-09 小窗闪退实录）。abort 策略让两类
-# catch 机制在 release 里静默失效，而 dev 默认 unwind——线上和开发行为分裂：
-# 1. wry 的 WKURLSchemeHandler 回包用 objc2::exception::catch 兜 NSException；
-#    abort 下 catch 的着陆垫被替换成 panic_cannot_unwind，ObjC 异常直接
-#    abort——进小窗 resize 时 WebKit 取消 in-flight 流请求，worker 回包撞上
-#    已停止的 task 即抛异常，v0.1.0 装机版小窗必闪退（crash.log: "panic in a
-#    function that cannot unwind"，线程 hongguo-proto-stream-1）。
-# 2. protocol/register.rs 的 catch_unwind 三层防线整体变 no-op——协议路径上
-#    任何一个 panic 都从「一条请求回 500」升级成全进程 abort，2026-10-07
-#    那次「回调 panic → abort → 僵尸进程锁库」的教训在 release 里等于没修。
-# 代价是二进制略大（unwind 表）与微弱性能差，换正确性，值。
+# 保留 unwind：原生播放器工作线程需要捕获失败并完成资源释放。
 [profile.release]
 opt-level = 3
 lto = "thin"
@@ -118,30 +88,6 @@ strip = true
 [profile.dev]
 debug = "line-tables-only"
 
-# 只对这一个依赖关掉 debug 断言，别把自己的代码也一起降级。
-#
-# `rusty_h265-accel` 的去块滤波在帧边界有个过严的 `debug_assert`
-# （deblock.rs:331，水平边要求 x >= 4）。1080p 真实码流第一帧就踩到，
-# 结果 dev 下整个软解必然 panic。
-#
-# 它确实只是一条断言：release 不编译它，该段 SIMD 路径又由 `if ok` 守住
-# 会整段跳过。不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
-# 消费者是 HEIC 封面软解（`hongguo-media::heif`）与 HEVC 软解直播放
-# （`hongguo-softdec`）——后者每一帧都过这段滤波，这条配置对它是必需的。
-[profile.dev.package.rusty_h265-accel]
-debug-assertions = false
-
-# 软解直播放的出帧打包（解码器的 u16 平面 → 8-bit I420）是逐像素循环，1080p 一帧
-# 三百多万次。零优化下它不向量化：macOS dev 构建采样，解码线程约 63% 的时间耗在
-# 这一个循环上，1080p 30fps 的片子 1× 就吃满一个核，2× 直接跟不上（2026-11-11 实测）。
-# workspace 成员默认不吃下面那条 `"*"`，所以单独点名；release 不受影响。
-[profile.dev.package.hongguo-softdec]
-opt-level = 2
-
-# 依赖在 dev 下也开 O2：GPUI 壳（gpui-pre Windows 平台层）每个 vsync 都
-# 全量重绘一次窗口，dev 档零优化的 taffy 布局 + 绘制 + 文字排版让内容页
-# 一帧 40-70ms（恒定 15-21fps，2026-10-24 帧停顿探针实测），任何页面都
-# 「不流畅」。workspace 自己的代码保持 dev 档（增量编译快、可调试），只
-# 优化 rarely-edit 的依赖；首次构建慢几分钟，之后改壳代码仍是秒级增量。
+# 第三方依赖保留 O2；工作区自身保持可调试与增量编译。
 [profile.dev.package."*"]
 opt-level = 2

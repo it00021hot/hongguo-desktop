@@ -42,14 +42,6 @@ pub async fn list(state: &AppState, cursor: &str) -> AppResult<FollowUpdatePage>
     hongguo_api::interact::fetch_follow_updates(cursor, &env).await
 }
 
-/// 是否已追（列表第一页本地判成员，player IsFollowingUpdate 同款口径）。
-pub async fn is_following(state: &AppState, series_id: &str) -> AppResult<bool> {
-    login_wall(state)?;
-    let env = state.api_env();
-    let page = hongguo_api::interact::fetch_follow_updates("", &env).await?;
-    Ok(page.items.iter().any(|i| i.series_id == series_id))
-}
-
 /// 拉本地通知（新→旧）。
 pub fn notices(state: &AppState) -> AppResult<Vec<FollowNotice>> {
     state.store.follow_notices()
@@ -148,12 +140,7 @@ async fn refresh_baseline(state: &AppState, series_id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 启动通知检查定时器：先立即查一轮，之后每 `CHECK_INTERVAL` 一轮。
-/// 壳装配期调用一次（两壳共用）；任务常驻到进程结束。
-pub fn start_notice_loop(state: crate::app_state::AppState) {
-    drop(start_notice_task(state));
-}
-
+/// 启动通知检查任务：先立即查一轮，之后每 `CHECK_INTERVAL` 一轮。
 /// The owner must abort this task when its application session ends.
 pub fn start_notice_task(state: AppState) -> tokio::task::JoinHandle<()> {
     crate::runtime::spawn(async move {
@@ -165,7 +152,3 @@ pub fn start_notice_task(state: AppState) -> tokio::task::JoinHandle<()> {
         }
     })
 }
-
-#[cfg(test)]
-#[path = "follow_tests.rs"]
-mod tests;

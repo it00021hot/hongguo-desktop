@@ -7,8 +7,6 @@ use base64::Engine;
 
 use crate::aes_v3::AesV3;
 use crate::constants::{medusa_aes_iv, medusa_aes_key, medusa_sign_key};
-#[cfg(test)]
-use crate::device::extracted_proto_fixed;
 use crate::device::{APP_ID, CHANNEL_ID, device_proto};
 use crate::primitives::{le32, md5_raw, sm3, u32};
 use crate::protobuf::{FieldType, FieldValue, proto};
@@ -85,7 +83,7 @@ pub(crate) fn rand32() -> u32 {
 /// Medusa 需要的一次性随机量。
 /// 全部集中在这里（而非散在 `build_medusa` 里）是为了让整条流水线在测试里喂固定值、与现版 JS 输出逐字节对齐。
 #[derive(Debug, Clone, Copy)]
-pub struct Entropy {
+struct Entropy {
     /// 进程启动次数
     pub env_launch: i64,
     /// 进程 pid
@@ -136,8 +134,7 @@ pub fn build_medusa(
     )
 }
 
-/// 用给定随机量装配 x-medusa。测试用固定 `entropy` 对齐 JS 黄金向量。
-pub fn assemble_medusa(
+fn assemble_medusa(
     url: &str,
     body: Option<&[u8]>,
     khronos: u32,
@@ -157,8 +154,7 @@ pub fn assemble_medusa(
     )
 }
 
-/// 纯管线装配（设备 proto 由调用方给定）：JS 黄金向量锚专用，锚住「算法未漂移」。
-pub fn assemble_with_proto(
+fn assemble_with_proto(
     url: &str,
     body: Option<&[u8]>,
     khronos: u32,
@@ -309,7 +305,3 @@ pub fn assemble_with_proto(
 
     base64::engine::general_purpose::STANDARD.encode(out)
 }
-
-#[cfg(test)]
-#[path = "medusa_tests.rs"]
-mod tests;

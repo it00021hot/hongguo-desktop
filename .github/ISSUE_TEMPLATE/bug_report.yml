@@ -77,7 +77,7 @@ body:
       options:
         - macOS 安装包 dmg（Apple Silicon）
         - macOS 安装包 dmg（Intel）
-        - Windows 安装包（NSIS）
+        - Windows 安装包（NSH / Inno Setup）
         - 源码自行构建（make dev）
         - 其他
     validations:
@@ -119,8 +119,8 @@ body:
       description: |
         排查关键素材，尽量提供（注意先脱敏）：
         - 崩溃时数据目录下的 crash.log——
-          macOS: ~/Library/Application Support/hongguo-downloader/
-          Windows: %APPDATA%\hongguo-downloader\
+          macOS: ~/Library/Application Support/guava/
+          Windows: %APPDATA%\guava\
         - 开发者工具控制台报错（复现时打开 DevTools）
         - 界面截图 / 录屏（直接拖拽到本框）
       placeholder: 可附 crash.log 片段、报错截图或录屏链接

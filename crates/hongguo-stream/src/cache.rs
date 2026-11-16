@@ -62,17 +62,11 @@ struct StreamKey {
 #[derive(Default)]
 pub struct StreamCache {
     entries: Mutex<HashMap<StreamKey, Arc<StreamEntry>>>,
-    /// 「不指定档位」时上一轮解析到的档位：缓存按 (vid, 档位) 分条目，不指定档位就没有键可查，
-    /// 记下上一轮的答案让下一个请求直接命中，不必再发一次接口调用。
-    auto: Mutex<HashMap<String, u32>>,
     /// 当前正在看的 vid。prepare 时设置；逐出策略只保它 + 显式预取 + 最近几条。
     current: Mutex<String>,
     /// 显式预取的档位（沉浸流「下一部剧」），有界（`MAX_PREFETCH_MARKS`），
     /// 新标记挤掉最老的。逐出策略额外保这些条目；填充礼让也认它。
     prefetch: Mutex<Vec<(String, u32)>>,
-    /// 系统播放器已排队、即将接力的下一集。只允许一条：它可以在 `current`
-    /// 还是上一集时提前续填，避免 loader 读到头部预算上限后干等 30s。
-    next: Mutex<Option<(String, u32)>>,
 }
 
 /// 除当前集与显式预取外，再保留几条最近用过的流：信息流切剧的目标毫秒级来回弹，
@@ -134,13 +128,6 @@ impl StreamCache {
     /// 这一档的条目是否还在（取流失败会被删掉）。
     pub fn exists(&self, vid: &str, definition: u32) -> bool {
         self.get(vid, definition).is_some()
-    }
-
-    /// 缓存的内存占用（字节）与条目数：排障用，供壳的周期状态日志把内存涨幅拆到流缓存这一层。
-    pub fn stats(&self) -> (u64, usize) {
-        let entries = self.entries.lock();
-        let bytes = entries.values().map(|e| entry_weight(e)).sum();
-        (bytes, entries.len())
     }
 
     /// 这一档是否已经可以供 `<video>` 取数，可以的话带回它提供的全部档位。
@@ -238,18 +225,13 @@ impl StreamCache {
         self.retain_with(vid, KEEP_RECENT, RETAIN_BUDGET_BYTES);
     }
 
-    /// [`Self::retain_playing_set`] 的可注入形态（测试用）。
     fn retain_with(&self, vid: &str, keep_recent: usize, budget: u64) {
         let prefetch = self.prefetch.lock().clone();
-        let next = self.next.lock().clone();
         let mut entries = self.entries.lock();
         let is_marked = |k: &StreamKey| {
             prefetch
                 .iter()
                 .any(|(v, d)| v == &k.vid && *d == k.definition)
-                || next
-                    .as_ref()
-                    .is_some_and(|(v, d)| v == &k.vid && *d == k.definition)
         };
 
         let mut others: Vec<(StreamKey, std::time::Instant, u64)> = entries
@@ -293,26 +275,7 @@ impl StreamCache {
     pub fn set_current(&self, vid: &str) {
         *self.current.lock() = vid.to_string();
         self.prefetch.lock().retain(|(v, _)| v != vid);
-        *self.next.lock() = None;
         self.retain_playing_set(vid);
-    }
-
-    /// 标记系统播放器队列里即将接力的下一集（只保留一条）。
-    pub fn mark_next(&self, vid: &str, definition: u32) {
-        *self.next.lock() = Some((vid.to_string(), definition));
-    }
-
-    /// 这一条是否是系统播放器排队中的下一集。
-    pub fn is_next(&self, vid: &str, definition: u32) -> bool {
-        self.next
-            .lock()
-            .as_ref()
-            .is_some_and(|(v, d)| v == vid && *d == definition)
-    }
-
-    /// 离开播放页/预加载取消：撤掉「下一集」标记，别再让它无界占带宽。
-    pub fn clear_next(&self) {
-        *self.next.lock() = None;
     }
 
     /// 这一条是否还在预取标记里（填充让位判定用）。
@@ -357,17 +320,6 @@ impl StreamCache {
             })
     }
 
-    /// 同 vid 任一档位已就绪就带回 `(实际档位, 全部档位表)`——「不指定档位」又没有 auto 记录时的
-    /// 兜底命中：宁可复用别的档位，也好过把取流接口、建流、填头部整条链路再走一遍。
-    pub fn ready_any(&self, vid: &str) -> Option<(u32, Vec<VideoDefinition>)> {
-        let entries = self.entries.lock();
-        entries
-            .iter()
-            .filter(|(k, _)| k.vid == vid)
-            .find(|(_, e)| *e.filled.lock() > 0 || e.progressive.lock().is_some())
-            .map(|(k, e)| (k.definition, e.definitions.lock().clone()))
-    }
-
     /// 预取条目是否需要「转正续填」：渐进已注册但远没填满，且没有填充方。
     pub fn needs_resume(&self, vid: &str, definition: u32) -> bool {
         let Some(entry) = self.get(vid, definition) else {
@@ -394,249 +346,16 @@ impl StreamCache {
         Some((prog.sparse.clone(), prog))
     }
 
-    /// 这一集「不指定档位」时上次解析到的档位。
-    pub fn auto_definition(&self, vid: &str) -> Option<u32> {
-        self.auto.lock().get(vid).copied()
-    }
-
-    /// 记下这次实际生效的档位，供下一次「不指定档位」的请求直接命中。
-    pub fn remember_auto(&self, vid: &str, definition: u32) {
-        self.auto.lock().insert(vid.to_string(), definition);
-    }
-
-    /// 缓存状态：(条目数, 已缓存字节)。字节口径只含整集模式的明文缓冲，渐进条目的
-    /// 稀疏内存不计入（统计偏小）；当前唯一生产消费方只读条目数，够用。
+    /// Cache entries and their resident payload/plan byte cost, matching eviction accounting.
     pub fn status(&self) -> (usize, u64) {
         let guard = self.entries.lock();
-        let bytes: u64 = guard.values().map(|e| *e.filled.lock()).sum();
+        let bytes: u64 = guard.values().map(|entry| entry_weight(entry)).sum();
         (guard.len(), bytes)
     }
 
     /// 清空。
     pub fn clear(&self) {
         self.entries.lock().clear();
-        self.auto.lock().clear();
         self.prefetch.lock().clear();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn store_keeps_the_first_result_and_rejects_a_duplicate() {
-        let c = StreamCache::default();
-        assert!(c.store("v1", 1080, &[1u8; 8]), "第一次应写入");
-        assert!(!c.store("v1", 1080, &[2u8; 8]), "重复的那份应作废");
-        let entry = c.get("v1", 1080).expect("条目应存在");
-        assert_eq!(*entry.filled.lock(), 8, "不能被拼成两段");
-        assert!(entry.buffer.lock().iter().all(|b| *b == 1));
-    }
-
-    #[test]
-    fn ready_only_reports_a_fully_filled_entry() {
-        let c = StreamCache::default();
-        let def = VideoDefinition {
-            value: 1080,
-            width: 1920,
-            height: 1080,
-        };
-        c.set_definitions("v2", 1080, &[def]);
-        assert!(
-            c.ready("v2", 1080).is_none(),
-            "只有档位表、没有数据时不算就绪"
-        );
-        c.store("v2", 1080, &[7u8; 4]);
-        assert_eq!(c.ready("v2", 1080), Some(vec![def]));
-    }
-
-    #[test]
-    fn begin_fetch_grants_exactly_one_holder() {
-        let c = StreamCache::default();
-        assert!(c.begin_fetch("v1", 1080), "第一次应拿到取流权");
-        assert!(!c.begin_fetch("v1", 1080), "第二次必须被拒");
-        assert!(c.is_fetching("v1", 1080));
-        c.end_fetch("v1", 1080);
-        assert!(!c.is_fetching("v1", 1080));
-        assert!(c.begin_fetch("v1", 1080), "放开后应能重新拿到");
-    }
-
-    #[test]
-    fn fetching_is_tracked_per_stream() {
-        let c = StreamCache::default();
-        c.begin_fetch("a", 1080);
-        assert!(c.is_fetching("a", 1080));
-        assert!(!c.is_fetching("a", 720), "别的档位不受影响");
-        assert!(!c.is_fetching("b", 1080), "别的 vid 不受影响");
-    }
-
-    #[test]
-    fn next_marker_survives_until_the_next_current() {
-        let c = StreamCache::default();
-        c.mark_next("a", 1080);
-        assert!(c.is_next("a", 1080));
-        assert!(!c.is_next("a", 720));
-        assert!(!c.is_next("b", 1080));
-        c.set_current("a");
-        assert!(
-            !c.is_next("a", 1080),
-            "切上后 next 必须清掉，避免继续无界占带宽"
-        );
-    }
-
-    /// 免触碰的存在性检查：`get` 会刷新 LRU 指纹，断言里用它才不打乱时序。
-    fn present(c: &StreamCache, vid: &str, definition: u32) -> bool {
-        c.entries.lock().contains_key(&StreamKey {
-            vid: vid.to_string(),
-            definition,
-        })
-    }
-
-    #[test]
-    fn retain_keeps_current_marks_and_a_few_recent_others() {
-        let c = StreamCache::default();
-        c.store("cur", 1080, &[0u8; 10]);
-        c.store("marked", 1080, &[0u8; 10]);
-        c.mark_prefetch("marked", 1080);
-        for v in ["o1", "o2", "o3", "o4"] {
-            c.store(v, 1080, &[0u8; 10]);
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        c.retain_playing_set("cur");
-        assert!(present(&c, "cur", 1080), "当前集必留");
-        assert!(present(&c, "marked", 1080), "显式预取必留");
-        assert!(present(&c, "o4", 1080), "最近的在保留窗内");
-        assert!(present(&c, "o3", 1080), "最近的在保留窗内");
-        assert!(present(&c, "o2", 1080), "最近的在保留窗内");
-        assert!(!present(&c, "o1", 1080), "最旧的被逐出");
-
-        c.set_current("o4");
-        assert!(
-            present(&c, "cur", 1080),
-            "刚切走的上一部仍在保留窗内（挂载的 <video> 可能还在读它）"
-        );
-    }
-
-    #[test]
-    fn set_current_itself_runs_retain() {
-        // 连播接力只调 set_current；逐出必须嵌在里面，不能依赖 prepare。
-        let c = StreamCache::default();
-        c.store("big-cur", 1080, &[0u8; 10]);
-        for i in 0..6 {
-            c.store(&format!("f{i}"), 1080, &[0u8; 10]);
-            std::thread::sleep(std::time::Duration::from_millis(3));
-        }
-        c.set_current("big-cur");
-        assert!(present(&c, "big-cur", 1080), "当前集必留");
-        assert!(!present(&c, "f0", 1080));
-        assert!(!present(&c, "f1", 1080));
-        assert!(!present(&c, "f2", 1080));
-        assert!(present(&c, "f3", 1080));
-        assert!(present(&c, "f4", 1080));
-        assert!(present(&c, "f5", 1080));
-    }
-
-    #[test]
-    fn retain_window_evicts_oldest_beyond_keep_recent() {
-        let c = StreamCache::default();
-        c.store("big-cur", 1080, &[0u8; 10]);
-        for i in 0..6 {
-            c.store(&format!("f{i}"), 1080, &[0u8; 10]);
-            std::thread::sleep(std::time::Duration::from_millis(3));
-        }
-        c.retain_playing_set("big-cur");
-        assert!(present(&c, "big-cur", 1080), "当前集必留");
-        assert!(!present(&c, "f0", 1080));
-        assert!(!present(&c, "f1", 1080));
-        assert!(!present(&c, "f2", 1080));
-        assert!(present(&c, "f3", 1080));
-        assert!(present(&c, "f4", 1080));
-        assert!(present(&c, "f5", 1080));
-    }
-
-    #[test]
-    fn retain_budget_evicts_oldest_first_until_under_budget() {
-        let c = StreamCache::default();
-        c.store("cur", 1080, &[0u8; 30]);
-        for i in 0..4 {
-            c.store(&format!("b{i}"), 1080, &[0u8; 10]);
-            std::thread::sleep(std::time::Duration::from_millis(3));
-        }
-        c.retain_with("cur", 4, 50);
-        assert!(present(&c, "cur", 1080), "当前集即便最大也豁免");
-        assert!(!present(&c, "b0", 1080));
-        assert!(!present(&c, "b1", 1080));
-        assert!(present(&c, "b2", 1080), "回到预算内就停手");
-        assert!(present(&c, "b3", 1080));
-    }
-
-    #[test]
-    fn prefetch_marks_are_bounded() {
-        let c = StreamCache::default();
-        for i in 0..super::MAX_PREFETCH_MARKS + 2 {
-            c.mark_prefetch(&format!("p{i}"), 1080);
-        }
-        assert_eq!(c.prefetch.lock().len(), super::MAX_PREFETCH_MARKS);
-        assert!(
-            !c.prefetch
-                .lock()
-                .iter()
-                .any(|(v, _)| v == "p0" || v == "p1"),
-            "最老的标记被挤出"
-        );
-        c.set_current("p3");
-        assert!(c.prefetch.lock().iter().all(|(v, _)| v != "p3"));
-        c.mark_prefetch("px", 720);
-        c.remove("px", 720);
-        assert!(c.prefetch.lock().iter().all(|(v, _)| v != "px"));
-    }
-
-    #[test]
-    fn ready_any_returns_any_ready_definition_of_the_same_vid() {
-        let c = StreamCache::default();
-        assert!(c.ready_any("v-any").is_none(), "没有条目时无值");
-        c.set_definitions("v-any", 720, &[]);
-        assert!(c.ready_any("v-any").is_none(), "只有档位表不算就绪");
-        c.store("v-any", 720, &[0u8; 8]);
-        let (def, _) = c.ready_any("v-any").expect("有明文条目就应命中");
-        assert_eq!(def, 720);
-    }
-
-    #[test]
-    fn auto_definition_lets_the_next_untargeted_request_hit_the_cache() {
-        let c = StreamCache::default();
-        assert_eq!(c.auto_definition("v1"), None);
-        c.remember_auto("v1", 1080);
-        assert_eq!(c.auto_definition("v1"), Some(1080));
-    }
-
-    #[test]
-    fn remove_clears_the_fetch_flag_with_the_entry() {
-        let c = StreamCache::default();
-        c.begin_fetch("v1", 1080);
-        c.remove("v1", 1080);
-        assert!(!c.is_fetching("v1", 1080));
-        assert!(c.get("v1", 1080).is_none());
-    }
-
-    #[test]
-    fn status_counts_entries_and_bytes() {
-        let c = StreamCache::default();
-        c.store("a", 1080, &[0u8; 100]);
-        c.store("b", 1080, &[0u8; 50]);
-        let (count, bytes) = c.status();
-        assert_eq!(count, 2);
-        assert_eq!(bytes, 150);
-    }
-
-    #[test]
-    fn clear_removes_entries_and_remembered_definitions() {
-        let c = StreamCache::default();
-        c.store("a", 1080, &[0u8; 10]);
-        c.remember_auto("a", 1080);
-        c.clear();
-        assert_eq!(c.status().0, 0);
-        assert_eq!(c.auto_definition("a"), None);
     }
 }

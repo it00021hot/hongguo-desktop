@@ -8,8 +8,8 @@
 ## 整合与迁移
 
 - service 归档只接受有有效视频样本的 HEVC 输出，旧 H.264 完成缓存失效重建，防止误用旧中间文件。
-- Tauri/GPUI/NSH 的能力字段同步为 `hevcHwEncoder`；设置与合并文案明确 HEVC 输出，移除本地 H.264 例外。
-- GPUI 的系统视频工厂与 macOS/Windows 原生视频 presenter 删除，保留软解帧呈现、音频控制、暂停/倍速/定位。
+- NSH 的能力字段统一为 `hevcHwEncoder`；设置与合并文案明确 HEVC 输出，移除本地 H.264 例外。
+- 旧壳的系统视频工厂与 macOS/Windows 原生视频 presenter 随旧壳删除；NSH 保留软解帧呈现、音频控制、暂停/倍速/定位。
 - NSH Apple/Android/Windows 只接受已注册的软解帧源；缺帧源报错，不把原视频交给系统播放器。
 - HEVC 编码必须真实试编并核对输出；不能将 HEVC 解码能力当成编码能力。缺编码器时仍可播放和原流无损合并，
   统一编码合并明确报告后端不可用，不回退 H.264，也不自动下载安装扩展。
@@ -20,7 +20,7 @@
 - `hongguo-media::mux`：移除 H.264/avcC 写出，实现 `hvc1`/`hvcC`，完整 VPS/SPS/PPS 数组；从实际 SPS 读取 profile/tier/level、色度、位深和时域层数。`hvc1` 样本剥离参数集，其余 NAL 转四字节长度前缀。
 - 写出入口为 `mux_hevc` / `ArchiveHevc`；后者分批落盘、仅累积样本元数据，必须调用 `finish` 封存为带正常 `stbl` 的 faststart MP4。完成时顺序拷贝样本，不累积整集压缩载荷，不对外暴露渐进播放/片段读取接口。平台共用 `with_audio` 入口签名保留，AAC 字节、PTS/DTS、ctts、样本时长与 edit 语义保持。
 - `hongguo-media-platform`：ByteVC2 解帧后输入各平台 HEVC encoder；ffmpeg 探测/参数只选择 HEVC encoder，输出标记 `hvc1`。平台门面使用 `transcode_hevc` / `hevc_hw_encoder_available`，能力字段使用 `hevc_hw_encoder`（wire `hevcHwEncoder`）。
-- `hongguo-media-platform-api`：`I420View` / `EncodedVideo` 字段保持，编码输出统一 HEVC Annex-B；删除 AVC 输入解码变体，H.264 输入由业务层明确拒绝。
+- `hongguo-media-types::encoding`（原 `hongguo-media-platform-api`，已并入媒体类型层）：`I420View` / `EncodedVideo` 字段保持，编码输出统一 HEVC Annex-B；删除 AVC 输入解码变体，H.264 输入由业务层明确拒绝。
 - 删除零消费者 `hongguo-media::h264` 参数集读取模块，拒绝 AVC 输出的测试允许保留 AVC 标识。
 
 ## 缓存与平台边界

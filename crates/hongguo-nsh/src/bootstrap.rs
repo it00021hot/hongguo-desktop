@@ -45,6 +45,9 @@ pub(crate) async fn open() -> AppResult<Arc<Session>> {
         .map_err(|error| AppError::Internal(error.to_string()))??;
     let media = MediaServer::start().await.map_err(AppError::Internal)?;
     hongguo_service::device::arm_cold_start();
+    // 封面/头像缓存自动清理：启动跑一轮、每小时一轮，策略每轮现读设置
+    // （默认两档全 0 = 不动用户缓存；手动「磁盘清理」页不受影响）。
+    hongguo_service::storage_service::cache::start_auto_clean_loop(state.clone());
     let registration = hongguo_service::runtime::spawn({
         let state = state.clone();
         async move { hongguo_service::device::ensure_registered(&state).await }
@@ -65,7 +68,7 @@ fn open_state() -> AppResult<AppState> {
         })?;
         hongguo_store::paths::set_absolute_data_root(root);
     } else {
-        hongguo_store::paths::set_shell_data_root("hongguo-nsh");
+        hongguo_store::paths::set_shell_data_root("guava");
     }
     let store = hongguo_service::device::open_application_store(&hongguo_store::paths::db_file())?;
     let settings = match store.settings()? {
@@ -96,20 +99,6 @@ fn open_state() -> AppResult<AppState> {
 }
 
 impl Session {
-    #[cfg(test)]
-    pub(crate) async fn for_test(
-        state: AppState,
-        history: Vec<hongguo_api::history::WatchHistoryItem>,
-    ) -> AppResult<Arc<Self>> {
-        Ok(Arc::new(Self {
-            personal: crate::personal_sources::PersonalSources::with_test_history(&state, history),
-            state,
-            media: MediaServer::start().await.map_err(AppError::Internal)?,
-            registration: hongguo_service::runtime::spawn(async {}),
-            follow_notices: OnceLock::new(),
-        }))
-    }
-
     pub(crate) fn start_notice_checks(&self) {
         self.follow_notices
             .get_or_init(|| hongguo_service::follow_service::start_notice_task(self.state.clone()));

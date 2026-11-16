@@ -1,4 +1,4 @@
-//! 归档转码结果与文件读取。HEVC 封装在 [`crate::mux`]，各平台编码器和 ffmpeg 产物使用同一输出契约。
+//! 平台归档转码结果与文件读取。HEVC 封装在 [`crate::mux`]。
 
 use std::path::Path;
 
@@ -9,7 +9,7 @@ use hongguo_common::{AppError, AppResult};
 pub struct TranscodeResult {
     /// 转码产物的路径
     pub output_path: String,
-    /// 实际走的后端；`None` = 机器上没有任何可用后端（平台编码器不可用且没装 ffmpeg）
+    /// 归档编码后端；缓存产物在当前设备无编码器时为 `None`。
     pub backend: Option<crate::Backend>,
 }
 

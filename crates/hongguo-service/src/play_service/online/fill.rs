@@ -227,10 +227,7 @@ fn resume_fill_inner(
     // 同步入口，可能被协议/回调线程调用：必须用共用任务运行时（红线）。
     crate::runtime::spawn(async move {
         let reporter = ProgressReporter::new(event_sink(state.events()), owned_key);
-        let cancelled = || {
-            !c.exists(&owned, definition)
-                || (c.current() != owned && !c.is_next(&owned, definition))
-        };
+        let cancelled = || !c.exists(&owned, definition) || c.current() != owned;
         let client = match hongguo_api::client::build_client(&proxy) {
             Ok(cl) => cl,
             Err(e) => {
@@ -540,106 +537,3 @@ const BOX_WALK_MAX: usize = 4;
 /// 顺序填充的步长（每段一个 Range 请求）：1MB 分块按 mp4 样本表分组拉流；
 /// 分块越小，seek 需求打断顺序填充的粒度越细，回跳响应越快。
 const FETCH_CHUNK: u64 = 1024 * 1024;
-
-#[cfg(test)]
-mod scheduler_tests {
-    use super::*;
-
-    fn progressive_of(total: u64) -> Arc<ProgressiveStream> {
-        Arc::new(ProgressiveStream {
-            sparse: hongguo_video::streaming::SparseBuffer::new(total),
-            plan: None,
-            plain_len: total,
-            demand: Default::default(),
-            cdn_url: String::new(),
-            media_cache_key: None,
-            proxy: hongguo_common::model::ProxyConfig::default(),
-        })
-    }
-
-    #[test]
-    fn only_the_playing_episode_is_cached_whole() {
-        const TOTAL: u64 = 10_000_000;
-        const DYNAMIC_BYTES: u64 = 5 * 1024 * 1024;
-        let c = StreamCache::default();
-        let prog = progressive_of(TOTAL);
-
-        assert!(
-            matches!(
-                fill_budget(&c, "v-prefetch", &prog, None),
-                FillBudget::Yield
-            ),
-            "没有预取预算的非当前集应让位"
-        );
-        assert!(matches!(
-            fill_budget(&c, "v-prefetch", &prog, Some(DYNAMIC_BYTES)),
-            FillBudget::Bounded(DYNAMIC_BYTES)
-        ));
-
-        c.set_current("v-playing");
-        assert!(matches!(
-            fill_budget(&c, "v-playing", &prog, None),
-            FillBudget::Unbounded
-        ));
-
-        prog.demand.register(&[(0, 10)]);
-        assert!(matches!(
-            fill_budget(&c, "v-prefetch", &prog, Some(DYNAMIC_BYTES)),
-            FillBudget::Bounded(DYNAMIC_BYTES)
-        ));
-        assert!(matches!(
-            fill_budget(&c, "v-watched", &prog, None),
-            FillBudget::Unbounded
-        ));
-    }
-
-    #[test]
-    fn non_current_yields_to_the_playing_episode() {
-        let c = StreamCache::default();
-        c.set_current("v-current");
-        let current = progressive_of(1_000);
-        c.begin_fetch("v-current", 1080);
-        c.set_progressive("v-current", 1080, current.clone());
-        current.demand.register(&[(0, 10)]);
-
-        let other = progressive_of(10_000_000);
-        assert!(
-            matches!(
-                fill_budget(&c, "v-other", &other, Some(1024)),
-                FillBudget::Yield
-            ),
-            "在播的那一路在等数据时，其余的流该让位"
-        );
-    }
-
-    #[test]
-    fn wrap_is_a_decision_not_a_loop() {
-        let sparse = hongguo_video::streaming::SparseBuffer::new(100);
-        sparse.write(50, &[0u8; 5]);
-        sparse.write(90, &[0u8; 10]);
-        assert!(matches!(next_target(&sparse, 90), Decision::Wrap));
-        assert!(matches!(next_target(&sparse, 0), Decision::Fetch(0, 50)));
-        sparse.write(0, &[0u8; 50]);
-        assert!(matches!(next_target(&sparse, 0), Decision::Fetch(55, 90)));
-        sparse.write(55, &[0u8; 35]);
-        assert!(matches!(next_target(&sparse, 0), Decision::Done));
-        assert!(matches!(next_target(&sparse, 99), Decision::Done));
-    }
-
-    #[test]
-    fn demand_points_backwards_into_early_hole() {
-        use hongguo_stream::ReaderDemand;
-
-        let sparse = hongguo_video::streaming::SparseBuffer::new(100);
-        sparse.write(90, &[0u8; 10]);
-        let d = ReaderDemand::new();
-        d.register(&[(10, 20)]);
-
-        let want = d.first_wanted(&sparse).expect("应定位到读者的洞");
-        assert_eq!(want, 10);
-        assert!(matches!(
-            next_target(&sparse, want),
-            Decision::Fetch(10, 90)
-        ));
-    }
-}

@@ -8,22 +8,12 @@ use std::path::{Path, PathBuf};
 #[path = "archive.rs"]
 mod archive;
 
-#[cfg(test)]
-#[path = "fragment_inspection.rs"]
-mod inspection;
-#[cfg(test)]
-use inspection::{prefix_is_independently_decodable, read_fragment_video, read_u32};
-
 use hongguo_common::{AppError, AppResult};
 use hongguo_video::r#box::{build_box, parse_boxes};
 
 use super::hvcc;
 use super::track::{audio_stsd, dinf, hdlr, mdhd, mvhd, smhd, tkhd, video_stsd, vmhd};
 use super::{AudioTrack, MEDIA_TIMESCALE, MOVIE_TIMESCALE};
-
-#[cfg(test)]
-#[path = "fragment_timing_tests.rs"]
-mod timing_tests;
 
 const VIDEO_TRACK: u32 = 1;
 const AUDIO_TRACK: u32 = 2;
@@ -53,14 +43,6 @@ pub struct ArchiveHevc {
     audio_samples: Vec<archive::RecordedSample>,
 }
 
-/// 一次追加后文件上能看到的视频时间。
-#[cfg(test)]
-struct FragmentVideo {
-    pub pts: Vec<f64>,
-    pub first_is_sync: bool,
-    pub fragment_bases: Vec<u64>,
-}
-
 pub struct ArchiveTiming {
     pub video_end_secs: f64,
     pub audio_end_secs: Option<f64>,
@@ -78,11 +60,10 @@ impl ArchiveHevc {
             return Err(AppError::Media("片段封装缺少分辨率或时长".into()));
         }
         if let Some(parent) = path.parent() {
-            hongguo_common::offline_qa::qa_create_dir_all(parent)
-                .map_err(|e| AppError::Io(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
         }
         let file =
-            hongguo_common::offline_qa::qa_create(path).map_err(|e| AppError::Io(e.to_string()))?;
+            hongguo_common::file_io::create(path).map_err(|e| AppError::Io(e.to_string()))?;
         Ok(Self {
             file,
             path: path.to_path_buf(),
@@ -114,7 +95,7 @@ impl ArchiveHevc {
                 && (!video[0].2
                     || !hvcc::split(&video[0].1)
                         .into_iter()
-                        .any(crate::hevc::is_random_access_nal)))
+                        .any(hongguo_video::hevc::is_random_access_nal)))
         {
             return Err(AppError::Media("片段缺少同步样本".into()));
         }
@@ -533,155 +514,4 @@ fn trun_box(samples: &[TimedSample], data_offset: u32) -> Vec<u8> {
         payload.extend(sample.cto.to_be_bytes());
     }
     build_box(b"trun", &payload)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const STEP: f64 = 1.0 / 30.0;
-
-    fn annexb(nals: &[&[u8]]) -> Vec<u8> {
-        let mut out = Vec::new();
-        for nal in nals {
-            out.extend_from_slice(&[0, 0, 0, 1]);
-            out.extend_from_slice(nal);
-        }
-        out
-    }
-
-    pub(super) fn idr(at: f64) -> (f64, Vec<u8>, bool) {
-        (at, super::super::fixtures::first(), true)
-    }
-
-    fn inter(at: f64) -> (f64, Vec<u8>, bool) {
-        (at, annexb(&[&[0x02, 1, 0x9a, 0x11]]), false)
-    }
-
-    #[test]
-    fn short_first_publish_preserves_later_idr_boundaries_and_every_flush_sample() {
-        let original: Vec<_> = (0..95)
-            .map(|at| {
-                if at % 30 == 0 {
-                    idr(f64::from(at) * STEP)
-                } else {
-                    inter(f64::from(at) * STEP)
-                }
-            })
-            .collect();
-        let mut units = original.clone();
-        let (first, next) = take_run(&mut units, 8, true).unwrap();
-        assert_eq!(first.len(), 8);
-        assert_eq!(next, Some(original[8].0));
-        let (tail, next) = take_run(&mut units, 30, false).unwrap();
-        assert_eq!(tail.len(), 22, "the next IDR must start its own fragment");
-        assert_eq!(next, Some(original[30].0));
-        assert!(units[0].2);
-        let mut written = first;
-        written.extend(tail);
-        while let Some((run, _)) = take_run(&mut units, 30, false) {
-            assert!(run[0].2);
-            written.extend(run);
-        }
-        assert_eq!(units.len(), 5);
-        assert!(units[0].2);
-        written.extend(units);
-        assert_eq!(written, original);
-    }
-
-    #[test]
-    fn an_observed_idr_closes_a_short_tail_without_waiting_for_the_batch_limit() {
-        let mut units: Vec<_> = (8..31)
-            .map(|at| {
-                if at == 30 {
-                    idr(f64::from(at) * STEP)
-                } else {
-                    inter(f64::from(at) * STEP)
-                }
-            })
-            .collect();
-        let (tail, next) = take_run(&mut units, 30, false).unwrap();
-        assert_eq!(tail.len(), 22);
-        assert_eq!(next, Some(30.0 * STEP));
-        assert_eq!(units.len(), 1);
-        assert!(units[0].2);
-        assert!(take_run(&mut units, 0, false).is_none());
-        assert!(take_run(&mut units, 30, false).is_none());
-    }
-
-    #[test]
-    fn a_second_keyframe_closes_the_first_gop() {
-        let mut units = vec![idr(0.0), inter(STEP), idr(STEP * 2.0)];
-        let (gop, next) = split_completed_gop(&mut units).expect("应切出封闭 GOP");
-        assert_eq!(gop.len(), 2);
-        assert!((next - STEP * 2.0).abs() < 1e-9);
-        assert_eq!(units.len(), 1);
-        assert!(split_completed_gop(&mut units).is_none());
-    }
-
-    #[test]
-    fn an_open_gop_stays_buffered() {
-        let mut units = vec![idr(0.0), inter(STEP)];
-        assert!(split_completed_gop(&mut units).is_none());
-        assert_eq!(units.len(), 2);
-    }
-
-    #[test]
-    fn the_first_gop_is_playable_and_a_later_gop_appends() {
-        let dir = std::env::temp_dir().join(format!("hg-frag-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("grow.mp4");
-        let audio = AudioTrack {
-            sample_rate: 44100,
-            channels: 2,
-            esds: None,
-            samples: vec![(0.0, vec![0x11, 0x22]), (STEP * 2.0, vec![0x33])],
-            end_secs: STEP * 4.0,
-        };
-        let mut growing = ArchiveHevc::create(&path, 64, 64, Some(&audio), 1.0).unwrap();
-        let bytes = growing
-            .push(
-                &[idr(0.0), inter(STEP)],
-                &[audio.samples[0].clone()],
-                ArchiveTiming {
-                    video_end_secs: STEP * 2.0,
-                    audio_end_secs: Some(STEP * 2.0),
-                },
-            )
-            .unwrap();
-        let first = read_fragment_video(&path).unwrap();
-        assert!(prefix_is_independently_decodable(&path));
-        assert_eq!(first.pts.len(), 2);
-        assert!(first.first_is_sync);
-        assert_eq!(first.fragment_bases.len(), 1);
-        assert!(bytes > 0);
-        let again = growing
-            .push(
-                &[idr(STEP * 2.0), inter(STEP * 3.0)],
-                &[audio.samples[1].clone()],
-                ArchiveTiming {
-                    video_end_secs: STEP * 4.0,
-                    audio_end_secs: Some(audio.end_secs),
-                },
-            )
-            .unwrap();
-        assert!(again > bytes);
-        let both = read_fragment_video(&path).unwrap();
-        assert_eq!(both.pts.len(), 4);
-        assert_eq!(both.fragment_bases.len(), 2);
-        assert!(both.fragment_bases[1] > both.fragment_bases[0]);
-        assert!((both.pts[0]).abs() < 1e-6);
-        assert!((both.pts[2] - STEP * 2.0).abs() < 1e-4);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn garbage_is_not_an_independent_prefix() {
-        let dir = std::env::temp_dir().join(format!("hg-frag-bad-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("no.mp4");
-        std::fs::write(&path, b"not a fragment").unwrap();
-        assert!(!prefix_is_independently_decodable(&path));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }

@@ -13,7 +13,7 @@
 增强关闭时由同一个 AVPlayer 的原画层显示，不初始化 GPU；开启后只切换像素处理图，不换播放器、
 播放地址或时钟。首个真实增强帧成功后才报告增强就绪。
 
-`hongguo-enhancement` 负责纯设置、CNNx2M/锐化 GPU 运算与失败策略；
+`hongguo-video-gpu::enhancement` 负责纯设置、CNNx2M/锐化 GPU 运算与失败策略；
 `hongguo-nsh-video-api` 定义中立的 props/events/seek 身份；
 `hongguo-nsh-video-{macos,ios,windows,android}` 负责各平台原生呈现和注册，
 其中 macOS/iOS 的 AVFoundation/Metal 像素处理归 `hongguo-nsh-video-apple`。
@@ -226,7 +226,7 @@ Android 的 jni 0.21、glow 0.17。按平台裁剪 feature；不升级 NSH，不
   EOF 不恢复日志另存未覆盖。平台 release strict 已通过，整个宿主最新 strict 另记
   `target/nsh-pixel-android-host-clippy.log`。运行环境为 Android 37 arm64/GLES 3.1
   模拟器，不能代替物理机驱动、业务 App 完整界面或四端发布验收。
-- 同算法 GPU 合成像素验证由 `hongguo-enhancement` 的独立 probe 负责；
+- 历史阶段同算法 GPU 合成像素验证由原 `hongguo-enhancement` 的独立 probe 负责；该入口现已移除，生产管线已并入 `hongguo-video-gpu::enhancement`。
   不能代替实际视频呈现、色彩/方向、同步、全屏与小窗验证。
 - macOS 正式独立 profile 的 Relay 单项通过：最后第 80 集真实 seek 到 125/128 秒，
   等实际 End 后切到另一剧第 1 集，并观测新播放器原生时钟从 2 推进到 4 秒。

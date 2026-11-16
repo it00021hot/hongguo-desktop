@@ -5,7 +5,7 @@
 use std::future::Future;
 use std::sync::OnceLock;
 
-use tokio::runtime::{Handle, Runtime};
+use tokio::runtime::Runtime;
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
@@ -36,9 +36,4 @@ where
     R: Send + 'static,
 {
     runtime().spawn_blocking(f)
-}
-
-/// 运行时 handle（少数需要显式持有运行时的设施，如跨线程回调里派发）。
-pub fn handle() -> Handle {
-    runtime().handle().clone()
 }

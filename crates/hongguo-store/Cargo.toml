@@ -24,10 +24,3 @@ log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = "0.4"
-
-[features]
-# 测试辅助件（`paths::ScopedDataDir`：把数据目录重定向到临时目录的守卫）：
-# 本 crate 与下游 crate 的测试都要用（落盘用例不能写进用户真实 %APPDATA%），
-# 而依赖 crate 对下游以非 test 方式编译——`#[cfg(test)]` 对下游不可见，用
-# feature 显式开启可避免测试代码常驻生产构建。下游在 [dev-dependencies] 里带此 feature。
-test-support = []
