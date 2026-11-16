@@ -31,5 +31,6 @@ Business requests go through `hongguo-service`; NSH has no direct API-client dep
 The workspace contains 29 crates: encoding contracts belong to media types, enhancement to video GPU, and HEVC parsing to the container layer.
 Global shortcuts, system notifications, desktop window operations and translations use native NSH APIs; platform supplements cover capabilities the framework does not expose.
 See [project structure](docs/project-structure.md) and the [NSH development guide](.agents/skills/hongguo-dev/references/nsh.md).
+The current release candidate is `0.7.0`. Desktop CI builds Windows x64, Apple Silicon and Intel macOS packages using the pinned NSH CLI. Version tags create draft releases only. Windows is unsigned; macOS is ad hoc signed without notarization. Installation acceptance and final publication remain manual; see the [desktop release guide](docs/desktop-release.md).
 The Tauri/GPUI shells, their legacy players and the WebView frontend have been removed. Their complete backup is
 [`codex/backup-tauri-final`](https://github.com/it00021hot/hongguo-desktop/tree/codex/backup-tauri-final).

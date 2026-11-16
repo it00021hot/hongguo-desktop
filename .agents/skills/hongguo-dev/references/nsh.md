@@ -56,6 +56,8 @@ iOS 需要完整 Xcode，最低 16.0。设备签名通过 NSH `--sign` 与 `--pr
 
 ## 结构与生命周期
 
+桌面产物由可复用 `.github/workflows/nsh-desktop.yml` 统一构建；`release.yml` 校验版本 tag 后复用 CI，并创建草稿 Release。版本、原生归档、签名状态与 SHA-256 门禁见 [桌面发版说明](../../../../docs/desktop-release.md)。不在普通 push 上创建远端 Release。
+
 CI 分开执行工具格式检查、Windows/macOS 三目标工作区构建与严格 Clippy、NSH 的 Windows/macOS/Android/iOS 模拟器打包。Android 正式签名可配置 `NSH_ANDROID_KEYSTORE_BASE64`、`NSH_ANDROID_KEY_ALIAS` 和 `NSH_KEYSTORE_PASSWORD` secrets；缺省仍是框架调试签名，不能当作商店发布验收。iOS 真机身份与 profile、macOS Developer ID/公证、Windows Authenticode 不凭空创建，均需使用方提供实际凭证并单独验收。本轮不上传或发布应用。
 
 共享界面与服务装配归 `hongguo-nsh`。`features/<功能>/presentation` 保存专用呈现，`ui` 保存共享控件，`shell` 保存窗口和导航；业务只通过 service。详见 `docs/project-structure.md` 与 `crates/hongguo-nsh/DESIGN.md`。

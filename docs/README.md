@@ -23,6 +23,7 @@
 | [nsh-softdec-integration-plan.md](./nsh-softdec-integration-plan.md) | 内置解码契约（帧供给协议与四端呈现）；DirectSession 章节已随 softdec 删除过期 |
 | [nsh-shell-plan.md](./nsh-shell-plan.md) | NSH 四端壳实施方案（实施中，Linux/Web 后续迭代） |
 | [nsh-windows-cross-check.md](./nsh-windows-cross-check.md) | macOS 宿主上交叉检查 Windows MSVC 目标的手册 |
+| [desktop-release.md](./desktop-release.md) | NSH 桌面 CI、版本检查、草稿发版与产物验收 |
 | [hevc-archive-migration.md](./hevc-archive-migration.md) | HEVC 归档/合并契约（hvc1/hvcC、ArchiveHevc、marker） |
 | [nsh-feature-parity.md](./nsh-feature-parity.md) | NSH 功能验收进度与缺口（对齐基准 Tauri 壳已移至备份分支） |
 | [req-hg-003-playback-parity.md](./req-hg-003-playback-parity.md) | 播放对齐调查交接、Craft 证据与运行时验收状态（进行中） |

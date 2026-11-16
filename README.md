@@ -27,6 +27,10 @@ Windows 使用 `--target windows`，NSH 检测到 Inno Setup 时生成安装器�
 Windows 扩展 HEVC 优先 D3D11 VLD，Main10 使用 P010；实际硬解不可用才回退软解，不使用 FFmpeg。
 平台实际验证范围见 [解码验证记录](docs/nsh-decoder-validation.md)。
 
+## 桌面发版准备
+
+当前候选版本为 `0.7.0`。CI 使用固定 NSH CLI 构建 Windows x64、Apple Silicon 和 Intel Mac 产物，版本 tag 触发完整检查后仅创建草稿 Release。Windows 暂不做 Authenticode 签名，Mac 为 ad hoc 签名、未公证；下载与正式发布前需人工安装验收。版本、产物和操作步骤见 [桌面发版说明](docs/desktop-release.md)。
+
 应用标识为 `com.guava.app`。Windows 数据目录为 `%APPDATA%\guava`，macOS 为 `~/Library/Application Support/guava`，数据库为 `guava.db`；`GUAVA_DATA_DIR` 可显式覆盖数据根。下载位于所选下载根下的 `guava/<剧名>`。移动端使用新应用 ID 的私有容器。旧版数据保留在原处，不自动迁移或删除。
 
 共用图标、表情和语言资源位于 `assets/`；NSH 界面与装配在 `crates/hongguo-nsh`。
