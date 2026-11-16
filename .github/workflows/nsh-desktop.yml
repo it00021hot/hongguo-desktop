@@ -47,22 +47,26 @@ jobs:
             . -> target
             vendor/nsh -> ../../target/nsh-cli
       - name: Prepare authenticated native SDK
-        shell: bash
+        shell: pwsh
         run: cargo build-tool setup '${{ matrix.triple }}'
       - name: Prepare the pinned Chinese installer compiler
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/ci-prepare-windows.ps1
       - name: Build the repository NSH CLI
-        shell: bash
+        shell: pwsh
         run: |
           cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
-          echo "$PWD/target/nsh-cli/debug" >> "$GITHUB_PATH"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$PWD/target/nsh-cli/debug" >> $env:GITHUB_PATH
       - name: Package through NSH
-        shell: bash
-        run: nsh package crates/hongguo-nsh --target '${{ matrix.target }}' ${{ matrix.args }} --out 'target/packages/${{ matrix.triple }}'
+        shell: pwsh
+        run: |
+          $packageArgs = @('package', 'crates/hongguo-nsh', '--target', '${{ matrix.target }}', '--out', 'target/packages/${{ matrix.triple }}')
+          if ('${{ matrix.args }}') { $packageArgs += '${{ matrix.args }}'.Split(' ') }
+          nsh @packageArgs
       - name: Audit and archive release artifacts
-        shell: bash
+        shell: pwsh
         run: cargo build-tool release-assets '${{ matrix.triple }}' 'target/packages/${{ matrix.triple }}' 'target/release-assets/${{ matrix.triple }}'
       - uses: actions/upload-artifact@v7.0.2
         with:
