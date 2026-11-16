@@ -34,6 +34,9 @@ impl DecoderPermit {
         let budget = budget();
         let threads = (requested as usize).clamp(1, budget.limit);
         let mut used = budget.used.lock();
+        if *used + threads > budget.limit {
+            log::debug!(target: "hongguo_playback::decoder", "threadBudget waiting availableThreads={} usedThreads={} requestedThreads={threads}", budget.limit, *used);
+        }
         while *used + threads > budget.limit && !cancelled.load(Ordering::Acquire) {
             budget.changed.wait(&mut used);
         }
@@ -60,5 +63,7 @@ impl Drop for DecoderPermit {
 }
 
 pub(super) fn wake() {
-    budget().changed.notify_all();
+    let budget = budget();
+    let _used = budget.used.lock();
+    budget.changed.notify_all();
 }

@@ -84,6 +84,10 @@ impl FrameSource for Frames {
             .map_err(|error| error.to_string())
     }
 
+    fn suspend_decoder(&self) {
+        self.session.suspend_decoder();
+    }
+
     fn reject_decoder(&self, detail: &str) -> Result<(), String> {
         self.session
             .reject_decoder(detail.to_owned())

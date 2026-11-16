@@ -81,7 +81,7 @@ pub(super) fn run(shared: &Shared) -> AppResult<()> {
         match decode(shared, &job) {
             Ok(()) => {
                 let mut state = shared.state.lock();
-                if state.epoch == job.epoch {
+                if state.epoch == job.epoch && !job.cancel.load(Ordering::Acquire) {
                     state.video_done = true;
                     shared.changed.notify_all();
                 }

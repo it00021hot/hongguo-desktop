@@ -98,6 +98,7 @@ impl Direct {
     pub fn pause_if_owner(&self) -> Result<(), VideoError> {
         self.lease.pause_if_owner().map(|_| ()).map_err(error)
     }
+
     pub fn is_owner(&self) -> Result<bool, VideoError> {
         self.lease.is_control_owner().map_err(error)
     }
@@ -199,6 +200,15 @@ impl Direct {
             self.last_submission = Some((generation, serial));
         }
         Ok(())
+    }
+}
+
+impl Drop for Direct {
+    fn drop(&mut self) {
+        let _ = self.lease.pause_if_owner();
+        if let Err(error) = self.lease.suspend_decoder_if_owner() {
+            log::debug!("[video] retiring decoder consumer: {error}");
+        }
     }
 }
 

@@ -176,7 +176,9 @@ impl PlaybackSession {
             != device
                 .as_ref()
                 .map(|device| (device.kind(), device.device(), device.generation()));
-        if changed && state.decoder_bound {
+        if (changed && state.decoder_bound)
+            || (!state.decoder_bound && state.cancel.load(Ordering::Acquire))
+        {
             self.shared.refresh(&mut state)?;
             let target = state.position;
             self.shared.restart(&mut state, target)?;
@@ -188,6 +190,23 @@ impl PlaybackSession {
         state.decoder_bound = true;
         self.shared.changed.notify_all();
         Ok(())
+    }
+
+    pub fn suspend_decoder(&self) {
+        let mut state = self.shared.state.lock();
+        if !state.decoder_bound {
+            return;
+        }
+        state.decoder_bound = false;
+        state.cancel.store(true, Ordering::Release);
+        state.queue.clear();
+        state.current = None;
+        state.bytes = 0;
+        state.queue_full = false;
+        state.video_done = false;
+        log::debug!(target: "hongguo_playback::decoder", "suspended epoch={} positionSeconds={}", state.epoch, state.position);
+        self.shared.changed.notify_all();
+        crate::budget::wake();
     }
 
     pub fn configure_clock(&self, clock: Arc<dyn Clock>) -> AppResult<()> {

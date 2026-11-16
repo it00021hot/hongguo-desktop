@@ -69,6 +69,7 @@ pub trait FrameSource: Send + Sync {
     fn configure_decoder(&self, _device: Option<Arc<dyn DecodeDevice>>) -> Result<(), String> {
         Ok(())
     }
+    fn suspend_decoder(&self) {}
     fn control(&self, _control: PlaybackControl) -> Result<(), String> {
         Ok(())
     }
@@ -218,6 +219,14 @@ impl FrameLease {
     ) -> Result<bool, String> {
         self.with_control(|source| source.configure_decoder(device))
             .map(|result| result.is_some())
+    }
+
+    pub fn suspend_decoder_if_owner(&self) -> Result<bool, String> {
+        self.with_control(|source| {
+            source.suspend_decoder();
+            Ok(())
+        })
+        .map(|result| result.is_some())
     }
 
     pub fn reject_decoder_if_owner(&self, detail: &str) -> Result<bool, String> {

@@ -126,6 +126,9 @@ impl AudioOutput {
 impl Drop for AudioOutput {
     fn drop(&mut self) {
         self.control.pause();
+        if let Err(error) = self.control.frames.suspend_decoder_if_owner() {
+            log::debug!("[video] retiring decoder consumer: {error}");
+        }
     }
 }
 fn decoder_error(error: String) -> OutputError {

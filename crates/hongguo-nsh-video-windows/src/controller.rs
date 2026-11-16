@@ -60,6 +60,10 @@ impl Default for Controller {
 
 impl Controller {
     pub fn set_props(&mut self, props: &VideoProps) -> Result<(), VideoError> {
+        if !props.active {
+            self.stop();
+            return Ok(());
+        }
         if self.device_removed() {
             self.suspend_for_device();
         }
@@ -151,6 +155,9 @@ impl Controller {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
+        if !props.active {
+            return Ok(());
+        }
         if !shared
             .consumer_active
             .load(std::sync::atomic::Ordering::Acquire)
@@ -489,10 +496,10 @@ impl Controller {
     }
 
     pub fn stop(&mut self) {
-        if let Some(direct) = &self.direct {
-            let _ = direct.pause_if_owner();
-        }
         self.direct = None;
+        self.source = None;
+        self.applied = None;
+        self.loaded = false;
         self.pending = None;
         self.queued = None;
         self.raw = None;

@@ -378,6 +378,13 @@ impl Worker {
             self.layers.set_visible(false);
         }
         if !self.props.active {
+            self.video.take();
+            self.direct.take();
+            self.shared
+                .control
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
             self.renderer.take();
             self.frame.take();
             self.status(EnhancementPhase::Idle, None);
