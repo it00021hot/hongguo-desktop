@@ -41,6 +41,7 @@ const ICON_SIZES: [u32; 7] = [16, 20, 24, 32, 40, 48, 64];
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WindowsConfig {
     pub(crate) installer_language: Option<String>,
+    pub(crate) display_name: Option<String>,
 }
 
 /// A directory `<out>/<name>`: the release runner as `<name>.exe` (the
@@ -156,6 +157,7 @@ fn installer(
         .join("icon.ico");
     let mut script = inno_script(&InnoApp {
         name,
+        display_name: config.display_name.as_deref().unwrap_or(name),
         id,
         version,
         // Relative to the script, which Inno Setup resolves from its own
@@ -237,6 +239,7 @@ fn find_iscc() -> Option<std::path::PathBuf> {
 /// What the installer script is made of.
 struct InnoApp<'a> {
     name: &'a str,
+    display_name: &'a str,
     id: &'a str,
     version: &'a str,
     /// The packaged directory, relative to the script, installed as is.
@@ -256,11 +259,12 @@ fn inno_script(app: &InnoApp<'_>) -> String {
     fn esc(value: &str) -> String {
         value.replace('{', "{{").replace('"', "\"\"")
     }
-    let name = esc(app.name);
+    let name = esc(app.display_name);
+    let shortcut_name = esc(&file_stem(app.display_name));
     let dir_name = esc(&file_stem(app.name));
     let id = esc(app.id);
     let exe = esc(app.exe);
-    let mut s = String::new();
+    let mut s = String::from("\u{feff}");
     s.push_str("; Made by `nsh package --target windows`; compile with Inno Setup 6 (ISCC.exe).\n");
     s.push_str("[Setup]\n");
     s.push_str(&format!("AppId={id}\n"));
@@ -289,6 +293,13 @@ fn inno_script(app: &InnoApp<'_>) -> String {
     // The bundle and assets of the previous version go: a file it had and
     // this one has not must not stay.
     s.push_str("Type: filesandordirs; Name: \"{app}\\nsh\"\n");
+    if shortcut_name != dir_name {
+        for directory in ["autoprograms", "autodesktop"] {
+            s.push_str(&format!(
+                "Type: files; Name: \"{{{directory}}}\\{dir_name}.lnk\"\n"
+            ));
+        }
+    }
     s.push_str("\n[Files]\n");
     s.push_str(&format!(
         "Source: \"{}\\*\"; DestDir: \"{{app}}\"; Flags: ignoreversion recursesubdirs createallsubdirs\n",
@@ -296,16 +307,16 @@ fn inno_script(app: &InnoApp<'_>) -> String {
     ));
     s.push_str("\n[Icons]\n");
     s.push_str(&format!(
-        "Name: \"{{autoprograms}}\\{dir_name}\"; Filename: \"{{app}}\\{exe}\"; AppUserModelID: \"{id}\"\n"
+        "Name: \"{{autoprograms}}\\{shortcut_name}\"; Filename: \"{{app}}\\{exe}\"; AppUserModelID: \"{id}\"\n"
     ));
     s.push_str(&format!(
-        "Name: \"{{autodesktop}}\\{dir_name}\"; Filename: \"{{app}}\\{exe}\"; AppUserModelID: \"{id}\"; Tasks: desktopicon\n"
+        "Name: \"{{autodesktop}}\\{shortcut_name}\"; Filename: \"{{app}}\\{exe}\"; AppUserModelID: \"{id}\"; Tasks: desktopicon\n"
     ));
     s.push_str("\n[Run]\n");
     s.push_str(&format!(
         "Filename: \"{{app}}\\{exe}\"; Description: \"{{cm:LaunchProgram,{}}}\"; Flags: nowait postinstall skipifsilent\n",
         // Inside a constant, `%` escapes: `%2c` a comma, `%7b` `%7d` braces.
-        app.name
+        app.display_name
             .replace('%', "%25")
             .replace(',', "%2c")
             .replace('{', "%7b")
@@ -600,6 +611,7 @@ mod tests {
     fn installer_scripts_install_per_user_and_upgrade_by_id() {
         let script = inno_script(&InnoApp {
             name: "Hopper {Lab}",
+            display_name: "Hopper {Lab}",
             id: "com.example.hopper",
             version: "1.2.0",
             source: "Hopper {Lab}",

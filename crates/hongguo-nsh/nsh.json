@@ -8,7 +8,7 @@
   "root": "App",
   "theme": "theme.json",
   "appearance": "system",
-  "windows": { "installerLanguage": "ChineseSimplified" },
+  "windows": { "installerLanguage": "ChineseSimplified", "displayName": "番果" },
   "window": { "defaultSize": { "width": 1280, "height": 840 } },
   "android": { "targetSdk": 37, "activity": "com.hongguo.nsh.MainActivity", "abis": ["arm64-v8a"] },
   "ios": {

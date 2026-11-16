@@ -65,3 +65,7 @@ Windows packaging accepts `windows.installerLanguage`, the alphanumeric stem of 
 Inno Setup bundled language file (for example, `ChineseSimplified`). It adds the
 native `[Languages]` entry to the generated installer script; absent configuration
 keeps Inno Setup's default language. Missing compiler translations fail compilation.
+
+`windows.displayName` sets the installer, shortcut and uninstall-list labels while
+retaining the executable, install directory and AppId. A changed shortcut label
+removes the previous name's desktop and Start menu `.lnk` files during upgrade.
