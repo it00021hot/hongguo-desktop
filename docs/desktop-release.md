@@ -6,6 +6,8 @@
 
 普通分支 CI、桌面打包与发版均使用 macOS runner。格式、版本与更新日志门禁保持不变，三个桌面目标仍执行完整工作区构建与严格 Clippy：
 
+每轮流程先通过格式、资源与版本门禁，再串行检查三个目标，全部通过后串行打包；单轮最多占用一个 runner。发版复用相同限制。此限制不跨不同分支或 tag 的运行；同一分支的新 CI 仍会取消旧运行。
+
 | 目标 | Runner | 构建与打包 |
 | --- | --- | --- |
 | Windows x64 | `macos-15-intel` | cargo-xwin 交叉编译 MSVC，Wine 执行 Inno Setup |
@@ -48,6 +50,8 @@ Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未
 正式发布前的人工验收包括：Windows 覆盖安装与卸载、中文入口及新图标；两种 Mac 架构安装启动、Dock 与托盘；清晰度/倍速记忆、续播、返回已看完集数、自动切集、隐藏窗口播放、弱网缓冲及音画同步。CI 编译不替代这些行为验收。
 
 ## English
+
+Each run completes the format, resource and version gates before checking the three targets sequentially, then packages them sequentially after all checks pass. Each run uses at most one runner, including CI reused by releases. Separate branches or tags can still run concurrently; a newer CI run on the same branch cancels the previous run.
 
 All desktop CI, packaging and draft-release jobs use macOS runners. Intel Mac runners cross-compile Windows x64 through LLVM 19 and cargo-xwin 0.23.1; the shared `windows-cross` action also prepares checksum-verified Wine 11.0_1 and Inno Setup 6.7.4 when installers are needed. It uses a temporary Wine prefix and converts installer paths with `winepath`. Wine is a build tool only. Apple Silicon and Intel macOS packages use their respective native runners and Apple's signing and DMG tools. All three targets retain workspace builds and strict Clippy checks; Windows keeps its MSVC target, static CRT, baseline x86-64 instructions, 8 MiB stack and PE audit. Cross-compilation does not validate Windows runtime behavior.
 

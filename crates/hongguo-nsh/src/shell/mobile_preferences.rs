@@ -16,7 +16,7 @@ impl Preferences {
             move || preferences.is_some(),
             move || {
                 let preferences = preferences.expect("mobile shell provides preferences");
-                ui::button("", ui::ButtonVariant::Quiet)
+                ui::controls::surface(ui::ButtonVariant::Quiet)
                     .accessibility_label(move || tr("common.toggleTheme"))
                     .size_12()
                     .p_0()

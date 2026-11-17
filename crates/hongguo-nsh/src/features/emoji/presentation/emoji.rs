@@ -6,6 +6,7 @@ use nsh_base::{PopoverEvent, theme};
 use nsh_core::{element::ImageSrc, prelude::*};
 
 pub(crate) const DANMAKU_LINE_HEIGHT: f32 = 1.5;
+pub(crate) const PICKER_GAP: f32 = 8.0;
 
 pub(crate) enum InlineEmojiPart {
     Text(String),
@@ -182,7 +183,7 @@ pub(crate) fn emoji_picker(
         .on_close(closed)
         .placement(Placement::Top)
         .align(Align::End)
-        .offset(px(8.0))
+        .offset(px(PICKER_GAP))
         .margin(px(8.0))
         .trigger(trigger)
         .popup_style(|style| {

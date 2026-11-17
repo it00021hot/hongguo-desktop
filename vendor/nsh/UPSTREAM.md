@@ -20,7 +20,11 @@ adding a second display clock. Remove it when upstream provides equivalent
 native-component frame scheduling.
 
 Local changes include the Windows backend's same-canvas high-precision display
-composition. Android additionally exposes a
+composition. Native MediaEngine video maps its SDR BGRA8 frames from sRGB to
+linear scRGB on the GPU before drawing on an FP16 canvas, including the current
+display's SDR white scaling. The standard SDR canvas retains direct bitmap drawing.
+Remove this bridge when upstream provides equivalent native-video color management.
+Android additionally exposes a
 conservative `SurfaceComposition.supports(View)` admission check: separate HDR
 surfaces are excluded under Canvas shaders/transitions, masks, rounded ancestor clipping,
 nonidentity transforms, or partial ancestor opacity. Intersecting sibling overlays

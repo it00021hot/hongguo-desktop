@@ -69,7 +69,7 @@ pub(crate) fn surface(
                         .left_4()
                         .right_20()
                         .w(auto())
-                        .bottom(move || px(if show_binge_bar.get() { 104.0 } else { 56.0 }))
+                        .bottom(move || px(if show_binge_bar.get() { 64.0 } else { 56.0 }))
                 },
             )
             .style_when(

@@ -7,6 +7,8 @@ use nsh_base::{OpenChangeReason, PopoverEvent, theme};
 use nsh_core::{element::ImageSrc, prelude::*};
 mod scroll;
 
+const DESKTOP_SUGGESTIONS_WIDTH: f32 = 384.0;
+
 #[derive(Clone, PartialEq)]
 pub(crate) struct SearchSuggestion {
     pub word: SharedString,
@@ -52,7 +54,11 @@ pub(crate) fn search_suggestions(
                 })
             })
             .placement(Placement::Bottom)
-            .align(Align::Start)
+            .align(if is_desktop() {
+                Align::End
+            } else {
+                Align::Start
+            })
             .offset(px(6.0))
             .margin(px(8.0))
             .close_on_escape(move || !popup.composing.get())
@@ -84,7 +90,13 @@ pub(crate) fn search_suggestions(
             })
             .popup_style(move |style| {
                 style
-                    .w(move || px(width.get()))
+                    .w(move || {
+                        px(if is_desktop() {
+                            width.get().max(DESKTOP_SUGGESTIONS_WIDTH)
+                        } else {
+                            width.get()
+                        })
+                    })
                     .max_w(move || px((window().width.0 - 16.0).max(0.0)))
                     .max_h(px(320.0))
                     .rounded(radii::card())

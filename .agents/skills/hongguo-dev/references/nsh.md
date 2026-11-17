@@ -22,6 +22,10 @@ Makefile 转发到这些命令，并在 macOS 设置 VVdeC 的阻塞等待策略
 正式 macOS 包通过 `macos.infoPlist.LSEnvironment` 在进程初始化前设置相同策略。
 名称、ID、版本、图标、平台 plist、窗口参数与 `nativeHost` 接入配置统一位于 `crates/hongguo-nsh/nsh.json`。客户端开发、检查、构建、运行、打包及资源维护均无需 Node.js/npm。
 
+`hongguo-api` 的固定 MetaSec 材料保存在 `assets/metasec/v5/`，Cargo 只做本地长度与 SHA-256 校验后嵌入应用。固定材料的干净构建与运行均不下载 APK 或片段，不依赖 curl 或材料缓存；设备 SDK 会话仍由私有数据库管理。来源与校验依据见 `docs/req-hg-003-playback-parity.md`。
+
+English: Pinned MetaSec files live under assets/metasec/v5. Cargo validates local size/SHA-256 and embeds them in every host. Neither clean builds nor runtime download APK material or require curl/material caches. Device SDK sessions remain private database data.
+
 `nativeHost` 是本项目为固定 CLI 增加的通用原生宿主接入口，尚非上游 0.5.1 标准能力，必须使用仓库构建的 CLI。它通过参数数组调用 `tools/build` 的 Rust 工具，失败即中止。工具只准备 SDK、独立宿主、媒体依赖和重链接材料；NSH 自己生成安装器、APK/AAB、Apple 包和签名。仓库根可用 `cargo build-tool <命令>` 调用同一工具。补丁范围见 `vendor/nsh/UPSTREAM.md`。
 
 `cargo build-tool` 与 `nativeHost` 都通过 `--target host-tuple` 在当前宿主编译构建工具，避免移动端或交叉编译的 `CARGO_BUILD_TARGET` 把工具本身编译成目标平台程序；SDK 目标仍通过参数或该环境变量选择。

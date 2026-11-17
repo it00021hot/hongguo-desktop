@@ -64,17 +64,18 @@ pub(crate) fn toolbar(session: SessionHandle, nav: Navigation) -> View {
         .window_drag(false)
         .relative()
         .w_52()
+        .max_w(percentage(1.0))
+        .min_w_0()
         .child(super::search::field(search, submit, move |item| {
-            if item.cover.is_empty() || item.series_id.is_empty() {
+            if item.series_id.is_empty() {
                 search.change(&item.word);
                 submit();
             } else {
-                search.dismiss();
-                nav.push(Route::Detail(item.series_id));
+                nav.detail(crate::navigation::DetailPrefill::from_suggestion(&item));
             }
         }))
         .child(
-            ui::button("", ui::ButtonVariant::Quiet)
+            ui::controls::surface(ui::ButtonVariant::Quiet)
                 .accessibility_label(move || tr("search.submit"))
                 .absolute()
                 .left_0()

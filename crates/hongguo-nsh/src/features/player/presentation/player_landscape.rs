@@ -177,34 +177,27 @@ pub(crate) fn player_landscape_label(
 ) -> nsh_base::ButtonElement {
     crate::features::player::presentation::video::player_surface()
         .flex_shrink_0()
+        .flex_row()
+        .items_center()
         .px_1p5()
         .py_1()
         .rounded_md()
-        .min_h(px(24.0))
-        .h_6()
-        .hit_slop(move || {
-            EdgeInsets::all(px(if matches!(os(), nsh_core::platform::Os::Android) {
-                12.0
-            } else {
-                10.0
-            }))
-        })
-        .child(text(label).text_xs())
+        .min_h_12()
+        .h_12()
+        .child(
+            text(label)
+                .text_sm()
+                .line_height(px(20.0))
+                .number_of_lines(1),
+        )
 }
 
 pub(crate) fn player_landscape_danmaku(selected: Signal<bool>) -> nsh_base::ButtonElement {
     crate::features::player::presentation::video::player_surface()
-        .size_8()
-        .min_h(px(32.0))
+        .size_12()
+        .min_h_12()
         .p_0()
         .rounded_md()
-        .hit_slop(move || {
-            EdgeInsets::all(px(if matches!(os(), nsh_core::platform::Os::Android) {
-                8.0
-            } else {
-                6.0
-            }))
-        })
         .accessibility_label(move || Some(tr("player.danmaku")))
         .selected(selected)
         .bg(move || {
@@ -251,11 +244,16 @@ pub(crate) fn player_landscape_footer(footer: View, active: Memo<bool>) -> View 
     )
 }
 
-pub(crate) fn player_seek_rail(slider: nsh_base::SliderElement, landscape: Memo<bool>) -> View {
+pub(crate) fn player_seek_rail(
+    slider: nsh_base::SliderElement,
+    landscape: Memo<bool>,
+    in_card: Memo<bool>,
+) -> View {
     view()
         .relative()
         .w_full()
         .style_when(move || landscape.get(), |style| style.h_4())
+        .style_when(in_card, |style| style.h_2())
         .child(
             view()
                 .w_full()
@@ -267,6 +265,9 @@ pub(crate) fn player_seek_rail(slider: nsh_base::SliderElement, landscape: Memo<
                     move || landscape.get() && !is_desktop(),
                     |style| style.absolute().left_0().right_0().top(px(-16.0)),
                 )
+                .style_when(in_card, |style| {
+                    style.absolute().left_0().right_0().top(px(-20.0))
+                })
                 .child(slider),
         )
 }

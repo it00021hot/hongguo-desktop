@@ -158,7 +158,7 @@ pub(crate) fn window_player_controls(
         ))
         .child(
             view().child(
-                player_seek(seek, move || state.position.get().1)
+                player_seek(seek, move || state.position.get().1, false)
                     .accessibility_label(move || tr("common.progress"))
                     .disabled(move || state.busy.get() || state.position.get().1 <= 0.0)
                     .on_change(move |value: &nsh_base::SliderValue| {

@@ -18,6 +18,7 @@ pub(crate) enum Icon {
     Back,
     ChevronLeft,
     MonitorPlay,
+    VideoPlay,
     Play,
     Pause,
     Next,
@@ -70,6 +71,7 @@ pub(crate) fn icon(name: Icon) -> Svg {
     let markup = match name {
         Icon::ChevronLeft => include_str!("icons/chevron-left.svg"),
         Icon::MonitorPlay => include_str!("icons/monitor-play.svg"),
+        Icon::VideoPlay => include_str!("icons/video-play.svg"),
         Icon::Hourglass => include_str!("icons/hourglass.svg"),
         Icon::Home => include_str!("icons/flame.svg"),
         Icon::Send => include_str!("icons/send.svg"),

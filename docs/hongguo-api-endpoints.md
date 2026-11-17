@@ -93,7 +93,7 @@ host_abi=arm64-v8a, _rticket={ms}, …`（即设备档案全量字段 + 时间�
 `type=1` 能发码但被服务端按「换绑」场景处理（目标号已绑定其它账号时
 报 1001），短信登录发码场景是 `type=3731`。
 
-**桌面取流端点**统一使用当前设备的 MetaSec v5 会话和 Cronet 六头。首次在线取流自动准备并验证所需的官方发行包片段。
+**桌面取流端点**统一使用当前设备的 MetaSec v5 会话和 Cronet 六头。固定许可与原生材料由仓库版本资源提供，构建时本地校验并随应用携带；构建与播放均不下载 APK，设备会话仍独立交换与持久化。
 
 ```
 POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/

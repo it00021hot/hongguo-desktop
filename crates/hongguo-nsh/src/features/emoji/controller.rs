@@ -276,4 +276,12 @@ pub(crate) fn picker(
         panel::panel(state, true, action).into_element(),
         move || editor.reference.focus(),
     )
+    .offset(move || {
+        px(crate::features::emoji::presentation::emoji::PICKER_GAP
+            + if attachment.with(Option::is_some) {
+                super::sendbox::ATTACHMENT_PREVIEW_SIZE + super::sendbox::COMPOSER_GAP
+            } else {
+                0.0
+            })
+    })
 }

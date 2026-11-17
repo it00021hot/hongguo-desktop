@@ -46,10 +46,7 @@ impl AppStateInner {
     /// 使用宿主打开的数据库与已装载的设备档案。
     pub fn with_device(store: Store, device: hongguo_signer::device::DeviceProfile) -> Self {
         if store.db_path() != std::path::Path::new(":memory:") {
-            hongguo_api::metasec::configure_app(
-                store.db_path(),
-                Arc::new(SdkSessionStore(store.clone())),
-            );
+            hongguo_api::metasec::configure_app(Arc::new(SdkSessionStore(store.clone())));
         }
         Self {
             store,

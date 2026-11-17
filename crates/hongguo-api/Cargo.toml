@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[build-dependencies]
+hex = "0.4"
+sha2 = "0.11"
+
 [dependencies]
 hongguo-media-types = { path = "../hongguo-media-types" }
 hongguo-common = { path = "../hongguo-common" }
@@ -28,5 +32,4 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.11"
 tokio = { version = "1", features = ["full"] }

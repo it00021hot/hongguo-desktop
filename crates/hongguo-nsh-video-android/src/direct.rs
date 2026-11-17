@@ -12,6 +12,9 @@ impl DirectSlot {
         if let Err(error) = self.lease.pause_if_owner() {
             log::debug!("[Android video] retiring session controls: {error}");
         }
+        if let Err(error) = self.lease.suspend_decoder_if_owner() {
+            log::debug!("[Android video] retiring decoder consumer: {error}");
+        }
         self.lease.close();
     }
 }

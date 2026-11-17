@@ -73,7 +73,7 @@ pub(super) fn content(
                         }))),
                 )
                 .child(when(is_desktop, move || crate::features::library::presentation::library_search(query, move || tr("history.searchPlaceholder"))))
-                .child(when(move || !is_desktop(), move || ui::button("", ui::ButtonVariant::Quiet)
+                .child(when(move || !is_desktop(), move || ui::controls::surface(ui::ButtonVariant::Quiet)
                     .accessibility_label(move || tr("history.searchPlaceholder"))
                     .size(px(48.0)).p_0().child(ui::icon(ui::Icon::Search))
                     .selected(search_open).on_press(move || search_open.update(|open| *open = !*open))))

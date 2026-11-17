@@ -73,6 +73,7 @@ pub(crate) enum ControlAction {
     ReserveSeason(String),
     RetrySeasons,
     EnterBinge,
+    ExitBinge,
 }
 
 pub(crate) fn controls<E: IntoElement>(
@@ -98,6 +99,7 @@ pub(crate) fn controls<E: IntoElement>(
     let action = stored(Box::new(action) as Box<dyn Fn(ControlAction)>);
     let dragging = signal(false);
     let seek = signal(state.position.get_untracked().0);
+    let feed_card = computed(move || !is_desktop() && compact() && state.binge_bar_visible());
     let tight = computed(move || {
         is_desktop() && state.geometry.viewport.get().0 < DESKTOP_SHORT_LABEL_WIDTH
     });
@@ -111,6 +113,30 @@ pub(crate) fn controls<E: IntoElement>(
         }
     });
     let extra = move |control| action.with(|action| action(ControlAction::Advanced(control)));
+    let binge = move || {
+        dynamic(move || {
+            let trigger = crate::features::player::presentation::player_binge(move || {
+                if is_desktop() {
+                    format!(
+                        "{} · {}  ›",
+                        tr("player.watchFullSeries"),
+                        tr("player.totalEpisodes")
+                            .replace("{count}", &state.episode_count.get().to_string())
+                    )
+                } else {
+                    let caption = state.caption.get();
+                    format!(
+                        "{} · {}",
+                        caption.title,
+                        tr("player.totalEpisodes").replace("{count}", &caption.total.to_string())
+                    )
+                }
+            })
+            .disabled(state.busy)
+            .on_press(move || action.with(|action| action(ControlAction::EnterBinge)));
+            view().child(trigger)
+        })
+    };
     effect(move || {
         if !compact() && state.danmaku_settings.open.get() {
             state.menus.open.set(None);
@@ -125,6 +151,9 @@ pub(crate) fn controls<E: IntoElement>(
         .absolute()
         .inset_0()
         .pointer_events(PointerEvents::BoxNone)
+        .child(when(move || !is_desktop(), move || {
+            crate::features::player::presentation::video::player_pause_indicator(state.paused)
+        }))
         .child(crate::features::player::presentation::player_watch_fullscreen(
             state.geometry,
             computed(|| {
@@ -138,6 +167,13 @@ pub(crate) fn controls<E: IntoElement>(
                 action.with(|action| action(ControlAction::Fullscreen))
             })
         }))
+        .child(when(
+            move || !is_desktop() && state.in_binge.get() && !super::landscape::active(),
+            move || view().absolute().top_3().left_3().child(
+                crate::features::player::presentation::player_icon_button(Icon::Back, move || tr("nav.back"))
+                    .on_press(move || action.with(|action| action(ControlAction::ExitBinge)))
+            ),
+        ))
         .child(when(compact, move || {
             view()
                 .absolute()
@@ -201,15 +237,25 @@ pub(crate) fn controls<E: IntoElement>(
                 .gap(move || px(if compact() { 2.0 } else { 8.0 }))
                 .style_when(
                     move || !is_desktop() && compact() && !super::landscape::active(),
-                    |style| style.bottom(move || px(if state.binge_bar_visible() { 48.0 } else { 0.0 })).pt_0().pb_0(),
+                    |style| style.px_0().pt_0().pb_0().gap_0(),
                 )
                 .pointer_events(PointerEvents::BoxNone)
+                .style_when(feed_card, |style| {
+                    style.left_2().right_2().rounded_lg().bg(move || {
+                        crate::features::player::presentation::video::player_ink().opacity(0.18)
+                    })
+                })
+                .child(when(
+                    move || !is_desktop() && compact() && state.binge_bar_visible(),
+                    binge,
+                ))
                 .child(when(
                     move || (compact() && (is_desktop() || dragging.get())) || super::landscape::active(),
                     move || {
                         view()
                             .flex_row()
                             .justify_between()
+                            .style_when(move || !is_desktop() && compact() && !super::landscape::active(), |style| style.px_3())
                             .child(crate::features::player::presentation::player_phone_time(move || {
                                 duration(state.position.get().0)
                             }))
@@ -219,7 +265,7 @@ pub(crate) fn controls<E: IntoElement>(
                     },
                 ))
                 .child(crate::features::player::presentation::player_seek_rail(
-                    crate::features::player::presentation::player_seek(seek, move || state.position.get().1)
+                    crate::features::player::presentation::player_seek(seek, move || state.position.get().1, feed_card)
                         .disabled(move || state.busy.get() || state.position.get().1 <= 0.0)
                         .on_change(move |value: &nsh_base::SliderValue| {
                             dragging.set(true);
@@ -239,7 +285,8 @@ pub(crate) fn controls<E: IntoElement>(
                             dragging.set(false);
                         }),
                     computed(super::landscape::active),
-                ))
+                    feed_card,
+                ).style_when(move || !is_desktop() && compact() && !super::landscape::active(), |style| style.px_3()))
                 .child(when(
                     move || !compact() && !super::landscape::active(),
                     move || {
@@ -465,29 +512,9 @@ pub(crate) fn controls<E: IntoElement>(
                 .bottom(move || px(if compact() { 40.0 } else { 56.0 }))
                 .style_when(
                     move || !is_desktop() && compact(),
-                    |style| style.left_0().right_0().bottom_0().z_index(40),
+                    |style| style.hidden(),
                 )
-                .child(dynamic(move || {
-                    let trigger = crate::features::player::presentation::player_binge(move || {
-                        if is_desktop() {
-                            format!("{} · {}  ›", tr("player.watchFullSeries"), tr("player.totalEpisodes")
-                                .replace("{count}", &state.episode_count.get().to_string()))
-                        } else {
-                            let caption = state.caption.get();
-                            format!("{} · {}", caption.title,
-                                tr("player.totalEpisodes").replace("{count}", &caption.total.to_string()))
-                        }
-                    })
-                    .style_when(
-                        move || {
-                            !state.binge_bar_visible()
-                        },
-                        |style| style.hidden(),
-                    )
-                    .disabled(state.busy)
-                    .on_press(move || action.with(|action| action(ControlAction::EnterBinge)));
-                    view().child(trigger)
-                })),
+                .child(when(move || state.binge_bar_visible(), binge)),
         )
         .child(when(compact, move || {
             menus::episode_sheet(state.menus, state.busy, more_stop, move |intent| {

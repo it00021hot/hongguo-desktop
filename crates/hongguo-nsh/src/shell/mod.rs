@@ -1,6 +1,5 @@
 use crate::ui::ButtonVariant;
 use crate::ui::Icon;
-use crate::ui::button;
 use crate::ui::icon;
 use crate::{
     i18n::tr,
@@ -71,7 +70,7 @@ pub(crate) fn page(nav: Navigation, title: impl IntoReactive<SharedString> + Clo
         .child(when(
             move || nav.can_back(),
             move || {
-                button("", ButtonVariant::Quiet)
+                crate::ui::controls::surface(ButtonVariant::Quiet)
                     .accessibility_label(move || tr("nav.back"))
                     .min_h(px(28.0))
                     .size(px(28.0))
@@ -207,42 +206,43 @@ pub(crate) fn shell_with_theme(
                 .flex_row()
                 .items_center()
                 .gap_3()
-                .pr(crate::native_window::trailing_inset)
-                .pl(crate::native_window::leading_inset)
                 .bg(move || theme().color("titlebar").expect("titlebar token"))
                 .child(
-                    view()
-                        .flex_row()
-                        .gap_0p5()
-                        .child(
-                            toolbar_button(Icon::Back, "nav.back")
-                                .disabled(move || !nav.can_back())
-                                .on_press(move || nav.back()),
-                        )
-                        .child(
-                            toolbar_button(Icon::Forward, "nav.forward")
-                                .disabled(move || !nav.can_forward())
-                                .on_press(move || nav.forward()),
-                        )
-                        .child(
-                            toolbar_button(Icon::Sidebar, "nav.collapse")
-                                .style_when(
-                                    move || window().width.0 < 768.0,
-                                    |style| style.hidden(),
-                                )
-                                .accessibility_label(move || {
-                                    tr(if collapsed.get() {
-                                        "nav.expand"
-                                    } else {
-                                        "nav.collapse"
+                    view().flex_1().min_w_0().child(
+                        view()
+                            .pl(crate::native_window::leading_inset)
+                            .flex_row()
+                            .gap_0p5()
+                            .child(
+                                toolbar_button(Icon::Back, "nav.back")
+                                    .disabled(move || !nav.can_back())
+                                    .on_press(move || nav.back()),
+                            )
+                            .child(
+                                toolbar_button(Icon::Forward, "nav.forward")
+                                    .disabled(move || !nav.can_forward())
+                                    .on_press(move || nav.forward()),
+                            )
+                            .child(
+                                toolbar_button(Icon::Sidebar, "nav.collapse")
+                                    .style_when(
+                                        move || window().width.0 < 768.0,
+                                        |style| style.hidden(),
+                                    )
+                                    .accessibility_label(move || {
+                                        tr(if collapsed.get() {
+                                            "nav.expand"
+                                        } else {
+                                            "nav.collapse"
+                                        })
                                     })
-                                })
-                                .on_press(move || sidebar_preferences::toggle(collapsed)),
-                        ),
+                                    .on_press(move || sidebar_preferences::toggle(collapsed)),
+                            ),
+                    ),
                 )
                 .child(
                     view()
-                        .flex_1()
+                        .flex_shrink_0()
                         .min_w_0()
                         .flex_row()
                         .justify_center()
@@ -251,73 +251,95 @@ pub(crate) fn shell_with_theme(
                         .style_when(move || portrait_mode(nav), |style| style.hidden())
                         .child(dynamic(move || toolbar.content())),
                 )
-                .child(view().flex_shrink_0().child(toolbar_content))
                 .child(
-                    view()
-                        .flex_row()
-                        .gap_1()
-                        .style_when(move || window().width.0 < 768.0, |style| style.hidden())
-                        .child(
-                            crate::ui::controls::surface(ButtonVariant::Quiet)
-                                .accessibility_label(move || {
-                                    tr(if is_pinned() {
-                                        "player.unpin"
-                                    } else {
-                                        "player.pin"
-                                    })
-                                })
-                                .min_h(px(28.0))
-                                .size(px(28.0))
-                                .p_0()
-                                .selected(is_pinned)
-                                .selected_style(|style| {
-                                    style
-                                        .bg(move || theme().background.opacity(0.0))
-                                        .border(px(0.0))
-                                        .text_color(move || theme().foreground)
-                                })
-                                .child(dynamic(move || {
-                                    icon(if is_pinned() {
-                                        Icon::PinFilled
-                                    } else {
-                                        Icon::Pin
-                                    })
-                                }))
-                                .on_press(move || {
-                                    if let Some(modes) = crate::window_modes::WindowModes::current()
-                                    {
-                                        modes.toggle_pinned();
-                                    } else {
-                                        pinned.update(|value| *value = !*value);
-                                    }
-                                }),
-                        )
-                        .child(crate::ui::toolbar_menu::menu(
-                            toolbar_button(Icon::Languages, "search.langLabel"),
-                            crate::ui::toolbar_menu::LANGUAGES,
-                            move || crate::i18n::language().to_owned(),
-                            crate::ui::toolbar_menu::change_language,
-                        ))
-                        .child(crate::ui::toolbar_menu::menu(
-                            crate::ui::controls::surface(ButtonVariant::Quiet)
-                                .accessibility_label(move || tr("common.toggleTheme"))
-                                .min_h(px(28.0))
-                                .size(px(28.0))
-                                .p_0()
-                                .child(dynamic(move || {
-                                    icon(if dark() { Icon::Moon } else { Icon::Sun })
-                                }))
-                                .disabled(move || theme_busy.get()),
-                            crate::ui::toolbar_menu::THEMES,
-                            theme_value,
-                            move |value| {
-                                on_theme(match value {
-                                    "light" => nsh_core::platform::Appearance::Light,
-                                    "dark" => nsh_core::platform::Appearance::Dark,
-                                    _ => nsh_core::platform::Appearance::System,
-                                })
-                            },
-                        )),
+                    view().flex_1().min_w_0().child(
+                        view()
+                            .w_full()
+                            .flex_row()
+                            .items_center()
+                            .justify_end()
+                            .gap_3()
+                            .pr(crate::native_window::trailing_inset)
+                            .child(
+                                view()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .max_w(px(208.0))
+                                    .child(toolbar_content),
+                            )
+                            .child(
+                                view()
+                                    .flex_row()
+                                    .flex_shrink_0()
+                                    .gap_1()
+                                    .style_when(
+                                        move || window().width.0 < 768.0,
+                                        |style| style.hidden(),
+                                    )
+                                    .child(
+                                        crate::ui::controls::surface(ButtonVariant::Quiet)
+                                            .accessibility_label(move || {
+                                                tr(if is_pinned() {
+                                                    "player.unpin"
+                                                } else {
+                                                    "player.pin"
+                                                })
+                                            })
+                                            .min_h(px(28.0))
+                                            .size(px(28.0))
+                                            .p_0()
+                                            .selected(is_pinned)
+                                            .selected_style(|style| {
+                                                style
+                                                    .bg(move || theme().background.opacity(0.0))
+                                                    .border(px(0.0))
+                                                    .text_color(move || theme().foreground)
+                                            })
+                                            .child(dynamic(move || {
+                                                icon(if is_pinned() {
+                                                    Icon::PinFilled
+                                                } else {
+                                                    Icon::Pin
+                                                })
+                                            }))
+                                            .on_press(move || {
+                                                if let Some(modes) =
+                                                    crate::window_modes::WindowModes::current()
+                                                {
+                                                    modes.toggle_pinned();
+                                                } else {
+                                                    pinned.update(|value| *value = !*value);
+                                                }
+                                            }),
+                                    )
+                                    .child(crate::ui::toolbar_menu::menu(
+                                        toolbar_button(Icon::Languages, "search.langLabel"),
+                                        crate::ui::toolbar_menu::LANGUAGES,
+                                        move || crate::i18n::language().to_owned(),
+                                        crate::ui::toolbar_menu::change_language,
+                                    ))
+                                    .child(crate::ui::toolbar_menu::menu(
+                                        crate::ui::controls::surface(ButtonVariant::Quiet)
+                                            .accessibility_label(move || tr("common.toggleTheme"))
+                                            .min_h(px(28.0))
+                                            .size(px(28.0))
+                                            .p_0()
+                                            .child(dynamic(move || {
+                                                icon(if dark() { Icon::Moon } else { Icon::Sun })
+                                            }))
+                                            .disabled(move || theme_busy.get()),
+                                        crate::ui::toolbar_menu::THEMES,
+                                        theme_value,
+                                        move |value| {
+                                            on_theme(match value {
+                                                "light" => nsh_core::platform::Appearance::Light,
+                                                "dark" => nsh_core::platform::Appearance::Dark,
+                                                _ => nsh_core::platform::Appearance::System,
+                                            })
+                                        },
+                                    )),
+                            ),
+                    ),
                 ),
         )
         .child(

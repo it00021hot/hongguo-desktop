@@ -23,6 +23,8 @@
 //! pause, a scrubber, the time) that drives the engine directly, as the
 //! platforms' controls do.
 
+mod color;
+
 use std::{
     cell::{Cell, RefCell},
     rc::{Rc, Weak},
@@ -135,6 +137,7 @@ struct Status {
 struct Frame {
     texture: ID3D11Texture2D,
     bitmap: ID2D1Bitmap1,
+    color: Option<color::VideoColor>,
     size: (u32, u32),
     /// The device generation they were made in.
     generation: u64,
@@ -638,17 +641,31 @@ impl Hosted for VideoItem {
         {
             let natural = (frame.size.0 as f32, frame.size.1 as f32);
             let (x, y, fw, fh) = fit(self.resize_mode(), natural, size);
-            // SAFETY: a Direct2D call between BeginDraw and EndDraw, with a
-            // bitmap of the context's device.
-            unsafe {
-                cx.dc.DrawBitmap(
-                    &frame.bitmap,
-                    Some(&rect_f(x, y, fw, fh)),
-                    1.0,
-                    D2D1_INTERPOLATION_MODE_LINEAR,
-                    None,
-                    None,
-                );
+            if let Some(color) = &frame.color {
+                if let Err(err) = color.draw(
+                    cx.dc,
+                    natural,
+                    rect_f(x, y, fw, fh),
+                    crate::output::ui_color([1.0; 4])[0],
+                ) && !self.status.failed.replace(true)
+                {
+                    let message = format!("cannot map SDR video to scRGB: {err}");
+                    log::warn!("{message}");
+                    self.emitter.emit(EventKind::Error, || error(message));
+                }
+            } else {
+                // SAFETY: a Direct2D call between BeginDraw and EndDraw, with a
+                // bitmap of the context's device.
+                unsafe {
+                    cx.dc.DrawBitmap(
+                        &frame.bitmap,
+                        Some(&rect_f(x, y, fw, fh)),
+                        1.0,
+                        D2D1_INTERPOLATION_MODE_LINEAR,
+                        None,
+                        None,
+                    );
+                }
             }
         }
         if self.controls() {
@@ -929,9 +946,15 @@ fn make_frame(gfx: &gfx::Gfx, size: (u32, u32), generation: u64) -> Result<Frame
                 colorContext: std::mem::ManuallyDrop::new(None),
             }),
         )?;
+        let color = if crate::output::mode() == crate::OutputColorMode::ScRgb {
+            Some(color::VideoColor::new(&gfx.dc, &bitmap)?)
+        } else {
+            None
+        };
         Ok(Frame {
             texture,
             bitmap,
+            color,
             size,
             generation,
             filled: false,

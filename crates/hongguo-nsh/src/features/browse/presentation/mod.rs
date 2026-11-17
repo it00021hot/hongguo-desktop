@@ -4,11 +4,7 @@ use super::{
     model::Query,
     search::{self, Search},
 };
-use crate::{
-    i18n::tr,
-    navigation::{Navigation, Route},
-    ui,
-};
+use crate::{i18n::tr, navigation::Navigation, ui};
 use nsh_core::prelude::*;
 use std::collections::HashMap;
 
@@ -106,14 +102,14 @@ pub(super) fn content(
                     .flex_1()
                     .min_w_0()
                     .child(search::field(search, submit, move |item| {
-                        if item.cover.is_empty() || item.series_id.is_empty() {
+                        if item.series_id.is_empty() {
                             search.change(&item.word);
                             submit();
                         } else {
                             if !is_desktop() {
                                 dismiss_keyboard();
                             }
-                            nav.push(Route::Detail(item.series_id));
+                            nav.detail(crate::navigation::DetailPrefill::from_suggestion(&item));
                         }
                     }))
                     .child(

@@ -67,19 +67,18 @@ pub(crate) fn player_binge(label: impl IntoReactive<SharedString>) -> nsh_base::
             .min_h_12()
             .px_4()
             .py_0()
-            .rounded(px(0.0))
+            .rounded_lg()
             .flex_row()
             .items_center()
             .justify_start()
             .gap_2()
-            .bg(move || theme().background)
-            .text_color(move || theme().foreground)
-            .hover(crate::ui::palette::highlighted)
+            .bg(move || player_ink().opacity(0.0))
+            .text_color(player_ink)
             .child(
-                crate::ui::icon(Icon::Episodes)
+                crate::ui::icon(Icon::VideoPlay)
                     .size_4()
                     .flex_shrink_0()
-                    .text_color(move || theme().primary),
+                    .text_color(player_ink),
             )
             .child(text(label).text_sm().min_w_0().flex_1().number_of_lines(1))
             .child(
@@ -164,6 +163,45 @@ pub(crate) fn player_phone_time(label: impl IntoReactive<SharedString>) -> Text 
         .text_color(move || player_ink().opacity(0.7))
 }
 
+pub(crate) fn player_pause_indicator(paused: Signal<bool>) -> View {
+    view()
+        .absolute()
+        .inset_0()
+        .pointer_events(PointerEvents::None)
+        .accessible(false)
+        .items_center()
+        .justify_center()
+        .opacity(move || if paused.get() { 1.0_f32 } else { 0.0_f32 })
+        .transition()
+        .duration(move || {
+            if reduce_motion() {
+                0.0
+            } else {
+                crate::ui::motion::FAST_MS
+            }
+        })
+        .ease_out()
+        .child(
+            view()
+                .size_20()
+                .rounded_full()
+                .items_center()
+                .justify_center()
+                .bg(move || {
+                    theme()
+                        .color("video-surface")
+                        .expect("video surface token")
+                        .opacity(0.45)
+                })
+                .child(
+                    icon(Icon::Play)
+                        .size_10()
+                        .fill_current()
+                        .text_color(player_ink),
+                ),
+        )
+}
+
 pub(crate) fn player_title(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
     player_surface()
         .min_h(move || px(if is_desktop() { 0.0 } else { 48.0 }))
@@ -237,7 +275,7 @@ pub(crate) fn player_send_surface(variant: Memo<PlayerComposerVariant>) -> View 
         .ml_2()
         .style_when(
             move || variant.get() == PlayerComposerVariant::Landscape,
-            |style| style.w_full().h_9().ml_0().pl_2p5(),
+            |style| style.w_full().h_12().ml_0().pl_2p5(),
         )
         .min_w(move || {
             px(if variant.get() == PlayerComposerVariant::Toolbar {
@@ -483,7 +521,11 @@ fn rail_icon(glyph: Icon) -> Svg {
 pub(crate) fn player_seek(
     value: Signal<f64>,
     maximum: impl IntoReactive<f64>,
+    in_card: impl IntoReactive<bool>,
 ) -> nsh_base::SliderElement {
+    let in_card = in_card.into_reactive();
+    let in_card = computed(move || in_card.get());
+    let height = move || px(if is_desktop() { 16.0 } else { 48.0 });
     nsh_base::slider()
         .min(0.0)
         .max(maximum)
@@ -492,25 +534,20 @@ pub(crate) fn player_seek(
         .value(move || nsh_base::SliderValue::Single(value.get()))
         .on_change(move |next: &nsh_base::SliderValue| value.set(next.start()))
         .w_full()
-        .min_h(move || px(if is_desktop() { 16.0 } else { 48.0 }))
-        .h(move || px(if is_desktop() { 16.0 } else { 48.0 }))
+        .min_h(height)
+        .h(height)
         .justify_center()
-        .track_style(|style| {
+        .track_style(move |style| style.w_full().h(height).justify_center())
+        .indicator_style(move |style| {
             style
                 .w_full()
-                .h(move || px(if is_desktop() { 16.0 } else { 48.0 }))
-                .justify_center()
-        })
-        .indicator_style(|style| {
-            style
-                .w_full()
-                .h_0p5()
+                .h(move || px(if in_card.get() { 1.0 } else { 2.0 }))
                 .rounded_full()
                 .bg(move || player_ink().opacity(0.2))
         })
-        .range_style(|style| {
+        .range_style(move |style| {
             style
-                .h_0p5()
+                .h(move || px(if in_card.get() { 1.0 } else { 2.0 }))
                 .rounded_full()
                 .bg(move || player_ink().opacity(0.6))
         })
@@ -519,5 +556,10 @@ pub(crate) fn player_seek(
         } else {
             "opacity-100"
         })
-        .thumb_style(|style| style.size(px(12.0)).rounded_full().bg(player_ink))
+        .thumb_style(move |style| {
+            style
+                .size(move || px(if in_card.get() { 4.0 } else { 12.0 }))
+                .rounded_full()
+                .bg(player_ink)
+        })
 }

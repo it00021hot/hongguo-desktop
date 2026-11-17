@@ -351,11 +351,12 @@ fn bottom_panel(
                                     .font_weight(FontWeight::SEMIBOLD),
                             )
                             .child(
-                                crate::features::player::presentation::player_icon_button(
-                                    Icon::Close,
-                                    move || crate::i18n::tr("common.close"),
-                                )
-                                .on_press(move || change.with(|change| change(false))),
+                                crate::ui::controls::surface(crate::ui::ButtonVariant::Quiet)
+                                    .accessibility_label(move || crate::i18n::tr("common.close"))
+                                    .size(px(48.0))
+                                    .p_0()
+                                    .child(icon(Icon::Close))
+                                    .on_press(move || change.with(|change| change(false))),
                             ),
                     )
                     .child(focus_panel(content(), title))
@@ -368,6 +369,7 @@ fn focus_panel(content: View, title: Memo<SharedString>) -> View {
     let focused = stored(false);
     view()
         .element_ref(&node)
+        .style_when(move || !is_desktop(), |style| style.flex_1().min_h_0())
         .focusable(true)
         .role(nsh_core::AccessibilityRole::Group)
         .label(move || title.get())

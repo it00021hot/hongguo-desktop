@@ -60,13 +60,15 @@ pub(crate) fn comment_panel(
                                     ))
                                     .child(view().flex_1())
                                     .child(
-                                        crate::ui::button("", crate::ui::ButtonVariant::Quiet)
-                                            .accessibility_label(move || tr("common.close"))
-                                            .size_8()
-                                            .min_h_8()
-                                            .p_0()
-                                            .child(crate::ui::icon(crate::ui::Icon::Close))
-                                            .on_press(close),
+                                        crate::ui::controls::surface(
+                                            crate::ui::ButtonVariant::Quiet,
+                                        )
+                                        .accessibility_label(move || tr("common.close"))
+                                        .size_8()
+                                        .min_h_8()
+                                        .p_0()
+                                        .child(crate::ui::icon(crate::ui::Icon::Close))
+                                        .on_press(close),
                                     ),
                             )
                             .child((content.get())()),

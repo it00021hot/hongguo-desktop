@@ -341,10 +341,16 @@ fn content(
     effect(move || {
         if !is_desktop()
             && visible.get()
-            && let Some(modes) = window_modes.filter(|modes| modes.state().landscape)
+            && !panels_open.get()
+            && (in_binge.get() || window_modes.is_some_and(|modes| modes.state().landscape))
         {
             on_back_press(move || {
-                modes.set_landscape(false);
+                chrome.wake();
+                if let Some(modes) = window_modes.filter(|modes| modes.state().landscape) {
+                    modes.set_landscape(false);
+                } else {
+                    gestures.exit_binge();
+                }
                 true
             });
         }
@@ -530,6 +536,7 @@ fn content(
             }
             ControlAction::SelectEpisode(episode) => select_episode(episode),
             ControlAction::EnterBinge => gestures.enter_binge(),
+            ControlAction::ExitBinge => gestures.exit_binge(),
             ControlAction::RetrySeasons => seasons.retry(),
             ControlAction::ReserveSeason(id) => seasons.reserve(session, nav, id),
             ControlAction::SwitchSeason(id) => {
