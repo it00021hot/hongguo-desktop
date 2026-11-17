@@ -1,4 +1,4 @@
-name: NSH Desktop Packages
+name: NSH Desktop Checks and Packages
 
 on:
   workflow_call:
@@ -6,6 +6,9 @@ on:
       source_ref:
         type: string
         default: ''
+      package:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,7 +17,7 @@ jobs:
   package:
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 3
       matrix:
         include:
           - os: macos-15-intel
@@ -39,9 +42,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.triple }}
+          components: clippy
       - uses: swatinem/rust-cache@v2.9.3
         with:
-          key: nsh-desktop-${{ matrix.triple }}
+          shared-key: desktop-${{ matrix.triple }}
           workspaces: |
             . -> target
             vendor/nsh -> ../../target/nsh-cli
@@ -49,22 +53,41 @@ jobs:
         if: matrix.target == 'windows'
         uses: ./.github/actions/windows-cross
         with:
-          installer: 'true'
+          installer: ${{ inputs.package && 'true' || 'false' }}
       - name: Prepare authenticated native SDK
-        run: cargo build-tool setup '${{ matrix.triple }}'
+        shell: bash
+        run: |
+          cargo build-tool setup '${{ matrix.triple }}'
+          if [ '${{ matrix.target }}' = macos ]; then
+            echo "DYLD_LIBRARY_PATH=$PWD/target/native-media/${{ matrix.triple }}/libde265-1.1.3/lib" >> "$GITHUB_ENV"
+          fi
+      - name: Build and lint the target workspace
+        shell: bash
+        run: |
+          cargo_args=()
+          if [ '${{ matrix.target }}' = windows ]; then
+            cargo_args+=(xwin)
+          fi
+          cargo "${cargo_args[@]}" build --locked --workspace --target '${{ matrix.triple }}'
+          cargo "${cargo_args[@]}" clippy --locked --workspace --target '${{ matrix.triple }}' --all-targets -- -D warnings -D clippy::allow_attributes
       - name: Build the repository NSH CLI
+        if: inputs.package
         shell: bash
         run: |
           cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
           echo "$PWD/target/nsh-cli/debug" >> "$GITHUB_PATH"
       - name: Package through NSH
+        if: inputs.package
         shell: bash
         run: nsh package crates/hongguo-nsh --target '${{ matrix.target }}' --out 'target/packages/${{ matrix.triple }}' ${{ matrix.args }}
       - name: Audit and archive release artifacts
+        if: inputs.package
         run: cargo build-tool release-assets '${{ matrix.triple }}' 'target/packages/${{ matrix.triple }}' 'target/release-assets/${{ matrix.triple }}'
       - uses: actions/upload-artifact@v7.0.2
+        if: inputs.package
         with:
           name: guava-desktop-${{ matrix.triple }}
           path: target/release-assets/${{ matrix.triple }}/
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0

@@ -69,7 +69,7 @@ iOS 需要完整 Xcode，最低 16.0。设备签名通过 NSH `--sign` 与 `--pr
 
 桌面产物由可复用 `.github/workflows/nsh-desktop.yml` 统一构建；`release.yml` 校验版本 tag 后复用 CI，通过全部产物、来源和 SHA-256 门禁后正式发布。手动触发默认保留草稿，显式勾选 `publish` 才公开。版本、原生归档与签名状态见 [桌面发版说明](../../../../docs/desktop-release.md)。普通分支 push 不创建远端 Release；推送版本 tag 需明确的发布授权。
 
-CI 分开执行工具格式检查、Windows/macOS 三目标工作区构建与严格 Clippy、NSH 的 Windows/macOS 桌面打包；移动端未正式发布，CI 不打包移动端。Android 正式签名可配置 `NSH_ANDROID_KEYSTORE_BASE64`、`NSH_ANDROID_KEY_ALIAS` 和 `NSH_KEYSTORE_PASSWORD` secrets；缺省仍是框架调试签名，不能当作商店发布验收。iOS 真机身份与 profile、macOS Developer ID/公证、Windows Authenticode 不凭空创建，均需使用方提供实际凭证并单独验收。本轮不上传或发布应用。
+CI 先执行共享格式、资源、主题、版本与文件规模门禁，再并行执行 Windows/macOS 三目标工作区构建与严格 Clippy。发版通过 `package: true` 让各目标在同一 runner 上继续 NSH 打包，全部成功后才公开。普通 CI 不打包，dev push 不触发；main push 和目标为 main 的 PR 触发检查，`chore(release):` 合并提交由 tag 工作流负责完整验证以避免重复。移动端未正式发布，CI 不打包移动端。Android 正式签名可配置 `NSH_ANDROID_KEYSTORE_BASE64`、`NSH_ANDROID_KEY_ALIAS` 和 `NSH_KEYSTORE_PASSWORD` secrets；缺省仍是框架调试签名，不能当作商店发布验收。iOS 真机身份与 profile、macOS Developer ID/公证、Windows Authenticode 不凭空创建，均需使用方提供实际凭证并单独验收。
 
 共享界面与服务装配归 `hongguo-nsh`。`features/<功能>/presentation` 保存专用呈现，`ui` 保存共享控件，`shell` 保存窗口和导航；业务只通过 service。详见 `docs/project-structure.md` 与 `crates/hongguo-nsh/DESIGN.md`。
 

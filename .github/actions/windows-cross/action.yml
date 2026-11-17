@@ -7,6 +7,15 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: actions/cache@v6.1.0
+      id: xwin-tool
+      with:
+        path: ${{ runner.tool_cache }}/cargo-xwin-0.23.1
+        key: macos-x64-cargo-xwin-binary-0.23.1
+    - name: Install pinned cargo-xwin
+      if: steps.xwin-tool.outputs.cache-hit != 'true'
+      shell: bash
+      run: cargo install cargo-xwin --version 0.23.1 --locked --root "$RUNNER_TOOL_CACHE/cargo-xwin-0.23.1"
     - name: Prepare LLVM and cargo-xwin
       shell: bash
       run: |
@@ -14,9 +23,10 @@ runs:
           echo 'Windows cross jobs require an Intel macOS runner' >&2
           exit 1
         fi
-        brew install llvm@19
+        if ! brew list --versions llvm@19 >/dev/null 2>&1; then
+          brew install llvm@19
+        fi
         llvm_bin="$(brew --prefix llvm@19)/bin"
-        cargo install cargo-xwin --version 0.23.1 --locked
         mkdir -p "$RUNNER_TEMP/windows-cross/bin"
         cat > "$RUNNER_TEMP/windows-cross/bin/rc.exe" <<SHIM
         #!/bin/bash
@@ -31,12 +41,14 @@ runs:
         chmod +x "$RUNNER_TEMP/windows-cross/bin/rc.exe"
         {
           echo "$llvm_bin"
+          echo "$RUNNER_TOOL_CACHE/cargo-xwin-0.23.1/bin"
           echo "$RUNNER_TEMP/windows-cross/bin"
         } >> "$GITHUB_PATH"
         {
           echo "XWIN_CACHE_DIR=$RUNNER_TEMP/cargo-xwin"
           echo 'XWIN_ARCH=x86_64'
         } >> "$GITHUB_ENV"
+        export PATH="$RUNNER_TOOL_CACHE/cargo-xwin-0.23.1/bin:$PATH"
         cargo xwin --version
     - uses: actions/cache@v6.1.0
       with:

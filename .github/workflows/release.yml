@@ -34,6 +34,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: swatinem/rust-cache@v2.9.3
+        with:
+          shared-key: build-tools
       - id: metadata
         name: Validate tag, workspace versions and changelog
         env:
@@ -45,6 +48,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       source_ref: ${{ needs.validate.outputs.sha }}
+      package: true
 
   release:
     needs: [validate, ci]
@@ -58,6 +62,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: swatinem/rust-cache@v2.9.3
+        with:
+          shared-key: build-tools
       - uses: actions/download-artifact@v8.0.2
         with:
           pattern: guava-desktop-*
