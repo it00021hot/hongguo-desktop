@@ -59,21 +59,50 @@ runs:
       shell: bash
       env:
         WINE_SHA256: b50dc50ec7f41d58b115a6b685d4d1315ba3c797bd3aa0f49213f2703cb82388
+        WINE_DEVEL_SHA256: 9909b486657e10ab66c7279371ae1f990345b596b3b1b3a0cf21f28af24fa0ce
         INNO_SHA256: a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c
         TRANSLATION_SHA256: e0b0b350e2245f3c5e65586dfe43d574f6e7f06f2261149aba284954b3fc9a8d
       run: |
         tools="$RUNNER_TEMP/windows-cross"
-        curl -fL --retry 3 'https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.0_1/wine-stable-11.0_1-osx64.tar.xz' -o "$tools/wine.tar.xz"
-        echo "$WINE_SHA256  $tools/wine.tar.xz" | shasum -a 256 -c -
-        tar -xf "$tools/wine.tar.xz" -C "$tools"
-        wine_bin="$tools/Wine Stable.app/Contents/Resources/wine/bin"
-        export PATH="$wine_bin:$PATH"
-        export WINEPREFIX="$tools/prefix"
-        export WINEDEBUG=-all
+        mkdir -p "$tools/bin"
         export WINEDLLOVERRIDES='mscoree,mshtml='
-        wine --version
-        wineboot --init
-        wineserver -w
+        # macOS 15 Intel runner（15.7.9）上 wine-stable 11.0_1 的 wineboot 启动事件等待
+        # 超时，前缀半初始化后 kernel32 加载失败（c0000135）；wine-devel 11.21 正常。
+        # 以 devel 为主候选，失败时重建前缀各重试一次后换下一候选，重试保留诊断输出。
+        init_prefix() {
+          export WINEPREFIX="$tools/prefix"
+          wineserver -k 2>/dev/null || true
+          rm -rf "$WINEPREFIX"
+          if wineboot --init && wineserver -w; then
+            wine cmd /c echo wine-ok
+          else
+            return 1
+          fi
+        }
+        wine_ready=false
+        for candidate in \
+          '11.21|wine-devel-11.21-osx64.tar.xz|Wine Devel.app|WINE_DEVEL_SHA256' \
+          '11.0_1|wine-stable-11.0_1-osx64.tar.xz|Wine Stable.app|WINE_SHA256'; do
+          IFS='|' read -r tag tarball bundle sha_var <<< "$candidate"
+          curl -fL --retry 3 "https://github.com/Gcenx/macOS_Wine_builds/releases/download/$tag/$tarball" -o "$tools/wine.tar.xz"
+          echo "${!sha_var}  $tools/wine.tar.xz" | shasum -a 256 -c - || continue
+          tar -xf "$tools/wine.tar.xz" -C "$tools"
+          export PATH="$tools/$bundle/Contents/Resources/wine/bin:$PATH"
+          wine --version || continue
+          for attempt in 1 2; do
+            if [ "$attempt" = 2 ]; then unset WINEDEBUG; else export WINEDEBUG=-all; fi
+            if init_prefix; then
+              wine_ready=true
+              wine_bin="$tools/$bundle/Contents/Resources/wine/bin"
+              break
+            fi
+            echo "wineboot attempt $attempt failed for $tarball" >&2
+            df -h / | tail -1 >&2
+          done
+          if [ "$wine_ready" = true ]; then break; fi
+        done
+        if [ "$wine_ready" != true ]; then echo 'All pinned wine candidates failed to initialize a prefix' >&2; exit 1; fi
+        export WINEDEBUG=-all
         curl -fL --retry 3 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe' -o "$tools/inno.exe"
         echo "$INNO_SHA256  $tools/inno.exe" | shasum -a 256 -c -
         inno_dir="$tools/inno"
