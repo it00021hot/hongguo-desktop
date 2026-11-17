@@ -27,6 +27,7 @@ build: native-sdk
 lint: native-sdk
 	cargo fmt -- --check
 	cargo build-tool enhancement-assets
+	cargo build-tool theme-check
 	cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
 lint-macos: export CC_aarch64_apple_darwin ?= clang
 lint-macos: export CXX_aarch64_apple_darwin ?= clang++
