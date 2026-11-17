@@ -12,7 +12,7 @@ use crate::{
 };
 use nsh_core::prelude::*;
 
-pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
+pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
     let result = data(session, nav);
     content(session, nav, result)
 }
@@ -45,7 +45,7 @@ fn content(
     session: SessionHandle,
     nav: Navigation,
     result: Resource<(u64, Vec<model::HistoryItem>), bridge::Failure>,
-) -> Screen {
+) -> View {
     let busy = signal(false);
     let deleted = signal(0_u64);
     let feedback = signal(SharedString::default());
@@ -123,7 +123,7 @@ fn content(
     let has_current = computed(move || {
         result.with(|items| items.is_some_and(|(identity, _)| *identity == session.identity()))
     });
-    crate::shell::page(nav, move || tr("nav.history.title")).child(
+    crate::shell::content(nav, move || tr("nav.history.title")).child(
         view()
             .flex_1()
             .child(ui::status(feedback))
@@ -157,7 +157,6 @@ fn content(
                                 items.map(|(_, items)| items.clone()).unwrap_or_default()
                             })
                         },
-                        move || user.get().is_none(),
                         hongguo_common::utils::time::now_ms(),
                         history::HistoryEvents {
                             open: Box::new(open),

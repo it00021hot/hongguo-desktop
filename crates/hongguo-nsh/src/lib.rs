@@ -56,6 +56,7 @@ fn native_components(components: &nsh_platform_ios::Components) {
 pub fn App() -> impl IntoElement {
     i18n::install();
     view_memory::provide();
+    shell::PlayerOverlay::provide();
     set_tokens(
         nsh_base::tokens_of(Some(include_str!("../theme.json"))).expect("validated NSH theme"),
     );
@@ -64,7 +65,13 @@ pub fn App() -> impl IntoElement {
         .flex_1()
         .pt_safe_area()
         .px_safe_area()
-        .bg(move || theme().background)
+        .bg(move || {
+            if shell::PlayerOverlay::fullscreen() {
+                theme().color("video-surface").expect("video surface token")
+            } else {
+                theme().background
+            }
+        })
         .text_color(move || theme().foreground)
         .child(when(
             move || session.loading(),
@@ -103,6 +110,7 @@ pub fn App() -> impl IntoElement {
                 });
                 let nav = navigation::Navigation::new();
                 view_memory::provide_models();
+                features::browse::GlobalSearch::provide();
                 shortcuts::Shortcuts::provide();
                 crate::shell::provide_account_label(
                     computed(move || {
@@ -126,10 +134,10 @@ pub fn App() -> impl IntoElement {
                 let account_dialogs = features::account_dialogs(handle);
                 crate::shell::shell_with_theme(
                     nav,
-                    view(),
+                    features::browse::search_toolbar(handle, nav),
                     crate::shell::stack().child(each(
                         nav.routes(),
-                        |route: &navigation::Route| format!("{route:?}"),
+                        |route: &navigation::Route| format!("{:?}", route.section_root()),
                         move |route, index| {
                             features::render(route.get_untracked(), handle, nav)
                                 .on_dismiss(move || nav.dismiss(index.get_untracked()))

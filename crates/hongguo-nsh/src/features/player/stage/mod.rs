@@ -39,6 +39,7 @@ pub(crate) fn surface(
     rail: impl IntoElement,
     controls: impl IntoElement,
     status: impl IntoElement,
+    show_binge_bar: Memo<bool>,
 ) -> View {
     let chrome = super::chrome::Chrome::current();
     let modes = crate::window_modes::WindowModes::current();
@@ -46,15 +47,30 @@ pub(crate) fn surface(
     let overlay = crate::features::player::presentation::player_chrome(computed(move || {
         chrome.is_none_or(|chrome| chrome.shown().get())
     }))
+    .right(move || px(geometry.map_or(0.0, |geometry| geometry.comment_width())))
     .child(
         view()
             .absolute()
             .left_3()
-            .bottom(move || px(if compact() { 40.0 } else { 112.0 }))
-            .w(percentage(0.62))
+            .bottom(move || {
+                px(if compact() {
+                    40.0
+                } else if show_binge_bar.get() {
+                    104.0
+                } else {
+                    80.0
+                })
+            })
+            .right_20()
             .style_when(
                 move || !is_desktop() && compact(),
-                |style| style.left_4().right_20().w(auto()).bottom_36(),
+                |style| {
+                    style
+                        .left_4()
+                        .right_20()
+                        .w(auto())
+                        .bottom(move || px(if show_binge_bar.get() { 64.0 } else { 56.0 }))
+                },
             )
             .style_when(
                 move || {
@@ -74,7 +90,7 @@ pub(crate) fn surface(
             .bottom(px(96.0))
             .style_when(
                 move || !is_desktop() && compact(),
-                |style| style.right_3().bottom_36(),
+                |style| style.right_2().bottom_24(),
             )
             .style_when(
                 move || {
@@ -97,7 +113,7 @@ pub(crate) fn surface(
         .on_layout(move |bounds: &Bounds<Points>| {
             if let Some(geometry) = geometry {
                 geometry
-                    .viewport
+                    .stage
                     .set((bounds.size.width.0, bounds.size.height.0));
             }
         })
@@ -109,14 +125,41 @@ pub(crate) fn surface(
             },
             crate::features::player::presentation::window_drag_bar,
         ))
-        .child(view().absolute().inset_0().child(video))
+        .child(
+            view()
+                .absolute()
+                .inset_0()
+                .right(move || px(geometry.map_or(0.0, |geometry| geometry.comment_width())))
+                .style_when(
+                    move || {
+                        !is_desktop()
+                            && geometry.is_some_and(|geometry| geometry.comments_open.get())
+                    },
+                    |style| {
+                        style.bottom(move || {
+                            px(geometry.map_or(0.0, |geometry| {
+                                geometry.stage.get().1
+                                    * super::presentation::comment_panel::MOBILE_HEIGHT_RATIO
+                            }))
+                        })
+                    },
+                )
+                .on_layout(move |bounds: &Bounds<Points>| {
+                    if let Some(geometry) = geometry {
+                        geometry
+                            .viewport
+                            .set((bounds.size.width.0, bounds.size.height.0));
+                    }
+                })
+                .child(video),
+        )
         .child(when(
             move || is_desktop() && geometry.is_some(),
             move || {
                 view()
                     .absolute()
                     .right_0()
-                    .bottom(px(56.0))
+                    .bottom_0()
                     .size(px(0.0))
                     .pointer_events(PointerEvents::None)
                     .element_ref(&geometry.expect("player geometry").comment_anchor)
@@ -146,7 +189,6 @@ pub(crate) struct Info {
     pub(crate) title: String,
     pub(crate) episode: u32,
     pub(crate) total: u32,
-    pub(crate) intro: String,
     pub(crate) heat: String,
     pub(crate) season: String,
     pub(crate) badge: String,
@@ -156,17 +198,18 @@ impl From<Info> for crate::features::player::presentation::WindowCaption {
     fn from(info: Info) -> Self {
         Self {
             title: info.title,
-            intro: info.intro,
             episode: info.episode,
             total: info.total,
         }
     }
 }
 
-pub(crate) fn info(model: impl IntoReactive<Info>, open: impl Fn() + 'static) -> View {
+pub(crate) fn info(
+    model: impl IntoReactive<Info>,
+    open_detail: impl Fn() + Copy + 'static,
+) -> View {
     let model = model.into_reactive();
     let model = computed(move || model.get());
-    let expanded = signal(false);
     view()
         .w_full()
         .gap_0p5()
@@ -177,10 +220,6 @@ pub(crate) fn info(model: impl IntoReactive<Info>, open: impl Fn() + 'static) ->
             },
             |style| style.hidden(),
         )
-        .child(when(
-            move || !model.get().heat.is_empty(),
-            move || crate::features::player::presentation::player_heat(move || model.get().heat),
-        ))
         .child(
             view()
                 .flex_row()
@@ -203,54 +242,14 @@ pub(crate) fn info(model: impl IntoReactive<Info>, open: impl Fn() + 'static) ->
                     },
                 ))
                 .child(
-                    crate::features::player::presentation::player_title(move || {
-                        if is_desktop() {
-                            format!("@{}", model.get().title)
-                        } else {
-                            model.get().title
-                        }
-                    })
-                    .on_press(open),
+                    crate::features::player::presentation::player_title(move || model.get().title)
+                        .on_press(open_detail),
                 ),
         )
         .child(
-            text(move || {
-                let info = model.get();
-                format!(
-                    "{} · {}",
-                    tr("player.epShort").replace("{index}", &info.episode.to_string()),
-                    tr("player.totalEpisodes").replace("{count}", &info.total.to_string())
-                )
+            crate::features::player::presentation::player_episode_label(move || {
+                tr("player.epShort").replace("{index}", &model.get().episode.to_string())
             })
-            .text_xs()
-            .style_when(move || !is_desktop(), |style| style.text_sm()),
+            .number_of_lines(1),
         )
-        .child(when(
-            move || !model.get().intro.is_empty(),
-            move || {
-                view()
-                    .flex_row()
-                    .items_end()
-                    .gap_2()
-                    .max_w(move || percentage(if compact() { 1.0 } else { 0.36 }))
-                    .style_when(move || compact() && is_desktop(), |style| style.invisible())
-                    .child(
-                        crate::features::player::presentation::player_intro(move || {
-                            model.get().intro
-                        })
-                        .flex_1()
-                        .number_of_lines(move || if expanded.get() { 0_u32 } else { 2_u32 }),
-                    )
-                    .child(
-                        crate::features::player::presentation::player_inline(move || {
-                            tr(if expanded.get() {
-                                "player.introCollapse"
-                            } else {
-                                "player.introExpand"
-                            })
-                        })
-                        .on_press(move || expanded.update(|expanded| *expanded = !*expanded)),
-                    )
-            },
-        ))
 }

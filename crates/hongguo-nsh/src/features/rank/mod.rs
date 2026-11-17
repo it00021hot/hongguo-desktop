@@ -13,8 +13,8 @@ use model::Query;
 pub(super) use model::ScrollScope;
 use nsh_core::prelude::*;
 
-pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
-    crate::shell::page(nav, move || tr("nav.rank.title")).child(content(session, nav))
+pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
+    crate::shell::content(nav, move || tr("nav.rank.title")).child(content(session, nav))
 }
 
 fn content(session: SessionHandle, nav: Navigation) -> View {

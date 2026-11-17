@@ -3,6 +3,9 @@ mod controller;
 pub(super) fn card() -> View {
     card::build()
 }
+pub(crate) fn profile() -> View {
+    card::profile()
+}
 mod model;
 mod view;
 
@@ -110,5 +113,7 @@ fn clock(state: State, prompt: AccountPrompt) {
 pub(super) fn fallback(session: SessionHandle, nav: Navigation) -> Screen {
     let dialogs = dialogs(session);
     AccountPrompt::provide().request();
-    crate::shell::page(nav, move || crate::i18n::tr("settings.account")).child(dialogs)
+    crate::shell::page(nav, move || crate::i18n::tr("settings.account"))
+        .child(card())
+        .child(dialogs)
 }

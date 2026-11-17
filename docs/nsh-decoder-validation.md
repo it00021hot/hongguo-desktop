@@ -1,5 +1,93 @@
 # NSH 编解码验证记录
 
+## 2026-11-18 手机选剧退出、暂停提示与横屏布局
+
+移动端进入选剧后，原生返回未接入解除 FeedNavigation 锁的操作；此前只有宿主导航回调和 Esc 路径。现增加手机左上返回入口，并由 Android 原生 BackHandler 在可见且无弹层时处理返回：横屏优先退出横屏，其次解除选剧锁，保留当前来源和进度。弹层保持原生关闭优先级。
+
+手机竖屏将剧名条、拖动时间行和进度条放入同一纵向控制栏，剧名在进度上方；取消先前以独立绝对定位倒置二者的布局。暂停时增加不接收触摸和辅助焦点的居中播放三角，点击与滑动继续由原视频处理。提示沿 FAST_MS 淡入淡出，减少动态效果时立即显隐。
+
+横屏弹幕栏此前高 36dp，而内部编辑器强制 48dp、内容另有顶部 padding，导致文字偏上。视频编辑器现跟随容器高度，内容按可用高度垂直居中。独立 MuMu 新安装官方 `com.phoenix.read` 7.4.5.32，游客播放与暂停截图保存在 `device-mumu/official-*.png`，未使用用户既有官方实例或账号。参照其实际选集、清晰度和倍速排列调整本应用横屏控制行：选集在左、清晰度和倍速在右；保留本应用弹幕开关，关闭弹幕时收起输入，开启后呈现输入。手机横屏选集、清晰度、倍速与弹幕开关保持至少 48dp；这不是对官方所有清屏、分享和画幅功能的完整复制。
+
+首轮修复 APK 已在华为 LYA-AL00 / Android 10 和 MuMu Android 15 验证系统返回、按钮返回及弹层优先关闭，解除锁定后上滑恢复切剧。对应 `mobile-locked.png`、`mobile-system-back.png`、`mobile-button-back.png`、`mobile-panel-back.png` 和 `mobile-feed-resumed.png`。暂停提示在随后 APK 两台设备实际可见，截图为 `pause-visible.png`（华为）与 `pause-confirmed.png`（MuMu）。所有文件位于忽略的 `target/issue-24/`。
+
+最终 APK `android-mobile-verified/guava.apk` 覆盖安装到两台设备：竖屏保留剧名条在进度条上方；进入横屏后，暂停三角、选集入口、清晰度及倍速均正常显示。弹幕开启、关闭两种状态分别保存在各设备的 `verified-landscape-on.png` / `verified-landscape-off.png`。华为原生 UI 树实测：控制行 bounds 为 y=906..1050，选集及清晰度文字 y=948..1008，输入文字 y=954..1002，三者垂直中心均为 978px；选集在弹幕关闭时仍保持同一中心。UI 树为 `verified-landscape-{on,off}.xml`。前一集成包另完成两台设备原生返回退出横屏，以及 MuMu 下一次返回解除锁定，截图 `aligned-back-portrait.png` / `aligned-back-unselected.png`。
+
+明暗主题、横竖屏、触控点击和实际播放画面已查看，尺寸、圆角、颜色及反馈沿用共享控件；暂停提示使用有意的圆形背景，视频画面中的文字未作颜色或位置拟合。宿主工作区构建及严格 Clippy、最后按钮修正后的定向严格 Clippy、Android arm64 release APK 构建和格式检查通过，日志 `mobile-aligned-clippy.log`、`mobile-verified-build.log`、`mobile-aligned-final-clippy.log`、`mobile-verified-package.log`。本轮未启用系统读屏、系统大字号或减少动态效果设置，未执行登录、弹幕发送或 iOS 真机验收。
+
+English: Mobile back now exits landscape before clearing the selected-series feed lock, while native overlays retain dismissal priority. Portrait title and seek controls share one vertical layout. A non-interactive centered play indicator makes pause visible without replacing video gestures. The video rich editor follows its container height and vertically centers its content. Landscape orders episodes on the left and quality/rate on the right, with the input shown only while danmaku is enabled. Reference captures use a fresh guest installation of official Android 7.4.5.32; they do not establish parity with every official feature.
+
+The final arm64 APK passed portrait/landscape, paused playback and both danmaku layouts on Huawei Android 10 hardware and MuMu Android 15. Native Huawei bounds put the row, episode label, quality label and input text at the same 978px vertical center. Workspace build/strict Clippy, the last targeted strict Clippy, final Android packaging and formatting passed. System screen readers, larger system fonts, reduced-motion device settings, authenticated sends and iOS hardware were not exercised.
+
+## 2026-11-17 Android ByteVC2 会话配额与长剧选集
+
+使用下节同一份第 12 集 ByteVC2 原流。MuMu 旧版实际复现：先在首页播放第 12 集，进入“我的”，从历史再次打开同一集；新播放器黑屏，15 秒后返回 `video decoder stalled beyond recovery deadline`。日志和截图为 `target/issue-24/device-mumu/retained-before.*`。
+
+共享解码器按可用 CPU 数分配线程配额，暂停的旧会话在队列满时仍持有配额。Android 隐藏和关闭消费者此前没有调用已有的 `suspend_decoder_if_owner`，保留页面足以阻止新会话进入。两个共享会话的独立复现中，保留暂停会话后新会话两秒内无首帧；挂起旧会话后新会话在 199ms 出帧。修复在 Android 隐藏和关闭时释放解码绑定及配额，恢复时沿用现有代次重建，不增加配额、不延长超时、不改解码或音轨时间轴。
+
+1000 集选集此前将所有分组换行展开，挤占整个 Sheet，而集数列表使用内容高度，无法获得有界滚动空间。分组改为单行横向原生 Scroll，选中组通过 reveal 自动可见；手机集数 List 占用剩余空间独立纵向滚动，继续使用稳定集号与原有触控尺寸。
+
+11 月 17 日晚至 18 日凌晨，通过固定 CLI 构建并覆盖安装 arm64 APK，在本轮独立应用数据中完成以下检查；未使用用户账号或既有应用数据。
+
+| 设备 | ByteVC2 第 12 集 | 1000 集选集 |
+| --- | --- | --- |
+| 华为 LYA-AL00 / Android 10 真机 | 首页播放后进入“我的”，从历史打开同集，首帧恢复至约 28 秒并继续播放超过原 15 秒超时；画面持续变化 | 首尾分组可达，实际选择并播放第 1000 集，关闭和系统返回正常 |
+| MuMu / Android 15 模拟器 | 同一路径恢复至约 38 秒，继续播放超过 15 秒并自动续播，未出现旧版解码停滞 | 首尾分组可达，实际选择并播放第 1000 集，关闭和系统返回正常 |
+
+上述播放回归日志为 `device-huawei/fixed-retained.log`、`device-mumu/fixed-seek.log`，对应 `retained-start-fixed.png` / `retained-after-fixed.png`；检查未出现 `DecoderFailed` 或解码停滞错误。随后仅完善选集首次布局定位和浅色关闭按钮，最终 APK `android-final/guava.apk` 在两台设备复验明暗主题：首次打开即显示当前 `991–1000` 分组及选中第 1000 集，可手动横滑回首组，30 个集数按钮完整可见；关闭按钮两种主题均可见且可用。截图为各设备目录的 `final-picker-auto-light.png`、`final-picker-auto-dark.png`、`final-picker-first-dark.png`。触控按钮保留至少 48dp；未启用系统读屏、修改系统字号或覆盖横屏验收。
+
+工作区严格 Clippy、工作区构建通过；最后界面修改后宿主严格 Clippy、Android arm64 release 严格 Clippy及完整 APK 构建通过。日志分别为 `fixed-host-clippy.log`、`fixed-host-build.log`、`final-host-clippy.log`、`fixed-android-clippy.log` 和 `android-final-build.log`，均位于忽略的 `target/issue-24/`。
+
+English: Retaining a paused Android ByteVC2 feed decoder could exhaust the shared CPU-thread admission budget. Opening the same episode from history then stalled for 15 seconds. Suspending the retained decoder released admission and produced the next first frame in 199ms in the isolated shared-session reproduction. Android now suspends decoding when the consumer is hidden or closed and rebinds on return, preserving generation isolation, timeouts and native audio timing. Long-series group selectors now scroll horizontally in one row; the phone episode grid fills the bounded remaining space and scrolls vertically.
+
+Both Huawei Android 10 hardware and MuMu Android 15 passed the retained-feed/history playback reproduction beyond the former timeout and played episode 1000. The final arm64 APK additionally passed initial current-group reveal, first/last group navigation and visible working close controls in light/dark themes on both devices. Workspace build and strict Clippy, final host strict Clippy, Android release strict Clippy and APK packaging passed. System screen readers, large system fonts and landscape remain outside this verification.
+
+## 2026-11-17 Windows SDR 视频发白（issue #24）
+
+按 [issue 截图](https://github.com/it00021hot/hongguo-desktop/issues/24) 的剧名和集数，经现有搜索、分集解析、取流与解密实现获取实际原流。使用本轮创建的独立数据目录，不读取用户账号；样本保存在忽略的 `target/issue-24/`。
+
+| 剧集 | 集数 | vid | 1080P 原流 | 容器色彩标记 |
+| --- | --- | --- | --- | --- |
+| 无限白粥，朕可是忠臣啊 | 12 | 7703065460987661336 | ByteVC2 | BT.709、有限范围、SDR |
+| 无限白粥，朕可是忠臣啊 | 23 | 7703065467933428760 | HEVC、8-bit | BT.709、有限范围、SDR |
+| 万妖图录传第十四季 | 5 | 7702765020278426648 | HEVC、8-bit | BT.709、有限范围、SDR |
+
+正常样本走专用帧转换；两份发白样本的 8-bit HEVC 默认走 NSH MediaEngine Video。后者原本将非线性 BGRA8 直接 DrawBitmap 到线性 FP16 scRGB 画布，遗漏传递函数转换。Direct2D 实际 GPU 回读：BGRA 中灰 128 在旧路径得到线性值 `0.501953`，经本次生产转换模块得到 `0.215820`，与 sRGB 解码结果吻合。
+
+固定 NSH Windows 补丁为普通 Video 增加 GPU ColorManagement、当前 SDR 白电平缩放和视口缩放，效果图随原帧/设备重建；标准 SDR 画布沿用原路径。专用解码、选流和 HDR 映射规则不变。严格 Clippy 与 Windows 客户端构建通过；独立 Windows 数据实例实际播放第 23 集至 31 秒，画面与进度正常，未出现转换失败日志。
+
+进一步在华为 LYA-AL00 / Android 10 真机、MuMu Android 15 模拟器导出同一份 HEVC 原流的系统解码帧。Windows 使用与生产一致的 MediaEngine TransferVideoFrame、FP16 Direct2D 画布和生产 `VideoColor` 模块回读；10 秒 / 4 秒请求分别以 Android 帧号 296 / 116 对齐内容，避免将 seek 的相邻帧差异计入色彩误差。下表是 1920×1080 全帧 RGB 平均绝对误差，每通道满值 255；没有调色或亮度拟合。
+
+| 同帧参照 | 无限白粥第 23 集：修复前 → 修复后 | 万妖第 5 集：修复前 → 修复后 |
+| --- | --- | --- |
+| 华为真机系统解码 | 54.1228 → 0.4795 | 64.2162 → 0.9608 |
+| MuMu 系统解码 | 54.2135 → 0.3258 | 64.8035 → 0.4945 |
+| Windows MediaEngine 原生 RGB | 修复后误差 0 | 修复后误差 0 |
+
+原始帧、`same-frame-results.json` 和 `same-frame-comparison.png` 位于 `target/issue-24/`。当前源码通过固定 CLI 完成 Android arm64 APK 构建；两台设备在本轮独立创建的数据中，通过现有 Store 写入真实已下载原流任务和观看入口，随后安装原始正式 APK（无调试 manifest），实际播放上述两份 HEVC 问题样本，画面与进度持续变化。此客户端播放回归与系统解码同帧数值对比是两项独立证据。真机初始公共签名材料下载返回 HTTP 404，准备同一份经现有哈希校验的公共材料缓存后继续验证；未更改签名或选流实现，也未使用用户账号或既有应用数据。
+
+该次色彩回归额外发现 Android 本地 ByteVC2 第 12 集解码停滞，以及华为高密度屏上 1000 集选集分组挤占列表；当时未计为通过。后续已分别修复并在两台设备验证，见上节。这两项与 Windows scRGB 色彩转换缺口独立。本轮 Windows GPU 为 NVIDIA GTX 1650，未覆盖举报者 Intel 核显、屏幕光学色度标定或所有 HDR 显示组合。
+
+English: The exact reported episodes were fetched through existing services into isolated data. Episode 12 is ByteVC2; episode 23 and season 14 episode 5 are 8-bit HEVC. All containers signal limited-range BT.709 SDR. MediaEngine BGRA8 frames previously bypassed sRGB-to-linear conversion on the scRGB canvas. GPU readback measured midgray as 0.501953 before conversion and 0.215820 through the production fix, which also applies the current SDR white level. Clippy and the Windows build pass; an isolated Windows client played episode 23 through 31 seconds. Matching full-resolution frames from Huawei Android 10 and MuMu Android 15 reduce RGB MAE from 54–65 to below 1/255 per channel, with byte-identical output against Windows native RGB. Android frame indices 296/116 match Windows requests at 10/4 seconds. The current arm64 APK was built and both HEVC samples played in the actual client on both devices, using isolated downloaded-file fixtures and the original non-debuggable APK. A public signing-material CDN 404 required preparing the existing hash-checked cache. Android local ByteVC2 decoder stalls and the dense-screen long-series episode layout remain separate findings. The Windows GPU was NVIDIA; reporter Intel hardware, optical calibration and broader HDR combinations were not covered.
+
+## 2026-11-17 Android 启动音轨时钟修复
+
+原 API37 arm64 模拟器 `emulator-5554`、应用 `com.guava.app`，覆盖安装保留数据。
+《重生1988，从做倒爷开始起家》720P、2倍速，修复前启动后稳定报错：
+`MediaPlayer returned positionMs=-22, playing=true, seeking=false, buffering=false, ended=false`，
+随后共享时钟的非负时间约束终止播放。
+
+[AOSP NuPlayerRenderer](https://android.googlesource.com/platform/frameworks/av/+/refs/heads/main/media/libmediaplayerservice/nuplayer/NuPlayerRenderer.cpp)
+在音轨尚未输出首批样本时直接返回首个音频锚点；AAC预卷锚点可以早于媒体零点。
+Android适配层将零点之前的播放位置映射为0，随后位置继续跟随原生音轨；
+不平移原始时间轴，不修改共享时钟约束，MediaPlayer错误仍按原有路径上报。
+
+修复包实际从第1集自动续播到第2集、第3集，画面与进度持续变化；
+第2集暂停后原生renderer为`paused(1)`，拖动到92秒呈现新代次画面，恢复后继续前进并自动续播。
+系统音轨为AAC、44100Hz、双声道、`speed(2.000000)`，运行日志未再出现`DecoderFailed`。
+强制重启应用后保留720P、2倍速，从第3集约66秒继续播放，首帧PTS为66520ms并完成新代次seek。
+Android arm64 APK完整编译、打包与覆盖安装通过，`cargo fmt -- --check`和工作区严格Clippy通过。
+本轮结果不外推iOS、其他Android设备或主观听感的音画同步验收。
+
 2026-11-14。本记录对应移除 FFmpeg 后的代码。此前 FFmpeg/PCM/D3D11VA 的验证
 不能用于证明当前原生 Video + 专用解码补充路线。
 

@@ -25,7 +25,6 @@ pub(super) fn controls(
                 let info = information.get();
                 crate::features::player::presentation::WindowCaption {
                     title: info.title,
-                    intro: info.intro,
                     episode: info.episode,
                     total: info.total,
                 }

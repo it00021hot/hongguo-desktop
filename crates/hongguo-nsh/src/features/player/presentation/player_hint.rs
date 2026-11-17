@@ -8,8 +8,8 @@ pub(crate) fn player_hint(label: impl IntoReactive<SharedString>) -> nsh_base::T
         .px_2()
         .py_1()
         .rounded(crate::ui::radii::control())
-        .bg(move || theme().color("video-picker").expect("picker"))
-        .text_color(move || theme().color("video-controls").expect("controls"))
+        .bg(move || theme().popover)
+        .text_color(move || theme().popover_foreground)
         .child(text(label).text_xs().font_weight(FontWeight::NORMAL))
 }
 
@@ -18,12 +18,7 @@ pub(crate) fn player_danmaku_settings(open: Signal<bool>) -> nsh_base::ButtonEle
         .accessibility_label(move || crate::i18n::tr("player.danmakuSettings"))
         .size(move || px(if is_desktop() { 32.0 } else { 48.0 }))
         .p_0()
-        .text_color(move || {
-            theme()
-                .color("video-controls")
-                .expect("controls")
-                .opacity(if open.get() { 1.0 } else { 0.7 })
-        })
+        .text_color(move || super::video::player_ink().opacity(if open.get() { 1.0 } else { 0.7 }))
         .child(player_hint(move || {
             crate::i18n::tr("player.danmakuSettings")
         }))
@@ -66,14 +61,9 @@ pub(crate) fn player_danmaku_toggle(enabled: Signal<bool>) -> nsh_base::ButtonEl
         .size(move || px(if is_desktop() { 32.0 } else { 48.0 }))
         .p_0()
         .text_color(move || {
-            theme()
-                .color("video-controls")
-                .expect("controls")
-                .opacity(if enabled.get() { 1.0 } else { 0.4 })
+            super::video::player_ink().opacity(if enabled.get() { 1.0 } else { 0.4 })
         })
-        .selected_style(|style| {
-            style.text_color(move || theme().color("video-controls").expect("controls"))
-        })
+        .selected_style(|style| style.text_color(super::video::player_ink))
         .child(player_hint(move || label.get()))
         .child(
             view()

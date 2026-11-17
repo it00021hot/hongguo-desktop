@@ -20,6 +20,7 @@ pub(super) struct Search {
     suggestions: Resource<Suggestions, bridge::Failure>,
     opened: Signal<bool>,
     focused: Signal<bool>,
+    keyboard_selection: Signal<bool>,
     pub composing: Signal<bool>,
     pub selected: Signal<usize>,
 }
@@ -58,6 +59,7 @@ impl Search {
             suggestions,
             opened: signal(false),
             focused: signal(false),
+            keyboard_selection: signal(false),
             composing,
             selected: signal(0),
         }
@@ -81,6 +83,7 @@ impl Search {
         batch(|| {
             self.draft.set(next.to_owned());
             self.selected.set(0);
+            self.keyboard_selection.set(false);
             self.opened.set(true);
         });
     }
@@ -89,11 +92,13 @@ impl Search {
         batch(|| {
             self.focused.set(focused);
             self.opened.set(focused);
+            self.keyboard_selection.set(false);
         });
     }
 
     pub fn dismiss(self) {
         self.opened.set(false);
+        self.keyboard_selection.set(false);
     }
 
     pub fn term(self) -> String {
@@ -105,6 +110,7 @@ impl Search {
             self.draft.set(String::new());
             self.opened.set(false);
             self.selected.set(0);
+            self.keyboard_selection.set(false);
         });
     }
 
@@ -113,6 +119,7 @@ impl Search {
             .suggestions
             .with(|response| response.map_or(0, |response| response.items.len()));
         if count > 0 {
+            self.keyboard_selection.set(true);
             self.selected.update(|index| {
                 *index = (*index as isize + delta).rem_euclid(count as isize) as usize
             });
@@ -133,6 +140,7 @@ impl Search {
     pub fn popup(self) -> crate::features::browse::presentation::SearchPopup {
         crate::features::browse::presentation::SearchPopup {
             open: computed(move || self.visible()),
+            focused: computed(move || self.focused.get()),
             composing: self.composing,
             selected: self.selected,
             options: computed(move || {
@@ -147,7 +155,7 @@ impl Search {
                                         word: item.word.clone().into(),
                                         cover: item.cover.clone(),
                                         description: item.abstract_text.clone().into(),
-                                        rich: !item.series_id.is_empty(),
+                                        rich: !item.cover.is_empty() && !item.series_id.is_empty(),
                                         parts: item
                                             .parts
                                             .iter()
@@ -178,12 +186,14 @@ pub(super) fn field(
         if search.composing.get_untracked() {
             return;
         }
-        if search.visible() {
-            pick_index(search.selected.get_untracked());
-        } else {
-            search.dismiss();
-            submit();
+        if search.visible()
+            && search.keyboard_selection.get_untracked()
+            && let Some(item) = search.pick(search.selected.get_untracked())
+        {
+            search.change(&item.word);
         }
+        search.dismiss();
+        submit();
     };
     effect(move || {
         if !search.visible() {
@@ -200,15 +210,6 @@ pub(super) fn field(
                 move |_| search.step(delta),
             );
         }
-        on_key_with(
-            "enter",
-            KeyOptions {
-                when: nsh_core::keymap::When::Always,
-                repeat: false,
-                ..Default::default()
-            },
-            move |_| submit_input(),
-        );
     });
     crate::features::browse::presentation::search_suggestions(
         search.popup(),
@@ -216,6 +217,10 @@ pub(super) fn field(
             crate::i18n::tr("search.placeholder")
         })
         .value(search.draft)
+        .style_when(
+            move || search.draft.with(String::is_empty),
+            |style| style.text_center(),
+        )
         .on_change(move |next: &str| search.change(next))
         .on_focus(move || search.focus(true))
         .on_blur(move || search.focus(false))

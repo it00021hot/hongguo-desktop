@@ -3,8 +3,10 @@ use crate::i18n::tr;
 use crate::ui::ButtonVariant;
 use crate::ui::Icon;
 use crate::ui::icon;
+use crate::ui::palette;
 use crate::ui::radii;
 use nsh_base::SheetEvent;
+use nsh_base::theme;
 use nsh_core::prelude::*;
 
 pub(crate) fn download_sheet(
@@ -19,7 +21,9 @@ pub(crate) fn download_sheet(
                 open.set(*next);
             }
         })
-        .backdrop_style(|style| style.bg(move || player_popup::color("video-surface").opacity(0.5)))
+        .backdrop_style(|style| {
+            style.bg(move || theme().color("dialog-backdrop").expect("backdrop token"))
+        })
         .popup_style(|style| {
             player_popup::surface(style)
                 .w_full()
@@ -76,8 +80,8 @@ pub(crate) fn download_quick(
     if outline {
         button
             .border_1()
-            .border_color(move || player_popup::color("video-controls").opacity(0.2))
-            .bg(move || player_popup::color("video-picker-cell"))
+            .border_color(move || nsh_base::theme().border)
+            .bg(move || theme().secondary)
     } else {
         button
     }
@@ -92,14 +96,11 @@ pub(crate) fn download_episode(
         .h_8()
         .p_0()
         .border_1()
-        .border_color(move || player_popup::color("video-controls").opacity(0.2))
-        .bg(move || player_popup::color("video-picker-cell"))
+        .border_color(move || nsh_base::theme().border)
+        .bg(move || theme().secondary)
         .selected(move || selected.get())
         .selected_style(|style| {
-            style
-                .bg(move || player_popup::color("video-picker-active"))
-                .text_color(move || player_popup::color("video-controls"))
-                .border_color(move || player_popup::color("video-picker-active"))
+            palette::selected(style).border_color(palette::selection_background)
         })
         .accessibility_label(move || {
             Some(format!("{} {index}", tr("download.selectEpisodes")).into())
@@ -115,7 +116,7 @@ pub(crate) fn download_grid() -> Scroll {
     scroll()
         .max_h(px(256.0))
         .border_1()
-        .border_color(move || player_popup::color("video-controls").opacity(0.1))
+        .border_color(move || nsh_base::theme().border)
         .rounded(radii::control())
         .p_2()
 }
@@ -126,10 +127,10 @@ pub(crate) fn download_count(count: impl IntoReactive<usize>) -> View {
         .px_2()
         .py_0p5()
         .rounded(radii::control())
-        .bg(move || player_popup::color("video-picker-cell"))
+        .bg(move || theme().secondary)
         .border_1()
-        .border_color(move || player_popup::color("video-controls").opacity(0.1))
-        .text_color(move || player_popup::color("video-controls"))
+        .border_color(move || nsh_base::theme().border)
+        .text_color(move || theme().foreground)
         .child(
             text(move || tr("download.selected").replace("{count}", &count.get().to_string()))
                 .text_xs()
@@ -140,7 +141,7 @@ pub(crate) fn download_count(count: impl IntoReactive<usize>) -> View {
 pub(crate) fn download_range_error() -> Text {
     text(move || tr("download.rangeInvalid"))
         .text_xs()
-        .text_color(move || player_popup::color("video-picker-active"))
+        .text_color(move || nsh_base::theme().destructive)
 }
 
 pub(crate) fn download_cancel() -> nsh_base::ButtonElement {
@@ -148,7 +149,7 @@ pub(crate) fn download_cancel() -> nsh_base::ButtonElement {
         .h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
         .py_0()
         .border_1()
-        .border_color(move || player_popup::color("video-controls").opacity(0.2))
+        .border_color(move || nsh_base::theme().border)
         .child(
             text(move || tr("common.cancel"))
                 .text_sm()
@@ -158,8 +159,10 @@ pub(crate) fn download_cancel() -> nsh_base::ButtonElement {
 
 pub(crate) fn download_submit() -> nsh_base::ButtonElement {
     surface(36.0)
-        .bg(move || player_popup::color("video-picker-active"))
-        .hover(|style| style.bg(move || player_popup::color("video-picker-active").opacity(0.9)))
+        .bg(move || theme().primary)
+        .text_color(move || theme().primary_foreground)
+        .hover(|style| style.bg(move || theme().primary.opacity(0.9)))
+        .disabled_style(palette::disabled)
         .flex_row()
         .gap_2()
         .child(icon(Icon::Download))
@@ -172,15 +175,15 @@ pub(crate) fn download_submit() -> nsh_base::ButtonElement {
 
 pub(crate) fn download_field(label: impl IntoReactive<SharedString>) -> nsh_base::Input {
     crate::ui::field(label)
-        .text_color(move || player_popup::color("video-controls"))
-        .placeholder_color(move || color(player_popup::color("video-picker-muted")))
-        .border_color(move || player_popup::color("video-controls").opacity(0.2))
-        .caret_color(move || color(player_popup::color("video-controls")))
-        .selection_color(move || color(player_popup::color("video-controls").opacity(0.3)))
-        .focus(|style| {
+        .text_color(move || theme().foreground)
+        .placeholder_color(move || color(theme().muted_foreground))
+        .border_color(move || nsh_base::theme().input)
+        .caret_color(move || color(nsh_base::theme().ring))
+        .selection_color(move || color(nsh_base::theme().primary.opacity(0.3)))
+        .focus_visible(|style| {
             style
                 .outline(px(2.0))
-                .outline_color(move || player_popup::color("video-controls"))
+                .outline_color(move || nsh_base::theme().ring)
         })
 }
 
@@ -188,17 +191,17 @@ pub(crate) fn download_status(message: impl IntoReactive<SharedString>) -> View 
     view().py_3().child(
         text(message)
             .text_sm()
-            .text_color(move || player_popup::color("video-picker-muted")),
+            .text_color(move || theme().muted_foreground),
     )
 }
 
 fn surface(height: f32) -> nsh_base::ButtonElement {
     crate::ui::controls::surface_height(ButtonVariant::Quiet, height)
-        .text_color(move || player_popup::color("video-controls"))
-        .hover(|style| style.bg(move || player_popup::color("video-picker-hover")))
+        .text_color(move || theme().foreground)
+        .hover(|style| style.bg(move || theme().accent))
         .focus(|style| {
             style
                 .outline(px(2.0))
-                .outline_color(move || player_popup::color("video-controls"))
+                .outline_color(move || nsh_base::theme().ring)
         })
 }

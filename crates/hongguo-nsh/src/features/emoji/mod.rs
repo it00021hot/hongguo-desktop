@@ -65,6 +65,14 @@ pub(crate) fn comment_picker(editor: Editor, trigger: ElementRef) -> impl IntoEl
     )
 }
 
+pub(crate) fn floating_picker(editor: Editor, trigger: ElementRef) -> impl IntoElement {
+    system_picker_skin(
+        editor,
+        trigger,
+        crate::features::emoji::presentation::EmojiTextStyle::FloatingCaption,
+    )
+}
+
 fn system_picker_skin(
     editor: Editor,
     trigger: ElementRef,

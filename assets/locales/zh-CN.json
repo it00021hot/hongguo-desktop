@@ -16,6 +16,11 @@
     "playbackFailed": "视频播放失败，请重试"
   },
   "nav": {
+    "my": "我的",
+    "signedOut": "未登录",
+    "syncHint": "登录后同步收藏与追更",
+    "primaryHome": "首页",
+    "primaryDownloads": "下载",
     "home": {
       "title": "推荐"
     },
@@ -131,6 +136,7 @@
     "submitting": "已加入队列 {count} 个任务"
   },
   "tasks": {
+    "emptyHint": "在播放器中选择下载，离线也能继续看",
     "queueStatus": "进行中 {running} · 等待 {pending} · 已完成 {completed} · 失败 {failed}",
     "concurrency": "并发 {active}/{limit}",
     "startAll": "一键启动",
@@ -754,6 +760,7 @@
     "playCount": "{count}次播放",
     "empty": "推荐流暂时为空",
     "tabFeed": "推荐",
+    "tabFollowing": "关注",
     "tabComic": "漫剧",
     "tabHuman": "真人"
   },

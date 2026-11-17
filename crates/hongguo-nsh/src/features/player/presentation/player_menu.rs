@@ -90,12 +90,9 @@ pub(crate) fn player_menu_option(
         .items_center()
         .gap_2()
         .text_color(video_ink)
-        .hover(|style| style.bg(move || player_popup::color("video-picker-hover")))
-        .focus(|style| {
-            style
-                .bg(move || player_popup::color("video-picker-hover"))
-                .text_color(video_ink)
-        })
+        .checked_style(crate::ui::palette::selected)
+        .hover(crate::ui::palette::highlighted)
+        .focus(crate::ui::palette::highlighted)
         .disabled_style(|style| style.opacity(0.45))
         .child(
             view()
@@ -354,11 +351,12 @@ fn bottom_panel(
                                     .font_weight(FontWeight::SEMIBOLD),
                             )
                             .child(
-                                crate::features::player::presentation::player_icon_button(
-                                    Icon::Close,
-                                    move || crate::i18n::tr("common.close"),
-                                )
-                                .on_press(move || change.with(|change| change(false))),
+                                crate::ui::controls::surface(crate::ui::ButtonVariant::Quiet)
+                                    .accessibility_label(move || crate::i18n::tr("common.close"))
+                                    .size(px(48.0))
+                                    .p_0()
+                                    .child(icon(Icon::Close))
+                                    .on_press(move || change.with(|change| change(false))),
                             ),
                     )
                     .child(focus_panel(content(), title))
@@ -371,6 +369,7 @@ fn focus_panel(content: View, title: Memo<SharedString>) -> View {
     let focused = stored(false);
     view()
         .element_ref(&node)
+        .style_when(move || !is_desktop(), |style| style.flex_1().min_h_0())
         .focusable(true)
         .role(nsh_core::AccessibilityRole::Group)
         .label(move || title.get())
@@ -414,24 +413,14 @@ pub(crate) fn player_episode(
         .min_w(move || px(if is_desktop() { 0.0 } else { 48.0 }))
         .items_center()
         .justify_center()
-        .text_color(move || {
-            theme()
-                .color("video-picker-muted")
-                .expect("video picker muted token")
-        })
+        .text_color(move || theme().muted_foreground)
         .font_weight(FontWeight::NORMAL)
         .checked_style(|style| {
             style
                 .text_color(video_ink)
                 .font_weight(FontWeight::SEMIBOLD)
         })
-        .hover(|style| {
-            style.text_color(move || {
-                theme()
-                    .color("video-picker-text")
-                    .expect("video picker text token")
-            })
-        })
+        .hover(|style| style.text_color(move || theme().foreground))
         .focus(|style| style.outline(px(2.0)).outline_color(video_ink))
         .disabled_style(|style| style.opacity(0.45))
         .transition()
@@ -460,15 +449,10 @@ pub(crate) fn player_volume_slider(value: impl IntoReactive<f32>) -> nsh_base::S
                 .w_1()
                 .h_full()
                 .rounded_full()
-                .bg(move || video_ink().opacity(0.25))
+                .bg(move || theme().secondary)
         })
-        .range_style(|style| {
-            style
-                .w_1()
-                .rounded_full()
-                .bg(move || video_ink().opacity(0.9))
-        })
-        .thumb_style(|style| style.size_3().rounded_full().bg(video_ink))
+        .range_style(|style| style.w_1().rounded_full().bg(move || theme().primary))
+        .thumb_style(|style| style.size_3().rounded_full().bg(move || theme().primary))
         .thumb_class("hover:opacity-90 active:opacity-80 focus:outline-2 focus:outline-ring")
 }
 
@@ -501,39 +485,12 @@ pub(crate) fn player_episode_cell(
         .items_center()
         .justify_center()
         .rounded(radii::control())
-        .bg(move || {
-            theme()
-                .color("video-picker-cell")
-                .expect("video picker cell token")
-        })
-        .text_color(move || {
-            theme()
-                .color("video-picker-text")
-                .expect("video picker text token")
-        })
+        .bg(move || theme().secondary)
+        .text_color(move || theme().secondary_foreground)
         .selected_style(|style| {
-            style
-                .text_color(video_ink)
-                .font_weight(FontWeight::SEMIBOLD)
-                .bg(move || {
-                    theme()
-                        .color("video-picker-active")
-                        .expect("video selected token")
-                })
+            crate::ui::palette::selected(style).font_weight(FontWeight::SEMIBOLD)
         })
-        .hover(move |style| {
-            style.bg(move || {
-                if selected.get() {
-                    theme()
-                        .color("video-picker-active")
-                        .expect("video picker active token")
-                } else {
-                    theme()
-                        .color("video-picker-hover")
-                        .expect("video picker hover token")
-                }
-            })
-        })
+        .hover(crate::ui::palette::highlighted)
         .focus(|style| style.outline(px(2.0)).outline_color(video_ink))
         .disabled_style(|style| style.opacity(0.45))
         .transition()
@@ -609,9 +566,7 @@ pub(crate) fn player_toggle_icon(
 }
 
 fn video_ink() -> nsh_core::element::AdaptiveColor {
-    theme()
-        .color("video-controls")
-        .expect("video foreground token")
+    theme().popover_foreground
 }
 fn video_surface() -> nsh_core::element::AdaptiveColor {
     theme().color("video-surface").expect("video surface token")

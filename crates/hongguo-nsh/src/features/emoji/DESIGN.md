@@ -17,6 +17,8 @@
 
 状态/动效：按钮复用ui hover/press/focus；Popover从trigger上方短缩放淡入/退出，消费FAST_MS与PRESS_SCALE；
 reduced-motion下即时。Tab选中持续可见；请求/上传期间真实loading、禁重复提交；结果与错误就地展示。
+评论附图预览和发送栏不参与剩余空间收缩；附图存在时，表情 Popover 的原生间距增加预览高度与栏间距，保持面板位于整个预览区上方。加入、替换、移除附图后仍可连续选择，原生弹层即时重排，不对避让距离添加动画；无附图时使用原触发间距。
+English: The picker reserves the selected attachment's preview height and composer gap in its native placement offset. Preview/send controls do not shrink; selecting remains continuous. This change passes host strict Clippy, build and format checks; updated-client visual verification is pending.
 系统格不播放入场波浪，避免连续选取和滚动回收反复动画；附件加入/移除直接更新内容，无额外布局动画。
 键盘Tab/Enter可选择，Escape关闭并恢复输入；收藏菜单按NSH公开组件在桌面右键、手机长按开启。
 移动真机选图/输入法尚未验收，不把共享内核或宿主编译通过当成真机通过。

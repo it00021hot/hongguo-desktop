@@ -78,16 +78,10 @@ pub(crate) fn calendar_date(
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
         .checked_style(|style| {
-            style
-                .bg(move || theme().primary)
-                .text_color(move || theme().primary_foreground)
-                .border_color(move || theme().primary.opacity(0.0))
+            crate::ui::palette::selected(style)
+                .border_color(crate::ui::palette::selection_background)
         })
-        .hover(move |style| {
-            style
-                .bg(move || theme().accent)
-                .text_color(move || theme().accent_foreground)
-        })
+        .hover(crate::ui::palette::highlighted)
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .transition()
         .duration(move || if reduce_motion() { 0.0 } else { FAST_MS })

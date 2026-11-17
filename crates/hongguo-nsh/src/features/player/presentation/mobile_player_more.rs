@@ -92,7 +92,9 @@ pub(crate) fn mobile_player_more(
                     }
                 })
                 .on_close(move || trigger_ref.focus())
-                .backdrop_style(|style| style.bg(move || ink("video-surface").opacity(0.5)))
+                .backdrop_style(|style| {
+                    style.bg(move || theme().color("dialog-backdrop").expect("backdrop token"))
+                })
                 .popup_style(|style| {
                     crate::features::player::presentation::player_popup::surface(style)
                         .max_h(move || px(window().height.0 * 0.78))
@@ -139,7 +141,7 @@ fn actions(
     view()
         .rounded(crate::ui::radii::card())
         .overflow_hidden()
-        .bg(move || ink("video-controls").opacity(0.05))
+        .bg(move || theme().secondary)
         .child(
             view()
                 .flex_row()
@@ -224,13 +226,9 @@ fn row(label: impl IntoReactive<SharedString>, glyph: Option<Icon>) -> nsh_base:
         .px_3()
         .py_3()
         .min_h(move || px(if is_desktop() { 44.0 } else { 48.0 }))
-        .hover(|style| style.bg(move || ink("video-controls").opacity(0.05)))
+        .hover(|style| style.bg(move || theme().accent))
         .active(|style| style.opacity(0.8))
-        .focus(|style| {
-            style
-                .outline(px(2.0))
-                .outline_color(move || ink("video-controls"))
-        })
+        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .disabled_style(|style| style.opacity(0.4))
         .transition()
         .duration(move || if reduce_motion() { 0.0 } else { FAST_MS })
@@ -257,26 +255,22 @@ fn more_switch(checked: Signal<bool>) -> nsh_base::SwitchElement {
                 .w_8()
                 .h(px(18.4))
                 .border_1()
-                .border_color(move || ink("video-controls").opacity(0.0))
+                .border_color(move || theme().border)
                 .justify_center()
                 .rounded_full()
-                .bg(move || ink("video-controls").opacity(0.2))
-                .checked(|style| style.bg(move || ink("video-picker-active")))
+                .bg(move || theme().secondary)
+                .checked(|style| style.bg(move || theme().primary))
         })
         .thumb_style(|style| {
             style
                 .size_4()
                 .rounded_full()
-                .bg(move || ink("video-controls"))
+                .bg(move || theme().background)
                 .checked(|style| style.translate_x(px(14.0)))
                 .transition()
                 .duration(move || if reduce_motion() { 0.0 } else { FAST_MS })
         })
-        .focus(|style| {
-            style
-                .outline(px(2.0))
-                .outline_color(move || ink("video-controls"))
-        })
+        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .disabled_style(|style| style.opacity(0.4))
 }
 
@@ -291,9 +285,7 @@ fn chevron(expanded: impl IntoReactive<bool>) -> Svg {
 }
 
 fn separator() -> View {
-    view()
-        .h(px(1.0))
-        .bg(move || ink("video-controls").opacity(0.1))
+    view().h(px(1.0)).bg(move || theme().border)
 }
 
 fn close_button() -> nsh_base::ButtonElement {
@@ -306,14 +298,6 @@ fn close_button() -> nsh_base::ButtonElement {
         .rounded(px(2.0))
         .opacity(0.8)
         .hover(|style| style.opacity(1.0))
-        .focus(|style| {
-            style
-                .outline(px(2.0))
-                .outline_color(move || ink("video-controls"))
-        })
+        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .child(icon(Icon::Close).size_4())
-}
-
-fn ink(name: &str) -> AdaptiveColor {
-    theme().color(name).expect("mobile player semantic token")
 }

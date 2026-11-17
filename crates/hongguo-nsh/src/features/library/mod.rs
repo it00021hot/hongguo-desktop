@@ -90,7 +90,7 @@ impl Kind {
     }
 }
 
-pub(crate) fn page(session: SessionHandle, nav: Navigation, kind: Kind) -> Screen {
+pub(crate) fn page(session: SessionHandle, nav: Navigation, kind: Kind) -> View {
     let logged_in = crate::view_memory::cached("library-login", move || {
         computed(move || {
             session.identity();
@@ -98,14 +98,14 @@ pub(crate) fn page(session: SessionHandle, nav: Navigation, kind: Kind) -> Scree
         })
     });
     if kind == Kind::Follows {
-        return crate::shell::page(nav, move || tr(kind.title()))
+        return crate::shell::content(nav, move || tr(kind.title()))
             .child(notices::build(session, nav, logged_in));
     }
     if kind == Kind::Reservations {
-        return crate::shell::page(nav, move || tr(kind.title()))
+        return crate::shell::content(nav, move || tr(kind.title()))
             .child(content(session, nav, kind));
     }
-    crate::shell::page(nav, move || tr(kind.title()))
+    crate::shell::content(nav, move || tr(kind.title()))
         .child(when(
             move || logged_in.get(),
             move || content(session, nav, kind),

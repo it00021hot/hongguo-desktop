@@ -21,6 +21,7 @@ pub(super) fn content(
     status: impl IntoReactive<QueueStatus>,
     busy: impl IntoReactive<bool>,
     dispatch: impl Fn(TaskIntent) + 'static,
+    open_browse: impl Fn() + Copy + 'static,
 ) -> View {
     let items = items.into_reactive();
     let items = computed(move || items.get());
@@ -83,6 +84,10 @@ pub(super) fn content(
         }
     };
     let toolbar = view()
+        .style_when(
+            move || !is_desktop() && ids.get().is_empty(),
+            |style| style.hidden(),
+        )
         .flex_row()
         .flex_wrap()
         .items_center()
@@ -257,7 +262,32 @@ pub(super) fn content(
         .child(toolbar)
         .child(when(
             move || ids.get().is_empty(),
-            move || ui::status(move || tr("tasks.empty")),
+            move || {
+                if is_desktop() {
+                    return ui::status(move || tr("tasks.empty"));
+                }
+                view()
+                    .py_16()
+                    .items_center()
+                    .gap_3()
+                    .text_color(move || theme().muted_foreground)
+                    .child(ui::icon(ui::Icon::Download).size_8())
+                    .child(
+                        text(move || tr("tasks.empty"))
+                            .text_base()
+                            .text_color(move || theme().foreground),
+                    )
+                    .child(text(move || tr("tasks.emptyHint")).text_sm())
+                    .child(
+                        ui::button(move || tr("nav.browse.title"), ui::ButtonVariant::Primary)
+                            .on_press(open_browse),
+                    )
+                    .child(
+                        ui::button(move || tr("tasks.rescan"), ui::ButtonVariant::Quiet)
+                            .disabled(busy)
+                            .on_press(move || send(TaskIntent::Rescan)),
+                    )
+            },
         ))
         .child(when(move || !ids.get().is_empty(), table))
         .child(when(

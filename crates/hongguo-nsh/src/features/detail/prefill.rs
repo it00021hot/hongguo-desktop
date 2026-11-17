@@ -9,6 +9,16 @@ pub(crate) struct DetailPrefill {
 }
 
 impl DetailPrefill {
+    pub(crate) fn from_suggestion(item: &hongguo_service::contracts::search::SuggestItem) -> Self {
+        Self {
+            series_id: item.series_id.clone(),
+            title: item.word.clone(),
+            cover: item.cover.clone(),
+            desc: item.abstract_text.clone(),
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn from_rank(item: &hongguo_service::contracts::rank::RankItem) -> Self {
         Self {
             series_id: item.series_id.clone(),

@@ -19,29 +19,14 @@ pub(crate) fn slider(label: impl IntoReactive<SharedString>) -> nsh_base::Slider
                 .h_2()
                 .rounded_full()
                 .border_1()
-                .border_color(move || {
-                    theme()
-                        .color("native-range-border")
-                        .expect("native range token")
-                })
-                .bg(move || {
-                    theme()
-                        .color("native-range-track")
-                        .expect("native range token")
-                })
+                .border_color(move || theme().border)
+                .bg(move || theme().secondary)
         })
-        .range_style(|style| {
-            style.rounded_full().bg(move || {
-                theme()
-                    .color("native-range-fill")
-                    .expect("native range token")
-            })
-        })
+        .range_style(|style| style.rounded_full().bg(move || theme().primary))
         .thumb_style(|style| {
-            style.size(px(16.0)).rounded_full().bg(move || {
-                theme()
-                    .color("native-range-fill")
-                    .expect("native range token")
-            })
+            style
+                .size(px(16.0))
+                .rounded_full()
+                .bg(move || theme().primary)
         })
 }

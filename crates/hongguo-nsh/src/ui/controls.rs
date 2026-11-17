@@ -45,24 +45,20 @@ pub(crate) fn surface_height(
         .duration(move || if reduce_motion() { 0.0 } else { FAST_MS })
         .ease_out()
         .hover(move |style| {
-            style.bg(move || match variant {
-                ButtonVariant::Primary => theme().primary.opacity(0.9),
-                _ => theme().accent,
-            })
+            style
+                .bg(move || match variant {
+                    ButtonVariant::Primary => theme().primary.opacity(0.9),
+                    _ => theme().accent,
+                })
+                .selected(super::palette::selected)
         })
         .active(|style| {
             style
                 .opacity(0.8)
                 .scale(move || if reduce_motion() { 1.0 } else { PRESS_SCALE })
         })
-        .selected_style(|style| {
-            style
-                .bg(move || theme().primary.opacity(0.12))
-                .text_color(move || theme().foreground)
-                .border_1()
-                .border_color(move || theme().foreground.opacity(0.24))
-        })
-        .disabled_style(|style| style.opacity(0.45))
+        .selected_style(super::palette::selected)
+        .disabled_style(super::palette::disabled)
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
 }
 
@@ -85,7 +81,7 @@ pub(crate) fn field(label: impl IntoReactive<SharedString>) -> nsh_base::Input {
         .border_color(move || theme().input)
         .bg(move || theme().background.opacity(0.0))
         .text_color(move || theme().foreground)
-        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
+        .focus_visible(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
 }
 
 pub(crate) fn status(message: impl IntoReactive<SharedString>) -> View {

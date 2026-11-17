@@ -2,6 +2,8 @@ use crate::i18n::tr;
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
+pub(crate) const MOBILE_HEIGHT_RATIO: f32 = 0.64;
+
 pub(crate) fn comment_panel(
     open: Signal<bool>,
     total: Signal<i64>,
@@ -27,12 +29,12 @@ pub(crate) fn comment_panel(
                     .on_cancel(close)
                     .child(
                         view()
-                            .w(move || px(380.0_f32.min(geometry.viewport.get().0 * 0.85)))
-                            .h(move || px(geometry.viewport.get().1 * 0.68))
-                            .rounded_tl(px(12.0))
-                            .bg(move || theme().color("video-sheet").expect("sheet").opacity(0.95))
-                            .text_color(move || theme().color("video-picker-text").expect("text"))
-                            .shadow_2xl()
+                            .w(move || px(geometry.comment_width()))
+                            .h(move || px(geometry.stage.get().1))
+                            .bg(move || theme().card)
+                            .text_color(move || theme().foreground)
+                            .border_l_1()
+                            .border_color(move || theme().border)
                             .child(
                                 view()
                                     .h_12()
@@ -53,21 +55,19 @@ pub(crate) fn comment_panel(
                                             text(move || total.get().to_string())
                                                 .text_xs()
                                                 .font_weight(FontWeight::NORMAL)
-                                                .text_color(move || {
-                                                    theme()
-                                                        .color("video-picker-muted")
-                                                        .expect("muted")
-                                                })
+                                                .text_color(move || theme().muted_foreground)
                                         },
                                     ))
                                     .child(view().flex_1())
                                     .child(
-                                        crate::features::player::presentation::player_icon_button(
-                                            crate::ui::Icon::Close,
-                                            move || tr("common.close"),
+                                        crate::ui::controls::surface(
+                                            crate::ui::ButtonVariant::Quiet,
                                         )
-                                        .size_7()
-                                        .min_h_0()
+                                        .accessibility_label(move || tr("common.close"))
+                                        .size_8()
+                                        .min_h_8()
+                                        .p_0()
+                                        .child(crate::ui::icon(crate::ui::Icon::Close))
                                         .on_press(close),
                                     ),
                             )
@@ -80,9 +80,15 @@ pub(crate) fn comment_panel(
             move || {
                 crate::ui::sheet(
                     open,
-                    move || tr("player.comments.title"),
+                    move || format!("{} {}", total.get(), tr("player.comments.title")),
                     move || (content.get())(),
                 )
+                .backdrop_style(|style| style.bg(move || theme().background.opacity(0.0)))
+                .popup_style(|style| {
+                    style
+                        .h(move || px(window().height.0 * MOBILE_HEIGHT_RATIO))
+                        .bg(move || theme().card)
+                })
             },
         ))
 }

@@ -7,6 +7,8 @@ use nsh_base::{OpenChangeReason, PopoverEvent, theme};
 use nsh_core::{element::ImageSrc, prelude::*};
 mod scroll;
 
+const DESKTOP_SUGGESTIONS_WIDTH: f32 = 384.0;
+
 #[derive(Clone, PartialEq)]
 pub(crate) struct SearchSuggestion {
     pub word: SharedString,
@@ -19,6 +21,7 @@ pub(crate) struct SearchSuggestion {
 #[derive(Clone, Copy)]
 pub(crate) struct SearchPopup {
     pub open: Memo<bool>,
+    pub focused: Memo<bool>,
     pub composing: Signal<bool>,
     pub selected: Signal<usize>,
     pub options: Memo<Vec<SearchSuggestion>>,
@@ -26,6 +29,8 @@ pub(crate) struct SearchPopup {
 
 pub(crate) fn search_field(label: impl IntoReactive<SharedString>) -> nsh_base::Input {
     field(label)
+        .style_when(is_desktop, |style| style.h_8().min_h_8().px_8().py_1())
+        .style_when(move || !is_desktop(), |style| style.px_12())
         .role(nsh_core::AccessibilityRole::Combobox)
         .submit_behavior(nsh_core::SubmitBehavior::Submit)
         .auto_correct(false)
@@ -38,14 +43,26 @@ pub(crate) fn search_suggestions(
     dismiss: impl Fn() + Copy + 'static,
 ) -> View {
     let width = signal(0.0_f32);
-    view().flex_1().min_w_48().child(
+    let input_ref = element_ref();
+    view().flex_1().min_w_0().child(
         nsh_base::popover()
-            .open(move || Some(popup.open.get()))
+            .open(move || {
+                Some(if is_desktop() {
+                    popup.focused.get()
+                } else {
+                    popup.open.get()
+                })
+            })
             .placement(Placement::Bottom)
-            .align(Align::Start)
+            .align(if is_desktop() {
+                Align::End
+            } else {
+                Align::Start
+            })
             .offset(px(6.0))
             .margin(px(8.0))
             .close_on_escape(move || !popup.composing.get())
+            .close_on_press_outside(is_desktop())
             .trigger(
                 view()
                     .w_full()
@@ -53,6 +70,7 @@ pub(crate) fn search_suggestions(
                     .on_layout(move |bounds: &Bounds<Points>| width.set(bounds.size.width.0))
                     .child(
                         input
+                            .element_ref(&input_ref)
                             .w_full()
                             .accessibility_state(move || AccessibilityState {
                                 expanded: Some(popup.open.get()),
@@ -65,11 +83,20 @@ pub(crate) fn search_suggestions(
                     && *reason != OpenChangeReason::TriggerPress
                 {
                     dismiss();
+                    if is_desktop() {
+                        input_ref.blur();
+                    }
                 }
             })
             .popup_style(move |style| {
                 style
-                    .w(move || px(width.get()))
+                    .w(move || {
+                        px(if is_desktop() {
+                            width.get().max(DESKTOP_SUGGESTIONS_WIDTH)
+                        } else {
+                            width.get()
+                        })
+                    })
                     .max_w(move || px((window().width.0 - 16.0).max(0.0)))
                     .max_h(px(320.0))
                     .rounded(radii::card())
@@ -88,6 +115,10 @@ pub(crate) fn search_suggestions(
                         }
                     })
                     .ease_out()
+                    .style_when(
+                        move || !popup.open.get(),
+                        |style| style.w_0().h_0().border(px(0.0)).opacity(0.0),
+                    )
             })
             .popup_starting_style(|style| {
                 style.opacity(0.0).scale(move || {
@@ -107,58 +138,68 @@ pub(crate) fn search_suggestions(
                     }
                 })
             })
-            .child(dynamic(move || {
-                let scroll_state = scroll::PopupScroll::new(popup.selected);
-                scroll()
-                    .element_ref(&scroll_state.node)
-                    .max_h(px(318.0))
-                    .keyboard_taps(nsh_core::KeyboardTaps::Always)
-                    .on_layout(move |bounds: &Bounds<Points>| scroll_state.layout(bounds))
-                    .on_scroll(move |event: &nsh_core::element::ScrollEvent| {
-                        scroll_state.moved(event)
-                    })
-                    .child(
-                        view()
-                            .role(nsh_core::AccessibilityRole::Listbox)
-                            .label(move || crate::i18n::tr("search.placeholder"))
-                            .p_1p5()
-                            .child(each(
-                                move || {
-                                    popup
-                                        .options
-                                        .get()
-                                        .into_iter()
-                                        .enumerate()
-                                        .collect::<Vec<_>>()
-                                },
-                                |(index, option): &(usize, SearchSuggestion)| {
-                                    format!("{}:{index}", option.word)
-                                },
-                                move |entry, _| {
-                                    let option =
-                                        computed(move || entry.with(|(_, option)| option.clone()));
-                                    view()
-                                        .on_layout(move |bounds: &Bounds<Points>| {
-                                            scroll_state
-                                                .row(entry.with(|(index, _)| *index), bounds);
-                                        })
-                                        .on_mouse_enter(move |_: &nsh_core::MouseEvent| {
-                                            popup.selected.set(entry.with(|(index, _)| *index));
-                                        })
-                                        .child(
-                                            suggestion(option)
-                                                .selected(move || {
-                                                    entry.with(|(index, _)| *index)
-                                                        == popup.selected.get()
+            .child(when(
+                move || popup.open.get(),
+                move || {
+                    dynamic(move || {
+                        let scroll_state = scroll::PopupScroll::new(popup.selected);
+                        scroll()
+                            .element_ref(&scroll_state.node)
+                            .max_h(px(318.0))
+                            .keyboard_taps(nsh_core::KeyboardTaps::Always)
+                            .on_layout(move |bounds: &Bounds<Points>| scroll_state.layout(bounds))
+                            .on_scroll(move |event: &nsh_core::element::ScrollEvent| {
+                                scroll_state.moved(event)
+                            })
+                            .child(
+                                view()
+                                    .role(nsh_core::AccessibilityRole::Listbox)
+                                    .label(move || crate::i18n::tr("search.placeholder"))
+                                    .p_1p5()
+                                    .child(each(
+                                        move || {
+                                            popup
+                                                .options
+                                                .get()
+                                                .into_iter()
+                                                .enumerate()
+                                                .collect::<Vec<_>>()
+                                        },
+                                        |(index, option): &(usize, SearchSuggestion)| {
+                                            format!("{}:{index}", option.word)
+                                        },
+                                        move |entry, _| {
+                                            let option = computed(move || {
+                                                entry.with(|(_, option)| option.clone())
+                                            });
+                                            view()
+                                                .on_layout(move |bounds: &Bounds<Points>| {
+                                                    scroll_state.row(
+                                                        entry.with(|(index, _)| *index),
+                                                        bounds,
+                                                    );
                                                 })
-                                                .on_press(move || {
-                                                    pick(entry.with(|(index, _)| *index))
-                                                }),
-                                        )
-                                },
-                            )),
-                    )
-            })),
+                                                .on_mouse_enter(move |_: &nsh_core::MouseEvent| {
+                                                    popup
+                                                        .selected
+                                                        .set(entry.with(|(index, _)| *index));
+                                                })
+                                                .child(
+                                                    suggestion(option)
+                                                        .selected(move || {
+                                                            entry.with(|(index, _)| *index)
+                                                                == popup.selected.get()
+                                                        })
+                                                        .on_press(move || {
+                                                            pick(entry.with(|(index, _)| *index))
+                                                        }),
+                                                )
+                                        },
+                                    )),
+                            )
+                    })
+                },
+            )),
     )
 }
 

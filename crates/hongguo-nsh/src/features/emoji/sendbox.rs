@@ -2,6 +2,9 @@ use super::{Attachment, Editor};
 use crate::{i18n::tr, ui};
 use nsh_core::{element::ImageSrc, prelude::*};
 
+pub(super) const ATTACHMENT_PREVIEW_SIZE: f32 = 64.0;
+pub(super) const COMPOSER_GAP: f32 = 8.0;
+
 pub(crate) struct SendEvents {
     pub send: Box<dyn Fn()>,
     pub pick_image: Box<dyn Fn()>,
@@ -37,13 +40,15 @@ pub(crate) fn sendbox(
                 || attachment.is_some_and(|image| image.with(Option::is_some)))
     });
     view()
-        .gap_2()
+        .flex_shrink_0()
+        .gap(px(COMPOSER_GAP))
         .child(when(
             move || attachment.is_some_and(|image| image.with(Option::is_some)),
             move || {
                 view()
                     .relative()
-                    .size_16()
+                    .size(px(ATTACHMENT_PREVIEW_SIZE))
+                    .flex_shrink_0()
                     .rounded_md()
                     .border_1()
                     .border_color(move || nsh_base::theme().border)

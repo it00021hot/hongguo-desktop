@@ -55,10 +55,6 @@ pub(crate) fn caption(model: Memo<WindowCaption>) -> View {
                         &tr("player.totalEpisodes").replace("{count}", &model.total.to_string()),
                     );
                 }
-                if !model.intro.is_empty() {
-                    line.push(' ');
-                    line.push_str(&model.intro);
-                }
                 line
             })
             .mt_0p5()

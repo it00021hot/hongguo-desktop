@@ -99,13 +99,13 @@ pub(crate) async fn sign_playback(
     headers: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<SignedRequest> {
-    let metasec = MetaSec::required(client).await?;
+    let metasec = MetaSec::required().await?;
     let (profile_key, session) = metasec.session(&env.device)?;
     let initial = session
         .initial
         .get_or_try_init(|| async {
             if let Some(app) = APP.get() {
-                let store = app.sessions.clone();
+                let store = app.clone();
                 let key = profile_key.clone();
                 let cached = tokio::task::spawn_blocking(move || store.load(&key))
                     .await
@@ -158,7 +158,7 @@ async fn exchange_and_save(
 ) -> AppResult<SdiToken> {
     let issued = exchange(metasec, client, device, token).await?;
     if let Some(app) = APP.get() {
-        let store = app.sessions.clone();
+        let store = app.clone();
         let key = profile_key.to_owned();
         let session = issued.clone();
         tokio::task::spawn_blocking(move || store.save(&key, &session))

@@ -1,6 +1,7 @@
 use crate::ui::Icon;
 use crate::ui::icon;
 use crate::ui::motion::FAST_MS;
+use crate::ui::palette;
 use crate::ui::radii;
 use nsh_base::theme;
 use nsh_core::prelude::*;
@@ -13,10 +14,6 @@ pub(crate) fn picker_mobile_columns(available_width: f32) -> u32 {
     ((available_width + PICKER_GRID_GAP) / (PICKER_TOUCH_SIZE + PICKER_GRID_GAP))
         .floor()
         .clamp(1.0, PICKER_DESKTOP_COLUMNS as f32) as u32
-}
-
-pub(crate) fn picker_color(name: &str) -> AdaptiveColor {
-    theme().color(name).expect("player picker theme token")
 }
 
 pub(crate) fn picker_tab(
@@ -40,15 +37,11 @@ pub(crate) fn picker_tab(
         .items_center()
         .gap_1()
         .pb_1p5()
-        .text_color(move || picker_color("video-picker-muted"))
+        .text_color(move || theme().muted_foreground)
         .font_weight(FontWeight::SEMIBOLD)
-        .selected_style(|style| style.text_color(move || picker_color("video-controls")))
-        .hover(|style| style.text_color(move || picker_color("video-picker-text")))
-        .focus(|style| {
-            style
-                .outline(px(2.0))
-                .outline_color(move || picker_color("video-controls"))
-        })
+        .selected_style(|style| style.text_color(move || theme().primary))
+        .hover(|style| style.text_color(move || theme().foreground))
+        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .child(text(move || label.get()).text_sm().line_height(px(20.0)))
         .child(when(
             move || count.get() > 0,
@@ -56,8 +49,8 @@ pub(crate) fn picker_tab(
                 view()
                     .px_1p5()
                     .rounded_full()
-                    .bg(move || picker_color("video-picker-active"))
-                    .text_color(move || picker_color("video-controls"))
+                    .bg(palette::selection_background)
+                    .text_color(palette::selection_foreground)
                     .child(
                         text(move || count.get().to_string())
                             .text_xs()
@@ -75,7 +68,7 @@ pub(crate) fn picker_tab(
                     .bottom_0()
                     .h_0p5()
                     .rounded_full()
-                    .bg(move || picker_color("video-picker-active"))
+                    .bg(move || theme().primary)
             },
         ))
         .transition()
@@ -90,17 +83,13 @@ pub(crate) fn picker_close(label: impl IntoReactive<SharedString>) -> nsh_base::
         .items_center()
         .justify_center()
         .rounded(radii::control())
-        .text_color(move || picker_color("video-picker-muted"))
+        .text_color(move || theme().muted_foreground)
         .hover(|style| {
             style
-                .bg(move || picker_color("video-picker-cell"))
-                .text_color(move || picker_color("video-controls"))
+                .bg(move || theme().accent)
+                .text_color(move || theme().accent_foreground)
         })
-        .focus(|style| {
-            style
-                .outline(px(2.0))
-                .outline_color(move || picker_color("video-controls"))
-        })
+        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .child(icon(Icon::Dropdown))
 }
 
@@ -115,9 +104,9 @@ pub(crate) fn picker_downloaded(active: impl IntoReactive<bool>) -> View {
         .pointer_events(PointerEvents::None)
         .bg(move || {
             if active.get() {
-                picker_color("video-controls").opacity(0.9)
+                palette::selection_foreground()
             } else {
-                picker_color("video-picker-downloaded")
+                theme().color("success").expect("success token")
             }
         })
 }
@@ -133,28 +122,36 @@ pub(crate) fn picker_season(current: impl IntoReactive<bool>, unreleased: bool) 
         .rounded(move || theme().radius)
         .border_1()
         .border_color(move || {
-            picker_color("video-picker-active").opacity(if current.get() { 0.8 } else { 0.0 })
+            palette::selection_background().opacity(if current.get() { 0.8 } else { 0.0 })
         })
         .bg(move || {
-            picker_color("video-picker-cell").opacity(if current.get() { 0.75 } else { 0.5 })
+            if current.get() {
+                palette::selection_background()
+            } else {
+                theme().secondary
+            }
         })
-        .text_color(move || picker_color("video-controls"))
+        .text_color(move || {
+            if current.get() {
+                palette::selection_foreground()
+            } else {
+                theme().secondary_foreground
+            }
+        })
         .hover(move |style| {
             style.bg(move || {
-                picker_color("video-picker-cell").opacity(if current.get() {
-                    0.75
-                } else if unreleased {
-                    0.5
+                if current.get() {
+                    palette::selection_background()
                 } else {
-                    1.0
-                })
+                    if unreleased {
+                        theme().secondary
+                    } else {
+                        theme().accent
+                    }
+                }
             })
         })
-        .focus(|style| {
-            style
-                .outline(px(2.0))
-                .outline_color(move || picker_color("video-controls"))
-        })
+        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .transition()
         .duration(move || if reduce_motion() { 0.0 } else { FAST_MS })
 }
@@ -175,18 +172,20 @@ pub(crate) fn picker_reserve(
         .flex_shrink_0()
         .bg(move || {
             if reserved.get() {
-                picker_color("video-picker-hover")
+                theme().accent
             } else {
-                picker_color("video-picker-active")
+                palette::selection_background()
             }
         })
-        .text_color(move || picker_color("video-controls"))
-        .hover(move |style| style.opacity(if reserved.get() { 1.0 } else { 0.9 }))
-        .focus(|style| {
-            style
-                .outline(px(2.0))
-                .outline_color(move || picker_color("video-controls"))
+        .text_color(move || {
+            if !reserved.get() {
+                palette::selection_foreground()
+            } else {
+                theme().accent_foreground
+            }
         })
+        .hover(move |style| style.opacity(if reserved.get() { 1.0 } else { 0.9 }))
+        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .disabled_style(move |style| style.opacity(if reserved.get() { 1.0 } else { 0.6 }))
         .child(icon(Icon::Reservations).size_3())
         .child(
@@ -207,8 +206,8 @@ pub(crate) fn picker_play(label: impl IntoReactive<SharedString>) -> View {
         .rounded_full()
         .flex_shrink_0()
         .border_1()
-        .border_color(move || picker_color("video-picker-muted").opacity(0.6))
-        .text_color(move || picker_color("video-picker-text"))
+        .border_color(move || theme().border)
+        .text_color(move || theme().foreground)
         .child(icon(Icon::Play).size_3())
         .child(text(label).text_xs().line_height(px(16.0)))
 }

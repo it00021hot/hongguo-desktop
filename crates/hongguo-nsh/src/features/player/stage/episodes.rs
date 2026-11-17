@@ -12,6 +12,7 @@ pub(super) fn picker(
 ) -> View {
     let series = signal(false);
     view()
+        .style_when(move || !is_desktop(), |style| style.flex_1().min_h_0())
         .gap_3()
         .child(
             view()
@@ -57,11 +58,7 @@ pub(super) fn picker(
                                 })
                                 .text_xs()
                                 .line_height(px(16.0))
-                                .text_color(move || {
-                                    crate::features::player::presentation::picker_color(
-                                        "video-picker-muted",
-                                    )
-                                })
+                                .text_color(move || nsh_base::theme().muted_foreground)
                             },
                         ))
                         .child(when(is_desktop, move || {
@@ -138,48 +135,75 @@ fn grid(state: MenuState, busy: Memo<bool>, action: impl Fn(MenuAction) + Copy +
     });
     view()
         .on_layout(move |bounds: &Bounds<Points>| width.set(bounds.size.width.0))
+        .style_when(move || !is_desktop(), |style| style.flex_1().min_h_0())
         .gap_3()
         .child(when(
             move || state.episodes.with(Vec::len) > GROUP_SIZE,
             move || {
-                crate::features::player::presentation::player_episode_group()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap_x_4()
-                    .gap_y_1()
-                    .child(each(
-                        move || {
-                            (0..state
-                                .episodes
-                                .with(|episodes| episodes.len().div_ceil(GROUP_SIZE)))
-                                .collect::<Vec<_>>()
-                        },
-                        |group: &usize| *group,
-                        move |index, _| {
-                            crate::features::player::presentation::player_episode(
-                                move || {
-                                    state
-                                        .episodes
-                                        .with(|episodes| group_label(episodes, index.get()))
-                                },
-                                move || group.get() == index.get(),
-                            )
-                            .child(
-                                text(move || {
-                                    state
-                                        .episodes
-                                        .with(|episodes| group_label(episodes, index.get()))
-                                })
-                                .text_size(px(13.0))
-                                .line_height(px(20.0)),
-                            )
-                            .on_change(move |selected: &bool| {
-                                if *selected {
-                                    group.set(index.get_untracked());
-                                }
-                            })
-                        },
-                    ))
+                scroll().horizontal().flex_shrink_0().child(
+                    crate::features::player::presentation::player_episode_group()
+                        .flex_row()
+                        .gap_x_4()
+                        .child(each(
+                            move || {
+                                (0..state
+                                    .episodes
+                                    .with(|episodes| episodes.len().div_ceil(GROUP_SIZE)))
+                                    .collect::<Vec<_>>()
+                            },
+                            |group: &usize| *group,
+                            move |index, _| {
+                                let node = element_ref();
+                                let laid_out = stored(false);
+                                effect(move || {
+                                    if group.get() == index.get() {
+                                        node.reveal(
+                                            nsh_core::RevealOptions::default().animated(false),
+                                        );
+                                    }
+                                });
+                                view()
+                                    .flex_shrink_0()
+                                    .on_layout(move |_: &Bounds<Points>| {
+                                        if !laid_out.replace(true)
+                                            && group.get_untracked() == index.get_untracked()
+                                        {
+                                            node.reveal(
+                                                nsh_core::RevealOptions::default().animated(false),
+                                            );
+                                        }
+                                    })
+                                    .child(
+                                        crate::features::player::presentation::player_episode(
+                                            move || {
+                                                state.episodes.with(|episodes| {
+                                                    group_label(episodes, index.get())
+                                                })
+                                            },
+                                            move || group.get() == index.get(),
+                                        )
+                                        .element_ref(&node)
+                                        .flex_shrink_0()
+                                        .child(
+                                            text(move || {
+                                                state.episodes.with(|episodes| {
+                                                    group_label(episodes, index.get())
+                                                })
+                                            })
+                                            .text_size(px(13.0))
+                                            .line_height(px(20.0)),
+                                        )
+                                        .on_change(
+                                            move |selected: &bool| {
+                                                if *selected {
+                                                    group.set(index.get_untracked());
+                                                }
+                                            },
+                                        ),
+                                    )
+                            },
+                        )),
+                )
             },
         ))
         .child(dynamic(move || {
@@ -228,6 +252,7 @@ fn grid(state: MenuState, busy: Memo<bool>, action: impl Fn(MenuAction) + Copy +
                     + rows.saturating_sub(1) as f32
                         * crate::features::player::presentation::PICKER_GRID_GAP)
             })
+            .style_when(move || !is_desktop(), |style| style.flex_1().min_h_0())
             .columns(move || columns.get())
             .row_gap(px(crate::features::player::presentation::PICKER_GRID_GAP))
             .column_gap(px(crate::features::player::presentation::PICKER_GRID_GAP))
@@ -333,12 +358,8 @@ fn season_card(
                                 view()
                                     .px_1()
                                     .rounded(px(2.0))
-                                    .bg(move || {
-                                        crate::features::player::presentation::picker_color(
-                                            "video-picker-active",
-                                        )
-                                        .opacity(0.9)
-                                    })
+                                    .bg(crate::ui::palette::selection_background)
+                                    .text_color(crate::ui::palette::selection_foreground)
                                     .child(
                                         text(move || tr("player.comingSoonBadge"))
                                             .text_size(px(10.0))
@@ -351,11 +372,7 @@ fn season_card(
                                 .text_size(px(11.0))
                                 .line_height(px(16.0))
                                 .number_of_lines(1)
-                                .text_color(move || {
-                                    crate::features::player::presentation::picker_color(
-                                        "video-picker-muted",
-                                    )
-                                }),
+                                .text_color(move || nsh_base::theme().muted_foreground),
                         ),
                 ),
         );
@@ -364,9 +381,7 @@ fn season_card(
             text(move || tr("player.nowPlaying"))
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(move || {
-                    crate::features::player::presentation::picker_color("video-picker-active")
-                }),
+                .text_color(move || nsh_base::theme().primary),
         );
     }
     if unreleased {

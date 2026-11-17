@@ -71,13 +71,21 @@ Craft Anything 在官方 Cronet 的原生安全回调观察了实际签名前 UR
 
 ### MetaSec v5 自动初始化
 
-首次在线取流时，两个壳自动从 [红果官网下载落地页](https://applink.novelquickapp.com/FK6cu) 指向的固定 7.4.3.32 APK 获取所需的两个 HTTPS Range，共 5,413,035 字节。响应的区间、压缩长度和 SHA-256 均需匹配，解压长度有上限，ELF 还会核验 SM3。桌面读取其中的表及受限字节码。
+固定许可与 MetaSec 原生材料已一次性提取并保存在 `assets/metasec/v5/`，来源、大小及 SHA-256 见该目录的 README。构建 `hongguo-api` 时只校验本地文件并通过 `include_str!` / `include_bytes!` 嵌入所有宿主；运行时仍验证许可及 ELF 的 SM3。
 
-校验通过的两个压缩片段保存在应用数据目录的 `metasec-v5-74332.cache`，与设备会话分开存放。后续启动重新校验并复用，缓存损坏会自动重取。安装后打开即可在线初始化，无需手动创建配置文件、下载 APK 或设置环境变量。发行包与源码均无需附带官方签名材料。
+固定材料的干净构建、启动、首次取流及后续播放均不下载 APK 或片段，不依赖 curl、构建缓存或用户目录的材料缓存。材料缺失、大小或 SHA-256 不符会阻断构建。设备自己的 SDK 会话仍按档案保存在私有数据库，和固定应用级材料分开管理。
+
+2026-11-17：旧 7.4.3.32 APK 的 DEX 区间返回 404，首字节和 ELF 区间仍可命中 CDN 缓存，不能据此判定整包可用。本次从 [官网落地页](https://applink.novelquickapp.com/FK6cu) 的 7.4.5.32 APK 一次性提取所需文件；APK SHA-256 为 `b1ee6c1af73618adc69c92aca645b77b25dc3b59406efee68f488d3d1a6e8217`。许可内容和 MetaSec 原生库与原 7.4.3.32 材料逐字节相同；请求设备版本仍按既有 7.4.3.32 抓包契约，签名算法、许可及受限字节码均未变更。
+
+English: The fixed license and native image were extracted once from the official 7.4.5.32 APK and saved under assets/metasec/v5, with source and hash records. They are byte-identical to the previously verified 7.4.3.32 material. Cargo only validates local size/SHA-256 and embeds these files; neither clean builds nor runtime download APKs or fragments, use curl, or require material caches. Missing or corrupt assets fail the build. Runtime license and native image SM3 validation remain mandatory. Device sessions remain private database records, and request identity and signing behavior retain the verified 7.4.3.32 contract.
+
+2026-11-18：本地材料校验在空输出目录、无 curl 的 PATH 及不可达代理下成功；隔离副本中损坏的许可文件被拒绝。`cargo build --offline --workspace` 与工作区严格 Clippy 通过。Windows 独立数据实例已正常呈现原流画面，数据目录无需材料缓存；后续界面验证按用户要求由用户自行完成。
+
+Validation: local material verification succeeds with an empty output directory, no curl on PATH and an unreachable proxy; a corrupt license in an isolated fixture is rejected. Offline workspace build and strict Clippy pass. An isolated Windows app displays the original video without an application material cache. Further UI acceptance is user-operated as requested.
 
 首次创建桌面设备库时写入初始注册记录，再由启动流程自动注册。已有窗口状态等非数据库文件不会阻止首次注册。数据库、日志旁文件或已有注册限制的异常状态仍由原门禁判定。
 
-覆盖升级沿用同一数据目录，保留设置、观看历史和续播进度。旧正式版没有 v5 配置或会话，新版首次在线取流时自动准备材料和 SDK 会话。v0.5.7 至 v0.6.5 写入的已知匿名档案，以及此前启动只写入当前版匿名档案的设备，可在没有其他设备记录和注册限制时自动补齐初始注册记录。升级保留现有注册状态与限流记录。
+覆盖升级沿用同一数据目录，保留设置、观看历史和续播进度。旧正式版没有 v5 会话，新版首次在线取流时自动准备 SDK 会话，固定材料直接使用随包资源。v0.5.7 至 v0.6.5 写入的已知匿名档案，以及此前启动只写入当前版匿名档案的设备，可在没有其他设备记录和注册限制时自动补齐初始注册记录。升级保留现有注册状态与限流记录。
 
 ## 目标与证据位置
 

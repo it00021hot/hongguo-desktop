@@ -11,6 +11,7 @@ mod release;
 mod relink;
 mod sdk;
 mod signing;
+mod theme;
 
 use anyhow::{Result, bail};
 use std::{env, path::Path};
@@ -27,7 +28,7 @@ fn main() -> Result<()> {
     }
     if args.is_empty() || args[0] == "--help" {
         println!(
-            "hongguo-build <setup|build|stage|release-preflight|release-assets|codec-build|sdk-package|enhancement-assets|relink|resign-ios|cross-tools|reuse-runtime> [arguments]"
+            "hongguo-build <setup|build|stage|release-preflight|release-assets|codec-build|sdk-package|enhancement-assets|theme-check|relink|resign-ios|cross-tools|reuse-runtime> [arguments]"
         );
         return Ok(());
     }
@@ -54,6 +55,7 @@ fn main() -> Result<()> {
         "codec-build" => codec::build(&args)?,
         "sdk-package" => codec_export::package(&args)?,
         "enhancement-assets" => enhancement::check(&args)?,
+        "theme-check" => theme::check()?,
         "cross-tools" => codec::cross_tools()?,
         "reuse-runtime" => {
             anyhow::ensure!(

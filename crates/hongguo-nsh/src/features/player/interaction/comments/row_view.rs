@@ -50,13 +50,7 @@ pub(super) fn row(state: State, events: Events) -> View {
         (false, true) => crate::features::emoji::presentation::EmojiTextStyle::Reply,
         (false, false) => crate::features::emoji::presentation::EmojiTextStyle::Comment,
     };
-    let muted = move || {
-        if state.reviews || !is_desktop() {
-            theme().muted_foreground
-        } else {
-            theme().color("video-picker-muted").expect("picker muted")
-        }
-    };
+    let muted = move || theme().muted_foreground;
     let like = move || {
         (if review {
             crate::features::player::presentation::review_like(
@@ -271,7 +265,7 @@ pub(super) fn row(state: State, events: Events) -> View {
                     if state.reviews {
                         theme().muted
                     } else {
-                        theme().color("video-picker-hover").expect("picker hover")
+                        theme().accent
                     }
                 })
                 .child(when(

@@ -86,11 +86,14 @@ fn content(
     let rate = preferences.rate;
     let position = signal((0.0_f64, 0.0_f64));
     let video_size = signal((0.0_f64, 0.0_f64));
+    let comments_open = signal(false);
     let geometry = crate::features::player::presentation::PlayerGeometry {
         comment_anchor: element_ref(),
         comment_trigger: element_ref(),
         source: video_size,
         viewport: signal((0.0, 0.0)),
+        stage: signal((0.0, 0.0)),
+        comments_open,
     };
     provide_context(geometry);
     let window_modes = crate::window_modes::WindowModes::current();
@@ -98,6 +101,7 @@ fn content(
     let pending_seek = signal(None::<f64>);
     let failure = signal(SharedString::default());
     let notice = signal(SharedString::default());
+    let relay_notice = signal(SharedString::default());
     let source = resource(
         move || Some((selection.get(), definition.get(), reset_definition.get())),
         move |((id, episode), definition, reset_definition), _| {
@@ -134,6 +138,11 @@ fn content(
     };
     let visible =
         computed(move || lifecycle() == nsh_core::platform::Lifecycle::Active && routed.get());
+    crate::shell::PlayerOverlay::bind(
+        visible,
+        comments_open,
+        computed(move || window_modes.is_some_and(|modes| modes.state().landscape)),
+    );
     let play_allowed = computed(move || {
         session.identity();
         lifecycle::may_play(
@@ -166,7 +175,6 @@ fn content(
     );
     let menu_open = signal(None::<stage::Panel>);
     let download_open = signal(false);
-    let comments_open = signal(false);
     let enhancement = enhancement::Controller::new(preferences.enhancement);
     provide_context(enhancement);
     let relay = relay::observe(
@@ -190,7 +198,7 @@ fn content(
             paused,
         },
         feed,
-        notice,
+        relay_notice,
         move |series, episode| {
             batch(|| {
                 selection.set((series.series_id, episode));
@@ -331,6 +339,23 @@ fn content(
         },
     );
     effect(move || {
+        if !is_desktop()
+            && visible.get()
+            && !panels_open.get()
+            && (in_binge.get() || window_modes.is_some_and(|modes| modes.state().landscape))
+        {
+            on_back_press(move || {
+                chrome.wake();
+                if let Some(modes) = window_modes.filter(|modes| modes.state().landscape) {
+                    modes.set_landscape(false);
+                } else {
+                    gestures.exit_binge();
+                }
+                true
+            });
+        }
+    });
+    effect(move || {
         if !visible.get()
             || panels_open.get()
             || crate::shortcuts::Shortcuts::current().is_some_and(|keys| keys.is_capturing())
@@ -409,6 +434,7 @@ fn content(
             buffering,
             failure,
             notice,
+            relay_notice,
             gestures,
             chrome,
             video_size,
@@ -418,7 +444,7 @@ fn content(
         move || danmaku.overlay(),
         next,
     );
-    let information = info::observe(session, selection, source, overlay);
+    let information = info::observe(source, overlay);
     let controls_state = stage::ControlState {
         geometry,
         caption: computed(move || information.get().into()),
@@ -510,6 +536,7 @@ fn content(
             }
             ControlAction::SelectEpisode(episode) => select_episode(episode),
             ControlAction::EnterBinge => gestures.enter_binge(),
+            ControlAction::ExitBinge => gestures.exit_binge(),
             ControlAction::RetrySeasons => seasons.retry(),
             ControlAction::ReserveSeason(id) => seasons.reserve(session, nav, id),
             ControlAction::SwitchSeason(id) => {
@@ -607,7 +634,11 @@ fn content(
     stage::surface(
         video,
         stage::info(information, move || {
-            nav.push(Route::Detail(selection.get_untracked().0))
+            if let Some(id) =
+                source.with(|source| source.map(|source| source.history.series_id.clone()))
+            {
+                nav.push(Route::Detail(id));
+            }
         }),
         interaction::panel(
             session,
@@ -659,10 +690,12 @@ fn content(
                 move || ui::status(move || tr("player.bufferingShort")),
             ))
             .child(ui::status(notice))
+            .child(ui::status(relay_notice))
             .child(ui::status(move || {
                 window_modes.map_or_else(SharedString::default, |modes| modes.error())
             }))
             .child(ui::status(move || danmaku.notice())),
+        computed(move || controls_state.binge_bar_visible()),
     )
     .child(download::sheet(session, nav, download_open, source))
 }

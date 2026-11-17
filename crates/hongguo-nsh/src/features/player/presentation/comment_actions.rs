@@ -51,7 +51,7 @@ pub(crate) fn comment_more(
         .child(text(label).text_sm().font_weight(FontWeight::MEDIUM))
 }
 
-pub(crate) fn comment_notice(message: impl IntoReactive<SharedString>, reviews: bool) -> View {
+pub(crate) fn comment_notice(message: impl IntoReactive<SharedString>, _reviews: bool) -> View {
     let message = message.into_reactive();
     let visible = message.clone();
     view()
@@ -62,19 +62,13 @@ pub(crate) fn comment_notice(message: impl IntoReactive<SharedString>, reviews: 
             text(move || message.get())
                 .text_sm()
                 .font_weight(FontWeight::NORMAL)
-                .text_color(move || {
-                    if reviews || !is_desktop() {
-                        theme().muted_foreground
-                    } else {
-                        theme().color("video-picker-muted").expect("notice")
-                    }
-                }),
+                .text_color(move || theme().muted_foreground),
         )
 }
 
 pub(crate) fn comment_link(
     label: impl IntoReactive<SharedString>,
-    player: bool,
+    _player: bool,
     size: f32,
 ) -> nsh_base::ButtonElement {
     crate::ui::controls::surface(crate::ui::ButtonVariant::Quiet)
@@ -85,23 +79,11 @@ pub(crate) fn comment_link(
         .p_0()
         .gap_1()
         .bg(move || theme().background.opacity(0.0))
-        .text_color(move || {
-            if player && is_desktop() {
-                theme().color("video-picker-muted").expect("picker muted")
-            } else {
-                theme().muted_foreground
-            }
-        })
+        .text_color(move || theme().muted_foreground)
         .hover(move |style| {
             style
                 .bg(move || theme().background.opacity(0.0))
-                .text_color(move || {
-                    if player && is_desktop() {
-                        theme().color("video-picker-text").expect("picker text")
-                    } else {
-                        theme().foreground
-                    }
-                })
+                .text_color(move || theme().foreground)
         })
         .child(
             text(label)
@@ -114,13 +96,7 @@ pub(crate) fn comment_thread_row(content: impl IntoElement, reviews: bool) -> Vi
     view()
         .ml(px(if reviews { 48.0 } else { 42.0 }))
         .border_l(px(2.0))
-        .border_color(move || {
-            if reviews || !is_desktop() {
-                theme().border
-            } else {
-                theme().color("video-picker-cell").expect("thread border")
-            }
-        })
+        .border_color(move || theme().border)
         .pl(px(if reviews { 12.0 } else { 10.0 }))
         .child(content)
 }
@@ -128,7 +104,7 @@ pub(crate) fn comment_thread_row(content: impl IntoElement, reviews: bool) -> Vi
 pub(crate) fn comment_like(
     selected: Memo<bool>,
     count: Memo<i64>,
-    player: bool,
+    _player: bool,
     reply: bool,
 ) -> nsh_base::ButtonElement {
     crate::ui::controls::surface(crate::ui::ButtonVariant::Quiet)
@@ -149,8 +125,6 @@ pub(crate) fn comment_like(
         .text_color(move || {
             if selected.get() {
                 theme().color("hot").expect("hot")
-            } else if player && is_desktop() {
-                theme().color("video-picker-muted").expect("muted")
             } else {
                 theme().muted_foreground
             }
@@ -161,8 +135,6 @@ pub(crate) fn comment_like(
                 .text_color(move || {
                     if selected.get() {
                         theme().color("hot").expect("hot")
-                    } else if player && is_desktop() {
-                        theme().color("video-controls").expect("controls")
                     } else {
                         theme().foreground
                     }

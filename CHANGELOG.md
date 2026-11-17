@@ -9,6 +9,21 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.0] - 2026-11-18
+
+### ⚡ 优化
+
+- 统一桌面与移动端导航布局和主题，优化搜索联想、播放器控件与表情输入体验。
+- 内嵌固定签名材料，干净安装与首次运行无需额外下载签名材料。
+- 旧版数据仍不自动迁移；从 0.6.x 升级须手动下载安装，迁移前关闭新旧版本并备份，操作见 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+### 🐛 修复
+
+- 修复 Windows 视频播放的色彩处理问题。
+- 修复 Android 音轨负预卷时间导致的播放失败。
+
+English: Unified navigation and themes, improved search/player/emoji interactions, bundled signing material, and fixes for Windows video colors and Android audio preroll. Legacy data migration remains manual; back up before migrating.
+
 ## [0.7.0] - 2026-11-17
 
 ### ✨ 新增

@@ -92,6 +92,7 @@ pub(crate) fn body(
                     let title = item.title.clone();
                     let disabled = item.disabled;
                     let selected_value = item.value.clone();
+                    let selected = computed(move || value.get().as_ref() == Some(&selected_value));
                     view()
                         .element_ref(&node)
                         .role(nsh_core::AccessibilityRole::Option)
@@ -99,7 +100,7 @@ pub(crate) fn body(
                         .label(title.clone())
                         .focusable(!disabled)
                         .accessibility_state(move || AccessibilityState {
-                            selected: value.get().as_ref() == Some(&selected_value),
+                            selected: selected.get(),
                             ..Default::default()
                         })
                         .disabled(disabled)
@@ -110,8 +111,9 @@ pub(crate) fn body(
                         .rounded_md()
                         .justify_start()
                         .bg(nsh_core::Color::TRANSPARENT)
-                        .hover(|style| style.bg(move || theme().accent))
-                        .focus(|style| style.bg(move || theme().accent))
+                        .style_when(selected, crate::ui::palette::selected)
+                        .hover(crate::ui::palette::highlighted)
+                        .focus(crate::ui::palette::highlighted)
                         .disabled_style(|style| style.opacity(0.45))
                         .on_layout(move |_: &Bounds<Points>| {
                             if is_desktop() && cursor.get_untracked() == Some(at) {

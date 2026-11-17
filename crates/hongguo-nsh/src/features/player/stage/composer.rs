@@ -1,9 +1,10 @@
+use crate::features::player::presentation::PlayerComposerVariant;
 use crate::{i18n::tr, ui};
 use nsh_core::prelude::*;
 
 pub(crate) struct ComposerEvents {
     pub(crate) send: Box<dyn Fn()>,
-    pub(crate) emoji: Option<Box<dyn Fn() -> AnyElement>>,
+    pub(crate) emoji: Option<Box<dyn Fn(PlayerComposerVariant) -> AnyElement>>,
     pub(crate) previous: Memo<ElementRef>,
     pub(crate) next: ElementRef,
 }
@@ -55,6 +56,11 @@ fn input(
     floating: bool,
 ) -> View {
     let focused = stored(false);
+    let variant = if floating {
+        computed(|| PlayerComposerVariant::Popover)
+    } else {
+        variant
+    };
     let content = crate::features::player::presentation::player_send_surface(variant)
         .flex_shrink_0()
         .style_when(floating, |style| style.w(px(320.0)).min_w(px(320.0)).ml_0())
@@ -69,7 +75,11 @@ fn input(
                     placeholder: computed(move || tr("player.interact.danmakuPlaceholder")),
                     disabled,
                     multiline: false,
-                    skin: crate::features::emoji::FieldSkin::Video,
+                    skin: if floating {
+                        crate::features::emoji::FieldSkin::FloatingVideo
+                    } else {
+                        crate::features::emoji::FieldSkin::Video
+                    },
                     submit: Box::new(move || (events.get().send)()),
                     on_tab: Box::new(move |backward| {
                         if backward {
@@ -88,10 +98,13 @@ fn input(
                     move || tr("player.danmakuEmoji"),
                 )
                 .size(px(24.0))
+                .style_when(floating, |style| {
+                    style.text_color(move || nsh_base::theme().foreground)
+                })
                 .disabled(true)
                 .into_element()
             },
-            |emoji| emoji(),
+            |emoji| emoji(variant.get_untracked()),
         ))
         .child(
             crate::features::player::presentation::player_send_action(

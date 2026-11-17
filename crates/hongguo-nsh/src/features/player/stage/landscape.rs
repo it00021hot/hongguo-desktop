@@ -11,36 +11,31 @@ pub(super) fn row(
     action: impl Fn(ControlAction) + Copy + 'static,
     composer: impl Fn(Memo<ElementRef>) -> AnyElement + 'static,
 ) -> View {
-    let danmaku = element_ref();
     let episodes = element_ref();
     crate::features::player::presentation::player_landscape_row()
         .child(
-            crate::features::player::presentation::player_landscape_danmaku(state.danmaku_enabled)
-                .element_ref(&danmaku)
-                .on_press(move || action(ControlAction::Danmaku)),
+            crate::features::player::presentation::player_landscape_label(move || {
+                tr("player.episodesBar").replace("{count}", &state.episode_count.get().to_string())
+            })
+            .element_ref(&episodes)
+            .style_when(
+                move || !state.danmaku_enabled.get(),
+                |style| {
+                    style.flex_1().min_w_0().justify_start().bg(move || {
+                        crate::features::player::presentation::video::player_ink().opacity(0.1)
+                    })
+                },
+            )
+            .disabled(state.busy)
+            .accessibility_label(move || Some(tr("player.episodes")))
+            .on_press(move || state.menus.open.set(Some(super::Panel::Episodes))),
         )
-        .child(
+        .child(when(state.danmaku_enabled, move || {
             view()
                 .flex_1()
                 .min_w_0()
-                .child(composer(computed(move || danmaku))),
-        )
-        .child(
-            crate::features::player::presentation::player_landscape_label(move || {
-                format!("{}x", state.rate.get())
-            })
-            .accessibility_label(move || Some(tr("player.playbackRate")))
-            .disabled(state.busy)
-            .on_press(move || {
-                let rates = super::menu_model::RATES;
-                let index = rates
-                    .iter()
-                    .position(|rate| (*rate - state.rate.get_untracked()).abs() < 0.01);
-                action(ControlAction::SetRate(
-                    rates[index.map_or(0, |index| (index + 1) % rates.len())],
-                ));
-            }),
-        )
+                .child(composer(computed(move || episodes)))
+        }))
         .child(
             crate::features::player::presentation::player_landscape_label(move || {
                 if state.menus.selected_definition.get().is_none() {
@@ -72,12 +67,23 @@ pub(super) fn row(
         )
         .child(
             crate::features::player::presentation::player_landscape_label(move || {
-                tr("player.episodesBar").replace("{count}", &state.episode_count.get().to_string())
+                format!("{}x", state.rate.get())
             })
-            .element_ref(&episodes)
+            .accessibility_label(move || Some(tr("player.playbackRate")))
             .disabled(state.busy)
-            .accessibility_label(move || Some(tr("player.episodes")))
-            .on_press(move || state.menus.open.set(Some(super::Panel::Episodes))),
+            .on_press(move || {
+                let rates = super::menu_model::RATES;
+                let index = rates
+                    .iter()
+                    .position(|rate| (*rate - state.rate.get_untracked()).abs() < 0.01);
+                action(ControlAction::SetRate(
+                    rates[index.map_or(0, |index| (index + 1) % rates.len())],
+                ));
+            }),
+        )
+        .child(
+            crate::features::player::presentation::player_landscape_danmaku(state.danmaku_enabled)
+                .on_press(move || action(ControlAction::Danmaku)),
         )
         .child(menus::episode_sheet(
             state.menus,

@@ -202,8 +202,15 @@ impl Worker {
             }
         }
         if !self.enabled() {
+            if let Some(lease) = self.direct_lease()
+                && let Err(error) = lease.suspend_decoder_if_owner()
+            {
+                self.error(ErrorCode::DecoderFailed, error);
+                return;
+            }
             if let Some(renderer) = &mut self.renderer {
                 let _ = renderer.poll();
+                renderer.binding_lost();
             }
             return;
         }

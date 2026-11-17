@@ -18,5 +18,6 @@ cargo clippy --workspace --all-targets -- $STRICT
 echo '[pre-commit] cargo fmt / enhancement assets'
 cargo fmt -- --check
 cargo build-tool enhancement-assets
+cargo build-tool theme-check
 
 echo '[pre-commit] 全部通过'

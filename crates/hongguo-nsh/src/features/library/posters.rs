@@ -14,7 +14,7 @@ pub(super) fn build(
     let liked = rows.kind == Kind::Liked;
     let card_height = computed(move || {
         let columns = columns.get() as f32;
-        let card = (width.get() - (columns - 1.0) * 12.0) / columns;
+        let card = (width.get() - (columns - 1.0) * 16.0) / columns;
         (card - 2.0).max(0.0) * 4.0 / 3.0 + 62.0
     });
     view()
@@ -22,7 +22,7 @@ pub(super) fn build(
         .min_h(px(0.0))
         .max_h(move || {
             let count = rows.items.with(Vec::len).div_ceil(columns.get() as usize);
-            px(count as f32 * card_height.get() + count.saturating_sub(1) as f32 * 12.0)
+            px(count as f32 * card_height.get() + count.saturating_sub(1) as f32 * 16.0)
         })
         .on_layout(move |frame: &Bounds<Points>| width.set(frame.size.width.0))
         .child(
@@ -102,8 +102,8 @@ pub(super) fn build(
             )
             .flex_1()
             .columns(columns)
-            .column_gap(px(12.0))
-            .row_gap(px(12.0))
+            .column_gap(px(16.0))
+            .row_gap(px(16.0))
             .keys(move || {
                 rows.items.with(|items| {
                     items

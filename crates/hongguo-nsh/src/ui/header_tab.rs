@@ -12,12 +12,8 @@ pub(crate) fn header_tab(label: impl IntoReactive<SharedString>) -> nsh_base::Bu
         .justify_center()
         .bg(move || theme().background.opacity(0.0))
         .text_color(move || theme().muted_foreground)
-        .selected_style(|style| {
-            style
-                .bg(move || theme().primary)
-                .text_color(move || theme().primary_foreground)
-        })
-        .hover(|style| style.bg(move || theme().accent))
+        .selected_style(super::palette::selected)
+        .hover(super::palette::highlighted)
         .active(|style| style.opacity(0.75))
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .transition()

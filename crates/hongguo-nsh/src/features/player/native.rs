@@ -33,6 +33,7 @@ pub(super) struct State {
     pub buffering: Signal<bool>,
     pub failure: Signal<SharedString>,
     pub notice: Signal<SharedString>,
+    pub relay_notice: Signal<SharedString>,
     pub gestures: super::navigation::Controller,
     pub chrome: super::chrome::Chrome,
     pub video_size: Signal<(f64, f64)>,
@@ -59,6 +60,7 @@ pub(super) fn mount<E: IntoElement>(
         buffering,
         failure,
         notice,
+        relay_notice,
         gestures,
         chrome,
         video_size,
@@ -290,6 +292,9 @@ pub(super) fn mount<E: IntoElement>(
                                             buffering.set(buffered);
                                         }
                                         if !seeking {
+                                            if f64::from(progress.current_time) > previous.0 {
+                                                relay_notice.set(SharedString::default());
+                                            }
                                             position.set((progress.current_time.into(), duration));
                                             recorder.record(progress.current_time.into(), duration);
                                         }

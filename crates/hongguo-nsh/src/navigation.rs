@@ -24,6 +24,18 @@ pub(crate) enum Route {
 }
 
 impl Route {
+    pub(crate) fn section_root(&self) -> Self {
+        match self {
+            Self::History
+            | Self::Collections
+            | Self::Liked
+            | Self::Follows
+            | Self::Reservations => Self::History,
+            Self::Browse | Self::Rank | Self::New => Self::Browse,
+            Self::Tasks | Self::Merge | Self::Storage => Self::Tasks,
+            other => other.clone(),
+        }
+    }
     pub(crate) fn detail_id(&self) -> Option<&str> {
         match self {
             Self::Detail(id) => Some(id),
@@ -88,6 +100,9 @@ impl Navigation {
     }
     pub(crate) fn section(self) -> Route {
         self.0.with(|routes| {
+            if matches!(routes.last(), Some(Route::Player(_, _))) {
+                return Route::Catalog;
+            }
             routes
                 .iter()
                 .rev()
@@ -112,6 +127,13 @@ impl Navigation {
         }
         self.1.set(Vec::new());
         self.0.update(|routes| {
+            if let Some(current) = routes.last_mut()
+                && current.section_root() == route.section_root()
+                && *current != route
+            {
+                *current = route;
+                return;
+            }
             if let Some(index) = routes.iter().position(|existing| {
                 existing == &route
                     || route

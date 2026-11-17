@@ -30,7 +30,7 @@ pub(crate) fn creator_chip(data: Memo<CreatorChip>) -> nsh_base::ButtonElement {
         .py_1()
         .min_h(px(0.0))
         .bg(move || theme().background.opacity(0.0))
-        .hover(|style| style.bg(move || theme().color("sidebar-accent").expect("sidebar accent")))
+        .hover(|style| style.bg(move || theme().accent))
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .transition()
         .duration(move || {

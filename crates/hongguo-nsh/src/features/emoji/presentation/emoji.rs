@@ -6,6 +6,7 @@ use nsh_base::{PopoverEvent, theme};
 use nsh_core::{element::ImageSrc, prelude::*};
 
 pub(crate) const DANMAKU_LINE_HEIGHT: f32 = 1.5;
+pub(crate) const PICKER_GAP: f32 = 8.0;
 
 pub(crate) enum InlineEmojiPart {
     Text(String),
@@ -24,6 +25,7 @@ pub(crate) enum EmojiTextStyle {
     Review,
     ReviewReply,
     Caption,
+    FloatingCaption,
     Danmaku(f32),
 }
 
@@ -40,7 +42,10 @@ pub(crate) fn emoji_trigger(
         .size(move || {
             px(if !is_desktop() {
                 48.0
-            } else if matches!(skin, EmojiTextStyle::Caption) {
+            } else if matches!(
+                skin,
+                EmojiTextStyle::Caption | EmojiTextStyle::FloatingCaption
+            ) {
                 24.0
             } else {
                 32.0
@@ -50,8 +55,8 @@ pub(crate) fn emoji_trigger(
             EmojiTextStyle::Body | EmojiTextStyle::Review | EmojiTextStyle::ReviewReply => {
                 theme().foreground
             }
-            EmojiTextStyle::Comment | EmojiTextStyle::Reply => {
-                theme().color("video-picker-text").expect("picker text")
+            EmojiTextStyle::Comment | EmojiTextStyle::Reply | EmojiTextStyle::FloatingCaption => {
+                theme().foreground
             }
             EmojiTextStyle::Caption | EmojiTextStyle::Danmaku(_) => {
                 theme().color("video-controls").expect("controls")
@@ -64,7 +69,7 @@ pub(crate) fn emoji_paragraph(parts: Vec<InlineEmojiPart>, style: EmojiTextStyle
     let font_size = match style {
         EmojiTextStyle::Body | EmojiTextStyle::Comment | EmojiTextStyle::Review => 14.0,
         EmojiTextStyle::Reply | EmojiTextStyle::ReviewReply => 12.0,
-        EmojiTextStyle::Caption => 16.0,
+        EmojiTextStyle::Caption | EmojiTextStyle::FloatingCaption => 16.0,
         EmojiTextStyle::Danmaku(size) => size,
     };
     let content = parts.into_iter().map(|part| match part {
@@ -116,13 +121,7 @@ pub(crate) fn emoji_paragraph(parts: Vec<InlineEmojiPart>, style: EmojiTextStyle
             .line_height(move || {
                 nsh_core::LineHeight::Multiple(if is_desktop() { 1.375 } else { 1.5 })
             })
-            .text_color(move || {
-                if is_desktop() {
-                    theme().color("video-picker-text").expect("picker text")
-                } else {
-                    theme().foreground
-                }
-            }),
+            .text_color(move || theme().foreground),
         EmojiTextStyle::Review | EmojiTextStyle::ReviewReply => paragraph
             .text_size(move || px(if is_desktop() { font_size } else { 16.0 }))
             .font_weight(FontWeight::NORMAL)
@@ -139,6 +138,10 @@ pub(crate) fn emoji_paragraph(parts: Vec<InlineEmojiPart>, style: EmojiTextStyle
             .text_base()
             .number_of_lines(1)
             .text_color(move || theme().color("video-caption").expect("caption token")),
+        EmojiTextStyle::FloatingCaption => paragraph
+            .text_base()
+            .number_of_lines(1)
+            .text_color(move || theme().foreground),
         EmojiTextStyle::Danmaku(size) => paragraph
             .text_size(px(size))
             .line_height(nsh_core::LineHeight::Multiple(DANMAKU_LINE_HEIGHT))
@@ -180,7 +183,7 @@ pub(crate) fn emoji_picker(
         .on_close(closed)
         .placement(Placement::Top)
         .align(Align::End)
-        .offset(px(8.0))
+        .offset(px(PICKER_GAP))
         .margin(px(8.0))
         .trigger(trigger)
         .popup_style(|style| {
@@ -214,14 +217,7 @@ pub(crate) fn emoji_system_cell(code: &'static str, uri: &'static str) -> nsh_ba
         .py_1()
         .size(move || px(if is_desktop() { 34.25 } else { 48.0 }))
         .rounded_md()
-        .hover(|style| {
-            style.bg(move || {
-                theme()
-                    .color("video-controls")
-                    .expect("video controls")
-                    .opacity(0.15)
-            })
-        })
+        .hover(|style| style.bg(move || theme().accent))
         .child(
             image(ImageSrc::from(uri))
                 .size_6()
@@ -239,12 +235,7 @@ pub(crate) fn emoji_comment_image(src: impl IntoReactive<ImageSrc>) -> impl Into
         .max_h_40()
         .rounded_md()
         .border_1()
-        .border_color(move || {
-            theme()
-                .color("video-controls")
-                .expect("controls")
-                .opacity(0.1)
-        })
+        .border_color(move || theme().border)
         .object_fit(nsh_core::ResizeMode::Cover)
 }
 
@@ -278,28 +269,9 @@ pub(crate) fn emoji_tab(
         .size(move || px(if is_desktop() { 28.0 } else { 48.0 }))
         .p_1()
         .rounded_full()
-        .text_color(move || {
-            theme()
-                .color("video-controls")
-                .expect("controls")
-                .opacity(0.75)
-        })
-        .hover(|style| {
-            style.bg(move || {
-                theme()
-                    .color("video-controls")
-                    .expect("controls")
-                    .opacity(0.1)
-            })
-        })
-        .selected_style(|style| {
-            style.border(px(0.0)).bg(move || {
-                theme()
-                    .color("video-controls")
-                    .expect("controls")
-                    .opacity(0.15)
-            })
-        })
+        .text_color(move || theme().muted_foreground)
+        .hover(|style| style.bg(move || theme().accent))
+        .selected_style(|style| crate::ui::palette::selected(style).border(px(0.0)))
         .child(match glyph {
             Some(icon) => crate::ui::icon(icon).size_4().into_element(),
             None => text("GIF").text_xs().into_element(),
@@ -312,14 +284,14 @@ pub(crate) fn emoji_search() -> nsh_base::Input {
         .h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
         .text_xs()
         .border(px(0.0))
-        .bg(move || theme().color("video-picker-cell").expect("picker cell"))
-        .text_color(move || theme().color("video-controls").expect("controls"))
+        .bg(move || theme().muted)
+        .text_color(move || theme().foreground)
 }
 
 pub(crate) fn emoji_hint(value: impl IntoReactive<SharedString>) -> Text {
     text(value)
         .text_xs()
-        .text_color(move || theme().color("video-picker-muted").expect("picker muted"))
+        .text_color(move || theme().muted_foreground)
 }
 
 pub(crate) fn emoji_image_cell(
@@ -335,14 +307,7 @@ pub(crate) fn emoji_image_cell(
         .p_1()
         .rounded_md()
         .size(move || px(emoji_metrics(small).1))
-        .hover(|style| {
-            style.bg(move || {
-                theme()
-                    .color("video-controls")
-                    .expect("controls")
-                    .opacity(0.15)
-            })
-        })
+        .hover(|style| style.bg(move || theme().accent))
         .child(
             image(move || ImageSrc::from(src.get()))
                 .size_full()
@@ -370,14 +335,7 @@ pub(crate) fn emoji_context(
                 .px_3()
                 .py_2()
                 .rounded_md()
-                .hover(|style| {
-                    style.bg(move || {
-                        theme()
-                            .color("video-controls")
-                            .expect("controls")
-                            .opacity(0.1)
-                    })
-                })
+                .hover(|style| style.bg(move || theme().accent))
                 .child(
                     text(move || {
                         crate::i18n::tr(if remove.with(|remove| remove()) {
@@ -387,7 +345,7 @@ pub(crate) fn emoji_context(
                         })
                     })
                     .text_xs()
-                    .text_color(move || theme().color("video-controls").expect("controls")),
+                    .text_color(move || theme().popover_foreground),
                 ),
         )
 }

@@ -139,8 +139,14 @@ impl Handle {
             editor,
             move || pending.get(),
             crate::features::player::stage::ComposerEvents {
-                emoji: Some(Box::new(move || {
-                    crate::features::emoji::system_picker(editor, next).into_element()
+                emoji: Some(Box::new(move |variant| {
+                    if variant
+                        == crate::features::player::presentation::PlayerComposerVariant::Popover
+                    {
+                        crate::features::emoji::floating_picker(editor, next).into_element()
+                    } else {
+                        crate::features::emoji::system_picker(editor, next).into_element()
+                    }
                 })),
                 previous,
                 next,
