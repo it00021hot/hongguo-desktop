@@ -1,5 +1,24 @@
 # NSH 编解码验证记录
 
+## 2026-11-17 Android 启动音轨时钟修复
+
+原 API37 arm64 模拟器 `emulator-5554`、应用 `com.guava.app`，覆盖安装保留数据。
+《重生1988，从做倒爷开始起家》720P、2倍速，修复前启动后稳定报错：
+`MediaPlayer returned positionMs=-22, playing=true, seeking=false, buffering=false, ended=false`，
+随后共享时钟的非负时间约束终止播放。
+
+[AOSP NuPlayerRenderer](https://android.googlesource.com/platform/frameworks/av/+/refs/heads/main/media/libmediaplayerservice/nuplayer/NuPlayerRenderer.cpp)
+在音轨尚未输出首批样本时直接返回首个音频锚点；AAC预卷锚点可以早于媒体零点。
+Android适配层将零点之前的播放位置映射为0，随后位置继续跟随原生音轨；
+不平移原始时间轴，不修改共享时钟约束，MediaPlayer错误仍按原有路径上报。
+
+修复包实际从第1集自动续播到第2集、第3集，画面与进度持续变化；
+第2集暂停后原生renderer为`paused(1)`，拖动到92秒呈现新代次画面，恢复后继续前进并自动续播。
+系统音轨为AAC、44100Hz、双声道、`speed(2.000000)`，运行日志未再出现`DecoderFailed`。
+强制重启应用后保留720P、2倍速，从第3集约66秒继续播放，首帧PTS为66520ms并完成新代次seek。
+Android arm64 APK完整编译、打包与覆盖安装通过，`cargo fmt -- --check`和工作区严格Clippy通过。
+本轮结果不外推iOS、其他Android设备或主观听感的音画同步验收。
+
 2026-11-14。本记录对应移除 FFmpeg 后的代码。此前 FFmpeg/PCM/D3D11VA 的验证
 不能用于证明当前原生 Video + 专用解码补充路线。
 

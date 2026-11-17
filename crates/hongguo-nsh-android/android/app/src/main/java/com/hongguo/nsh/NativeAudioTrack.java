@@ -41,7 +41,8 @@ public final class NativeAudioTrack implements AutoCloseable {
 
     public double positionSeconds() {
         check();
-        return player.getCurrentPosition() / 1000.0;
+        // NuPlayer can expose the negative AAC preroll anchor before its first output.
+        return Math.max(0, player.getCurrentPosition()) / 1000.0;
     }
 
     public void control(boolean playing, float volume, boolean muted, double rate) {
