@@ -1,6 +1,6 @@
 # NSH 桌面发版
 
-本流程面向 Windows x64、macOS Apple Silicon 与 Intel。移动端未正式发布，普通 CI 不再打包移动端产物。当前版本为 `0.8.0`、NSH build `3`。
+本流程面向 Windows x64、macOS Apple Silicon 与 Intel。移动端未正式发布，普通 CI 不再打包移动端产物。当前版本为 `0.8.0`、NSH build `4`。
 
 ## 检查与产物
 
@@ -33,7 +33,9 @@ Windows 安装器使用固定 Inno Setup 6.7.4 与 SHA-256 校验的官方中文
 
 便携包与 Mac 归档包含 NSH 装配的原生依赖、许可证和对应源码材料；Mac 在上传 artifact 前归档，保留签名依赖的权限及符号链接。发布步骤重新核验所有 SHA-256，不混用上次构建产物。
 
-Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未做 Developer ID 签名与公证。流程不把这些状态标记成正式可信签名。NSH 新版检查 GitHub Release 的 `tag_name`，引导手动下载安装，不生成 NSH 自动安装更新清单或配置更新签名密钥。
+Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未做 Developer ID 签名与公证。流程不把这些状态标记成正式可信签名。0.8.0 起使用 NSH 原生 updater 的版本判断、SHA-256 校验、安装替换与重启。应用从 GitHub 最新正式 Release 获取独立的 `guava-update.json`，下载当前架构的 tar.gz / portable.zip；校验成功后由用户点击「立即更新」安装。安装前再次校验归档，目标目录须可写；失败显示原因并可重试。更新保留当前数据，旧版数据迁移仍须手动完成。0.7.0 及更早版本需先手动安装一次新版。
+
+更新清单在所有桌面产物来源与 SHA-256 校验成功后生成，包含应用 ID、版本、更新说明、平台归档地址、大小和哈希，与归档一起公开。信任来源为 GitHub HTTPS Release；不宣称具有独立的更新清单签名。冻结的 Tauri `latest.json` 保持原样，不作为 NSH 更新入口。
 
 旧 Tauri 客户端使用 `/releases/latest/download/latest.json`。新 Release 附带从 `v0.6.6` 获取并核验固定 SHA-256 的原始清单，冻结旧更新通道于 0.6.6，保留原包地址和签名，避免 Latest 切换后旧入口返回 404。该清单不提供 0.7.0 自动升级；旧用户须手动安装新版。不要将 Inno 安装器伪装成旧 NSIS 更新包，也不要伪造更新签名。
 

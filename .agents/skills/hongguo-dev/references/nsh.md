@@ -22,6 +22,8 @@ Makefile 转发到这些命令，并在 macOS 设置 VVdeC 的阻塞等待策略
 正式 macOS 包通过 `macos.infoPlist.LSEnvironment` 在进程初始化前设置相同策略。
 名称、ID、版本、图标、平台 plist、窗口参数与 `nativeHost` 接入配置统一位于 `crates/hongguo-nsh/nsh.json`。客户端开发、检查、构建、运行、打包及资源维护均无需 Node.js/npm。
 
+桌面自动更新使用 `nsh-updater` 的版本、校验、安装替换能力及 NSH restart。发版验证全部产物后生成独立 `guava-update.json`，保留旧 Tauri `latest.json`。0.7.0 及更早版本需手动安装一次 0.8.0；后续可下载更新并点击安装重启。真实更新替换只能针对自建包与独立数据目录验收。
+
 `hongguo-api` 的固定 MetaSec 材料保存在 `assets/metasec/v5/`，Cargo 只做本地长度与 SHA-256 校验后嵌入应用。固定材料的干净构建与运行均不下载 APK 或片段，不依赖 curl 或材料缓存；设备 SDK 会话仍由私有数据库管理。来源与校验依据见 `docs/req-hg-003-playback-parity.md`。
 
 English: Pinned MetaSec files live under assets/metasec/v5. Cargo validates local size/SHA-256 and embeds them in every host. Neither clean builds nor runtime download APK material or require curl/material caches. Device SDK sessions remain private database data.

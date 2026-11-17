@@ -17,6 +17,7 @@ serde_json = "1"
 [dependencies]
 nsh-core.workspace = true
 nsh-base.workspace = true
+nsh-updater.workspace = true
 env_logger = "0.11"
 hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false }
 hongguo-nsh-video-api = { path = "../hongguo-nsh-video-api" }
@@ -31,7 +32,6 @@ hongguo-stream = { path = "../hongguo-stream" }
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-semver = "1"
 chrono = "0.4"
 tokio = { version = "1", features = ["sync", "net", "macros"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }

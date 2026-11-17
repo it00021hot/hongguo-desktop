@@ -1,20 +1,44 @@
 use crate::{i18n::tr, ui};
 use nsh_core::prelude::*;
 
-const RELEASE_API: &str = "https://api.github.com/repos/it00021hot/hongguo-desktop/releases/latest";
+mod desktop;
 const RELEASES: &str = "https://github.com/it00021hot/hongguo-desktop/releases/latest";
 
-#[derive(serde::Deserialize)]
-struct Release {
-    #[serde(rename = "tag_name")]
-    version: String,
+#[derive(Clone, Copy)]
+struct Updates {
+    owner: Owner,
+    busy: Signal<bool>,
+    checked: Signal<bool>,
+    available: Signal<Option<nsh_updater::Available>>,
+    downloaded: Signal<Option<std::path::PathBuf>>,
+    operation: Signal<&'static str>,
+    failure: Signal<SharedString>,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self {
+            owner: Owner::current(),
+            busy: signal(false),
+            checked: signal(false),
+            available: signal(None),
+            downloaded: signal(None),
+            operation: signal("update.checking"),
+            failure: signal(SharedString::default()),
+        }
+    }
 }
 
 pub(crate) fn card() -> View {
-    let busy = signal(false);
-    let checked = signal(false);
-    let available = signal(None::<String>);
-    let failure = signal(SharedString::default());
+    let Updates {
+        owner,
+        busy,
+        checked,
+        available,
+        downloaded,
+        operation,
+        failure,
+    } = global::<Updates>().get_untracked();
     crate::features::settings::presentation::form_surface(
         view()
             .gap_1p5()
@@ -33,9 +57,11 @@ pub(crate) fn card() -> View {
                         crate::features::settings::presentation::update_action(
                             move || {
                                 tr(if busy.get() {
-                                    "update.checking"
+                                    operation.get()
+                                } else if downloaded.get().is_some() {
+                                    "update.installNow"
                                 } else if available.get().is_some() {
-                                    "update.viewNewVersion"
+                                    "update.download"
                                 } else {
                                     "update.checkUpdate"
                                 })
@@ -49,26 +75,52 @@ pub(crate) fn card() -> View {
                             }
                             busy.set(true);
                             failure.set(SharedString::default());
-                            spawn(async move {
-                                if available.get_untracked().is_some() {
-                                    if !open_url(RELEASES).await {
-                                        failure.set(tr("update.releaseOpenFailed"));
-                                    }
-                                } else {
-                                    let result = check().await;
-                                    match result {
-                                        Ok(version) => {
-                                            available.set(version);
-                                            checked.set(true);
+                            operation.set(if downloaded.get_untracked().is_some() {
+                                "update.installing"
+                            } else if available.get_untracked().is_some() {
+                                "update.downloadingArchive"
+                            } else {
+                                "update.checking"
+                            });
+                            owner.run(move || {
+                                spawn(async move {
+                                    let result = if !is_desktop() {
+                                        if open_url(RELEASES).await {
+                                            Ok(())
+                                        } else {
+                                            Err(tr("update.releaseOpenFailed").to_string())
                                         }
-                                        Err(error) => failure.set(
-                                            tr("update.checkFailed")
-                                                .replace("{error}", &error)
-                                                .into(),
-                                        ),
+                                    } else if let Some(path) = downloaded.get_untracked() {
+                                        match available.get_untracked() {
+                                            Some(update) => desktop::install(path, update).await,
+                                            None => Err("missing update metadata".into()),
+                                        }
+                                    } else if let Some(update) = available.get_untracked() {
+                                        desktop::download(update)
+                                            .await
+                                            .map(|path| downloaded.set(Some(path)))
+                                    } else {
+                                        desktop::check().await.map(|update| {
+                                            available.set(update);
+                                            checked.set(true);
+                                        })
+                                    };
+                                    if let Err(error) = result {
+                                        log::error!("[NSH update] operation failed: {error}");
+                                        failure.set(
+                                            tr(match operation.get_untracked() {
+                                                "update.installing" => "update.installFailed",
+                                                "update.downloadingArchive" => {
+                                                    "update.downloadFailed"
+                                                }
+                                                _ => "update.checkFailed",
+                                            })
+                                            .replace("{error}", &error)
+                                            .into(),
+                                        );
                                     }
-                                }
-                                busy.set(false);
+                                    busy.set(false);
+                                });
                             });
                         }),
                     ),
@@ -80,7 +132,8 @@ pub(crate) fn card() -> View {
                     if let Some(available) = available.get() {
                         format!(
                             "{version} · {}",
-                            tr("update.newVersionAvailable").replace("{version}", &available)
+                            tr("update.newVersionAvailable")
+                                .replace("{version}", &available.version)
                         )
                     } else if checked.get() {
                         format!("{version} · {}", tr("update.upToDate"))
@@ -93,7 +146,11 @@ pub(crate) fn card() -> View {
                 move || available.get().is_some(),
                 move || {
                     crate::features::settings::presentation::form_description(move || {
-                        tr("update.nshReleaseNote")
+                        tr(if downloaded.get().is_some() {
+                            "update.downloadedNote"
+                        } else {
+                            "update.nshReleaseNote"
+                        })
                     })
                 },
             ))
@@ -102,23 +159,4 @@ pub(crate) fn card() -> View {
                 move || ui::status(failure),
             )),
     )
-}
-
-async fn check() -> Result<Option<String>, String> {
-    let request = HttpRequest::get(RELEASE_API)
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", format!("guava/{}", crate::metadata().version));
-    let response = fetch(request).await?;
-    if response.status() != 200 {
-        return Err(format!("HTTP {}", response.status()));
-    }
-    newer_version(&response.text(), &crate::metadata().version)
-}
-
-fn newer_version(response: &str, current: &str) -> Result<Option<String>, String> {
-    let release: Release = serde_json::from_str(response).map_err(|error| error.to_string())?;
-    let candidate = semver::Version::parse(release.version.trim_start_matches('v'))
-        .map_err(|error| error.to_string())?;
-    let current = semver::Version::parse(current).map_err(|error| error.to_string())?;
-    Ok((candidate > current).then_some(release.version))
 }
