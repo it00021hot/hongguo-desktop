@@ -1,0 +1,80 @@
+name: Wine Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - name: Runner info
+        run: |
+          sw_vers
+          sysctl -n machdep.cpu.brand_string
+          df -h / | tail -1
+
+      - name: Variant A - pinned stable 11.0_1, exact release recipe
+        run: |
+          set -x
+          mkdir -p "$RUNNER_TEMP/probeA"
+          cd "$RUNNER_TEMP/probeA"
+          curl -fL --retry 3 'https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.0_1/wine-stable-11.0_1-osx64.tar.xz' -o wine.tar.xz
+          tar -xf wine.tar.xz
+          wine_bin="$PWD/Wine Stable.app/Contents/Resources/wine/bin"
+          export PATH="$wine_bin:$PATH"
+          export WINEPREFIX="$PWD/prefix"
+          export WINEDEBUG=-all
+          export WINEDLLOVERRIDES='mscoree,mshtml='
+          time wine --version
+          time wineboot --init; echo "boot1 exit=$?"
+          wineserver -k 2>/dev/null || true
+          sleep 2
+          time wineboot -u; echo "boot2-update exit=$?"
+          wineserver -k 2>/dev/null || true
+          sleep 2
+          time wineboot --init; echo "boot3-init exit=$?"
+          df -h / | tail -1
+
+      - name: Variant B - stable 11.0_1, fresh prefix with debug output
+        if: always()
+        run: |
+          set -x
+          mkdir -p "$RUNNER_TEMP/probeB"
+          cd "$RUNNER_TEMP/probeB"
+          tar -xf "$RUNNER_TEMP/probeA/wine.tar.xz"
+          wine_bin="$PWD/Wine Stable.app/Contents/Resources/wine/bin"
+          export PATH="$wine_bin:$PATH"
+          export WINEPREFIX="$PWD/prefix"
+          unset WINEDEBUG
+          export WINEDLLOVERRIDES='mscoree,mshtml='
+          time wineboot --init; echo "boot exit=$?"
+          wineserver -k 2>/dev/null || true
+          sleep 2
+          wine cmd /c ver && echo CMD_OK
+          df -h / | tail -1
+
+      - name: Variant C - devel 11.21 fresh prefix
+        if: always()
+        run: |
+          set -x
+          mkdir -p "$RUNNER_TEMP/probeC"
+          cd "$RUNNER_TEMP/probeC"
+          curl -fL --retry 3 'https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.21/wine-devel-11.21-osx64.tar.xz' -o wine.tar.xz
+          tar -xf wine.tar.xz
+          wine_bin="$PWD/wine-devel-11.21-osx64/bin"
+          ls -d "$PWD"/wine* || true
+          wine_bin="$(ls -d "$PWD"/wine*/bin | head -1)"
+          export PATH="$wine_bin:$PATH"
+          export WINEPREFIX="$PWD/prefix"
+          export WINEDEBUG=-all
+          export WINEDLLOVERRIDES='mscoree,mshtml='
+          time wine --version
+          time wineboot --init; echo "boot exit=$?"
+          wineserver -k 2>/dev/null || true
+          sleep 2
+          wine cmd /c ver && echo CMD_OK
+          df -h / | tail -1
