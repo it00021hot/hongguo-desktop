@@ -65,9 +65,7 @@ jobs:
           cd "$RUNNER_TEMP/probeC"
           curl -fL --retry 3 'https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.21/wine-devel-11.21-osx64.tar.xz' -o wine.tar.xz
           tar -xf wine.tar.xz
-          wine_bin="$PWD/wine-devel-11.21-osx64/bin"
-          ls -d "$PWD"/wine* || true
-          wine_bin="$(ls -d "$PWD"/wine*/bin | head -1)"
+          wine_bin="$PWD/Wine Devel.app/Contents/Resources/wine/bin"
           export PATH="$wine_bin:$PATH"
           export WINEPREFIX="$PWD/prefix"
           export WINEDEBUG=-all
