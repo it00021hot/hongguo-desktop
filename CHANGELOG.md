@@ -11,6 +11,13 @@
 
 ## [0.8.0] - 2026-11-18
 
+### ✨ 新增
+
+- 桌面端支持在设置中下载更新，校验完成后点击「立即更新」自动安装并重启，保留当前设置与登录状态。
+- 0.7.0 及更早版本需要手动安装一次本版本，之后可使用应用内自动更新。旧版数据仍不自动迁移，迁移前请备份，见 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+English: Desktop updates can now be downloaded, verified, installed and restarted in the app. Install this version manually once when upgrading from 0.7.0 or earlier. Settings and login are retained; legacy data migration remains manual.
+
 ### ⚡ 优化
 
 - 统一桌面与移动端导航布局和主题，优化搜索联想、播放器控件与表情输入体验。

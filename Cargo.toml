@@ -61,6 +61,7 @@ authors = ["hongguo-desktop contributors"]
 [workspace.dependencies]
 nsh-core = { path = "vendor/nsh/crates/nsh-core" }
 nsh-base = { path = "vendor/nsh/crates/nsh-base" }
+nsh-updater = { path = "vendor/nsh/crates/nsh-updater" }
 nsh-platform-macos = { path = "vendor/nsh/crates/nsh-platform-macos", default-features = false }
 nsh-platform-windows = { path = "vendor/nsh/crates/nsh-platform-windows", default-features = false }
 nsh-android-runtime = { package = "nsh-platform-android", path = "vendor/nsh/crates/nsh-platform-android", default-features = false }

@@ -461,7 +461,9 @@
     "installFailed": "Install failed: {error}",
     "noChangelog": "No release notes.",
     "releaseOpenFailed": "Could not open the release page",
-    "nshReleaseNote": "Download and install from the release page manually. Installation and previous-data migration are not automatic."
+    "nshReleaseNote": "Download and verify the update, then click Update now to install and restart. Current settings and login are kept; legacy data is not migrated.",
+    "downloadingArchive": "Downloading and verifying…",
+    "installing": "Installing and restarting…"
   },
   "settings": {
     "downloadDir": "Download folder",

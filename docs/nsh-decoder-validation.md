@@ -699,3 +699,9 @@ ByteVC2 的同步路径保留。线程数、可用量和授权量在启动解码
 完整工作区交叉检查受 `turso_sdk_kit` 构建脚本要求 `rc.exe` 阻断，Windows 实机未复验。
 当前 macOS 单实例重启日志确认 `availableThreads=12 requestedThreads=12 grantedThreads=12`；
 720P ByteVC2 仍按既有同步策略使用 `workers=0`，2× 实际呈现窗口记录约60fps。
+
+## 0.8.0 自动更新验证（2026-11-18）
+
+macOS arm64 独立 `.app`、独立 `target/qa-update-e2e/data` 数据目录：临时模拟 0.6.9 发现 0.8.0，以此前本地 0.8.0 包构造隔离更新归档。发现数据与下载体为受控 fixture；版本判断、归档大小/SHA-256 校验、落盘、安装前复验、NSH 应用替换和 restart 为实际实现。向已下载包追加数据后安装被拒绝，运行实例保持正常；恢复正确包后，进程从 69310 切换到 69366，包版本确认为 0.8.0，重新启动后在线画面和进度正常推进至 00:21 / 01:33。测试目标包通过 LSEnvironment 固定独立数据目录，避免重启后触及用户数据。临时 fixture 接入未保留在正式源码。
+
+此验证不代表正式 GitHub 最新版本清单/下载地址已上线，也不代表 Windows/macOS Intel 真机通过。GitHub 正式来源需在 Release 附件公开后验收；系统读屏、逐项动效及音画同步听感未计为通过。

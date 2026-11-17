@@ -108,6 +108,7 @@ pub fn preflight(args: &[String]) -> Result<()> {
     }
     if let Some(directory) = values.get("--artifacts") {
         verify_artifacts(Path::new(directory), &app, &sha)?;
+        update_manifest(Path::new(directory), &app, section)?;
     }
     if let Some(path) = env::var_os("GITHUB_OUTPUT") {
         writeln!(
@@ -120,6 +121,51 @@ pub fn preflight(args: &[String]) -> Result<()> {
         app["build"]
     );
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateManifest {
+    id: String,
+    version: String,
+    notes: Option<String>,
+    platforms: std::collections::BTreeMap<String, UpdateAsset>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateAsset {
+    url: String,
+    sha256: Option<String>,
+    size: Option<u64>,
+}
+
+fn update_manifest(directory: &Path, app: &Value, notes: &str) -> Result<()> {
+    let mut manifest = UpdateManifest {
+        id: app["id"].as_str().context("App id")?.into(),
+        version: app["version"].as_str().context("App version")?.into(),
+        notes: Some(notes.trim().into()),
+        platforms: std::collections::BTreeMap::new(),
+    };
+    for target in TARGETS {
+        let stem = format!("guava-{}-{}", manifest.version, target.platform);
+        let filename = if target.os == "windows" {
+            format!("{stem}-portable.zip")
+        } else {
+            format!("{stem}.tar.gz")
+        };
+        let archive = directory.join(&filename);
+        let asset = UpdateAsset {
+            url: filename,
+            sha256: Some(digest(&archive)?),
+            size: Some(fs::metadata(&archive)?.len()),
+        };
+        manifest.platforms.insert(target.platform.into(), asset);
+    }
+    write(
+        directory.join("guava-update.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
 }
 
 fn artifact_names(stem: &str, windows: bool) -> Vec<String> {
