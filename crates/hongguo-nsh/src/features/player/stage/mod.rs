@@ -53,7 +53,9 @@ pub(crate) fn surface(
             .absolute()
             .left_3()
             .bottom(move || {
-                px(if compact() {
+                px(if is_desktop() {
+                    geometry.map_or(0.0, |geometry| geometry.info_bottom(show_binge_bar.get()))
+                } else if compact() {
                     40.0
                 } else if show_binge_bar.get() {
                     104.0
@@ -87,7 +89,13 @@ pub(crate) fn surface(
         view()
             .absolute()
             .right_2()
-            .bottom(px(96.0))
+            .bottom(move || {
+                px(if is_desktop() {
+                    geometry.map_or(0.0, |geometry| geometry.info_bottom(show_binge_bar.get()))
+                } else {
+                    96.0
+                })
+            })
             .style_when(
                 move || !is_desktop() && compact(),
                 |style| style.right_2().bottom_24(),

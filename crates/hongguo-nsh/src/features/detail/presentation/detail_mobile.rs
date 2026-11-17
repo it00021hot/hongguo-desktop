@@ -47,9 +47,9 @@ fn action(selected: Memo<bool>, busy: Memo<bool>, collection: bool) -> nsh_base:
         .flex_row()
         .gap_2()
         .px_3()
-        .py_2()
-        .h(move || px(if is_desktop() { 40.0 } else { 48.0 }))
-        .min_h(move || px(if is_desktop() { 40.0 } else { 48.0 }))
+        .py_1()
+        .h(move || px(if is_desktop() { 40.0 } else { 36.0 }))
+        .min_h(move || px(if is_desktop() { 40.0 } else { 36.0 }))
         .border_1()
         .border_color(move || theme().input)
         .bg(move || {

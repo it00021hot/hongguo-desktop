@@ -18,24 +18,18 @@ pub(super) fn row(
                 tr("player.episodesBar").replace("{count}", &state.episode_count.get().to_string())
             })
             .element_ref(&episodes)
-            .style_when(
-                move || !state.danmaku_enabled.get(),
-                |style| {
-                    style.flex_1().min_w_0().justify_start().bg(move || {
-                        crate::features::player::presentation::video::player_ink().opacity(0.1)
-                    })
-                },
-            )
             .disabled(state.busy)
             .accessibility_label(move || Some(tr("player.episodes")))
             .on_press(move || state.menus.open.set(Some(super::Panel::Episodes))),
         )
-        .child(when(state.danmaku_enabled, move || {
+        .child(
             view()
                 .flex_1()
                 .min_w_0()
-                .child(composer(computed(move || episodes)))
-        }))
+                .child(when(state.danmaku_enabled, move || {
+                    composer(computed(move || episodes))
+                })),
+        )
         .child(
             crate::features::player::presentation::player_landscape_label(move || {
                 if state.menus.selected_definition.get().is_none() {

@@ -84,7 +84,9 @@ pub(crate) fn browse_exit_action() -> nsh_base::ButtonElement {
 
 pub(crate) fn browse_chip(label: impl IntoReactive<SharedString>) -> nsh_base::ToggleElement {
     nsh_base::toggle()
-        .min_h(px(if is_desktop() { 22.0 } else { 48.0 }))
+        .min_h(px(if is_desktop() { 22.0 } else { 28.0 }))
+        .min_w_7()
+        .hit_slop(EdgeInsets::all(px(if is_desktop() { 0.0 } else { 10.0 })))
         .px_3()
         .py_0p5()
         .rounded_full()
@@ -118,7 +120,7 @@ pub(crate) fn browse_filter_group() -> nsh_base::ToggleGroupElement {
         .flex_row()
         .flex_wrap()
         .gap_x_1()
-        .gap_y_1p5()
+        .gap_y(move || px(if is_desktop() { 6.0 } else { 8.0 }))
 }
 
 pub(crate) fn browse_expander(

@@ -270,12 +270,13 @@ pub(crate) enum PlayerComposerVariant {
 
 pub(crate) fn player_send_surface(variant: Memo<PlayerComposerVariant>) -> View {
     view()
+        .relative()
         .h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
         .w(px(208.0))
         .ml_2()
         .style_when(
             move || variant.get() == PlayerComposerVariant::Landscape,
-            |style| style.w_full().h_12().ml_0().pl_2p5(),
+            |style| style.w_full().max_w(px(240.0)).h_12().ml_0().pl_2(),
         )
         .min_w(move || {
             px(if variant.get() == PlayerComposerVariant::Toolbar {
@@ -298,12 +299,26 @@ pub(crate) fn player_send_surface(variant: Memo<PlayerComposerVariant>) -> View 
                     .color("video-controls")
                     .expect("video controls token")
                     .opacity(if variant.get() == PlayerComposerVariant::Landscape {
-                        0.1
+                        0.0
                     } else {
                         0.15
                     })
             }
         })
+        .child(when(
+            move || variant.get() == PlayerComposerVariant::Landscape,
+            move || {
+                view()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top_2()
+                    .h_8()
+                    .rounded_full()
+                    .bg(move || player_ink().opacity(0.1))
+                    .pointer_events(PointerEvents::None)
+            },
+        ))
 }
 
 pub(crate) fn player_send_action(
@@ -357,15 +372,27 @@ pub(crate) fn player_send_action(
                 }
             })
         })
+        .disabled_style(|style| {
+            style
+                .opacity(1.0)
+                .bg(move || {
+                    if variant.get() == PlayerComposerVariant::Popover {
+                        theme().muted
+                    } else {
+                        player_ink().opacity(0.06)
+                    }
+                })
+                .text_color(move || {
+                    if variant.get() == PlayerComposerVariant::Popover {
+                        theme().muted_foreground
+                    } else {
+                        player_ink().opacity(0.4)
+                    }
+                })
+        })
         .child(
             text(label)
-                .text_size(move || {
-                    px(if variant.get() == PlayerComposerVariant::Landscape {
-                        11.0
-                    } else {
-                        12.0
-                    })
-                })
+                .text_xs()
                 .line_height(px(16.0))
                 .font_weight(FontWeight::NORMAL),
         )

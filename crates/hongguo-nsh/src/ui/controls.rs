@@ -21,14 +21,16 @@ pub(crate) fn surface(variant: ButtonVariant) -> nsh_base::ButtonElement {
     surface_height(variant, 36.0)
 }
 
-pub(crate) fn surface_height(
-    variant: ButtonVariant,
-    desktop_height: f32,
-) -> nsh_base::ButtonElement {
+pub(crate) fn surface_height(variant: ButtonVariant, height: f32) -> nsh_base::ButtonElement {
     nsh_base::button()
-        .min_h(px(if is_desktop() { desktop_height } else { 48.0 }))
-        .px_4()
-        .py_2()
+        .min_h(px(height))
+        .hit_slop(EdgeInsets::all(px(if is_desktop() {
+            0.0
+        } else {
+            ((48.0 - height) * 0.5).max(0.0)
+        })))
+        .px(px(if is_desktop() { 16.0 } else { 12.0 }))
+        .py(px(if is_desktop() { 8.0 } else { 4.0 }))
         .items_center()
         .justify_center()
         .rounded(crate::ui::radii::control())

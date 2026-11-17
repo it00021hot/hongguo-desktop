@@ -10,12 +10,23 @@ pub(crate) struct PlayerGeometry {
     pub source: Signal<(f64, f64)>,
     pub viewport: Signal<(f32, f32)>,
     pub stage: Signal<(f32, f32)>,
+    pub toolbar_height: Signal<f32>,
+    pub binge_height: Signal<f32>,
     pub comments_open: Signal<bool>,
     pub comment_anchor: ElementRef,
     pub comment_trigger: ElementRef,
 }
 
 impl PlayerGeometry {
+    pub(crate) fn info_bottom(self, binge_visible: bool) -> f32 {
+        self.toolbar_height.get()
+            + if binge_visible {
+                self.binge_height.get() + 16.0
+            } else {
+                8.0
+            }
+    }
+
     pub(crate) fn comment_width(self) -> f32 {
         if is_desktop() && self.comments_open.get() {
             320.0_f32.min(self.stage.get().0 * 0.45)
@@ -119,6 +130,20 @@ pub(crate) fn player_landscape_header(
     exit: impl Fn() + 'static,
 ) -> View {
     view()
+        .opacity(move || {
+            if keyboard_height().0 > 0.0 {
+                0.0_f32
+            } else {
+                1.0_f32
+            }
+        })
+        .pointer_events(move || {
+            if keyboard_height().0 > 0.0 {
+                PointerEvents::None
+            } else {
+                PointerEvents::BoxNone
+            }
+        })
         .absolute()
         .top_0()
         .left_0()
@@ -169,7 +194,7 @@ pub(crate) fn player_landscape_header(
 }
 
 pub(crate) fn player_landscape_row() -> View {
-    view().flex_row().items_center().gap_2().mt_1()
+    view().flex_row().items_center().min_h_12().gap_2().mt_1()
 }
 
 pub(crate) fn player_landscape_label(
@@ -182,8 +207,10 @@ pub(crate) fn player_landscape_label(
         .px_1p5()
         .py_1()
         .rounded_md()
-        .min_h_12()
-        .h_12()
+        .min_h_8()
+        .h_8()
+        .min_w_8()
+        .hit_slop(EdgeInsets::all(px(8.0)))
         .child(
             text(label)
                 .text_sm()
@@ -194,8 +221,9 @@ pub(crate) fn player_landscape_label(
 
 pub(crate) fn player_landscape_danmaku(selected: Signal<bool>) -> nsh_base::ButtonElement {
     crate::features::player::presentation::video::player_surface()
-        .size_12()
-        .min_h_12()
+        .size_8()
+        .min_h_8()
+        .hit_slop(EdgeInsets::all(px(8.0)))
         .p_0()
         .rounded_md()
         .accessibility_label(move || Some(tr("player.danmaku")))

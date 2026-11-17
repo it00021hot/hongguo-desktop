@@ -42,7 +42,10 @@ minimize and window-cloaking lifecycle handling is retained.
 On Android API 26–29, the bottom safe-area and native tab-bar insets are capped by the stable system-bar
 inset. The legacy system-window inset also includes the IME during `adjustResize`;
 using it as a safe area gives the native tab bar a keyboard-sized bottom padding.
-The system-resized viewport continues to provide the keyboard space on these APIs.
+The legacy system-window inset above the stable bottom inset also supplies the IME height.
+Keyboard overlap is reduced by the space below the embedded view, so resized windows do not
+receive duplicate keyboard padding, while fullscreen windows can use the same keyboard
+environment and padding APIs as Android 11+. Remove this patch when upstream reports legacy IME overlap.
 
 The pinned CLI supports an embedding application's `nativeHost` configuration:
 `build` and `stage` are argument arrays, and `hosts` maps a target to its native

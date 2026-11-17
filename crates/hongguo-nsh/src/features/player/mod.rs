@@ -44,15 +44,18 @@ use nsh_core::prelude::*;
 
 pub(crate) fn page(session: SessionHandle, nav: Navigation, id: String, episode: u32) -> Screen {
     let owner = Route::Player(id.clone(), episode);
-    crate::shell::page(nav, move || tr("nav.player.title")).child(embedded(
-        session,
-        nav,
-        id,
-        episode,
-        owner,
-        computed(OverlayMeta::default),
-        None,
-    ))
+    let modes = crate::window_modes::WindowModes::current();
+    crate::shell::page(nav, move || tr("nav.player.title"))
+        .header_visible(move || is_desktop() || modes.is_none_or(|modes| !modes.state().landscape))
+        .child(embedded(
+            session,
+            nav,
+            id,
+            episode,
+            owner,
+            computed(OverlayMeta::default),
+            None,
+        ))
 }
 
 /// Mount the same player in a parent route that owns its visibility.
@@ -93,6 +96,8 @@ fn content(
         source: video_size,
         viewport: signal((0.0, 0.0)),
         stage: signal((0.0, 0.0)),
+        toolbar_height: signal(0.0),
+        binge_height: signal(0.0),
         comments_open,
     };
     provide_context(geometry);

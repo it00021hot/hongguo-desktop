@@ -134,7 +134,11 @@ pub(crate) fn controls<E: IntoElement>(
             })
             .disabled(state.busy)
             .on_press(move || action.with(|action| action(ControlAction::EnterBinge)));
-            view().child(trigger)
+            view()
+                .on_layout(move |bounds: &Bounds<Points>| {
+                    state.geometry.binge_height.set(bounds.size.height.0);
+                })
+                .child(trigger)
         })
     };
     effect(move || {
@@ -228,6 +232,9 @@ pub(crate) fn controls<E: IntoElement>(
                 .left_0()
                 .right_0()
                 .bottom_0()
+                .on_layout(move |bounds: &Bounds<Points>| {
+                    state.geometry.toolbar_height.set(bounds.size.height.0);
+                })
                 .z_index(30)
                 .style_when(is_desktop, |style| style.bg(move || nsh_base::theme().color("video-surface").expect("video surface token").opacity(0.85)))
                 .style_when(super::landscape::active, |style| style.mb_keyboard())
@@ -509,7 +516,15 @@ pub(crate) fn controls<E: IntoElement>(
                 .left_3()
                 .right_3()
                 .z_index(10)
-                .bottom(move || px(if compact() { 40.0 } else { 56.0 }))
+                .bottom(move || {
+                    px(if is_desktop() {
+                        state.geometry.toolbar_height.get() + 8.0
+                    } else if compact() {
+                        40.0
+                    } else {
+                        56.0
+                    })
+                })
                 .style_when(
                     move || !is_desktop() && compact(),
                     |style| style.hidden(),

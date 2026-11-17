@@ -1,5 +1,43 @@
 # NSH 编解码验证记录
 
+## 2026-11-18 桌面播放叠层间距回归
+
+手机紧凑按钮改动将共享px/py写成不依赖signal的闭包。NSH StyleRefinement先解析静态声明、再解析bound parts，导致这两个默认padding覆盖播放器后续的p_0、px_2和py_1；桌面剧名和集号左缘错位，互动图标与计数间距被撑大。改为静态平台值，桌面默认16/8dp恢复原声明语义，手机仍采用12/4dp。另复现连播入口固定bottom与播控高度冲突，改用实际on_layout高度，连播前后各留8dp，信息区与互动栏共用底部锚点。
+
+通过固定CLI启动当前Windows源码，在实际窗口检查约1280宽的明暗主题、约950宽的收起输入播控、约560宽的窄窗口，以及进入连播和Escape退出。剧名与集号左对齐、图标与数字分组、连播入口与进度线均未重叠；恢复原窗口大小及暗色，保留暂停画面。窗口状态与截图由本轮computer-use直接核验，不以此前仅检查进程存在的结果作为视觉通过。工作区构建和严格Clippy通过，日志为`target/issue-24/desktop-spacing-{build,workspace-clippy}.log`；格式检查通过。未新增大字号、系统读屏、macOS或本次源码的移动端安装验收，之前手机记录仅对应各节明确标注的APK。
+
+English: A mobile-density change accidentally made shared default padding reactive, overriding later static player padding. Static platform values restore the original desktop overrides. The desktop binge entry, information and action rail now follow measured toolbar height. Windows checks covered light/dark appearance, wide/intermediate/narrow windows, binge entry and Escape exit. Workspace build, strict Clippy and formatting passed; this revision has no new macOS or mobile-install validation.
+
+## 2026-11-18 手机紧凑控件与横屏弹幕输入
+
+横屏弹幕输入背景限制为240dp宽、32dp高，保留48dp编辑器触控行；选集、清晰度、倍速与弹幕开关收紧至32dp视觉高度。关闭弹幕后只收起输入，不再将选集拉成整行灰底。共享普通按钮采用36dp视觉高度，详情收藏、点赞同步；找剧筛选标签28dp高、分行间距8dp，原生hit_slop补充触控范围。禁用发送使用视频自身的低对比颜色，避免浅色主题白色按钮。
+
+华为Android 10另复现全屏软键盘覆盖输入：框架API 26–29未上报IME重叠高度，现通过legacy inset补齐，沿用播控已有mb_keyboard，不重复添加位移。输入时页头透明且禁用点击，保留节点；收起后恢复。中间版本使用hidden导致收键盘后视频和页头未恢复，最终版本已移除该做法。
+
+最终包`target/issue-24/android-compact-final/guava.apk`覆盖安装到华为LYA-AL00 / Android 10浅色真机和MuMu Android 15深色实例。两端检查找剧、详情及横屏紧凑布局；MuMu验证弹幕开关不会拉伸选集按钮。华为实际输入草稿、收起键盘后视频与页头恢复，第二次聚焦和收起仍正常，草稿已清空、未发送弹幕。华为筛选背景外约5dp点击仍能选中真人剧，再点击可取消。截图位于设备目录的`compact-final-{detail,landscape,filters,filter-hit,keyboard-fixed,keyboard-restored,keyboard-repeat,ready,danmaku-off}.png`（按设备适用）；最终真机状态为`device-huawei/compact-final-ready.png`。
+
+工作区构建、工作区严格Clippy、格式检查、theme-check和Android arm64 release打包通过，日志为`compact-final-{host-build,workspace-clippy,package}.log`。MuMu未成功调出软件键盘，因此软件IME避让只记录真机验收；未覆盖登录发送、系统读屏、大字号和iOS。
+
+English: Mobile controls now use compact visual bounds with expanded native touch areas. The landscape composer is capped at 240dp with a 32dp background. Huawei Android 10 hardware passed software-keyboard input and repeated dismissal with video/header restoration; MuMu Android 15 passed dark appearance and danmaku layout toggling. Workspace build, strict Clippy, formatting, theme validation and Android arm64 packaging passed. Emulator software IME, authenticated sends and iOS remain unverified.
+
+## 2026-11-18 找剧进入的独立播放器全屏导航头
+
+华为真机当前画面复现：从找剧进入详情并播放，点击全屏后，原生页面的浅色“播放”导航头仍保留高度，视频被压在下方。此前全屏验收使用首页嵌入播放器，未覆盖独立 Route::Player 的原生导航头。修复在独立播放页绑定 NSH `header_visible` 到移动端 landscape 状态，退出后恢复；不改共享页面壳的显示策略，避免覆盖找剧等分组页已有的隐藏头设置。截图和打包日志保存在忽略的 `target/issue-24/`。
+
+最终包 `android-standalone-fullscreen-final/guava.apk` 安装到华为 Android 10 真机及 MuMu Android 15：从找剧打开《狂蟒来袭》与《我一个钓鱼佬，怎么成天帝了》，进入全屏均不再显示页面导航头，暂停提示、剧名和底部播控正常；屏幕返回和系统返回分别恢复竖屏播放页、导航头及原进度，继续返回可回到详情和找剧列表。分组页没有多出的导航头。浅色真机、深色模拟器的截图为各设备目录下 `standalone-final-{browse,detail,player,fullscreen,button-back,system-back,return-browse}.png`。最终源码定向严格 Clippy、格式检查与 Android arm64 release 打包通过；日志为 `standalone-fullscreen-final-clippy.log`、`standalone-fullscreen-final-package.log`。本次仅针对独立播放器导航头与返回路径，未新增读屏、大字号或 iOS 验收。
+
+English: The standalone mobile player now reactively hides its native navigation header in fullscreen and restores it on exit. The binding belongs to the player page, preserving existing grouped-page header policies. The final arm64 APK passed browse-to-details-to-playback fullscreen, on-screen back, system back and return-to-browse on Huawei Android 10 hardware in light appearance and MuMu Android 15 in dark appearance. Targeted strict Clippy, formatting and Android release packaging passed.
+
+## 2026-11-18 推荐剧名卡片与第1000集画面核对
+
+根据用户提供的官方截图，手机推荐页将48dp剧名按钮和8dp进度行合并到同一圆角灰色卡片，使用白色实心播放图标、白色剧名及右侧箭头；1dp进度线和4dp静止滑块贴近卡片底边。实际原生 slider 保留48dp触控高度并向上下扩展，非焦点消费层阻止点击穿透视频，信息区按卡片总高度重新定位。桌面与选剧后的普通进度条保持原有尺寸。
+
+最终包 `target/issue-24/android-feed-card/guava.apk` 已覆盖安装到华为 LYA-AL00 / Android 10 真机和 MuMu Android 15 独立实例：浅色、深色卡片显示正常；暂停后拖动底边进度改变画面及滑块位置，保留暂停状态且没有误入选剧；点击剧名进入选剧，Android 返回恢复卡片。两台设备截图分别位于 `target/issue-24/device-{huawei,mumu}/feed-card-{initial,paused,seek,enter,exit}.png`。工作区构建、严格 Clippy 和 Android arm64 release 打包通过，日志为 `feed-card-build.log`、`feed-card-workspace-clippy.log`、`feed-card-package.log`。未新增系统读屏、大字号或 iOS 验收。
+
+另通过真实搜索、分集解析和取流链路获取《无限白粥，朕可是忠臣啊》第1000集：series `7703065438208412697`，vid `7703065985774799896`，1080P HEVC 原流18,796,600字节、3767个视频样本。Windows 系统 MediaEngine 单独解码原流115秒，得到用户第一张截图中蒙眼男子躺在床上的同一镜头；证据为 `target/issue-24/episode-1000-115.png`、`episode-1000-frames.log` 与 `fetch-current.log`。这证明该镜头已存在于本次接口返回的第1000集原流，不能仅凭人物判断为客户端标题与旧帧串台。独立官方7.4.5.32游客实例可选中同剧第1000集且起始画面一致，但拖动到尾部持续缓冲，因此不记为官方同一115秒画面复核通过，也不据此推断跨剧剧情关系。
+
+English: The mobile feed title and thin seek rail now share a rounded card, matching the supplied reference. The native slider retains a 48dp touch area while its visible row occupies 8dp. Huawei Android 10 hardware and MuMu Android 15 passed card rendering, paused seeking, entering the selected-series mode and returning to the feed. Workspace build, strict Clippy and Android arm64 packaging passed. Separately, the API-resolved original Infinite Rice episode 1000 contains the reported bed scene at 115 seconds when decoded by Windows MediaEngine. The official guest app selected the same episode but buffered indefinitely after seeking; official same-timestamp verification remains unconfirmed.
+
 ## 2026-11-18 手机选剧退出、暂停提示与横屏布局
 
 移动端进入选剧后，原生返回未接入解除 FeedNavigation 锁的操作；此前只有宿主导航回调和 Esc 路径。现增加手机左上返回入口，并由 Android 原生 BackHandler 在可见且无弹层时处理返回：横屏优先退出横屏，其次解除选剧锁，保留当前来源和进度。弹层保持原生关闭优先级。

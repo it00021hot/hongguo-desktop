@@ -810,6 +810,9 @@ public class NshView extends FrameLayout {
                 barsRight = insets.getSystemWindowInsetRight();
                 barsBottom = Math.min(insets.getSystemWindowInsetBottom(), insets.getStableInsetBottom());
                 barsLeft = insets.getSystemWindowInsetLeft();
+                if (insets.getSystemWindowInsetBottom() > insets.getStableInsetBottom()) {
+                    keyboardBottom = insets.getSystemWindowInsetBottom();
+                }
             }
             View window = getRootView();
             int[] at = new int[2];
