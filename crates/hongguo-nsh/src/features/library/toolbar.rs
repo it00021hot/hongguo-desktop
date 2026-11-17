@@ -55,9 +55,11 @@ pub(super) fn build(state: Toolbar) -> View {
                     ]
                     .into_iter()
                     .map(move |(value, key)| {
-                        crate::features::library::presentation::history_filter(move || tr(key))
-                            .selected(move || state.category.get() == value)
-                            .on_press(move || state.category.set(value))
+                        crate::features::library::presentation::history_filter(
+                            move || tr(key),
+                            computed(move || state.category.get() == value),
+                        )
+                        .on_press(move || state.category.set(value))
                     }),
                 ),
             )

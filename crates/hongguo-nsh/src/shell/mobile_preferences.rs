@@ -10,6 +10,37 @@ pub(crate) struct Preferences {
 }
 
 impl Preferences {
+    pub(super) fn theme_button() -> View {
+        let preferences = use_context::<Self>();
+        view().child(when(
+            move || preferences.is_some(),
+            move || {
+                let preferences = preferences.expect("mobile shell provides preferences");
+                ui::button("", ui::ButtonVariant::Quiet)
+                    .accessibility_label(move || tr("common.toggleTheme"))
+                    .size_12()
+                    .p_0()
+                    .disabled(preferences.busy)
+                    .child(dynamic(move || {
+                        ui::icon(if dark() {
+                            ui::Icon::Sun
+                        } else {
+                            ui::Icon::Moon
+                        })
+                    }))
+                    .on_press(move || {
+                        preferences.change.with(|change| {
+                            change(if dark() {
+                                Appearance::Light
+                            } else {
+                                Appearance::Dark
+                            })
+                        })
+                    })
+            },
+        ))
+    }
+
     pub fn new(
         busy: impl IntoReactive<bool>,
         value: impl Fn() -> String + 'static,

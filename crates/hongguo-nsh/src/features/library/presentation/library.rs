@@ -57,18 +57,42 @@ pub(crate) fn library_icon(
         .child(icon(glyph))
 }
 
-pub(crate) fn history_filter(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
+pub(crate) fn history_filter(
+    label: impl IntoReactive<SharedString>,
+    selected: Memo<bool>,
+) -> nsh_base::ButtonElement {
+    let label = label.into_reactive();
+    let label = computed(move || label.get());
+    if !is_desktop() {
+        return nsh_base::button()
+            .accessibility_label(move || label.get())
+            .selected(selected)
+            .min_h_12()
+            .min_w_12()
+            .items_center()
+            .justify_center()
+            .active(|style| style.opacity(0.8))
+            .focus_visible(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
+            .child(
+                view()
+                    .h_7()
+                    .px_3()
+                    .rounded_full()
+                    .items_center()
+                    .justify_center()
+                    .text_color(move || theme().muted_foreground)
+                    .style_when(selected, crate::ui::palette::selected)
+                    .child(text(label).text_xs()),
+            );
+    }
     surface(ButtonVariant::Quiet)
+        .selected(selected)
         .min_h(move || px(if is_desktop() { 24.0 } else { 48.0 }))
         .px_3()
         .py_1()
-        .rounded_full()
+        .rounded(radii::control())
         .text_color(move || theme().muted_foreground)
-        .selected_style(|style| {
-            style
-                .bg(move || theme().primary)
-                .text_color(move || theme().primary_foreground)
-        })
+        .selected_style(crate::ui::palette::selected)
         .child(
             text(label)
                 .text_xs()
@@ -79,23 +103,22 @@ pub(crate) fn history_filter(label: impl IntoReactive<SharedString>) -> nsh_base
 
 pub(crate) fn history_card() -> View {
     view()
-        .flex_row()
-        .items_center()
-        .gap_4()
-        .p_3()
+        .relative()
+        .items_stretch()
+        .gap_2()
+        .p_0()
         .rounded(radii::card)
-        .bg(move || theme().card)
-        .border_1()
+        .bg(move || theme().background)
         .border_color(move || theme().border)
         .hover(|style| style.border_color(move || theme().foreground.opacity(0.3)))
 }
 
 pub(crate) fn history_open() -> nsh_base::ButtonElement {
     surface(ButtonVariant::Quiet)
-        .flex_row()
-        .flex_1()
+        .flex_col()
+        .items_stretch()
         .min_w(px(0.0))
-        .gap_4()
+        .gap_2()
         .p_0()
         .justify_start()
         .active(|style| style.scale(1.0))
@@ -105,16 +128,12 @@ pub(crate) fn history_open() -> nsh_base::ButtonElement {
 pub(crate) fn history_progress(label: impl IntoReactive<SharedString>) -> View {
     view()
         .self_start()
-        .px_1p5()
-        .py_0p5()
-        .rounded(px(4.0))
-        .bg(move || theme().primary.opacity(0.1))
-        .text_color(move || theme().primary)
+        .text_color(move || theme().muted_foreground)
         .child(
             text(label)
                 .text_xs()
                 .line_height(px(16.0))
-                .font_weight(FontWeight::MEDIUM),
+                .number_of_lines(1),
         )
 }
 

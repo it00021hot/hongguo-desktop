@@ -25,9 +25,9 @@ pub(crate) fn personal_poster(
         .items_stretch()
         .justify_start()
         .overflow_hidden()
-        .bg(move || theme().card)
+        .bg(move || theme().background)
         .rounded(radii::card)
-        .border_1()
+        .border(px(0.0))
         .border_color(move || theme().border)
         .hover(|style| {
             style
@@ -37,9 +37,7 @@ pub(crate) fn personal_poster(
         .focus(|style| style.border_color(move || theme().foreground.opacity(0.3)))
         .active(|style| style.scale(1.0))
         .selected_style(|style| {
-            style
-                .border_color(move || theme().primary.opacity(0.6))
-                .bg(move || theme().primary.opacity(0.05))
+            crate::ui::palette::selected(style).border_color(move || theme().primary.opacity(0.6))
         })
         .child(
             view()
@@ -127,13 +125,13 @@ pub(crate) fn personal_poster(
         )
         .child(
             view()
-                .p_2p5()
+                .py_2()
                 .gap_1()
                 .child(
                     text(move || title.get())
                         .text_sm()
                         .line_height(px(20.0))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .number_of_lines(1),
                 )
                 .child(
@@ -233,13 +231,5 @@ pub(crate) fn personal_poster_pick(checked: impl IntoReactive<bool>) -> View {
 }
 
 pub(crate) fn personal_poster_columns(width: f32) -> u32 {
-    if width >= 1280.0 {
-        5
-    } else if width >= 1024.0 {
-        4
-    } else if width >= 640.0 {
-        3
-    } else {
-        2
-    }
+    crate::ui::poster_grid::columns(width)
 }

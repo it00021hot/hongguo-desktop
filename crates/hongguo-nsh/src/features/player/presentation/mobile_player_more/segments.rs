@@ -1,5 +1,6 @@
-use super::{MobilePlayerMoreAction, MobilePlayerMoreState, ink};
+use super::{MobilePlayerMoreAction, MobilePlayerMoreState};
 use crate::i18n::tr;
+use nsh_base::theme;
 use nsh_core::prelude::*;
 
 const RATE_MATCH_TOLERANCE: f32 = 0.01;
@@ -22,7 +23,7 @@ pub(crate) fn rates(
                     text(move || format!("{}x", state.rate.get()))
                         .font_family("monospace")
                         .text_xs()
-                        .text_color(move || ink("video-controls").opacity(0.5)),
+                        .text_color(move || theme().muted_foreground),
                 ),
         )
         .child(
@@ -68,7 +69,7 @@ pub(crate) fn definitions(
             move || {
                 text(move || tr("player.definitionLocalOnly"))
                     .text_xs()
-                    .text_color(move || ink("video-controls").opacity(0.45))
+                    .text_color(move || theme().muted_foreground)
             },
         ))
         .child(when(
@@ -124,7 +125,7 @@ fn heading(label: impl IntoReactive<SharedString>) -> Text {
     text(label)
         .text_sm()
         .line_height(px(20.0))
-        .text_color(move || ink("video-controls").opacity(0.85))
+        .text_color(move || theme().foreground)
 }
 
 #[derive(Debug, Clone, PartialEq, Props)]
@@ -162,30 +163,12 @@ fn MoreChoices(props: MoreChoicesProps, cx: Scope<MoreChoicesEvent>) -> impl Int
                 .rounded(move || nsh_base::theme().radius)
                 .items_center()
                 .justify_center()
-                .bg(move || ink("video-controls").opacity(0.05))
-                .text_color(move || ink("video-controls").opacity(0.7))
-                .checked_style(|style| {
-                    style
-                        .bg(move || ink("video-controls").opacity(0.2))
-                        .text_color(move || ink("video-controls"))
-                })
-                .hover(move |style| {
-                    style.bg(move || {
-                        ink("video-controls").opacity(
-                            if props.selected.get() == Some(index.get() as u32) {
-                                0.2
-                            } else {
-                                0.1
-                            },
-                        )
-                    })
-                })
+                .bg(move || theme().secondary)
+                .text_color(move || theme().secondary_foreground)
+                .checked_style(crate::ui::palette::selected)
+                .hover(crate::ui::palette::highlighted)
                 .active(|style| style.opacity(0.8))
-                .focus(|style| {
-                    style
-                        .outline(px(2.0))
-                        .outline_color(move || ink("video-controls"))
-                })
+                .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
                 .disabled_style(|style| style.opacity(0.4))
                 .transition()
                 .duration(move || if reduce_motion() { 0.0 } else { super::FAST_MS })

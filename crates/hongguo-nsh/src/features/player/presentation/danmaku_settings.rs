@@ -99,24 +99,14 @@ fn settings_layout(state: DanmakuSettingsState, gap: f32) -> View {
                             text(move || tr(field.label()))
                                 .text_xs()
                                 .line_height(px(16.0))
-                                .text_color(move || {
-                                    theme()
-                                        .color("video-controls")
-                                        .expect("video controls")
-                                        .opacity(0.9)
-                                }),
+                                .text_color(move || theme().foreground),
                         )
                         .child(
                             text(move || format!("{}%", (value.get() * 100.0).round() as u32))
                                 .text_xs()
                                 .line_height(px(16.0))
                                 .font_family("monospace")
-                                .text_color(move || {
-                                    theme()
-                                        .color("video-controls")
-                                        .expect("video controls")
-                                        .opacity(0.7)
-                                }),
+                                .text_color(move || theme().muted_foreground),
                         ),
                 )
                 .child(
@@ -140,24 +130,13 @@ fn settings_layout(state: DanmakuSettingsState, gap: f32) -> View {
                                     .justify_center()
                             })
                             .indicator_style(|style| {
-                                style.h_1().rounded_full().bg(move || {
-                                    theme()
-                                        .color("video-controls")
-                                        .expect("controls")
-                                        .opacity(0.35)
-                                })
+                                style.h_1().rounded_full().bg(move || theme().secondary)
                             })
                             .range_style(|style| {
-                                style
-                                    .h_1()
-                                    .rounded_full()
-                                    .bg(move || theme().color("video-controls").expect("controls"))
+                                style.h_1().rounded_full().bg(move || theme().primary)
                             })
                             .thumb_style(|style| {
-                                style
-                                    .size_3()
-                                    .rounded_full()
-                                    .bg(move || theme().color("video-controls").expect("controls"))
+                                style.size_3().rounded_full().bg(move || theme().primary)
                             })
                             .thumb_class("focus:outline-2 focus:outline-ring"),
                     ),

@@ -15,7 +15,7 @@ pub(super) enum Intent {
     All,
 }
 
-pub(in crate::features) fn page(session: SessionHandle, nav: Navigation) -> Screen {
+pub(in crate::features) fn page(session: SessionHandle, nav: Navigation) -> View {
     let completed = super::completed_inputs(session);
     let usage: Resource<StorageSnapshot, bridge::Failure> = resource(
         move || {
@@ -68,7 +68,7 @@ pub(in crate::features) fn page(session: SessionHandle, nav: Navigation) -> Scre
             busy.set(false);
         });
     };
-    crate::shell::page(nav, move || tr("settings.storage")).child(
+    crate::shell::content(nav, move || tr("settings.storage")).child(
         view::content(data, busy, confirming, message, act).child(when(
             move || usage.error().is_some(),
             move || {

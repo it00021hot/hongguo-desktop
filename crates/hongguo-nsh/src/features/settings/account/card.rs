@@ -182,3 +182,84 @@ pub(super) fn build() -> View {
             .into_element(),
     }))
 }
+
+pub(super) fn profile() -> View {
+    let state = use_context::<Context>().expect("account dialog owner provides profile state");
+    let prompt = AccountPrompt::provide();
+    view()
+        .flex_row()
+        .items_center()
+        .gap_4()
+        .style_when(move || !is_desktop(), |style| style.gap_3())
+        .child(
+            view()
+                .size(move || px(if is_desktop() { 56.0 } else { 52.0 }))
+                .rounded_full()
+                .overflow_hidden()
+                .bg(move || theme().muted)
+                .items_center()
+                .justify_center()
+                .child(dynamic(move || {
+                    match state
+                        .account
+                        .get()
+                        .filter(|account| !account.avatar.is_empty())
+                    {
+                        Some(account) => image(account.avatar)
+                            .size(move || px(if is_desktop() { 56.0 } else { 52.0 }))
+                            .object_fit(nsh_core::ResizeMode::Cover)
+                            .into_element(),
+                        None => crate::ui::icon(crate::ui::Icon::Account)
+                            .size_8()
+                            .into_element(),
+                    }
+                })),
+        )
+        .child(
+            view()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .child(
+                    text(move || {
+                        state
+                            .account
+                            .get()
+                            .map(|account| SharedString::from(account.name))
+                            .unwrap_or_else(|| tr("nav.signedOut"))
+                    })
+                    .text_base()
+                    .font_weight(FontWeight::SEMIBOLD),
+                )
+                .child(
+                    text(move || {
+                        state
+                            .account
+                            .get()
+                            .map(|account| {
+                                format!("{}  {}", account.mobile, account.hongguo_id).into()
+                            })
+                            .unwrap_or_else(|| tr("nav.syncHint"))
+                    })
+                    .text_sm()
+                    .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .child(
+            crate::ui::profile_action(move || {
+                tr(if state.account.get().is_some() {
+                    "settings.logout"
+                } else {
+                    "nav.login"
+                })
+            })
+            .disabled(state.pending)
+            .on_press(move || {
+                if state.account.get_untracked().is_some() {
+                    state.logout.set(true);
+                } else {
+                    prompt.request();
+                }
+            }),
+        )
+}

@@ -1,4 +1,6 @@
 mod filters;
+mod global_search;
+pub(crate) use global_search::{GlobalSearch, toolbar as search_toolbar};
 mod model;
 mod preferences;
 pub(crate) mod presentation;
@@ -16,8 +18,8 @@ use nsh_core::prelude::*;
 
 type Feed = Resource<LoadedPage, bridge::Failure>;
 
-pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
-    crate::shell::page(nav, move || tr("nav.browse.title")).child(content(session, nav))
+pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
+    crate::shell::content(nav, move || tr("nav.browse.title")).child(content(session, nav))
 }
 
 fn content(session: SessionHandle, nav: Navigation) -> View {
@@ -40,6 +42,9 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                 query.reset_paging();
             },
         );
+        if is_desktop() {
+            GlobalSearch::connect(query);
+        }
         let active = computed(move || {
             nav.routes()
                 .with(|routes| routes.last() == Some(&Route::Browse))

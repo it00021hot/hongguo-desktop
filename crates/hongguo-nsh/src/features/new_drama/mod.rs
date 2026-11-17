@@ -17,7 +17,7 @@ enum Mode {
     Calendar,
 }
 
-pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
+pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
     let (mode, recommend_active, calendar_active) = controls(nav);
     presentation(
         nav,
@@ -46,7 +46,7 @@ fn controls(nav: Navigation) -> (Signal<Mode>, Memo<bool>, Memo<bool>) {
     })
 }
 
-fn presentation(nav: Navigation, mode: Signal<Mode>, recommend: View, calendar: View) -> Screen {
+fn presentation(nav: Navigation, mode: Signal<Mode>, recommend: View, calendar: View) -> View {
     ui::toolbar_slot(
         move || {
             nav.routes()
@@ -54,7 +54,7 @@ fn presentation(nav: Navigation, mode: Signal<Mode>, recommend: View, calendar: 
         },
         move || mode_tabs(mode),
     );
-    crate::shell::page(nav, move || tr("nav.new.title")).child(
+    crate::shell::content(nav, move || tr("nav.new.title")).child(
         view()
             .flex_1()
             .min_h(px(0.0))

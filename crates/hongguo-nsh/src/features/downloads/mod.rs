@@ -13,7 +13,7 @@ use crate::{
 use nsh_core::prelude::*;
 use tasks::TaskIntent;
 
-pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
+pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
     let files = crate::file_access::FileAccess::current();
     let state = session.with(|session| session.state.clone());
     let result = resource(
@@ -45,7 +45,7 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
             result.refetch();
         });
     };
-    crate::shell::page(nav, move || tr("nav.tasks.title")).child(
+    crate::shell::content(nav, move || tr("nav.tasks.title")).child(
         view()
             .flex_1()
             .child(when(
@@ -82,6 +82,7 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
                         },
                         busy,
                         dispatch,
+                        move || nav.push(Route::Browse),
                     )
                 },
             )),

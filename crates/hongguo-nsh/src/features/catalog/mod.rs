@@ -69,8 +69,6 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                         .collect()
                 })
                 .into_iter()
-                // 官方 App 顶栏只渲染已知频道（关注 45 游客无数据面，同样不渲染）；
-                // 服务端下发的其他落地面（如「合集」bookstore tab）直接丢弃。
                 .filter(|tab| CHANNELS.iter().any(|(id, _)| *id == tab.tab_type))
                 .collect::<Vec<_>>()
         })
@@ -258,11 +256,10 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         .child(when(
             move || !is_desktop(),
             move || {
-                crate::shell::mobile_catalog_header(channel_tabs(
-                    available,
-                    channel,
-                    select_channel,
-                ))
+                crate::shell::mobile_catalog_header(
+                    nav,
+                    channel_tabs(available, channel, select_channel),
+                )
             },
         ))
         .child(
@@ -271,7 +268,19 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                 .min_h(px(0.0))
                 .relative()
                 .child(each(
-                    move || target.with(|target| target.cloned().into_iter().collect::<Vec<_>>()),
+                    move || {
+                        target.with(|target| {
+                            target
+                                .filter(|(id, _)| {
+                                    selected.with(|item| {
+                                        item.as_ref().is_some_and(|item| item.series_id == *id)
+                                    })
+                                })
+                                .cloned()
+                                .into_iter()
+                                .collect::<Vec<_>>()
+                        })
+                    },
                     |target: &(String, u32)| target.0.clone(),
                     move |target, _| {
                         let (id, episode) = target.get_untracked();
@@ -338,7 +347,14 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                     move || {
                         !result.loading() && result.error().is_none() && selected.get().is_none()
                     },
-                    move || ui::status(move || tr("common.empty")),
+                    move || {
+                        view()
+                            .absolute()
+                            .inset_0()
+                            .items_center()
+                            .justify_center()
+                            .child(ui::status(move || tr("common.empty")))
+                    },
                 )),
         )
 }
@@ -368,11 +384,7 @@ fn channel_tabs(
                         .map_or_else(|| tab.tab_type.into(), |(_, key)| tr(key))
                 };
                 let is_selected = move || selected.get() == tab.with(|tab| tab.tab_type.clone());
-                let button = if is_desktop() {
-                    ui::header_tab(label).selected(is_selected)
-                } else {
-                    crate::shell::mobile_channel_tab(label, is_selected)
-                };
+                let button = crate::shell::mobile_channel_tab(label, is_selected);
                 button.on_press(move || on_select(tab.get_untracked().tab_type))
             },
         ))

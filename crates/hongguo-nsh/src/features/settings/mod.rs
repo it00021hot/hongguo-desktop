@@ -27,6 +27,7 @@ impl Tasks {
 }
 
 pub(crate) use account::dialogs as account_dialogs;
+pub(crate) use account::profile;
 
 pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
     preferences::page(session, nav)

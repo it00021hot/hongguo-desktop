@@ -1,10 +1,11 @@
 use hongguo_service::contracts::discover::{FeedItem, FeedPage};
 
 pub(super) const DEFAULT_CHANNEL: &str = "16";
-pub(super) const CHANNELS: [(&str, &str); 3] = [
-    ("16", "home.tabFeed"),
+pub(super) const CHANNELS: [(&str, &str); 4] = [
+    ("45", "home.tabFollowing"),
     ("36", "home.tabComic"),
     ("39", "home.tabHuman"),
+    ("16", "home.tabFeed"),
 ];
 pub(super) const PREFETCH_REMAINING: usize = 3;
 

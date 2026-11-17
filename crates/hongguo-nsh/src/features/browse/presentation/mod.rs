@@ -27,6 +27,9 @@ pub(super) fn content(
         search.dismiss();
         let term = search.term();
         if !term.is_empty() {
+            if !is_desktop() {
+                dismiss_keyboard();
+            }
             query.update(|q| {
                 q.term = term;
                 q.reset_paging();
@@ -92,160 +95,197 @@ pub(super) fn content(
             load_more.with(|run| run());
         }
     });
-    ui::form_with_scroll(
+    let controls = move || {
         view()
-            .p_6()
-            .gap_4()
+            .flex_row()
+            .items_center()
+            .gap_2()
             .child(
                 view()
-                    .flex_row()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .child(search::field(search, submit, move |item| {
+                        if item.cover.is_empty() || item.series_id.is_empty() {
+                            search.change(&item.word);
+                            submit();
+                        } else {
+                            if !is_desktop() {
+                                dismiss_keyboard();
+                            }
+                            nav.push(Route::Detail(item.series_id));
+                        }
+                    }))
                     .child(
-                        view()
-                            .flex_1()
-                            .min_w_64()
-                            .flex_row()
-                            .gap_2()
-                            .child(search::field(search, submit, move |item| {
-                                if item.series_id.is_empty() {
-                                    search.change(&item.word);
-                                    submit();
-                                } else {
-                                    nav.push(Route::Detail(item.series_id));
-                                }
-                            }))
-                            .child(
-                                crate::features::browse::presentation::browse_search_action(
-                                    resubmitting,
-                                )
-                                .disabled(move || search.term().is_empty() || resubmitting.get())
-                                .on_press(submit),
-                            )
-                            .child(when(
-                                move || query.with(|q| !q.term.is_empty()),
-                                move || {
-                                    crate::features::browse::presentation::browse_exit_action()
-                                        .on_press(move || {
-                                            search.clear();
-                                            query.update(|q| {
-                                                q.term.clear();
-                                                q.reset_paging();
-                                            });
-                                        })
-                                },
-                            )),
-                    )
-                    .child(when(
-                        move || {
-                            query.with(|query| query.term.is_empty()) && !cards.with(Vec::is_empty)
-                        },
-                        move || {
-                            text(move || {
-                                tr("browse.totalCount")
-                                    .replace("{total}", &cards.with(Vec::len).to_string())
-                            })
-                            .text_sm()
-                            .ml(auto())
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(move || nsh_base::theme().muted_foreground)
-                        },
-                    )),
+                        crate::features::browse::presentation::browse_search_action(resubmitting)
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .disabled(move || search.term().is_empty() || resubmitting.get())
+                            .on_press(submit),
+                    ),
             )
             .child(when(
-                move || query.with(|q| q.term.is_empty()),
+                move || query.with(|q| !q.term.is_empty()),
                 move || {
+                    crate::features::browse::presentation::browse_exit_action().on_press(
+                        move || {
+                            search.clear();
+                            if !is_desktop() {
+                                dismiss_keyboard();
+                            }
+                            query.update(|q| {
+                                q.term.clear();
+                                q.reset_paging();
+                            });
+                        },
+                    )
+                },
+            ))
+    };
+    view()
+        .flex_1()
+        .min_h_0()
+        .child(when(
+            move || !is_desktop(),
+            move || view().px_4().py_2().flex_shrink_0().child(controls()),
+        ))
+        .child(ui::form_with_scroll(
+            view()
+                .p_4()
+                .gap_4()
+                .child(
                     view()
-                        .gap_1p5()
-                        .child(crate::features::browse::presentation::browse_expander(
-                            expanded,
-                            computed(move || query.with(Query::selected_filter_count)),
-                            move || super::preferences::toggle(expanded),
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .child(when(
+                            move || is_desktop() && query.with(|query| !query.term.is_empty()),
+                            move || {
+                                crate::features::browse::presentation::browse_exit_action()
+                                    .on_press(move || {
+                                        search.clear();
+                                        query.update(|query| {
+                                            query.term.clear();
+                                            query.reset_paging();
+                                        });
+                                    })
+                            },
                         ))
                         .child(when(
+                            move || query.with(|q| q.term.is_empty()),
+                            move || {
+                                crate::features::browse::presentation::browse_expander(
+                                    expanded,
+                                    computed(move || query.with(Query::selected_filter_count)),
+                                    move || super::preferences::toggle(expanded),
+                                )
+                            },
+                        ))
+                        .child(when(
+                            move || {
+                                query.with(|query| query.term.is_empty())
+                                    && !cards.with(Vec::is_empty)
+                            },
+                            move || {
+                                text(move || {
+                                    tr("browse.totalCount")
+                                        .replace("{total}", &cards.with(Vec::len).to_string())
+                                })
+                                .text_sm()
+                                .ml(auto())
+                                .font_weight(FontWeight::NORMAL)
+                                .text_color(move || nsh_base::theme().muted_foreground)
+                            },
+                        )),
+                )
+                .child(when(
+                    move || query.with(|q| q.term.is_empty()),
+                    move || {
+                        view().gap_1p5().child(when(
                             move || expanded.get(),
                             move || filters::content(panel, query),
                         ))
-                },
-            ))
-            .child(when(
-                move || pending.get(),
-                crate::features::browse::presentation::browse_loading,
-            ))
-            .child(when(
-                move || feed.error().is_some(),
-                move || {
-                    crate::features::error_state(
-                        move || {
-                            feed.error()
-                                .map_or_else(SharedString::default, |error| error.text())
-                        },
-                        move || feed.refetch(),
-                    )
-                },
-            ))
-            .child(when(
-                move || !pending.get() && cards.with(Vec::is_empty),
-                move || {
-                    crate::features::browse::presentation::browse_empty(move || {
-                        tr(if query.with(|query| query.term.is_empty()) {
-                            "browse.empty"
-                        } else {
-                            "search.empty"
-                        })
-                    })
-                },
-            ))
-            .child(when(
-                move || !cards.with(Vec::is_empty),
-                move || {
-                    ui::refresh_shade(move || feed.loading() && !fetching_more.get()).child(
-                        crate::features::browse::presentation::browse_grid(
-                            cards,
-                            move |id| {
-                                if let Some(seed) = feed.with(|page| {
-                                    page.and_then(|page| {
-                                        page.page.items.iter().find(|item| item.series_id == id)
-                                    })
-                                    .map(crate::navigation::DetailPrefill::from_rank)
-                                }) {
-                                    nav.detail(seed);
-                                }
+                    },
+                ))
+                .child(when(
+                    move || pending.get(),
+                    crate::features::browse::presentation::browse_loading,
+                ))
+                .child(when(
+                    move || feed.error().is_some(),
+                    move || {
+                        crate::features::error_state(
+                            move || {
+                                feed.error()
+                                    .map_or_else(SharedString::default, |error| error.text())
                             },
-                            move || load_more.with(|run| run()),
-                        ),
-                    )
-                },
-            ))
-            .child(when(
-                move || query.with(|query| query.term.is_empty()) && fetching_more.get(),
-                crate::features::browse::presentation::browse_loading_more,
-            ))
-            .child(when(
-                move || {
-                    query.with(|query| query.term.is_empty())
-                        && !feed.loading()
-                        && feed.with(|page| {
-                            page.is_some_and(|loaded| {
-                                !loaded.page.has_more && !cards.with(Vec::is_empty)
+                            move || feed.refetch(),
+                        )
+                    },
+                ))
+                .child(when(
+                    move || !pending.get() && cards.with(Vec::is_empty),
+                    move || {
+                        crate::features::browse::presentation::browse_empty(move || {
+                            tr(if query.with(|query| query.term.is_empty()) {
+                                "browse.empty"
+                            } else {
+                                "search.empty"
                             })
                         })
-                },
-                move || {
-                    text(move || tr("feed.end"))
-                        .text_center()
-                        .py_2()
-                        .text_sm()
-                        .text_color(move || nsh_base::theme().muted_foreground)
-                },
-            )),
-        crate::view_memory::remember_scroll(
-            scroll(),
-            "browse.scroll",
-            computed(move || query.with(|query| (query.scope(), query.identity))),
-        ),
-    )
+                    },
+                ))
+                .child(when(
+                    move || !cards.with(Vec::is_empty),
+                    move || {
+                        ui::refresh_shade(move || feed.loading() && !fetching_more.get()).child(
+                            crate::features::browse::presentation::browse_grid(
+                                cards,
+                                move |id| {
+                                    if let Some(seed) = feed.with(|page| {
+                                        page.and_then(|page| {
+                                            page.page.items.iter().find(|item| item.series_id == id)
+                                        })
+                                        .map(crate::navigation::DetailPrefill::from_rank)
+                                    }) {
+                                        nav.detail(seed);
+                                    }
+                                },
+                                move || load_more.with(|run| run()),
+                            ),
+                        )
+                    },
+                ))
+                .child(when(
+                    move || query.with(|query| query.term.is_empty()) && fetching_more.get(),
+                    crate::features::browse::presentation::browse_loading_more,
+                ))
+                .child(when(
+                    move || {
+                        query.with(|query| query.term.is_empty())
+                            && !feed.loading()
+                            && feed.with(|page| {
+                                page.is_some_and(|loaded| {
+                                    !loaded.page.has_more && !cards.with(Vec::is_empty)
+                                })
+                            })
+                    },
+                    move || {
+                        text(move || tr("feed.end"))
+                            .text_center()
+                            .py_2()
+                            .text_sm()
+                            .text_color(move || nsh_base::theme().muted_foreground)
+                    },
+                )),
+            crate::view_memory::remember_scroll(
+                scroll(),
+                "browse.scroll",
+                computed(move || query.with(|query| (query.scope(), query.identity))),
+            ),
+        ))
 }
 
 pub(crate) mod browse;

@@ -17,11 +17,21 @@ pub(crate) struct BrowseCard {
 }
 
 pub(crate) fn browse_search_action(busy: Memo<bool>) -> nsh_base::ButtonElement {
-    crate::ui::controls::surface(crate::ui::ButtonVariant::Primary)
-        .h_9()
-        .px_3()
-        .flex_row()
-        .gap_2()
+    crate::ui::controls::surface(crate::ui::ButtonVariant::Quiet)
+        .accessibility_label(move || tr("search.submit"))
+        .size_12()
+        .p_0()
+        .disabled_style(|style| {
+            style
+                .opacity(0.6)
+                .bg(move || theme().background.opacity(0.0))
+        })
+        .hover(|style| {
+            style
+                .bg(move || theme().background.opacity(0.0))
+                .text_color(move || theme().primary)
+        })
+        .accessibility_label(move || tr("search.submit"))
         .child(dynamic(move || {
             if busy.get() {
                 crate::features::browse::presentation::browse_loading::browse_spinner()
@@ -30,11 +40,6 @@ pub(crate) fn browse_search_action(busy: Memo<bool>) -> nsh_base::ButtonElement 
                 icon(Icon::Search).into_element()
             }
         }))
-        .child(
-            text(move || tr("search.submit"))
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM),
-        )
 }
 
 pub(crate) fn browse_exit_action() -> nsh_base::ButtonElement {
@@ -68,11 +73,13 @@ pub(crate) fn browse_exit_action() -> nsh_base::ButtonElement {
             })
         })
         .child(icon(Icon::Close))
-        .child(
+        .accessibility_label(move || tr("search.exit"))
+        .min_w(move || px(if is_desktop() { 0.0 } else { 48.0 }))
+        .child(when(is_desktop, move || {
             text(move || tr("search.exit"))
                 .text_sm()
-                .font_weight(FontWeight::MEDIUM),
-        )
+                .font_weight(FontWeight::MEDIUM)
+        }))
 }
 
 pub(crate) fn browse_chip(label: impl IntoReactive<SharedString>) -> nsh_base::ToggleElement {
@@ -87,17 +94,11 @@ pub(crate) fn browse_chip(label: impl IntoReactive<SharedString>) -> nsh_base::T
         .text_color(move || theme().muted_foreground)
         .font_weight(FontWeight::NORMAL)
         .pressed_style(|style| {
-            style
-                .border_color(move || theme().primary)
-                .bg(move || theme().primary.opacity(0.1))
-                .text_color(move || theme().primary)
+            crate::ui::palette::selected(style)
+                .border_color(move || theme().background.opacity(0.0))
                 .font_weight(FontWeight::MEDIUM)
         })
-        .hover(|style| {
-            style
-                .bg(move || theme().accent)
-                .text_color(move || theme().foreground)
-        })
+        .hover(crate::ui::palette::highlighted)
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .active(|style| style.opacity(0.8))
         .transition()
@@ -226,24 +227,14 @@ fn BrowseGridSurface(
                 let columns = columns.get() as f32;
                 px(
                     ((width.get() - (columns - 1.0) * 16.0) / columns - 2.0).max(0.0) * 4.0 / 3.0
-                        + 94.0,
+                        + 44.0,
                 )
             }),
         )
 }
 
 pub(crate) fn columns(width: f32) -> u32 {
-    if width >= 1536.0 {
-        8
-    } else if width >= 1024.0 {
-        5
-    } else if width >= 768.0 {
-        4
-    } else if width >= 640.0 {
-        3
-    } else {
-        2
-    }
+    crate::ui::poster_grid::columns(width)
 }
 
 fn card(item: Memo<BrowseCard>) -> nsh_base::ButtonElement {
@@ -255,9 +246,9 @@ fn card(item: Memo<BrowseCard>) -> nsh_base::ButtonElement {
         .justify_start()
         .overflow_hidden()
         .rounded(radii::card)
-        .border_1()
+        .border(px(0.0))
         .border_color(move || theme().border)
-        .bg(move || theme().card)
+        .bg(move || theme().background)
         .hover(|style| style.border_color(move || theme().foreground.opacity(0.3)))
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .active(|style| style.opacity(0.8))
@@ -340,49 +331,12 @@ fn card(item: Memo<BrowseCard>) -> nsh_base::ButtonElement {
                 )),
         )
         .child(
-            view()
-                .p_3()
-                .gap_1p5()
-                .child(
-                    text(move || item.with(|item| item.title.clone()))
-                        .text_sm()
-                        .line_height(px(21.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .number_of_lines(1),
-                )
-                .child(when(
-                    move || item.with(|item| !item.heat.is_empty()),
-                    move || {
-                        view()
-                            .flex_row()
-                            .items_center()
-                            .gap_0p5()
-                            .text_color(move || theme().color("warm").expect("warm token"))
-                            .child(icon(Icon::Home).size(px(14.0)))
-                            .child(
-                                text(move || item.with(|item| item.heat.clone()))
-                                    .text_xs()
-                                    .line_height(px(16.0))
-                                    .font_weight(FontWeight::MEDIUM),
-                            )
-                    },
-                ))
-                .child(view().flex_row().gap_1().overflow_hidden().child(each(
-                    move || item.with(|item| item.tags.iter().take(3).cloned().collect::<Vec<_>>()),
-                    |tag: &String| tag.clone(),
-                    move |tag, _| {
-                        view()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_full()
-                            .bg(move || theme().secondary)
-                            .child(
-                                text(move || tag.get())
-                                    .text_size(px(10.0))
-                                    .line_height(px(15.0))
-                                    .font_weight(FontWeight::MEDIUM),
-                            )
-                    },
-                ))),
+            view().py_2().gap_1p5().child(
+                text(move || item.with(|item| item.title.clone()))
+                    .text_sm()
+                    .line_height(px(21.0))
+                    .font_weight(FontWeight::MEDIUM)
+                    .number_of_lines(1),
+            ),
         )
 }

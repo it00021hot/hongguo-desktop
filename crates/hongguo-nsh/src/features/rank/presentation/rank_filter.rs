@@ -99,10 +99,8 @@ pub(crate) fn rank_filter_option(
         .border_1()
         .border_color(move || theme().border)
         .selected_style(|style| {
-            style
-                .border_color(move || theme().primary)
-                .bg(move || theme().primary)
-                .text_color(move || theme().primary_foreground)
+            crate::ui::palette::selected(style)
+                .border_color(crate::ui::palette::selection_background)
         })
         .child(
             text(label)

@@ -133,6 +133,7 @@ impl Search {
     pub fn popup(self) -> crate::features::browse::presentation::SearchPopup {
         crate::features::browse::presentation::SearchPopup {
             open: computed(move || self.visible()),
+            focused: computed(move || self.focused.get()),
             composing: self.composing,
             selected: self.selected,
             options: computed(move || {
@@ -147,7 +148,7 @@ impl Search {
                                         word: item.word.clone().into(),
                                         cover: item.cover.clone(),
                                         description: item.abstract_text.clone().into(),
-                                        rich: !item.series_id.is_empty(),
+                                        rich: !item.cover.is_empty() && !item.series_id.is_empty(),
                                         parts: item
                                             .parts
                                             .iter()
@@ -216,6 +217,10 @@ pub(super) fn field(
             crate::i18n::tr("search.placeholder")
         })
         .value(search.draft)
+        .style_when(
+            move || search.draft.with(String::is_empty),
+            |style| style.text_center(),
+        )
         .on_change(move |next: &str| search.change(next))
         .on_focus(move || search.focus(true))
         .on_blur(move || search.focus(false))

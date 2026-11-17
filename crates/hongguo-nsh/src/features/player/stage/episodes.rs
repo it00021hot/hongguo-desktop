@@ -57,11 +57,7 @@ pub(super) fn picker(
                                 })
                                 .text_xs()
                                 .line_height(px(16.0))
-                                .text_color(move || {
-                                    crate::features::player::presentation::picker_color(
-                                        "video-picker-muted",
-                                    )
-                                })
+                                .text_color(move || nsh_base::theme().muted_foreground)
                             },
                         ))
                         .child(when(is_desktop, move || {
@@ -333,12 +329,8 @@ fn season_card(
                                 view()
                                     .px_1()
                                     .rounded(px(2.0))
-                                    .bg(move || {
-                                        crate::features::player::presentation::picker_color(
-                                            "video-picker-active",
-                                        )
-                                        .opacity(0.9)
-                                    })
+                                    .bg(crate::ui::palette::selection_background)
+                                    .text_color(crate::ui::palette::selection_foreground)
                                     .child(
                                         text(move || tr("player.comingSoonBadge"))
                                             .text_size(px(10.0))
@@ -351,11 +343,7 @@ fn season_card(
                                 .text_size(px(11.0))
                                 .line_height(px(16.0))
                                 .number_of_lines(1)
-                                .text_color(move || {
-                                    crate::features::player::presentation::picker_color(
-                                        "video-picker-muted",
-                                    )
-                                }),
+                                .text_color(move || nsh_base::theme().muted_foreground),
                         ),
                 ),
         );
@@ -364,9 +352,7 @@ fn season_card(
             text(move || tr("player.nowPlaying"))
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(move || {
-                    crate::features::player::presentation::picker_color("video-picker-active")
-                }),
+                .text_color(move || nsh_base::theme().primary),
         );
     }
     if unreleased {

@@ -1,4 +1,3 @@
-//! The three existing input skins over a genuine document editor.
 use nsh_base::{
     rich_editor::{
         model::Node,
@@ -24,12 +23,16 @@ pub(crate) enum EmojiEditorSkin {
     Review,
     ReviewReply,
     Video,
+    FloatingVideo,
 }
 
 pub(crate) fn emoji_editor_views(skin: EmojiEditorSkin) -> NodeViews {
     let font = if matches!(
         skin,
-        EmojiEditorSkin::Video | EmojiEditorSkin::Reply | EmojiEditorSkin::ReviewReply
+        EmojiEditorSkin::Video
+            | EmojiEditorSkin::FloatingVideo
+            | EmojiEditorSkin::Reply
+            | EmojiEditorSkin::ReviewReply
     ) {
         12.0
     } else {
@@ -88,7 +91,10 @@ pub(crate) fn emoji_editor(
     changed: impl Fn() + Clone + 'static,
 ) -> (View, Rc<dyn Fn()>) {
     let selected = changed.clone();
-    let video = skin == EmojiEditorSkin::Video;
+    let video = matches!(
+        skin,
+        EmojiEditorSkin::Video | EmojiEditorSkin::FloatingVideo
+    );
     let height = move || {
         px(if skin == EmojiEditorSkin::Review {
             64.0
@@ -96,7 +102,10 @@ pub(crate) fn emoji_editor(
             48.0
         } else if matches!(
             skin,
-            EmojiEditorSkin::Reply | EmojiEditorSkin::ReviewReply | EmojiEditorSkin::Video
+            EmojiEditorSkin::Reply
+                | EmojiEditorSkin::ReviewReply
+                | EmojiEditorSkin::Video
+                | EmojiEditorSkin::FloatingVideo
         ) {
             32.0
         } else {
@@ -141,7 +150,7 @@ pub(crate) fn emoji_editor(
         })
         .bg(move || {
             if matches!(skin, EmojiEditorSkin::Comment | EmojiEditorSkin::Reply) {
-                theme().color("video-picker-cell").expect("comment field")
+                theme().muted
             } else if matches!(skin, EmojiEditorSkin::Review | EmojiEditorSkin::ReviewReply) {
                 theme().muted.opacity(0.5)
             } else {
@@ -163,9 +172,12 @@ fn classes(multiline: bool) -> RichEditorClasses {
 }
 
 fn styles(skin: EmojiEditorSkin, multiline: bool) -> RichEditorStyles {
-    let video = skin == EmojiEditorSkin::Video;
+    let video = matches!(
+        skin,
+        EmojiEditorSkin::Video | EmojiEditorSkin::FloatingVideo
+    );
     let color = move || {
-        if video || matches!(skin, EmojiEditorSkin::Comment | EmojiEditorSkin::Reply) {
+        if skin == EmojiEditorSkin::Video {
             theme().color("video-controls").expect("video controls")
         } else {
             theme().foreground
@@ -210,7 +222,11 @@ fn styles(skin: EmojiEditorSkin, multiline: bool) -> RichEditorStyles {
     let mut styles = RichEditorStyles::default();
     styles.root = Some(root.into());
     styles.content = Some(content.into());
-    let placeholder = StyleRefinement::default().opacity(0.5).text_color(color);
+    let placeholder = if skin == EmojiEditorSkin::FloatingVideo {
+        StyleRefinement::default().text_color(move || theme().muted_foreground)
+    } else {
+        StyleRefinement::default().opacity(0.5).text_color(color)
+    };
     let placeholder = if multiline {
         placeholder
     } else {

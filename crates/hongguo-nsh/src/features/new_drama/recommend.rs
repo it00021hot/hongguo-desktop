@@ -199,9 +199,11 @@ pub(super) fn presentation(
                     .map(move |(value, label)| {
                         let current = audience.clone();
                         let select = select.clone();
-                        crate::features::library::presentation::history_filter(move || tr(label))
-                            .selected(move || current.get() == value)
-                            .on_press(move || select(value))
+                        crate::features::library::presentation::history_filter(
+                            move || tr(label),
+                            computed(move || current.get() == value),
+                        )
+                        .on_press(move || select(value))
                     }),
                 ),
         )

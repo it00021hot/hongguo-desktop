@@ -24,7 +24,7 @@ pub(crate) mod player_popup;
 
 pub(crate) mod player_episode;
 pub(crate) use player_episode::{
-    PICKER_DESKTOP_COLUMNS, PICKER_GRID_GAP, picker_close, picker_color, picker_downloaded,
+    PICKER_DESKTOP_COLUMNS, PICKER_GRID_GAP, picker_close, picker_downloaded,
     picker_mobile_columns, picker_play, picker_reserve, picker_season, picker_tab,
 };
 
@@ -69,8 +69,8 @@ pub(crate) use mobile_player_more::{
 pub(crate) mod video;
 pub(crate) use video::player_campaign_badge;
 pub(crate) use video::{
-    PlayerComposerVariant, player_badge, player_binge, player_chrome, player_control, player_heat,
-    player_icon_button, player_inline, player_intro, player_phone_rate, player_phone_time,
+    PlayerComposerVariant, player_badge, player_binge, player_chrome, player_control,
+    player_episode_label, player_icon_button, player_phone_rate, player_phone_time,
     player_privacy_button, player_rail_item, player_seek, player_send_action, player_send_surface,
     player_stage, player_title,
 };

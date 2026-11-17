@@ -276,16 +276,8 @@ pub(crate) fn rank_sub_tab(
         .rounded(radii::control())
         .bg(move || theme().background.opacity(0.0))
         .text_color(move || theme().muted_foreground)
-        .hover(|style| {
-            style
-                .bg(move || theme().accent)
-                .text_color(move || theme().foreground)
-        })
-        .pressed_style(|style| {
-            style
-                .bg(move || theme().primary)
-                .text_color(move || theme().primary_foreground)
-        })
+        .hover(crate::ui::palette::highlighted)
+        .pressed_style(crate::ui::palette::selected)
         .active(|style| {
             style.opacity(0.8).scale(move || {
                 if reduce_motion() {

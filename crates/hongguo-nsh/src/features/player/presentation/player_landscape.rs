@@ -9,8 +9,20 @@ use nsh_core::prelude::*;
 pub(crate) struct PlayerGeometry {
     pub source: Signal<(f64, f64)>,
     pub viewport: Signal<(f32, f32)>,
+    pub stage: Signal<(f32, f32)>,
+    pub comments_open: Signal<bool>,
     pub comment_anchor: ElementRef,
     pub comment_trigger: ElementRef,
+}
+
+impl PlayerGeometry {
+    pub(crate) fn comment_width(self) -> f32 {
+        if is_desktop() && self.comments_open.get() {
+            320.0_f32.min(self.stage.get().0 * 0.45)
+        } else {
+            0.0
+        }
+    }
 }
 
 pub(crate) fn player_narrow() -> bool {
@@ -22,9 +34,16 @@ pub(crate) fn player_resize_mode(
     source: Signal<(f64, f64)>,
     mini: Memo<bool>,
 ) -> Memo<hongguo_nsh_video_api::ResizeMode> {
+    let geometry = use_context::<PlayerGeometry>();
+    let modes = crate::window_modes::WindowModes::current();
     computed(move || {
         let (width, height) = source.get();
-        if mini.get() || (player_narrow() && width > 0.0 && height > width) {
+        if !is_desktop()
+            && (modes.is_some_and(|modes| modes.state().landscape)
+                || geometry.is_some_and(|geometry| geometry.comments_open.get()))
+        {
+            hongguo_nsh_video_api::ResizeMode::Contain
+        } else if mini.get() || (player_narrow() && width > 0.0 && height > width) {
             hongguo_nsh_video_api::ResizeMode::Cover
         } else {
             hongguo_nsh_video_api::ResizeMode::Contain
@@ -38,6 +57,10 @@ pub(crate) fn player_watch_fullscreen(
     enter: impl Fn() + 'static,
 ) -> View {
     let enter = stored(Box::new(enter) as Box<dyn Fn()>);
+    let wide = computed(move || {
+        let (width, height) = geometry.source.get();
+        width > height
+    });
     view()
         .absolute()
         .inset_0()
@@ -45,21 +68,22 @@ pub(crate) fn player_watch_fullscreen(
         .child(when(
             move || {
                 let (width, height) = geometry.source.get();
-                width > height && height > 0.0 && window().width.0 < 768.0 && !fullscreen.get()
+                !is_desktop() && width > 0.0 && height > 0.0 && !fullscreen.get()
             },
             move || {
                 view()
                     .absolute()
-                    .left_0()
-                    .right_0()
                     .items_center()
-                    .top(move || {
-                        let (width, height) = geometry.viewport.get();
-                        let (video_width, video_height) = geometry.source.get();
-                        let rendered_height =
-                            (f64::from(width) * video_height / video_width).min(f64::from(height));
-                        px((f64::from(height) + rendered_height) as f32 * 0.5 + 10.0)
+                    .style_when(wide, |style| {
+                        style.left_0().right_0().top(move || {
+                            let (width, height) = geometry.viewport.get();
+                            let (video_width, video_height) = geometry.source.get();
+                            let rendered_height = (f64::from(width) * video_height / video_width)
+                                .min(f64::from(height));
+                            px((f64::from(height) + rendered_height) as f32 * 0.5 + 10.0)
+                        })
                     })
+                    .style_when(move || !wide.get(), |style| style.right_3().top_16())
                     .child(
                         crate::features::player::presentation::video::player_surface()
                             .flex_row()

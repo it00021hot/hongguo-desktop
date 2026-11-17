@@ -16,6 +16,11 @@
     "playbackFailed": "Video playback failed. Please try again."
   },
   "nav": {
+    "my": "My",
+    "signedOut": "Not signed in",
+    "syncHint": "Sign in to sync saved shows and follows",
+    "primaryHome": "Home",
+    "primaryDownloads": "Downloads",
     "home": {
       "title": "Discover"
     },
@@ -131,6 +136,7 @@
     "submitting": "Queued {count} tasks"
   },
   "tasks": {
+    "emptyHint": "Download episodes from the player to watch offline",
     "queueStatus": "Running {running} · Pending {pending} · Done {completed} · Failed {failed}",
     "concurrency": "Concurrency {active}/{limit}",
     "startAll": "Start all",
@@ -754,6 +760,7 @@
     "playCount": "{count} plays",
     "empty": "The feed is empty right now",
     "tabFeed": "For You",
+    "tabFollowing": "Following",
     "tabComic": "Anime",
     "tabHuman": "Live-action"
   },

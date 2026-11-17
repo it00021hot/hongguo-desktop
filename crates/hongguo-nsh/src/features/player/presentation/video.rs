@@ -4,6 +4,12 @@ use crate::ui::icon;
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
+pub(crate) fn player_ink() -> nsh_core::element::AdaptiveColor {
+    theme()
+        .color("video-controls")
+        .expect("video controls token")
+}
+
 pub(crate) fn player_source_motion(direction: i32) -> Motion {
     use crate::ui::motion::{PLAYER_ENTER_DISTANCE, PLAYER_ENTER_MS};
     motion().entering(
@@ -22,19 +28,7 @@ pub(crate) fn player_stage() -> View {
         .min_h(px(0.0))
         .min_w(px(0.0))
         .bg(move || theme().color("video-surface").expect("video surface token"))
-        .text_color(move || {
-            theme()
-                .color("video-controls")
-                .expect("video controls token")
-        })
-}
-
-pub(crate) fn player_heat(label: impl IntoReactive<SharedString>) -> Text {
-    text(label)
-        .text_xs()
-        .line_height(px(16.0))
-        .font_weight(FontWeight::NORMAL)
-        .text_color(move || theme().color("video-heat").expect("video heat token"))
+        .text_color(player_ink)
 }
 
 pub(crate) fn player_badge(label: impl IntoReactive<SharedString>) -> View {
@@ -65,11 +59,40 @@ pub(crate) fn player_campaign_badge(label: impl IntoReactive<SharedString>) -> V
 }
 
 pub(crate) fn player_binge(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
+    let label = label.into_reactive();
+    if !is_desktop() {
+        return player_surface()
+            .w_full()
+            .h_12()
+            .min_h_12()
+            .px_4()
+            .py_0()
+            .rounded(px(0.0))
+            .flex_row()
+            .items_center()
+            .justify_start()
+            .gap_2()
+            .bg(move || theme().background)
+            .text_color(move || theme().foreground)
+            .hover(crate::ui::palette::highlighted)
+            .child(
+                crate::ui::icon(Icon::Episodes)
+                    .size_4()
+                    .flex_shrink_0()
+                    .text_color(move || theme().primary),
+            )
+            .child(text(label).text_sm().min_w_0().flex_1().number_of_lines(1))
+            .child(
+                crate::ui::icon(Icon::Dropdown)
+                    .size_4()
+                    .flex_shrink_0()
+                    .rotate(deg(-90.0)),
+            );
+    }
     player_control(label)
         .w_full()
         .h_10()
         .min_h(px(40.0))
-        .style_when(move || !is_desktop(), |style| style.h_12().min_h(px(48.0)))
         .rounded(crate::ui::radii::control)
         .bg(move || theme().color("video-binge").expect("video binge token"))
         .hover(|style| {
@@ -86,6 +109,9 @@ pub(crate) fn player_control(label: impl IntoReactive<SharedString>) -> nsh_base
         text(label)
             .text_sm()
             .line_height(px(20.0))
+            .min_w_0()
+            .flex_shrink(1.0)
+            .number_of_lines(1)
             .font_weight(FontWeight::NORMAL),
     )
 }
@@ -135,12 +161,7 @@ pub(crate) fn player_phone_time(label: impl IntoReactive<SharedString>) -> Text 
         )
         .font_family("monospace")
         .font_weight(FontWeight::NORMAL)
-        .text_color(move || {
-            theme()
-                .color("video-controls")
-                .expect("video controls token")
-                .opacity(0.7)
-        })
+        .text_color(move || player_ink().opacity(0.7))
 }
 
 pub(crate) fn player_title(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
@@ -164,45 +185,13 @@ pub(crate) fn player_title(label: impl IntoReactive<SharedString>) -> nsh_base::
         )
 }
 
-pub(crate) fn player_inline(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
-    player_surface()
-        .min_h(move || px(if is_desktop() { 0.0 } else { 48.0 }))
-        .h(move || px(if is_desktop() { 20.0 } else { 48.0 }))
-        .min_w(move || px(if is_desktop() { 0.0 } else { 48.0 }))
-        .p_0()
-        .text_color(move || {
-            theme()
-                .color("video-controls")
-                .expect("video controls token")
-                .opacity(0.6)
-        })
-        .hover(|style| {
-            style.text_color(move || {
-                theme()
-                    .color("video-controls")
-                    .expect("video controls token")
-            })
-        })
-        .child(
-            text(label)
-                .text_xs()
-                .line_height(px(16.0))
-                .font_weight(FontWeight::NORMAL),
-        )
-}
-
-pub(crate) fn player_intro(label: impl IntoReactive<SharedString>) -> Text {
+pub(crate) fn player_episode_label(label: impl IntoReactive<SharedString>) -> Text {
     text(label)
         .text_xs()
         .line_height(px(20.0))
         .style_when(move || !is_desktop(), |style| style.text_sm())
         .font_weight(FontWeight::NORMAL)
-        .text_color(move || {
-            theme()
-                .color("video-controls")
-                .expect("video controls token")
-                .opacity(0.7)
-        })
+        .text_color(move || player_ink().opacity(0.7))
 }
 
 pub(crate) fn player_surface() -> nsh_base::ButtonElement {
@@ -217,11 +206,7 @@ pub(crate) fn player_surface() -> nsh_base::ButtonElement {
         .min_h(px(if is_desktop() { 32.0 } else { 48.0 }))
         .px_2()
         .py_1()
-        .text_color(move || {
-            theme()
-                .color("video-controls")
-                .expect("video controls token")
-        })
+        .text_color(player_ink)
         .hover(|style| {
             style.bg(move || {
                 theme()
@@ -242,6 +227,7 @@ pub(crate) fn player_surface() -> nsh_base::ButtonElement {
 pub(crate) enum PlayerComposerVariant {
     Toolbar,
     Landscape,
+    Popover,
 }
 
 pub(crate) fn player_send_surface(variant: Memo<PlayerComposerVariant>) -> View {
@@ -267,14 +253,18 @@ pub(crate) fn player_send_surface(variant: Memo<PlayerComposerVariant>) -> View 
         .pr_1()
         .rounded_full()
         .bg(move || {
-            theme()
-                .color("video-controls")
-                .expect("video controls token")
-                .opacity(if variant.get() == PlayerComposerVariant::Landscape {
-                    0.1
-                } else {
-                    0.15
-                })
+            if variant.get() == PlayerComposerVariant::Popover {
+                theme().muted
+            } else {
+                theme()
+                    .color("video-controls")
+                    .expect("video controls token")
+                    .opacity(if variant.get() == PlayerComposerVariant::Landscape {
+                        0.1
+                    } else {
+                        0.15
+                    })
+            }
         })
 }
 
@@ -300,18 +290,33 @@ pub(crate) fn player_send_action(
         .px_2()
         .py_0()
         .rounded_full()
-        .bg(move || {
-            theme()
-                .color("video-controls")
-                .expect("video controls token")
-                .opacity(0.15)
+        .text_color(move || {
+            if variant.get() == PlayerComposerVariant::Popover {
+                theme().primary_foreground
+            } else {
+                player_ink()
+            }
         })
-        .hover(|style| {
-            style.bg(move || {
+        .bg(move || {
+            if variant.get() == PlayerComposerVariant::Popover {
+                theme().primary
+            } else {
                 theme()
                     .color("video-controls")
                     .expect("video controls token")
-                    .opacity(0.25)
+                    .opacity(0.15)
+            }
+        })
+        .hover(|style| {
+            style.bg(move || {
+                if variant.get() == PlayerComposerVariant::Popover {
+                    theme().primary.opacity(0.9)
+                } else {
+                    theme()
+                        .color("video-controls")
+                        .expect("video controls token")
+                        .opacity(0.25)
+                }
             })
         })
         .child(
@@ -497,31 +502,22 @@ pub(crate) fn player_seek(
                 .justify_center()
         })
         .indicator_style(|style| {
-            style.w_full().h_0p5().rounded_full().bg(move || {
-                theme()
-                    .color("video-controls")
-                    .expect("video controls token")
-                    .opacity(0.2)
-            })
+            style
+                .w_full()
+                .h_0p5()
+                .rounded_full()
+                .bg(move || player_ink().opacity(0.2))
         })
         .range_style(|style| {
-            style.h_0p5().rounded_full().bg(move || {
-                theme()
-                    .color("video-controls")
-                    .expect("video controls token")
-                    .opacity(0.6)
-            })
+            style
+                .h_0p5()
+                .rounded_full()
+                .bg(move || player_ink().opacity(0.6))
         })
         .thumb_class(if is_desktop() {
             "opacity-0 hover:opacity-100 focus:opacity-100"
         } else {
             "opacity-100"
         })
-        .thumb_style(|style| {
-            style.size(px(12.0)).rounded_full().bg(move || {
-                theme()
-                    .color("video-controls")
-                    .expect("video controls token")
-            })
-        })
+        .thumb_style(|style| style.size(px(12.0)).rounded_full().bg(player_ink))
 }

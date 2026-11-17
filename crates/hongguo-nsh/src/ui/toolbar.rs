@@ -2,11 +2,13 @@ use nsh_core::{element::AnyElement, prelude::*};
 use std::rc::Rc;
 
 #[derive(Clone)]
-struct Content(Rc<dyn Fn() -> AnyElement>);
+struct Content {
+    render: Rc<dyn Fn() -> AnyElement>,
+}
 
 impl PartialEq for Content {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        Rc::ptr_eq(&self.render, &other.render)
     }
 }
 
@@ -20,11 +22,8 @@ impl ToolbarSlot {
         slot
     }
 
-    pub(crate) fn occupied(self) -> bool {
-        self.0.with(Option::is_some)
-    }
     pub(crate) fn content(self) -> Option<AnyElement> {
-        self.0.get().map(|content| (content.0)())
+        self.0.get().map(|content| (content.render)())
     }
 }
 
@@ -34,11 +33,17 @@ pub(crate) fn toolbar_slot<E: IntoElement>(
     active: impl IntoReactive<bool>,
     render: impl Fn() -> E + 'static,
 ) {
+    attach(active, render);
+}
+
+fn attach<E: IntoElement>(active: impl IntoReactive<bool>, render: impl Fn() -> E + 'static) {
     let Some(slot) = use_context::<ToolbarSlot>() else {
         return;
     };
     let active = active.into_reactive();
-    let content = Content(Rc::new(move || render().into_element()));
+    let content = Content {
+        render: Rc::new(move || render().into_element()),
+    };
     let owned = content.clone();
     effect(move || {
         if active.get() {

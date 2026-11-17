@@ -77,6 +77,9 @@ pub(crate) fn menu(
             view().children(choices.iter().map(move |&(value, label)| {
                 nsh_base::menu_item()
                     .accessibility_label(move || Some(tr(label)))
+                    .role(Some(nsh_core::AccessibilityRole::MenuItemRadio))
+                    .checked(move || Some(selected.with(|selected| selected()) == value))
+                    .checked_style(super::palette::selected)
                     .min_h(px(if is_desktop() { 32.0 } else { 48.0 }))
                     .px_2()
                     .py_1p5()
@@ -84,8 +87,8 @@ pub(crate) fn menu(
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .hover(|style| style.bg(move || theme().accent))
-                    .focus(|style| style.bg(move || theme().accent))
+                    .hover(super::palette::highlighted)
+                    .focus(super::palette::highlighted)
                     .child(
                         text(move || tr(label))
                             .text_sm()

@@ -79,7 +79,7 @@ impl MergeView {
     }
 }
 
-pub(in crate::features) fn page(session: SessionHandle, nav: Navigation) -> Screen {
+pub(in crate::features) fn page(session: SessionHandle, nav: Navigation) -> View {
     let draft = MergeDraft::new();
     let completed = super::completed_inputs(session);
     let active = computed(move || {
@@ -123,7 +123,7 @@ pub(in crate::features) fn page(session: SessionHandle, nav: Navigation) -> Scre
         computed(move || candidates.loading()),
         draft,
     );
-    crate::shell::page(nav, move || tr("merge.title")).child(
+    crate::shell::content(nav, move || tr("merge.title")).child(
         view::content(model, move |intent| dispatch(session, model, intent)).child(when(
             move || {
                 candidates.error().is_some()

@@ -1,6 +1,4 @@
 use crate::i18n::tr;
-use crate::ui::Icon;
-use crate::ui::icon;
 use crate::ui::radii;
 use nsh_base::theme;
 use nsh_core::{element::ImageSrc, prelude::*};
@@ -99,7 +97,7 @@ fn NewDramaGridSurface(
                 .estimated_item_size(move || {
                     let columns = columns.get() as f32;
                     let card_width = (width.get() - 32.0 - (columns - 1.0) * 16.0) / columns;
-                    px((card_width - 2.0).max(0.0) * 4.0 / 3.0 + 78.0)
+                    px((card_width - 2.0).max(0.0) * 4.0 / 3.0 + 44.0)
                 })
                 .footer(view().pt_8().pb_2().items_center().child(when(
                     move || finished.get(),
@@ -117,17 +115,7 @@ fn NewDramaGridSurface(
 }
 
 fn columns(width: f32) -> u32 {
-    if width >= 1536.0 {
-        8
-    } else if width >= 1024.0 {
-        5
-    } else if width >= 768.0 {
-        4
-    } else if width >= 640.0 {
-        3
-    } else {
-        2
-    }
+    crate::ui::poster_grid::columns(width)
 }
 
 fn card(item: Memo<NewDramaCard>) -> nsh_base::ButtonElement {
@@ -139,9 +127,9 @@ fn card(item: Memo<NewDramaCard>) -> nsh_base::ButtonElement {
         .justify_start()
         .overflow_hidden()
         .rounded(radii::card)
-        .border_1()
+        .border(px(0.0))
         .border_color(move || theme().border)
-        .bg(move || theme().card)
+        .bg(move || theme().background)
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .transition()
         .duration(move || {
@@ -171,26 +159,6 @@ fn card(item: Memo<NewDramaCard>) -> nsh_base::ButtonElement {
                         .inset_0()
                         .object_fit(nsh_core::ResizeMode::Cover),
                 )
-                .child(when(
-                    move || item.with(|item| !item.heat.is_empty()),
-                    move || {
-                        view()
-                            .absolute()
-                            .bottom_1()
-                            .left_1()
-                            .flex_row()
-                            .items_center()
-                            .gap_0p5()
-                            .text_color(move || theme().color("star").expect("star token"))
-                            .child(icon(Icon::Home).size_3())
-                            .child(
-                                text(move || item.with(|item| item.heat.clone()))
-                                    .text_size(px(10.0))
-                                    .line_height(px(15.0))
-                                    .font_weight(FontWeight::SEMIBOLD),
-                            )
-                    },
-                ))
                 .child(when(
                     move || item.with(|item| item.episodes > 0),
                     move || {
@@ -250,49 +218,12 @@ fn card(item: Memo<NewDramaCard>) -> nsh_base::ButtonElement {
                 )),
         )
         .child(
-            view()
-                .p_2()
-                .gap_1()
-                .min_w(px(0.0))
-                .child(
-                    text(move || item.with(|item| item.title.clone()))
-                        .text_sm()
-                        .line_height(px(20.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .number_of_lines(1),
-                )
-                .child(
-                    text(move || item.with(|item| item.category.clone()))
-                        .text_xs()
-                        .line_height(px(16.0))
-                        .text_color(move || theme().muted_foreground)
-                        .number_of_lines(1),
-                )
-                .child(when(
-                    move || item.with(|item| item.score > 0.0),
-                    move || {
-                        view()
-                            .flex_row()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                icon(Icon::Collections)
-                                    .size_3p5()
-                                    .text_color(move || theme().color("star").expect("star token")),
-                            )
-                            .child(
-                                text(move || {
-                                    format!(
-                                        "{:.1}{}",
-                                        item.with(|item| item.score),
-                                        tr("newDrama.scoreSuffix")
-                                    )
-                                })
-                                .text_xs()
-                                .line_height(px(16.0))
-                                .font_weight(FontWeight::SEMIBOLD),
-                            )
-                    },
-                )),
+            view().py_2().gap_1().min_w(px(0.0)).child(
+                text(move || item.with(|item| item.title.clone()))
+                    .text_sm()
+                    .line_height(px(20.0))
+                    .font_weight(FontWeight::MEDIUM)
+                    .number_of_lines(1),
+            ),
         )
 }

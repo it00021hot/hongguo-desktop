@@ -37,6 +37,15 @@ pub(crate) struct ControlState {
     pub(crate) danmaku_enabled: Signal<bool>,
     pub(crate) menus: MenuState,
 }
+
+impl ControlState {
+    pub(crate) fn binge_bar_visible(self) -> bool {
+        self.can_binge
+            && self.episode_count.get() > 0
+            && !self.in_binge.get()
+            && !super::landscape::active()
+    }
+}
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AdvancedControl {
     Enhancement,
@@ -184,14 +193,19 @@ pub(crate) fn controls<E: IntoElement>(
                 .right_0()
                 .bottom_0()
                 .z_index(30)
+                .style_when(is_desktop, |style| style.bg(move || nsh_base::theme().color("video-surface").expect("video surface token").opacity(0.85)))
                 .style_when(super::landscape::active, |style| style.mb_keyboard())
                 .px(move || px(if compact() { 12.0 } else { 16.0 }))
                 .pt(move || px(if compact() { 16.0 } else { 0.0 }))
                 .pb(move || px(if compact() { 6.0 } else { 12.0 }))
                 .gap(move || px(if compact() { 2.0 } else { 8.0 }))
+                .style_when(
+                    move || !is_desktop() && compact() && !super::landscape::active(),
+                    |style| style.bottom(move || px(if state.binge_bar_visible() { 48.0 } else { 0.0 })).pt_0().pb_0(),
+                )
                 .pointer_events(PointerEvents::BoxNone)
                 .child(when(
-                    move || compact() || super::landscape::active(),
+                    move || (compact() && (is_desktop() || dragging.get())) || super::landscape::active(),
                     move || {
                         view()
                             .flex_row()
@@ -451,21 +465,22 @@ pub(crate) fn controls<E: IntoElement>(
                 .bottom(move || px(if compact() { 40.0 } else { 56.0 }))
                 .style_when(
                     move || !is_desktop() && compact(),
-                    |style| style.left_4().right_4().bottom_20(),
+                    |style| style.left_0().right_0().bottom_0().z_index(40),
                 )
                 .child(dynamic(move || {
                     let trigger = crate::features::player::presentation::player_binge(move || {
-                        format!(
-                            "{} · {}  ›",
-                            tr("player.watchFullSeries"),
-                            tr("player.totalEpisodes")
-                                .replace("{count}", &state.episode_count.get().to_string())
-                        )
+                        if is_desktop() {
+                            format!("{} · {}  ›", tr("player.watchFullSeries"), tr("player.totalEpisodes")
+                                .replace("{count}", &state.episode_count.get().to_string()))
+                        } else {
+                            let caption = state.caption.get();
+                            format!("{} · {}", caption.title,
+                                tr("player.totalEpisodes").replace("{count}", &caption.total.to_string()))
+                        }
                     })
                     .style_when(
                         move || {
-                            let available = state.can_binge && state.episode_count.get() > 0;
-                            !available || state.in_binge.get() || super::landscape::active()
+                            !state.binge_bar_visible()
                         },
                         |style| style.hidden(),
                     )

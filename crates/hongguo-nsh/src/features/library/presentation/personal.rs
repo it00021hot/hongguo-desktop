@@ -47,9 +47,7 @@ pub(crate) fn personal_tab(label: impl IntoReactive<SharedString>) -> nsh_base::
         .text_color(move || theme().muted_foreground)
         .font_weight(FontWeight::NORMAL)
         .selected_style(|style| {
-            style
-                .bg(move || theme().primary)
-                .text_color(move || theme().primary_foreground)
+            crate::ui::palette::selected(style)
                 .border(px(0.0))
                 .font_weight(FontWeight::MEDIUM)
         })
@@ -78,9 +76,7 @@ pub(crate) fn personal_card(selected: impl IntoReactive<bool>) -> View {
         .ease_out()
         .hover(|style| style.border_color(move || theme().foreground.opacity(0.3)))
         .style_when(selected, |style| {
-            style
-                .border_color(move || theme().primary.opacity(0.6))
-                .bg(move || theme().primary.opacity(0.05))
+            crate::ui::palette::selected(style).border_color(move || theme().primary.opacity(0.6))
         })
 }
 

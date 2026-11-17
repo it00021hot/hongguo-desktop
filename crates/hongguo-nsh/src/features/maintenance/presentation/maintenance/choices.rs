@@ -90,12 +90,7 @@ pub(crate) fn maintenance_mode(
         .border_1()
         .border_color(move || theme().border.opacity(0.0))
         .text_color(move || theme().foreground.opacity(0.7))
-        .selected_style(|style| {
-            style
-                .bg(move || theme().background)
-                .text_color(move || theme().foreground)
-                .shadow_sm()
-        })
+        .selected_style(crate::ui::palette::selected)
         .disabled_style(|style| style.opacity(0.5))
         .hover(|style| style.bg(move || theme().accent))
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))

@@ -159,9 +159,7 @@ pub(crate) fn episode_card(
             .rounded(move || theme().radius)
             .font_weight(FontWeight::NORMAL)
             .selected_style(|style| {
-                style
-                    .bg(move || theme().primary)
-                    .text_color(move || theme().primary_foreground)
+                crate::ui::palette::selected(style)
                     .font_weight(FontWeight::SEMIBOLD)
                     .border(px(0.0))
             })
@@ -180,9 +178,7 @@ pub(crate) fn episode_card(
         .border_1()
         .border_color(move || theme().border)
         .selected_style(|style| {
-            style
-                .border_color(move || theme().primary)
-                .text_color(move || theme().primary)
+            crate::ui::palette::selected(style).border_color(move || theme().primary)
         })
         .child(
             text(move || number.get().to_string())

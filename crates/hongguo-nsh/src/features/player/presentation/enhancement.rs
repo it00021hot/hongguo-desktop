@@ -115,29 +115,10 @@ fn toggle(label: &'static str, selected: Memo<bool>) -> nsh_base::ButtonElement 
         .min_h(move || px(if is_desktop() { 28.0 } else { 48.0 }))
         .accessibility_label(move || Some(tr(label)))
         .selected(selected)
-        .bg(move || {
-            if selected.get() {
-                ink()
-            } else {
-                ink().opacity(0.1)
-            }
-        })
-        .text_color(move || {
-            if selected.get() {
-                theme().color("video-surface").expect("video surface")
-            } else {
-                ink().opacity(0.8)
-            }
-        })
-        .hover(move |style| {
-            style.bg(move || {
-                if selected.get() {
-                    ink()
-                } else {
-                    ink().opacity(0.2)
-                }
-            })
-        })
+        .bg(move || theme().secondary)
+        .text_color(move || theme().secondary_foreground)
+        .selected_style(crate::ui::palette::selected)
+        .hover(crate::ui::palette::highlighted)
         .active(|style| style.opacity(0.8))
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .transition()
@@ -152,12 +133,12 @@ fn toggle(label: &'static str, selected: Memo<bool>) -> nsh_base::ButtonElement 
 }
 
 fn ink() -> nsh_core::element::AdaptiveColor {
-    theme().color("video-controls").expect("video controls")
+    theme().popover_foreground
 }
 
 fn note(label: &'static str) -> Text {
     text(move || tr(label))
         .text_size(px(11.0))
         .line_height(px(18.0))
-        .text_color(move || ink().opacity(0.6))
+        .text_color(move || theme().muted_foreground)
 }
