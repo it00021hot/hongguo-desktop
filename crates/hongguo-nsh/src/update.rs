@@ -146,11 +146,18 @@ pub(crate) fn card() -> View {
                 move || available.get().is_some(),
                 move || {
                     crate::features::settings::presentation::form_description(move || {
-                        tr(if downloaded.get().is_some() {
-                            "update.downloadedNote"
+                        if downloaded.get().is_some() {
+                            tr("update.downloadedNote")
+                        } else if let Some(notes) = available
+                            .get()
+                            .and_then(|update| update.notes)
+                            .map(|notes| notes.trim().to_owned())
+                            .filter(|notes| !notes.is_empty())
+                        {
+                            notes.into()
                         } else {
-                            "update.nshReleaseNote"
-                        })
+                            tr("update.nshReleaseNote")
+                        }
                     })
                 },
             ))

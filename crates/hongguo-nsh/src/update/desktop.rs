@@ -6,15 +6,24 @@ const MANIFEST: &str =
     "https://github.com/it00021hot/hongguo-desktop/releases/latest/download/guava-update.json";
 
 pub(super) async fn check() -> Result<Option<Available>, String> {
+    let tag = untracked(|| locale().as_str().to_owned());
     let mut config = Config::default();
     config.id = crate::metadata().id.clone();
     config.version = crate::metadata().version.clone();
     config.github = Some("it00021hot/hongguo-desktop".into());
     config.validate().map_err(|error| error.to_string())?;
     let manifest = get(MANIFEST).await?;
-    config
+    let mut available = config
         .check(&manifest, None, &nsh_updater::platform())
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    if let Some(update) = available.as_mut()
+        && let Some(file) = nsh_updater::notes_for(&update.localized_notes, &tag)
+        && let Ok(bytes) = get(&file.url).await
+        && let Ok(notes) = nsh_updater::open_notes(file, bytes)
+    {
+        update.notes = Some(notes);
+    }
+    Ok(available)
 }
 
 pub(super) async fn download(update: Available) -> Result<PathBuf, String> {

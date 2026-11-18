@@ -1,6 +1,7 @@
 use crate::i18n::tr;
 use nsh_core::{
-    keymap::{Key, Keystroke, Modifiers, When},
+    KeyEvent,
+    keymap::{Key, Keystroke, Modifiers},
     platform::Os,
     prelude::*,
 };
@@ -8,9 +9,6 @@ use std::{collections::HashSet, rc::Rc};
 
 const STORAGE_KEY: &str = "guava.shortcuts";
 const ACTION_COUNT: usize = 5;
-const FIRST_VIRTUAL_KEY: u16 = 0x08;
-const LAST_VIRTUAL_KEY: u16 = 0xE2;
-const MODIFIER_COMBINATIONS: u8 = 16;
 type BossReceiver = Rc<dyn Fn(String)>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -150,7 +148,6 @@ impl Shortcuts {
             persistent,
         };
         provide_context(state);
-        state.capture_keys();
         state
     }
 
@@ -284,45 +281,127 @@ impl Shortcuts {
         }
     }
 
-    fn capture_keys(self) {
-        effect(move || {
-            if !self.is_capturing() {
-                return;
-            }
-            let mut keys = HashSet::new();
-            for virtual_key in FIRST_VIRTUAL_KEY..=LAST_VIRTUAL_KEY {
-                let Some(key) = Key::from_virtual_key(virtual_key) else {
-                    continue;
-                };
-                if !keys.insert(key) {
-                    continue;
-                }
-                for flags in 0..MODIFIER_COMBINATIONS {
-                    let stroke = Keystroke {
-                        key,
-                        modifiers: Modifiers {
-                            ctrl: flags & 1 != 0,
-                            alt: flags & 2 != 0,
-                            shift: flags & 4 != 0,
-                            cmd: flags & 8 != 0,
-                        },
-                    };
-                    if stroke.reserved(os()).is_some() {
-                        continue;
-                    }
-                    on_key_with(
-                        &stroke.to_string(),
-                        KeyOptions {
-                            when: When::Always,
-                            repeat: false,
-                            ..Default::default()
-                        },
-                        move |_| self.captured(stroke),
-                    );
-                }
-            }
-        });
+    pub(crate) fn handle_key_down(self, event: &KeyEvent) {
+        if !self.is_capturing() || event.repeat {
+            return;
+        }
+        let Some(stroke) = keystroke_from_event(event) else {
+            return;
+        };
+        if stroke.reserved(os()).is_some() {
+            return;
+        }
+        self.captured(stroke);
     }
+}
+
+fn keystroke_from_event(event: &KeyEvent) -> Option<Keystroke> {
+    let key = key_from_event(event)?;
+    Some(Keystroke {
+        modifiers: event.modifiers,
+        key,
+    })
+}
+
+fn key_from_event(event: &KeyEvent) -> Option<Key> {
+    let name = event.key.as_str();
+    match name {
+        "Enter" => return Some(Key::Enter),
+        "Escape" => return Some(Key::Escape),
+        "Tab" => return Some(Key::Tab),
+        "Backspace" => return Some(Key::Backspace),
+        "Delete" => return Some(Key::Delete),
+        "Insert" => return Some(Key::Insert),
+        "ArrowUp" => return Some(Key::Up),
+        "ArrowDown" => return Some(Key::Down),
+        "ArrowLeft" => return Some(Key::Left),
+        "ArrowRight" => return Some(Key::Right),
+        "Home" => return Some(Key::Home),
+        "End" => return Some(Key::End),
+        "PageUp" => return Some(Key::PageUp),
+        "PageDown" => return Some(Key::PageDown),
+        " " => return Some(Key::Char(' ')),
+        "Shift" | "Control" | "Alt" | "Meta" | "CapsLock" | "NumLock" | "ScrollLock"
+        | "Unidentified" => return None,
+        _ => {}
+    }
+    if let Some(number) = function_key_number(name) {
+        return Some(Key::F(number));
+    }
+    if !event.modifiers.alt
+        && let Some(ch) = single_char(name)
+        && ch.is_ascii_alphanumeric()
+    {
+        return Some(Key::Char(ch.to_ascii_lowercase()));
+    }
+    key_from_code(event.code.as_str()).or_else(|| {
+        single_char(name)
+            .filter(|ch| ch.is_ascii_graphic())
+            .map(|ch| Key::Char(ch.to_ascii_lowercase()))
+    })
+}
+
+fn single_char(value: &str) -> Option<char> {
+    let mut chars = value.chars();
+    let ch = chars.next()?;
+    chars.next().is_none().then_some(ch)
+}
+
+fn function_key_number(value: &str) -> Option<u8> {
+    let digits = value.strip_prefix('F')?;
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u8>().ok().filter(|n| (1..=24).contains(n))
+}
+
+fn key_from_code(code: &str) -> Option<Key> {
+    if let Some(suffix) = code.strip_prefix("Key")
+        && let Some(ch) = single_char(suffix)
+        && ch.is_ascii_alphabetic()
+    {
+        return Some(Key::Char(ch.to_ascii_lowercase()));
+    }
+    if let Some(suffix) = code
+        .strip_prefix("Digit")
+        .or_else(|| code.strip_prefix("Numpad"))
+        && let Some(ch) = single_char(suffix)
+        && ch.is_ascii_digit()
+    {
+        return Some(Key::Char(ch));
+    }
+    if let Some(number) = function_key_number(code) {
+        return Some(Key::F(number));
+    }
+    Some(match code {
+        "Enter" | "NumpadEnter" => Key::Enter,
+        "Escape" => Key::Escape,
+        "Tab" => Key::Tab,
+        "Backspace" => Key::Backspace,
+        "Delete" => Key::Delete,
+        "Insert" => Key::Insert,
+        "ArrowUp" => Key::Up,
+        "ArrowDown" => Key::Down,
+        "ArrowLeft" => Key::Left,
+        "ArrowRight" => Key::Right,
+        "Home" => Key::Home,
+        "End" => Key::End,
+        "PageUp" => Key::PageUp,
+        "PageDown" => Key::PageDown,
+        "Space" => Key::Char(' '),
+        "Minus" => Key::Char('-'),
+        "Equal" => Key::Char('='),
+        "BracketLeft" => Key::Char('['),
+        "BracketRight" => Key::Char(']'),
+        "Backslash" | "IntlBackslash" => Key::Char('\\'),
+        "Semicolon" => Key::Char(';'),
+        "Quote" => Key::Char('\''),
+        "Backquote" => Key::Char('`'),
+        "Comma" => Key::Char(','),
+        "Period" => Key::Char('.'),
+        "Slash" => Key::Char('/'),
+        _ => return None,
+    })
 }
 
 fn boss_keystroke(spec: &str, platform: Os) -> Result<Keystroke, String> {

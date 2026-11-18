@@ -55,7 +55,7 @@ pub(super) fn shortcuts(active: Memo<bool>) -> View {
                             .text_sm()
                             .line_height(px(20.0)),
                     )
-                    .child(
+                    .child(bind_capture(
                         crate::features::settings::presentation::settings_key(
                             move || {
                                 if keys.capturing() == Some(action) {
@@ -67,9 +67,11 @@ pub(super) fn shortcuts(active: Memo<bool>) -> View {
                             move || keys.capturing() == Some(action),
                             crate::features::settings::presentation::KeyBindingKind::Player,
                         )
-                        .accessibility_label(move || Some(tr(action.label_key())))
-                        .on_press(move || keys.capture(action)),
-                    )
+                        .accessibility_label(move || Some(tr(action.label_key()))),
+                        move || keys.capturing() == Some(action),
+                        move || keys.capture(action),
+                        keys,
+                    ))
             }))
             .child(ui::status(move || keys.notice())),
     )
@@ -103,7 +105,7 @@ pub(super) fn boss(draft: Signal<Draft>, busy: Signal<bool>) -> impl IntoElement
                                 .text_sm()
                                 .line_height(px(20.0)),
                         )
-                        .child(
+                        .child(bind_capture(
                             crate::features::settings::presentation::settings_key(
                                 move || {
                                     if keys.capturing_boss() {
@@ -131,13 +133,15 @@ pub(super) fn boss(draft: Signal<Draft>, busy: Signal<bool>) -> impl IntoElement
                                 crate::features::settings::presentation::KeyBindingKind::Boss,
                             )
                             .accessibility_label(move || Some(tr("settings.bossKey")))
-                            .disabled(busy)
-                            .on_press(move || {
+                            .disabled(busy),
+                            move || keys.capturing_boss(),
+                            move || {
                                 keys.capture_boss(move |spec| {
                                     draft.update(|draft| draft.boss_key = spec)
                                 })
-                            }),
-                        ),
+                            },
+                            keys,
+                        )),
                 )
                 .child(when(
                     move || {
@@ -170,4 +174,26 @@ pub(super) fn boss(draft: Signal<Draft>, busy: Signal<bool>) -> impl IntoElement
                 )),
         )
     })
+}
+
+fn bind_capture(
+    button: nsh_base::ButtonElement,
+    capturing: impl Fn() -> bool + Copy + 'static,
+    start: impl Fn() + 'static,
+    keys: Shortcuts,
+) -> View {
+    let node = element_ref();
+    view()
+        .capture_keys(move || {
+            if capturing() {
+                KeyCapture::All
+            } else {
+                KeyCapture::None
+            }
+        })
+        .on_key_down(move |event: &nsh_core::KeyEvent| keys.handle_key_down(event))
+        .child(button.element_ref(&node).on_press(move || {
+            node.focus();
+            start();
+        }))
 }
