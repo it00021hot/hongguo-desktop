@@ -45,7 +45,11 @@ pub(super) fn exposed(window: &NSWindow) -> Result<bool, String> {
         ))
     }
     .ok_or("window server did not return window metadata")?;
-    let id = f64::from(window.windowNumber() as u32);
+    let raw_id = window.windowNumber();
+    if raw_id <= 0 {
+        return Ok(false);
+    }
+    let id = raw_id as f64;
     let mut covers = Vec::new();
     let mut target = None;
     for info in windows.iter() {
@@ -53,7 +57,13 @@ pub(super) fn exposed(window: &NSWindow) -> Result<bool, String> {
             target = Some(bounds(&info)?);
             break;
         }
+        // Only standard application windows (`layer == 0`) are reliable opaque
+        // region covers here. Higher layers (menus, tooltips, IME, Dock,
+        // Electron/WindowServer overlays) keep `kCGWindowAlpha == 1.0` even
+        // when transparent; genuine occlusion at higher layers is handled by
+        // AppKit's `NSWindowOcclusionState::Visible` check in `macos.rs`.
         if number(&info, "kCGWindowOwnerPID")? == f64::from(std::process::id())
+            || number(&info, "kCGWindowLayer")? != 0.0
             || number(&info, "kCGWindowAlpha")? < 1.0
         {
             continue;

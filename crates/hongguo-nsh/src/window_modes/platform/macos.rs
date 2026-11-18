@@ -63,17 +63,26 @@ impl Observer {
             .is_none_or(|at| at.elapsed() >= VISIBILITY_INTERVAL)
         {
             self.visibility_checked = Some(Instant::now());
-            let shown = window.isVisible()
-                && !window.isMiniaturized()
-                && window
-                    .occlusionState()
-                    .contains(NSWindowOcclusionState::Visible);
+            let visible = window.isVisible();
+            let miniaturized = window.isMiniaturized();
+            let occlusion_visible = window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::Visible);
+            let shown = visible && !miniaturized && occlusion_visible;
             match if shown {
                 visibility::exposed(&window)
             } else {
                 Ok(false)
             } {
-                Ok(value) => exposed = Some(value),
+                Ok(value) => {
+                    if self.last.and_then(|last| last.exposed) != Some(value) {
+                        log::debug!(
+                            "[NSH window] visibility changed: exposed={value} visible={visible} miniaturized={miniaturized} occlusionVisible={occlusion_visible} level={}",
+                            window.level()
+                        );
+                    }
+                    exposed = Some(value);
+                }
                 Err(error) => self.context.emit("failure", Value::String(error)),
             }
         }
