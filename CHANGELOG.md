@@ -9,6 +9,18 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.1] - 2026-11-18
+
+### ⚡ 优化
+
+- 升级内置 NSH 至 0.6.0；桌面端 `Command-Q` / 应用退出接入退出确认弹窗，更新器支持按当前语言读取多语言发行说明，设置页快捷键录制改用原生按键捕获。
+
+### 🐛 修复
+
+- 修复 macOS 窗口置顶状态下点击其他应用或界面时高层透明窗口误触发「不可见暂停」的问题。
+
+English: Upgraded bundled NSH to 0.6.0, aligned Command-Q quit confirmation, localized updater release notes and native shortcut capture, and fixed false invisible-pause triggers while pinned on macOS.
+
 ## [0.8.0] - 2026-11-18
 
 ### ✨ 新增
