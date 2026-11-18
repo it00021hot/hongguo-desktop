@@ -1,6 +1,6 @@
 # hongguo-desktop
 
-当前客户端使用 NSH 0.5.1 与纯 Rust 业务内核，支持 Windows/macOS，另有独立 Android/iOS 宿主。
+当前客户端使用 NSH 0.6.0 与纯 Rust 业务内核，支持 Windows/macOS，另有独立 Android/iOS 宿主。
 Tauri、GPUI 与 React/WebView 专用代码已移除；历史备份为 `codex/backup-tauri-final`，不得根据历史文档恢复旧壳。
 
 ## 开发前

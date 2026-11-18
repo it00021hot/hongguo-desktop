@@ -600,7 +600,19 @@ pub(crate) fn decode_prop<'js>(
     let mut cx = tag.map_or_else(HostCx::default, HostCx::for_element);
     let reads = Reads::new();
     let input = Js::new(value, &reads);
-    let decoded = <Prop as HostProps>::decode(name, &input, &mut cx);
+    // `captureKeys` holds keystrokes: `mod` is Command where the platform
+    // follows Apple's conventions, which this runtime knows from its
+    // environment even though it decodes outside the engine's ambient one.
+    let decoded = if name == "captureKeys" {
+        let ctx = input.value.ctx();
+        let raw = ctx.as_raw().as_ptr();
+        // SAFETY: the app's state, for this call into JS.
+        let os = unsafe { &(*crate::state::state(raw)).dom }.os();
+        let apple = nsh_core::keymap::apple_keys(os, crate::env::current(raw).apple_keyboard);
+        Some(nsh_core::js::host::decode_capture_keys(&input, &mut cx, apple).map(Prop::KeyCapture))
+    } else {
+        <Prop as HostProps>::decode(name, &input, &mut cx)
+    };
     for message in cx.warnings {
         warnings.warn(message);
     }
@@ -1087,8 +1099,8 @@ fn decode_animation(r: &mut Reader<'_, '_>) -> rquickjs::Result<AnimationOp> {
         ANIMATION_DIFF_CLAMP => AnimationOp::CreateDiffClamp {
             node,
             input: r.int()? as nsh_core::animation::NodeId,
-            min: r.number()?,
-            max: r.number()?,
+            min: r.operand()?,
+            max: r.operand()?,
             snap: r.value()?.as_bool().unwrap_or(false),
         },
         ANIMATION_START_COMPOSITE => {
@@ -1493,6 +1505,7 @@ mod tests {
     use nsh_core::{
         LayoutCurve, LayoutProperty, LayoutTransition, PropertyValue, StyleKey,
         animation::{Curve, EaseMode},
+        element::Spring,
     };
     use rquickjs::{Context, Runtime};
 
@@ -1775,5 +1788,91 @@ mod tests {
         let tables = nsh_core::js::animation::tables();
         let spring = tables["presets"]["spring"].to_string();
         assert_eq!(layout(&spring), LayoutAnimation::SPRING);
+        // A cubic Bézier: its control points, each `x` held to 0..1;
+        // without them (or with too few), it eases in and out.
+        let c = layout("{ update: { type: 'bezier', bezier: [0.2, 0, 1.4, 1.2] } }");
+        assert_eq!(
+            c.update.map(|u| u.curve),
+            Some(LayoutCurve::Bezier([0.2, 0.0, 1.0, 1.2]))
+        );
+        let d = layout("{ update: { type: 'bezier', bezier: [0.2, 0] } }");
+        assert_eq!(d.update.map(|u| u.curve), Some(LayoutCurve::EaseInEaseOut));
+    }
+
+    /// A `spring` phase with `stiffness`, `damping` or `mass` moves on its
+    /// physics and lasts until it settles, whatever its `duration`; the
+    /// members it leaves out are `Animated.spring`'s defaults.
+    #[test]
+    fn layout_springs_decode_by_their_physics() {
+        let a = layout(
+            "{ duration: 200, update: { type: 'spring', stiffness: 620, damping: 36, mass: 1, springDamping: 0.3, delay: 10 } }",
+        );
+        let spring = Spring {
+            stiffness: 620.0,
+            damping: 36.0,
+            ..Spring::default()
+        };
+        assert_eq!(
+            a.update,
+            Some(LayoutTransition {
+                delay_ms: 10.0,
+                ..LayoutTransition::spring(spring)
+            })
+        );
+        // ζ = 36 / (2 √620) ≈ 0.72: it settles in about 380 ms.
+        let settle = a.update.unwrap().run_ms();
+        assert!((350.0..420.0).contains(&settle), "{settle}");
+        let b = layout("{ update: { type: 'spring', stiffness: 300 } }");
+        assert_eq!(
+            b.update.map(|u| u.curve),
+            Some(LayoutCurve::Spring(Spring {
+                stiffness: 300.0,
+                ..Spring::default()
+            }))
+        );
+        // Only a `spring` takes them.
+        let c = layout("{ update: { type: 'linear', stiffness: 300 } }");
+        assert_eq!(c.update.map(|u| u.curve), Some(LayoutCurve::Linear));
+    }
+
+    /// `ViewRef.animateLayout(transition)`: a layout animation sent to the
+    /// node, `transition` its `update`; without one, easing in and out.
+    #[test]
+    fn animate_layout_is_a_layout_animation_of_the_node() {
+        let rt = Runtime::new().unwrap();
+        let cx = Context::full(&rt).unwrap();
+        cx.with(|cx| {
+            let arg = cx
+                .eval("({ update: { type: 'bezier', bezier: [0.3, 0, 0, 1], duration: 200 } })")
+                .unwrap();
+            let Some(Command::LayoutAnimation(a)) = decode_command("layoutAnimation", arg).unwrap()
+            else {
+                panic!("not a layout animation");
+            };
+            assert_eq!(
+                a.update,
+                Some(LayoutTransition {
+                    curve: LayoutCurve::Bezier([0.3, 0.0, 0.0, 1.0]),
+                    property: LayoutProperty::Opacity,
+                    duration_ms: 200.0,
+                    delay_ms: 0.0,
+                })
+            );
+            assert_eq!((a.create, a.delete), (None, None));
+            // A physical spring, as `configureNext`'s phases take it.
+            let arg = cx
+                .eval("({ update: { type: 'spring', stiffness: 620, damping: 36, mass: 1 } })")
+                .unwrap();
+            let Some(Command::LayoutAnimation(b)) = decode_command("layoutAnimation", arg).unwrap()
+            else {
+                panic!("not a layout animation");
+            };
+            let spring = Spring {
+                stiffness: 620.0,
+                damping: 36.0,
+                ..Spring::default()
+            };
+            assert_eq!(b.update, Some(LayoutTransition::spring(spring)));
+        });
     }
 }

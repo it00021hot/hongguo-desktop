@@ -87,6 +87,11 @@ pub struct WebProps {
     /// ([`crate::web_resource`]). Read when the platform makes the web
     /// view, as `incognito`.
     pub url_schemes: Vec<crate::web_resource::WebUrlScheme>,
+    /// Internal: an `on_download` or `on_download_pending` listener asks
+    /// the platform to hold every download for the core. Read by the
+    /// web view's backend.
+    #[doc(hidden)]
+    pub defer_downloads: bool,
 }
 
 impl Default for WebProps {
@@ -103,6 +108,7 @@ impl Default for WebProps {
             back_forward_gestures: false,
             incognito: false,
             url_schemes: Vec::new(),
+            defer_downloads: false,
         }
     }
 }
@@ -196,6 +202,9 @@ pub struct ScrollBehavior {
     pub enabled: bool,
     /// It overscrolls past its edges.
     pub bounces: bool,
+    /// A tap at the top of the window scrolls it to its top (iOS:
+    /// `UIScrollView.scrollsToTop`).
+    pub scrolls_to_top: bool,
     /// Room around the content.
     pub content_inset: EdgeInsets,
     /// Whether taps dismiss the keyboard.
@@ -236,6 +245,7 @@ impl Default for ScrollBehavior {
             deceleration: 0.0,
             enabled: true,
             bounces: true,
+            scrolls_to_top: true,
             content_inset: EdgeInsets::default(),
             keyboard_taps: KeyboardTaps::Never,
             one_step: false,
@@ -437,6 +447,10 @@ pub struct ScreenConfig {
     pub left_system_item: Option<crate::HeaderSystemItem>,
     /// As `right_symbol`, in the leading slot, pressing `left`.
     pub left_symbol: Option<Arc<str>>,
+    /// Trailing UIKit bar buttons (`ios={{ headerRightItems }}`); a
+    /// non-empty list wins over `right_system_item` / `right_symbol` and
+    /// leaves `right`'s view out of the iOS bar. Empty is unset.
+    pub right_items: Vec<crate::HeaderItem>,
     /// Custom title view.
     pub title_view: Option<NodeId>,
     /// The app's header (`header`): on a platform without a native header
@@ -472,6 +486,7 @@ impl Default for ScreenConfig {
             right_symbol: None,
             left_system_item: None,
             left_symbol: None,
+            right_items: Vec::new(),
             title_view: None,
             header_view: None,
             header_height: Points::ZERO,
@@ -485,7 +500,7 @@ impl Default for ScreenConfig {
 /// transparent layer over the whole window (no card, scrim, shadow or
 /// background; `presentation` is ignored), and what shows is the app's
 /// popup and backdrop, which the runtime renders inside it.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModalConfig {
     /// How it appears.
     pub animation: ModalAnimation,
@@ -513,6 +528,20 @@ pub struct ModalConfig {
     /// window, not the main one). For a window's own root: the window
     /// holding its node. The core works it out from where the node is.
     pub window: NodeId,
+    /// iOS sheets: the heights it rests at (`detents`); empty for the
+    /// system's full height.
+    pub detents: Vec<crate::SheetDetent>,
+    /// iOS sheets: the detent the app keeps it at (`detent`); applied when
+    /// it changes.
+    pub detent: Option<crate::SheetDetent>,
+    /// iOS sheets: the detent it opens at without [`Self::detent`]
+    /// (`defaultDetent`); `None` for the smallest.
+    pub default_detent: Option<crate::SheetDetent>,
+    /// iOS sheets: the system's grabber shows (`grabber`).
+    pub grabber: bool,
+    /// iOS sheets: up to this detent what is behind is not dimmed and
+    /// takes touches (`largestUndimmedDetent`).
+    pub largest_undimmed_detent: Option<crate::SheetDetent>,
 }
 
 impl Default for ModalConfig {
@@ -526,6 +555,11 @@ impl Default for ModalConfig {
             close_on_backdrop_press: true,
             close_on_swipe: true,
             window: crate::ROOT_ID,
+            detents: Vec::new(),
+            detent: None,
+            default_detent: None,
+            grabber: false,
+            largest_undimmed_detent: None,
         }
     }
 }
@@ -567,7 +601,9 @@ pub struct InputConfig {
     pub auto_correct: bool,
     /// Several lines (return inserts a line break).
     pub multiline: bool,
-    /// Maximum length in UTF-16 units.
+    /// The most characters the user's edits leave (`maxLength`), counted
+    /// as Unicode scalar values ([`crate::text_edit::char_len`]); an
+    /// insertion is cut by [`crate::text_edit::clip_chars`].
     pub max_length: Option<u32>,
     /// The user can edit the text.
     pub editable: bool,

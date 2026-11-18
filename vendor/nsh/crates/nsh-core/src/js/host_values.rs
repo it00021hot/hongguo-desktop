@@ -5,16 +5,36 @@
 use super::host::{HostCx, HostInput, HostList, HostValue, field};
 use crate::{
     AccessibilityCurrent, AccessibilityProp, AccessibilityRole, AccessibilityState, AutoFill,
-    CellSlot, EdgeInsets, ImageScales, ImageSource, KeyboardTaps, ListContentStyle, MacOsBackdrop,
-    MacOsBackdropBlending, MacOsBackdropMaterial, MacOsBackdropState, ModalProp, Prop,
-    RevealOptions, ScrollAlignment, ScrollProp, StatusBarSetting, StatusBarStyle, Viewability,
-    element::TsTypes,
+    CellSlot, EdgeInsets, HeaderItem, HeaderItemContent, HeaderSystemItem, ImageScales,
+    ImageSource, KeyboardTaps, ListContentStyle, MacOsBackdrop, MacOsBackdropBlending,
+    MacOsBackdropMaterial, MacOsBackdropState, ModalProp, Prop, RevealOptions, ScreenProp,
+    ScrollAlignment, ScrollProp, StatusBarSetting, StatusBarStyle, Viewability,
+    element::{ElementTarget, TsTypes},
     geometry::{Bounds, Percentage, Points, point, size},
     mount::ModalConfig,
     ops::OverlayProp,
     overlay::{OverlayAnchor, TooltipContent},
     props::{AccessibilityActionDef, AccessibilityValue, Checked, PanActivation, Ripple},
 };
+
+/// `"none"`, `"all"`, or the canonical keystrokes a view captures
+/// (`"mod+k"`, `"shift+tab"`): parsed once here with the shortcut rules
+/// and this platform's `mod`, which the engine's environment names
+/// ([`crate::element::try_apple_keys`]); a JS host decoding outside that
+/// environment calls [`crate::js::host::decode_capture_keys`] with its own
+/// convention.
+/// Another string clears the rule with a warning; an invalid keystroke in
+/// the array is reported and left out.
+impl HostValue for crate::KeyCapture {
+    fn decode<I: HostInput>(input: &I, cx: &mut HostCx) -> Option<Self> {
+        let apple = crate::element::try_apple_keys().unwrap_or(false);
+        super::host::decode_capture_keys(input, cx, apple)
+    }
+
+    fn ts_type(_: &mut TsTypes) -> String {
+        "\"none\" | \"all\" | readonly string[]".into()
+    }
+}
 
 fn number<I: HostInput>(input: &I, key: &str) -> Option<f32> {
     input
@@ -174,6 +194,42 @@ impl HostValue for MacOsBackdrop {
                  blending?: {blending};\n  state?: {state};\n}}"
             )
         })
+    }
+}
+
+/// A dialog's `detents`, `detent`, `defaultDetent` and
+/// `largestUndimmedDetent`: `"medium"`, `"large"`, `{ height }` or
+/// `{ fraction }`; anything else is left out with a warning.
+impl HostValue for crate::SheetDetent {
+    fn decode<I: HostInput>(input: &I, cx: &mut HostCx) -> Option<Self> {
+        use crate::SheetDetent;
+        if input.is_nullish() {
+            return None;
+        }
+        if let Some(name) = input.as_string() {
+            match name.as_str() {
+                "medium" => return Some(SheetDetent::Medium),
+                "large" => return Some(SheetDetent::Large),
+                _ => {}
+            }
+        } else if input.is_object() {
+            let number = |key| input.field(key).and_then(|v| v.as_number());
+            let detent = match number("height") {
+                Some(height) => SheetDetent::of_height(height),
+                None => number("fraction").and_then(SheetDetent::of_fraction),
+            };
+            if detent.is_some() {
+                return detent;
+            }
+        }
+        cx.warn(
+            r#"detent: expected "medium", "large", `{ height }` (0 or more) or `{ fraction }` (0 to 1)"#,
+        );
+        None
+    }
+
+    fn ts_type(types: &mut TsTypes) -> String {
+        <crate::SheetDetent as crate::element::JsValue>::ts_type(types)
     }
 }
 
@@ -454,7 +510,161 @@ impl HostValue for Ripple {
     }
 }
 
+/// A trailing iOS bar button: `{ key?, systemItem | symbol | label,
+/// disabled?, menu? }`. Handlers (`onPress`, menu `onSelect`) are taken by
+/// the JS runtime when it sets the prop; this decode leaves their ids at 0.
+impl HostValue for HeaderItem {
+    fn decode<I: HostInput>(input: &I, cx: &mut HostCx) -> Option<Self> {
+        if !input.is_object() {
+            return None;
+        }
+        let system = field::<HeaderSystemItem, _>(input, "systemItem", cx);
+        let symbol = field::<std::sync::Arc<str>, _>(input, "symbol", cx);
+        let label_content = field::<std::sync::Arc<str>, _>(input, "label", cx);
+        let content = match (system, symbol, label_content.clone()) {
+            (Some(item), None, _) => HeaderItemContent::SystemItem(item),
+            (None, Some(name), _) => HeaderItemContent::Symbol(name),
+            (None, None, Some(text)) => HeaderItemContent::Label(text),
+            _ => {
+                cx.warn("headerRightItems entry needs exactly one of systemItem, symbol, or label");
+                return None;
+            }
+        };
+        // `label` is the button's title when it is the content; otherwise
+        // VoiceOver's label (re-read when content was system/symbol).
+        let label = match &content {
+            HeaderItemContent::Label(_) => None,
+            _ => label_content,
+        };
+        let flag = |key| input.field(key).and_then(|v| v.as_bool()).unwrap_or(false);
+        let menu = input.field("menu").and_then(|v| {
+            v.as_list()?;
+            Some(
+                v.items()
+                    .iter()
+                    .filter_map(|item| decode_menu_item(item, cx))
+                    .collect::<Vec<_>>(),
+            )
+        });
+        Some(HeaderItem {
+            key: field(input, "key", cx),
+            content,
+            label,
+            disabled: flag("disabled"),
+            press_id: 0,
+            menu,
+        })
+    }
+
+    fn ts_type(types: &mut TsTypes) -> String {
+        let system = HeaderSystemItem::ts_type(types);
+        types.declare("HeaderItem", |_| {
+            format!(
+                "/** A trailing iOS navigation-bar button (`ios.headerRightItems`).\n\
+                 * `menu` takes `nsh/desktop`'s `MenuItem` items (`onSelect` per\n\
+                 * item; `destructive`, `inline`, `symbol` as documented there).\n\
+                 * `onPress` runs when the button has no menu. */\n\
+                 export type HeaderItem = {{\n  key?: string;\n  disabled?: boolean;\n  \
+                 onPress?: () => void;\n  menu?: import(\"nsh/desktop\").MenuItem[];\n}} & (\n  \
+                 {{ systemItem: {system}; symbol?: never; label?: string }} \
+                 | {{ symbol: string; systemItem?: never; label?: string }} \
+                 | {{ label: string; systemItem?: never; symbol?: never }}\n);"
+            )
+        })
+    }
+}
+
+/// One `nsh/desktop` menu item without its handlers (ids stay 0); JS's
+/// special path for `headerRightItems` assigns ids and keeps the functions.
+fn decode_menu_item<I: HostInput>(input: &I, cx: &mut HostCx) -> Option<crate::desktop::MenuItem> {
+    use crate::{
+        desktop::{MenuAction, MenuItem},
+        keymap::When,
+    };
+    if !input.is_object() {
+        return None;
+    }
+    if input.field("type").and_then(|v| v.as_string()).as_deref() == Some("separator") {
+        return Some(MenuItem::Separator);
+    }
+    let flag = |key| input.field(key).and_then(|v| v.as_bool());
+    let label = field::<String, _>(input, "label", cx).unwrap_or_default();
+    let enabled = !flag("disabled").unwrap_or(false);
+    let icon = field::<ImageSource, _>(input, "icon", cx);
+    let symbol = field::<String, _>(input, "symbol", cx);
+    if let Some(items_input) = input.field("submenu") {
+        let items = items_input
+            .items()
+            .iter()
+            .filter_map(|item| decode_menu_item(item, cx))
+            .collect();
+        return Some(MenuItem::Submenu {
+            label,
+            enabled,
+            items,
+            icon,
+            symbol,
+            inline: flag("inline").unwrap_or(false),
+        });
+    }
+    let role = field::<String, _>(input, "role", cx).and_then(|name| menu_role(&name));
+    if label.is_empty() && role.is_none() {
+        return None;
+    }
+    Some(MenuItem::Action(MenuAction {
+        id: 0,
+        label,
+        shortcut: None,
+        enabled,
+        checked: flag("checked"),
+        role,
+        when: When::Always,
+        icon,
+        symbol,
+        destructive: flag("destructive").unwrap_or(false),
+    }))
+}
+
+fn menu_role(name: &str) -> Option<crate::desktop::MenuRole> {
+    use crate::desktop::MenuRole;
+    Some(match name {
+        "about" => MenuRole::About,
+        "hide" => MenuRole::Hide,
+        "hideOthers" => MenuRole::HideOthers,
+        "showAll" => MenuRole::ShowAll,
+        "quit" => MenuRole::Quit,
+        "undo" => MenuRole::Undo,
+        "redo" => MenuRole::Redo,
+        "cut" => MenuRole::Cut,
+        "copy" => MenuRole::Copy,
+        "paste" => MenuRole::Paste,
+        "selectAll" => MenuRole::SelectAll,
+        "minimize" => MenuRole::Minimize,
+        "zoom" => MenuRole::Zoom,
+        "toggleFullScreen" => MenuRole::ToggleFullScreen,
+        "close" => MenuRole::Close,
+        _ => return None,
+    })
+}
+
 // --- Whole variants ---------------------------------------------------------
+
+/// `selectionMenu`: `nsh/desktop`'s `MenuItem` items. Handlers (`onSelect`)
+/// are taken by the JS runtime when it sets the prop; this decode leaves
+/// their ids at 0.
+pub(crate) fn selection_menu<I: HostInput>(input: &I, cx: &mut HostCx) -> Option<Prop> {
+    if input.is_nullish() {
+        return Some(Prop::SelectionMenu(Vec::new()));
+    }
+    input.as_list()?;
+    Some(Prop::SelectionMenu(
+        input
+            .items()
+            .iter()
+            .filter_map(|item| decode_menu_item(item, cx))
+            .collect(),
+    ))
+}
 
 /// `slot`: a recycling slot (a number) or a role.
 pub(crate) fn slot<I: HostInput>(input: &I, _: &mut HostCx) -> Option<Prop> {
@@ -538,6 +748,36 @@ pub(crate) fn overlay_anchor<I: HostInput>(input: &I, _: &mut HostCx) -> Option<
         _ => bounds().map_or(OverlayAnchor::None, OverlayAnchor::Bounds),
     };
     Some(OverlayProp::Anchor(anchor))
+}
+
+/// `accessibilityActiveDescendant`: an element (a ref), or nothing.
+pub(crate) fn active_descendant<I: HostInput>(
+    input: &I,
+    _: &mut HostCx,
+) -> Option<AccessibilityProp> {
+    Some(AccessibilityProp::ActiveDescendant(
+        input.node().map(ElementTarget::of_node),
+    ))
+}
+
+/// `accessibilityControls`: an element (a ref), or nothing.
+pub(crate) fn accessibility_controls<I: HostInput>(
+    input: &I,
+    _: &mut HostCx,
+) -> Option<AccessibilityProp> {
+    Some(AccessibilityProp::Controls(
+        input.node().map(ElementTarget::of_node),
+    ))
+}
+
+/// `accessibilityDescribedBy`: an element (a ref), or nothing.
+pub(crate) fn accessibility_described_by<I: HostInput>(
+    input: &I,
+    _: &mut HostCx,
+) -> Option<AccessibilityProp> {
+    Some(AccessibilityProp::DescribedBy(
+        input.node().map(ElementTarget::of_node),
+    ))
 }
 
 /// `tooltip`: an element (a node JS made), or nothing.
@@ -752,8 +992,19 @@ pub(crate) fn keyboard_taps<I: HostInput>(input: &I, _: &mut HostCx) -> Option<S
     }))
 }
 
-/// `supportedOrientations`: the orientation names.
+/// A dialog's `supportedOrientations`: the orientation names.
 pub(crate) fn orientations<I: HostInput>(input: &I, _: &mut HostCx) -> Option<ModalProp> {
+    Some(ModalProp::Orientations(orientation_bits(input)))
+}
+
+/// A page's `supportedOrientations`: the orientation names.
+pub(crate) fn page_orientations<I: HostInput>(input: &I, _: &mut HostCx) -> Option<ScreenProp> {
+    Some(ScreenProp::Orientations(orientation_bits(input)))
+}
+
+/// The [`ModalConfig::PORTRAIT`] bits of a list of orientation names; a
+/// name it does not know adds none.
+fn orientation_bits<I: HostInput>(input: &I) -> u8 {
     let mut bits = 0;
     for name in input.items() {
         bits |= match name.as_string().as_deref() {
@@ -765,7 +1016,7 @@ pub(crate) fn orientations<I: HostInput>(input: &I, _: &mut HostCx) -> Option<Mo
             _ => 0,
         };
     }
-    Some(ModalProp::Orientations(bits))
+    bits
 }
 
 /// A shader's `uniforms`: `{ name: value }`, a value a number, a CSS color,

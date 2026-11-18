@@ -40,7 +40,9 @@ mod global_shortcut;
 mod gpu;
 mod image;
 mod input;
+mod keyboard;
 mod keymap;
+mod login_item;
 mod mount;
 mod native;
 mod navigation;
@@ -50,6 +52,7 @@ mod screen_color;
 mod scroll;
 mod selectable_view;
 mod shader;
+mod share;
 mod sight;
 // Shared with iOS.
 use nsh_platform_apple::{audio, notifications, speech};

@@ -15,6 +15,7 @@ mod dev_port;
 mod entry;
 mod init;
 mod logger;
+mod native_features;
 mod native_host;
 mod package;
 mod platforms;
@@ -191,18 +192,20 @@ enum Command {
         /// UDID); default: a booted one, else the newest iPhone.
         #[arg(long, value_name = "DEVICE")]
         device: Option<String>,
-        /// With `--target macos`: the display the apps' windows open on,
-        /// centered: 1 is the primary display (the one with the menu bar),
-        /// 2 the next, and so on; the main one when there is no such
-        /// display. Default: the first display besides the primary one
-        /// (not a mirror of it), so that a run keeps off the screen in use;
-        /// the primary one when there is no other.
+        /// With `--target macos` or `gpui`: the display the apps' windows
+        /// open on, centered: 1 is the primary display (on macOS the one with
+        /// the menu bar), 2 the next, and so on; the main one when there is
+        /// no such display. Default: the first display besides the primary
+        /// one (not a mirror of it), so that a run keeps off the screen in
+        /// use; the primary one when there is no other.
         #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
         display: Option<u32>,
-        /// With `--target macos`: lets the apps become the active app, as
-        /// they would run for a user. By default they run in the
-        /// background: their windows show but never take the keyboard from
-        /// the app in use, and the tests' input goes to them directly.
+        /// With `--target macos`, `windows`, `gpui` or `linux`: lets the apps
+        /// become the active app, as they would run for a user. By default
+        /// they run in the background: their windows show but never take the
+        /// keyboard from the app in use, and the tests' input goes to them
+        /// directly (on Linux the keys go to the widgets, as on Wayland,
+        /// except on a display nobody types on, such as Xvfb).
         #[arg(long)]
         foreground: bool,
     },
@@ -358,9 +361,12 @@ enum Command {
         /// The secret key (`nsh keygen`'s `.secret`) of the app's `updater.publicKey`.
         #[arg(long)]
         key: Option<PathBuf>,
-        /// A text file with what changed.
+        /// A text file with what changed; `<tag>=<file>` for another
+        /// language, a BCP 47 tag such as `en`, `zh-TW` or `ja`, written
+        /// beside the manifest as `notes.<tag>.md` (repeatable; the
+        /// untagged one is needed with tagged ones).
         #[arg(long)]
-        notes: Option<PathBuf>,
+        notes: Vec<String>,
         /// Where iOS or Android users get it: `ios=<url>`, `android=<url>` (repeatable).
         #[arg(long = "link")]
         links: Vec<String>,
@@ -775,6 +781,11 @@ fn run(mut command: Command) -> anyhow::Result<()> {
                 ..
             }
     );
+    // An app written for other NSH versions says so before anything else
+    // fails on what this one lacks.
+    if let Some(entry) = command.entry_mut() {
+        package::check_nsh_version(entry)?;
+    }
     if let Some(entry) = command.entry_mut()
         && rust_app::is_root(entry)
         && !rust_command
@@ -786,8 +797,24 @@ fn run(mut command: Command) -> anyhow::Result<()> {
             ui::path(entry)
         );
     }
+    // Only commands that build this machine's headless runner, host or
+    // runner after the describing program share one build with it; the
+    // others (a bundle, a check, a package or a host for another target)
+    // build only the describing program for this machine.
+    let here = |target: run::Target| target == run::Target::native() && target != run::Target::Web;
+    let unify = match &command {
+        Command::Test { .. } => true,
+        Command::Run { target, .. } => here(*target),
+        Command::Dev {
+            target,
+            server_only: false,
+            ..
+        } => here(*target),
+        Command::Package(args) => Some(args.target) == package::PackageTarget::desktop(),
+        _ => false,
+    };
     let app = match command.entry_mut() {
-        Some(entry) => rust_app::of(entry)?,
+        Some(entry) => rust_app::of(entry, unify)?,
         None => None,
     };
     let Some(app) = app else {
@@ -1043,7 +1070,7 @@ fn dispatch(command: Command) -> anyhow::Result<()> {
             package: package.as_deref(),
             entry: &entry,
             key: key.as_deref(),
-            notes: notes.as_deref(),
+            notes: &notes,
             links: &links,
             base_url: base_url.as_deref(),
             out: &out,

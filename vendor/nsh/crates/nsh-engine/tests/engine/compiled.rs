@@ -75,7 +75,7 @@ fn start() -> (Engine, Receiver<MountBatch>) {
         limits: nsh_engine::Limits::default(),
         ui_sets: Vec::new(),
         runtime: None,
-        data_dir: None,
+        support_dir: None,
         cache: nsh_engine::CacheOptions::off(),
         storage: None,
         clock: Default::default(),
@@ -87,6 +87,8 @@ fn start() -> (Engine, Receiver<MountBatch>) {
         speech: None,
         audio: None,
         windows: None,
+        login_item: None,
+        data_dir: None,
     };
     (
         Engine::start(config, || ApproxTextEngine, ChannelSink(tx)).unwrap(),
@@ -254,7 +256,7 @@ fn start_app_culling(
         limits: nsh_engine::Limits::default(),
         ui_sets: vec![nsh_base::registry(), crate::test_ui::registry()],
         runtime: None,
-        data_dir: None,
+        support_dir: None,
         cache: nsh_engine::CacheOptions::off(),
         storage: None,
         clock: Default::default(),
@@ -266,6 +268,8 @@ fn start_app_culling(
         speech: None,
         audio: None,
         windows: None,
+        login_item: None,
+        data_dir: None,
     };
     (
         Engine::start(config, || ApproxTextEngine, ChannelSink(tx)).unwrap(),
@@ -424,6 +428,75 @@ fn dialogs_in_a_scroll_view_open_with_content_culling() {
     assert_eq!(modals(&batch), 2);
     assert!(text_id(&batch, "in sheet").is_some());
     assert!(text_id(&batch, "far down").is_some());
+}
+
+const SLIDING_CARDS: &str = r#"import { createAnimatedValue, mount, Scroll, Text, View } from "nsh";
+
+// A page of sections that fade and slide 14pt up into place as they appear.
+function Card(props: { index: number }) {
+  const t = createAnimatedValue(0);
+  t.timing(1, { duration: 300, delay: Math.min(8, props.index) * 40 });
+  const y = t.interpolate({ inputRange: [0, 1], outputRange: [14, 0] });
+  return (
+    <View style={{ height: 200, opacity: t, transform: [{ translateY: y }] }}>
+      <Text>{`card ${props.index}`}</Text>
+    </View>
+  );
+}
+
+mount(() => (
+  <Scroll style={{ flex: 1 }}>
+    {Array.from({ length: 30 }, (_, i) => (
+      <Card index={i} />
+    ))}
+  </Scroll>
+));
+"#;
+
+/// Sections that slide in by a few points are culled as still ones: the
+/// page makes those near the screen, not all of them in its first frames,
+/// and the others as it scrolls to them.
+#[test]
+fn sliding_sections_are_made_as_they_come_near() {
+    let (engine, rx) = start_app_culling(SLIDING_CARDS, (px(44.0), px(96.0)), true);
+    let mut texts = Vec::new();
+    let mut scroll = None;
+    // Every batch the start sends, its paced views included.
+    while let Ok(batch) = rx.recv_timeout(Duration::from_millis(500)) {
+        for item in &batch.items {
+            match item {
+                MountItem::Text { text, .. } => texts.push(text.text.to_string()),
+                MountItem::Create {
+                    id,
+                    kind: nsh_core::ViewKind::Scroll,
+                } => scroll = Some(*id),
+                _ => {}
+            }
+        }
+    }
+    let has = |texts: &[String], t: &str| texts.iter().any(|x| x == t);
+    // 844pt of screen and one around it: cards 0 to 8 (8 starts at 1600,
+    // 14pt of slide short of 1688), not 9 (1800) and on.
+    assert!(has(&texts, "card 0") && has(&texts, "card 8"), "{texts:?}");
+    assert!(
+        !has(&texts, "card 9") && !has(&texts, "card 29"),
+        "{texts:?}"
+    );
+    // Scrolled to the end, the last cards come.
+    engine.control().scroll(
+        scroll.expect("the scroll view"),
+        nsh_core::geometry::point(Points(0.0), Points(6000.0 - 844.0)),
+        0,
+    );
+    let mut texts = Vec::new();
+    while let Ok(batch) = rx.recv_timeout(Duration::from_millis(500)) {
+        for item in &batch.items {
+            if let MountItem::Text { text, .. } = item {
+                texts.push(text.text.to_string());
+            }
+        }
+    }
+    assert!(has(&texts, "card 29"), "{texts:?}");
 }
 
 const MODAL_DISMISS: &str = r#"import { mount, signal, Text, View } from "nsh";
@@ -1129,7 +1202,7 @@ fn dialogs_report_cancels_and_closes_with_their_reason() {
         .items
         .iter()
         .find_map(|i| match i {
-            MountItem::ModalConfig { id, config } if *id == modal => Some(*config),
+            MountItem::ModalConfig { id, config } if *id == modal => Some(config.clone()),
             _ => None,
         })
         .expect("its config");
@@ -1163,6 +1236,82 @@ fn dialogs_report_cancels_and_closes_with_their_reason() {
     control.dispatch_event(modal, EventKind::RequestClose, EventPayload::None);
     next(&rx, |b| {
         log_of(b).is_some_and(|l| l.ends_with(",cancel,cancel,change false cancel"))
+    });
+}
+
+const SHEET_DETENTS: &str = r#"import { mount, signal, Text, View } from "nsh";
+import { Dialog } from "nsh/base";
+
+const log = signal<string[]>([]);
+
+mount(() => (
+  <View style={{ flex: 1 }}>
+    <Text>{`log ${log().join(",")}`}</Text>
+    <Dialog
+      presentation="pageSheet"
+      detents={["medium", { height: 200 }, { fraction: 0.4 }, "bogus", { fraction: 3 }, { height: -1 }, { height: NaN }] as any}
+      detent="medium"
+      defaultDetent="large"
+      grabber
+      largestUndimmedDetent={{ fraction: 0.4 }}
+      onDetentChange={({ detent }) => log.update((l) => [...l, JSON.stringify(detent)])}
+    >
+      <Text>in sheet</Text>
+    </Dialog>
+  </View>
+));
+"#;
+
+/// A dialog's sheet options reach the platform from TSX as the core's
+/// `SheetDetent`s, detents that are not one left out; the platform's
+/// `DetentChange` payload reaches the app as the same JS value.
+#[test]
+fn sheet_detents_reach_the_platform_and_the_users_moves_the_app() {
+    use nsh_core::{SheetDetent, geometry::Percentage};
+    let (engine, rx) = start_app(SHEET_DETENTS);
+    let control = engine.control();
+    let first = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("first frame");
+    let modal = modal_of(&first).expect("a dialog");
+    let config = first
+        .items
+        .iter()
+        .find_map(|i| match i {
+            MountItem::ModalConfig { id, config } if *id == modal => Some(config.clone()),
+            _ => None,
+        })
+        .expect("its config");
+    assert_eq!(
+        config.detents,
+        vec![
+            SheetDetent::Medium,
+            SheetDetent::Height(Points(200.0)),
+            SheetDetent::Fraction(Percentage(0.4)),
+        ]
+    );
+    assert_eq!(config.detent, Some(SheetDetent::Medium));
+    assert_eq!(config.default_detent, Some(SheetDetent::Large));
+    assert!(config.grabber);
+    assert_eq!(
+        config.largest_undimmed_detent,
+        Some(SheetDetent::Fraction(Percentage(0.4)))
+    );
+    control.dispatch_event(
+        modal,
+        EventKind::DetentChange,
+        SheetDetent::Height(Points(200.0)).change_payload(),
+    );
+    next(&rx, |b| {
+        log_of(b).as_deref() == Some(r#"log {"height":200}"#)
+    });
+    control.dispatch_event(
+        modal,
+        EventKind::DetentChange,
+        SheetDetent::Large.change_payload(),
+    );
+    next(&rx, |b| {
+        log_of(b).as_deref() == Some(r#"log {"height":200},"large""#)
     });
 }
 
@@ -1372,6 +1521,272 @@ fn pages_keep_or_pop_by_their_flags() {
         "{:?}",
         texts(&batch)
     );
+}
+
+const PAGE_HEADER_ITEMS: &str = r##"import { mount, signal, Text, View } from "nsh";
+import { NavPage, NavStack, createNavStack } from "nsh/base";
+
+const nav = createNavStack(["home"]);
+const log = signal<string[]>([]);
+const filter = signal("all");
+const suspended = signal(false);
+
+mount(() => (
+  <View style={{ flex: 1 }}>
+    <Text>{`log ${log().join(",")}`}</Text>
+    <NavStack state={nav} style={{ flex: 1 }}>
+      {(route) => (
+        <NavPage
+          title={route}
+          headerRight={<Text>fallback</Text>}
+          ios={{
+            headerRightItems: [
+              {
+                key: "edit",
+                systemItem: "edit",
+                onPress: () => log.update((l) => [...l, "press edit"]),
+              },
+              {
+                key: "more",
+                symbol: "ellipsis.circle",
+                menu: [
+                  {
+                    label: suspended() ? "Reinstate" : "Suspend",
+                    onSelect: () => {
+                      suspended.set(!suspended());
+                      log.update((l) => [...l, suspended() ? "menu suspend" : "menu reinstate"]);
+                    },
+                  },
+                  {
+                    label: "Open",
+                    checked: filter() === "open",
+                    onSelect: () => {
+                      filter.set("open");
+                      log.update((l) => [...l, "menu open"]);
+                    },
+                  },
+                ],
+              },
+              { key: "add", systemItem: "add", onPress: () => log.update((l) => [...l, "press add"]) },
+            ],
+          }}
+        >
+          <Text>{`filter ${filter()}`}</Text>
+          <Text>{`suspended ${suspended()}`}</Text>
+        </NavPage>
+      )}
+    </NavStack>
+  </View>
+));
+"##;
+
+/// Trailing `ios.headerRightItems` reach the platform in the screen's
+/// config; presses and menu selections report the root's `Menu` event
+/// with the items' ids. Re-binding (same keys) assigns new ids; stale
+/// ones no longer run.
+#[test]
+fn pages_report_trailing_header_item_presses_and_menu_selections() {
+    let (engine, rx) = start_app(PAGE_HEADER_ITEMS);
+    let control = engine.control();
+    let first = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("first frame");
+    let config = first
+        .items
+        .iter()
+        .rev()
+        .find_map(|i| match i {
+            MountItem::ScreenConfig { config, .. } => Some((**config).clone()),
+            _ => None,
+        })
+        .expect("a page");
+    assert_eq!(config.right_items.len(), 3);
+    assert_eq!(
+        config.right_items[0].content,
+        nsh_core::HeaderItemContent::SystemItem(nsh_core::HeaderSystemItem::Edit)
+    );
+    assert!(config.right_items[0].press_id != 0);
+    assert_eq!(
+        config.right_items[1].content,
+        nsh_core::HeaderItemContent::Symbol("ellipsis.circle".into())
+    );
+    let menu = config.right_items[1].menu.as_ref().expect("more menu");
+    assert_eq!(menu.len(), 2);
+    let suspend_id = match &menu[0] {
+        nsh_core::desktop::MenuItem::Action(action) => {
+            assert_eq!(action.label, "Suspend");
+            assert!(action.id != 0);
+            action.id
+        }
+        other => panic!("expected an action, got {other:?}"),
+    };
+    let edit_id = config.right_items[0].press_id;
+    control.dispatch_event(
+        nsh_core::ROOT_ID,
+        EventKind::Menu,
+        EventPayload::Map(vec![("id", nsh_core::PayloadValue::Number(edit_id as f64))]),
+    );
+    next(&rx, |b| log_of(b).as_deref() == Some("log press edit"));
+    control.dispatch_event(
+        nsh_core::ROOT_ID,
+        EventKind::Menu,
+        EventPayload::Map(vec![(
+            "id",
+            nsh_core::PayloadValue::Number(suspend_id as f64),
+        )]),
+    );
+    let batch = next(&rx, |b| {
+        log_of(b).as_deref() == Some("log press edit,menu suspend")
+    });
+    assert!(
+        texts(&batch).contains(&"suspended true".to_owned()),
+        "{:?}",
+        texts(&batch)
+    );
+    let updated = batch
+        .items
+        .iter()
+        .rev()
+        .find_map(|i| match i {
+            MountItem::ScreenConfig { config, .. } => Some((**config).clone()),
+            _ => None,
+        })
+        .expect("updated page");
+    assert!(
+        nsh_core::element::header::same_right_buttons(&config.right_items, &updated.right_items),
+        "same keys keep the UIBarButtonItems"
+    );
+    let new_edit_id = updated.right_items[0].press_id;
+    let reinstate_id = match &updated.right_items[1].menu.as_ref().unwrap()[0] {
+        nsh_core::desktop::MenuItem::Action(action) => {
+            assert_eq!(action.label, "Reinstate");
+            action.id
+        }
+        other => panic!("expected an action, got {other:?}"),
+    };
+    assert_ne!(new_edit_id, edit_id);
+    assert_ne!(reinstate_id, suspend_id);
+    // Stale ids from the previous binding do nothing.
+    control.dispatch_event(
+        nsh_core::ROOT_ID,
+        EventKind::Menu,
+        EventPayload::Map(vec![("id", nsh_core::PayloadValue::Number(edit_id as f64))]),
+    );
+    assert!(rx.try_recv().is_err(), "stale edit id must not run");
+    // The current binding's press id still runs (what a kept UIKit target
+    // must report after update_right_item refreshes press_id).
+    control.dispatch_event(
+        nsh_core::ROOT_ID,
+        EventKind::Menu,
+        EventPayload::Map(vec![(
+            "id",
+            nsh_core::PayloadValue::Number(new_edit_id as f64),
+        )]),
+    );
+    next(&rx, |b| {
+        log_of(b).as_deref() == Some("log press edit,menu suspend,press edit")
+    });
+    control.dispatch_event(
+        nsh_core::ROOT_ID,
+        EventKind::Menu,
+        EventPayload::Map(vec![(
+            "id",
+            nsh_core::PayloadValue::Number(reinstate_id as f64),
+        )]),
+    );
+    let batch = next(&rx, |b| {
+        log_of(b).as_deref() == Some("log press edit,menu suspend,press edit,menu reinstate")
+    });
+    assert!(
+        texts(&batch).contains(&"suspended false".to_owned()),
+        "{:?}",
+        texts(&batch)
+    );
+}
+
+const SELECTION_MENU: &str = r##"import { mount, signal, Text, View } from "nsh";
+
+const log = signal<string[]>([]);
+const label = signal("Highlight");
+
+mount(() => (
+  <View style={{ flex: 1 }}>
+    <Text>{`log ${log().join(",")}`}</Text>
+    <View
+      selectable
+      selectionMenu={[
+        { label: label(), onSelect: () => { log.update((l) => [...l, label()]); label.set("Unhighlight"); } },
+        { type: "separator" },
+        { label: "Define", disabled: true },
+      ]}
+    >
+      <Text>Some words</Text>
+    </View>
+  </View>
+));
+"##;
+
+/// The items of a selectable view's `selectionMenu` reach its view props;
+/// a chosen item's `onSelect` runs when the platform reports its id as the
+/// root's `Menu` event, and items set again get new ids (stale ones do
+/// nothing).
+#[test]
+fn selection_menu_items_run_when_chosen() {
+    use nsh_core::desktop::MenuItem;
+
+    let (engine, rx) = start_app(SELECTION_MENU);
+    let control = engine.control();
+    let menu_of = |batch: &MountBatch| {
+        batch.items.iter().rev().find_map(|i| match i {
+            MountItem::ViewProps { props, .. } if props.selectable_view => {
+                Some(props.selection_menu.clone())
+            }
+            _ => None,
+        })
+    };
+    let first = next(&rx, |b| menu_of(b).is_some());
+    let menu = menu_of(&first).unwrap();
+    let [
+        MenuItem::Action(highlight),
+        MenuItem::Separator,
+        MenuItem::Action(define),
+    ] = &menu[..]
+    else {
+        panic!("two items and a separator: {menu:?}");
+    };
+    assert_eq!(highlight.label, "Highlight");
+    assert!(highlight.id != 0);
+    assert_eq!(define.label, "Define");
+    assert!(!define.enabled);
+    let choose = |id: u32| {
+        control.dispatch_event(
+            nsh_core::ROOT_ID,
+            EventKind::Menu,
+            EventPayload::Map(vec![("id", nsh_core::PayloadValue::Number(id as f64))]),
+        );
+    };
+    choose(highlight.id);
+    let batch = next(&rx, |b| menu_of(b).is_some());
+    let updated = menu_of(&batch).unwrap();
+    let MenuItem::Action(unhighlight) = &updated[0] else {
+        panic!("an action: {updated:?}");
+    };
+    assert_eq!(unhighlight.label, "Unhighlight");
+    assert_ne!(unhighlight.id, highlight.id);
+    let mut seen = log_of(&batch);
+    while seen.as_deref() != Some("log Highlight") {
+        seen = log_of(&next(&rx, |b| log_of(b).is_some()));
+    }
+    // The old id does nothing.
+    choose(highlight.id);
+    assert!(
+        rx.recv_timeout(std::time::Duration::from_millis(300))
+            .is_err()
+    );
+    choose(unhighlight.id);
+    next(&rx, |b| {
+        log_of(b).as_deref() == Some("log Highlight,Unhighlight")
+    });
 }
 
 const PAGE_HEADER: &str = r#"import { mount, Text, View } from "nsh";
@@ -1796,6 +2211,7 @@ const results = [
   `native:${attempt(() => <Probe data={huge()} />)}`,
   `scrollbar:${attempt(() => <Scroll scrollbar={theme as never}><Text>x</Text></Scroll>)}`,
   `sticky:${attempt(() => <List each={[1]} stickyHeaderIndices={huge() as never}>{() => <Text>x</Text>}</List>)}`,
+  `captureKeys:${attempt(() => <View focusable captureKeys={huge() as never} />)}`,
 ];
 // A start returns a promise: what it cannot decode rejects it.
 const settled = (start: () => Promise<unknown>) =>
@@ -1841,7 +2257,7 @@ fn values_too_long_or_nested_in_themselves_are_refused_when_decoded() {
              transform:RangeError translate:RangeError outputRange:RangeError \
              inputRange:RangeError native:RangeError(a native component value is nested \
              deeper than 64 or has more than 1048576 entries) scrollbar:rendered \
-             sticky:RangeError easing:RangeError clamp:TypeError(decay: `clamp` must be \
+             sticky:RangeError captureKeys:RangeError easing:RangeError clamp:TypeError(decay: `clamp` must be \
              [min, max]) shared:RangeError keyframes:RangeError"
         ],
         "{:?}",

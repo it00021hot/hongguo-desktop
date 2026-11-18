@@ -390,7 +390,7 @@ impl<M: TextEngine> Core<M> {
         views.sort_unstable();
         views.dedup();
         for view in views {
-            let Some(node) = self.nodes.get(view as usize) else {
+            let Some(node) = self.nodes.get(view as usize).filter(|node| node.created) else {
                 continue;
             };
             let Some(scroll) = node.scroll.as_ref() else {
@@ -744,7 +744,7 @@ const IGNORED: [(u16, &str, &str); 8] = [
     ),
     (
         ignored::BEHAVIOR,
-        "paging, snapping, `contentInset`, `contentOffset`, `bounces`, `scrollable` and `keyboardDismissMode`",
+        "paging, snapping, `contentInset`, `contentOffset`, `bounces`, `scrollsToTop`, `scrollable` and `keyboardDismissMode`",
         AROUND,
     ),
     (ignored::SCROLLBAR, "`scrollbar`", AROUND),

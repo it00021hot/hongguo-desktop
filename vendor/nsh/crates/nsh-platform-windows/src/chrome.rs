@@ -46,7 +46,8 @@ use std::{
 use nsh_core::{
     Color, EventKind, EventPayload, ImageSource, PayloadValue, ROOT_ID,
     desktop::{
-        DesktopCommand, Key, MenuAction, MenuItem, MenuRole, Shortcut, WindowRequest, menu_icon,
+        DesktopCommand, Key, MenuAction, MenuItem, MenuLabels, MenuRole, Shortcut, WindowEvent,
+        WindowRequest, menu_icon,
     },
     geometry::{Edges, Points},
 };
@@ -132,6 +133,10 @@ struct Entry {
 struct Popup {
     items: Arc<[MenuItem]>,
     at: Option<(f32, f32)>,
+    /// `at` is the menu's top-end corner rather than its top-start one: it
+    /// opens towards the left (a right-to-left layout's, anchored to a
+    /// view's bottom-end corner).
+    end: bool,
     /// What the items of a menu of the platform's own do, by id - 1 (the
     /// app's menus report their ids instead).
     actions: Vec<Action>,
@@ -148,6 +153,10 @@ pub(crate) type Action = Rc<dyn Fn(&Rc<Surface>)>;
 /// A surface's chrome.
 #[derive(Default)]
 pub(crate) struct Chrome {
+    /// The labels the core translates for this surface's language: the
+    /// platform's own menus and the role items with no label of their own
+    /// show them.
+    pub(crate) labels: RefCell<MenuLabels>,
     /// The application menu.
     menu: RefCell<Option<Arc<[MenuItem]>>>,
     /// The menu bar shown (`HMENU`, 0 for none).
@@ -169,6 +178,10 @@ pub(crate) struct Chrome {
     tracked_popup: RefCell<Option<Arc<[MenuItem]>>>,
     #[cfg(feature = "dev")]
     test_choice: Cell<Option<(u32, Option<MenuRole>)>>,
+    /// The app listens to quit requests
+    /// (`DesktopCommand::SetQuitOnRequest(false)`): the Quit item and its
+    /// Ctrl+Q ask it ([`ask_quit`]).
+    asks_quit: Cell<bool>,
 }
 
 impl Chrome {
@@ -178,6 +191,7 @@ impl Chrome {
         Popup {
             items,
             at,
+            end: false,
             actions: Vec::new(),
             area: self.context_area.take(),
             awaited: true,
@@ -367,10 +381,11 @@ pub(crate) fn command(surface: &Rc<Surface>, command: &DesktopCommand) {
         return;
     }
     // The embedding app owns its window and the shell's integration: only
-    // context menus work there.
+    // context menus, and the labels of the menus the view makes, work
+    // there.
     if !top_level(hwnd) {
         match command {
-            DesktopCommand::PopupMenu { .. } => {}
+            DesktopCommand::PopupMenu { .. } | DesktopCommand::SetMenuLabels(_) => {}
             DesktopCommand::RegisterGlobalShortcut { id, .. } => {
                 crate::global_shortcut::answer(surface, *id, false);
                 return;
@@ -407,6 +422,9 @@ pub(crate) fn command(surface: &Rc<Surface>, command: &DesktopCommand) {
         // A window of the app's own's ([`crate::app_window`]).
         DesktopCommand::OpenWindow(_) => {}
         DesktopCommand::Quit => quit(surface),
+        DesktopCommand::SetQuitOnRequest(quit) => c.asks_quit.set(!quit),
+        // Additional quit request sources are currently macOS-only.
+        DesktopCommand::SetQuitRequestOptions(_) | DesktopCommand::CancelQuitRequest => {}
         // Quits as above, then the runner starts the app again; an
         // embedding app's window is its own.
         DesktopCommand::Restart => {
@@ -420,6 +438,14 @@ pub(crate) fn command(surface: &Rc<Surface>, command: &DesktopCommand) {
         }
         // The Win32 menu bar always shows.
         DesktopCommand::SetMenuBar(_) => {}
+        // The edit menus read them as they open, a top-level window's menu
+        // bar now.
+        DesktopCommand::SetMenuLabels(labels) => {
+            c.labels.replace((**labels).clone());
+            if top_level(hwnd) {
+                show_menu_bar(surface);
+            }
+        }
         DesktopCommand::PopupMenu { items, at } => popup(
             surface,
             c.app_popup(items.clone(), at.map(|p| (p.x.0, p.y.0))),
@@ -482,7 +508,7 @@ pub(crate) enum LocalItem {
         /// work).
         role: Option<MenuRole>,
         /// A label of its own (else the role's).
-        label: &'static str,
+        label: String,
         /// It can be chosen.
         enabled: bool,
         /// What choosing it does.
@@ -493,6 +519,18 @@ pub(crate) enum LocalItem {
 /// Shows a context menu of the platform's own (a text field's) at the
 /// pointer.
 pub(crate) fn popup_actions(surface: &Surface, items: Vec<LocalItem>) {
+    popup_actions_at(surface, items, None, false);
+}
+
+/// Shows a context menu of the platform's own at `at` (in the window's
+/// points), or at the pointer; with `end`, `at` is its top-end corner (it
+/// opens towards the left).
+pub(crate) fn popup_actions_at(
+    surface: &Surface,
+    items: Vec<LocalItem>,
+    at: Option<(f32, f32)>,
+    end: bool,
+) {
     let mut actions = Vec::new();
     let items: Vec<MenuItem> = items
         .into_iter()
@@ -507,10 +545,11 @@ pub(crate) fn popup_actions(surface: &Surface, items: Vec<LocalItem>) {
                 actions.push(action);
                 MenuItem::Action(MenuAction {
                     id: actions.len() as u32,
-                    label: if label.is_empty() {
-                        role.map_or("", MenuRole::label).to_owned()
-                    } else {
-                        label.to_owned()
+                    label: match role {
+                        Some(role) if label.is_empty() => {
+                            surface.chrome.labels.borrow().label(role).to_owned()
+                        }
+                        _ => label,
                     },
                     shortcut: role.and_then(|r| r.shortcut(false)),
                     enabled,
@@ -518,6 +557,8 @@ pub(crate) fn popup_actions(surface: &Surface, items: Vec<LocalItem>) {
                     role: None,
                     when: nsh_core::keymap::When::Always,
                     icon: None,
+                    symbol: None,
+                    destructive: false,
                 })
             }
         })
@@ -526,7 +567,8 @@ pub(crate) fn popup_actions(surface: &Surface, items: Vec<LocalItem>) {
         surface,
         Popup {
             items: items.into(),
-            at: None,
+            at,
+            end,
             actions,
             area: None,
             awaited: false,
@@ -543,11 +585,27 @@ pub(crate) fn popup_tray(surface: &Surface, items: Arc<[MenuItem]>, at: (f32, f3
         Popup {
             items,
             at: Some(at),
+            end: false,
             actions: Vec::new(),
             area: None,
             awaited: false,
         },
     );
+}
+
+/// The user asked to quit (the Quit item, its Ctrl+Q): while the app
+/// listens to quit requests, it hears this one ([`WindowEvent::QuitRequest`])
+/// and decides, and this is true; false when quitting goes on.
+fn ask_quit(surface: &Surface) -> bool {
+    if !surface.chrome.asks_quit.get() {
+        return false;
+    }
+    surface.event(
+        ROOT_ID,
+        EventKind::Window,
+        EventPayload::Window(Box::new(WindowEvent::QuitRequest)),
+    );
+    true
 }
 
 /// Quits the app, as its `quit` role: the windows close without asking
@@ -667,6 +725,18 @@ pub(crate) fn nc_max_size(hwnd: HWND, info: &mut MINMAXINFO) {
         x: (work.right - work.left) + inset * 2,
         y: (work.bottom - work.top) + inset * 2,
     };
+}
+
+/// What the system's frame of `hwnd` leaves invisible around a window in
+/// the normal mode, in pixels (left, top, right, bottom): its resize
+/// borders past the visible one, on every side but the top. A window
+/// without the system's frame has none.
+pub(crate) fn invisible_frame(hwnd: HWND) -> crate::window_state::Margins {
+    if frameless(hwnd) {
+        return (0, 0, 0, 0);
+    }
+    let side = (frame_thickness(hwnd) - top_border(hwnd)).max(0);
+    (side, 0, side, side)
 }
 
 /// The visible border the system draws along a window's top edge, in
@@ -1197,6 +1267,9 @@ pub(crate) fn draw(surface: &Surface, hwnd: HWND, dc: &ID2D1DeviceContext, scale
         };
         // SAFETY: drawing on the context between its BeginDraw / EndDraw.
         unsafe {
+            use windows::Win32::Graphics::{
+                Direct2D::D2D1_DRAW_TEXT_OPTIONS_NONE, DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
+            };
             if let Some(bg) = background
                 && let Ok(brush) = dc.CreateSolidColorBrush(&color_f(bg), None)
             {
@@ -1205,6 +1278,28 @@ pub(crate) fn draw(surface: &Surface, hwnd: HWND, dc: &ID2D1DeviceContext, scale
             let Ok(brush) = dc.CreateSolidColorBrush(&color_f(foreground), None) else {
                 continue;
             };
+            // The system's own caption glyphs (Windows 11's Segoe Fluent
+            // Icons, Windows 10's Segoe MDL2 Assets), as native title bars
+            // draw them; lines where neither font is installed.
+            if let Some(format) = icon_format() {
+                let ch = match code {
+                    HTMINBUTTON => '\u{E921}',
+                    HTMAXBUTTON if zoomed(hwnd) => '\u{E923}',
+                    HTMAXBUTTON => '\u{E922}',
+                    _ => '\u{E8BB}',
+                };
+                let mut buf = [0u16; 2];
+                let units = ch.encode_utf16(&mut buf);
+                dc.DrawText(
+                    units,
+                    &format,
+                    &rect_f(x, 0.0, BUTTON_WIDTH, caption),
+                    &brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                continue;
+            }
             let left = snap(x + (BUTTON_WIDTH - glyph) / 2.0);
             let top = snap((caption - glyph) / 2.0);
             let (right, bottom) = (left + glyph - px, top + glyph - px);
@@ -1248,6 +1343,67 @@ pub(crate) fn draw(surface: &Surface, hwnd: HWND, dc: &ID2D1DeviceContext, scale
     }
 }
 
+/// The caption glyphs' font, the one the system's title bars use, centered
+/// in a button; `None` when no such font is installed.
+fn icon_format() -> Option<IDWriteTextFormat> {
+    thread_local! {
+        static FORMAT: Option<IDWriteTextFormat> = icon_font().and_then(|family| {
+            let factory = crate::gfx::dwrite();
+            // SAFETY: COM calls with valid strings.
+            unsafe {
+                let format = factory
+                    .CreateTextFormat(
+                        &HSTRING::from(family),
+                        None,
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        // The size Windows' caption buttons use.
+                        10.0,
+                        &HSTRING::new(),
+                    )
+                    .ok()?;
+                let _ = format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                let _ = format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                let _ = format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                Some(format)
+            }
+        });
+    }
+    FORMAT.with(Clone::clone)
+}
+
+/// The installed icon font with the caption glyphs, newest first.
+fn icon_font() -> Option<&'static str> {
+    let factory = crate::gfx::dwrite();
+    let mut collection = None;
+    // SAFETY: COM calls with local out values.
+    unsafe {
+        factory
+            .GetSystemFontCollection(&mut collection, false)
+            .ok()?;
+        let collection = collection?;
+        ["Segoe Fluent Icons", "Segoe MDL2 Assets"]
+            .into_iter()
+            .find(|name| {
+                let (mut index, mut exists) = (0u32, windows::core::BOOL(0));
+                collection
+                    .FindFamilyName(&HSTRING::from(*name), &mut index, &mut exists)
+                    .is_ok()
+                    && exists.as_bool()
+            })
+    }
+}
+
+use windows::{
+    Win32::Graphics::DirectWrite::{
+        DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_CENTER,
+        DWRITE_WORD_WRAPPING_NO_WRAP, IDWriteTextFormat,
+    },
+    core::HSTRING,
+};
+
 // --- Menus ------------------------------------------------------------------------------
 
 type SetPreferredAppMode = unsafe extern "system" fn(i32) -> i32;
@@ -1288,12 +1444,12 @@ fn theme_menus(dark: bool) {
     });
 }
 
-/// A menu item's text: `&` shows as itself, the shortcut after a tab.
-fn item_text(action: &MenuAction) -> Vec<u16> {
-    let label = if action.label.is_empty() {
-        action.role.map_or("", MenuRole::label)
-    } else {
-        &action.label
+/// A menu item's text: `&` shows as itself, the shortcut after a tab; a
+/// role's label from `labels` when it has none of its own.
+fn item_text(action: &MenuAction, labels: &MenuLabels) -> Vec<u16> {
+    let label = match action.role {
+        Some(role) if action.label.is_empty() => labels.label(role),
+        _ => &action.label,
     };
     let mut text = label.replace('&', "&&");
     if let Some(shortcut) = &action.shortcut {
@@ -1474,10 +1630,12 @@ fn load_icons(
 
 /// Appends `items` to `menu`, numbering their commands in `entries`
 /// (command id = index + 1) and adding the items with an icon to `icons`,
-/// but for this level's without `with_icons` (a menu bar's titles are text).
+/// but for this level's without `with_icons` (a menu bar's titles are text);
+/// roles with no label of their own read `labels`.
 fn append(
     menu: HMENU,
     items: &[MenuItem],
+    labels: &MenuLabels,
     entries: &mut Vec<Entry>,
     icons: &mut Vec<PendingIcon>,
     with_icons: bool,
@@ -1512,7 +1670,7 @@ fn append(
                     if action.checked == Some(true) {
                         flags |= MF_CHECKED;
                     }
-                    let text = item_text(action);
+                    let text = item_text(action, labels);
                     let _ = AppendMenuW(menu, flags, entries.len(), PCWSTR(text.as_ptr()));
                     if let Some(source) = action.icon.clone().filter(|_| with_icons) {
                         icons.push(PendingIcon {
@@ -1529,9 +1687,10 @@ fn append(
                     enabled,
                     items,
                     icon,
+                    ..
                 } => {
                     let Ok(sub) = CreatePopupMenu() else { continue };
-                    append(sub, items, entries, icons, true);
+                    append(sub, items, labels, entries, icons, true);
                     let mut flags = MF_POPUP | MF_STRING;
                     if !enabled {
                         flags |= MF_GRAYED;
@@ -1568,9 +1727,10 @@ fn show_menu_bar(surface: &Surface) {
     // destroyed once the window no longer shows it, then its bitmaps freed.
     unsafe {
         let bar = match &shown {
-            Some(items) => CreateMenu()
-                .ok()
-                .inspect(|bar| append(*bar, items, &mut entries, &mut icons, false)),
+            Some(items) => CreateMenu().ok().inspect(|bar| {
+                let labels = c.labels.borrow();
+                append(*bar, items, &labels, &mut entries, &mut icons, false);
+            }),
             None => None,
         };
         theme_menus(crate::system::dark(surface));
@@ -1610,7 +1770,11 @@ fn choose(surface: &Rc<Surface>, id: u32, role: Option<MenuRole>, area: Option<&
     let hwnd = surface.hwnd();
     match role {
         // An embedding app's window is its own to close or keep.
-        Some(MenuRole::Quit) if top_level(hwnd) => quit(surface),
+        Some(MenuRole::Quit) if top_level(hwnd) => {
+            if !ask_quit(surface) {
+                quit(surface);
+            }
+        }
         Some(MenuRole::Quit | MenuRole::Close) => {
             // As the window menu's Close: the app hears a close press.
             if let Some(shell) = crate::window::shell(hwnd) {
@@ -1649,6 +1813,10 @@ fn choose(surface: &Rc<Surface>, id: u32, role: Option<MenuRole>, area: Option<&
                         shift,
                         ..Default::default()
                     },
+                    scan: 0,
+                    extended: false,
+                    sys: false,
+                    translated: false,
                 },
             );
         }
@@ -1668,6 +1836,7 @@ pub(crate) fn show_popup(surface: &Rc<Surface>) {
     let Some(Popup {
         items,
         at,
+        end,
         actions,
         area,
         awaited,
@@ -1682,7 +1851,14 @@ pub(crate) fn show_popup(surface: &Rc<Surface>) {
     // SAFETY: a menu made, tracked and destroyed on this thread.
     let chosen = unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
-        append(menu, &items, &mut entries, &mut icons, true);
+        append(
+            menu,
+            &items,
+            &surface.chrome.labels.borrow(),
+            &mut entries,
+            &mut icons,
+            true,
+        );
         // What loaded in time is in memory, on the items now; what did not
         // goes on them while the menu is open.
         let loads = load_icons(surface, icons, &bitmaps);
@@ -1701,15 +1877,22 @@ pub(crate) fn show_popup(surface: &Rc<Surface>) {
         }
         theme_menus(crate::system::dark(surface));
         // The window must be in front for the menu to close when clicking
-        // elsewhere.
-        let _ = SetForegroundWindow(hwnd);
+        // elsewhere; a background app's stays behind (the test agent closes
+        // its menus itself).
+        if !crate::window::in_background() {
+            let _ = SetForegroundWindow(hwnd);
+        }
         #[cfg(feature = "dev")]
         if actions.is_empty() {
             *surface.chrome.tracked_popup.borrow_mut() = Some(items.clone());
         }
         let chosen = TrackPopupMenuEx(
             menu,
-            (TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN).0,
+            (TPM_RETURNCMD
+                | TPM_RIGHTBUTTON
+                | if end { TPM_RIGHTALIGN } else { TPM_LEFTALIGN }
+                | TPM_TOPALIGN)
+                .0,
             p.x,
             p.y,
             hwnd,
@@ -2069,6 +2252,29 @@ mod tests {
         assert!(!press_released(&surface, hwnd, (20.0, 15.0)));
     }
 
+    /// A role-only item reads the translated label, else the English
+    /// default, with its shortcut after a tab.
+    #[test]
+    fn a_role_item_reads_the_translated_label() {
+        let action = MenuAction {
+            id: 1,
+            label: String::new(),
+            shortcut: MenuRole::Copy.shortcut(false),
+            enabled: true,
+            checked: None,
+            role: Some(MenuRole::Copy),
+            when: nsh_core::keymap::When::Always,
+            icon: None,
+            symbol: None,
+            destructive: false,
+        };
+        let text = |labels: &MenuLabels| String::from_utf16(&item_text(&action, labels)).unwrap();
+        assert_eq!(text(&MenuLabels::default()), "Copy\tCtrl+C\0");
+        let mut labels = MenuLabels::default();
+        labels.roles.insert(MenuRole::Copy, "コピー".into());
+        assert_eq!(text(&labels), "コピー\tCtrl+C\0");
+    }
+
     fn selectable_text(surface: &Surface) -> (NshView, NshView) {
         let area = NshView::new(2, ViewKind::View);
         area.state_mut().props.selectable_view = true;
@@ -2091,6 +2297,16 @@ mod tests {
 
     fn selection(text: &NshView) -> Option<(u32, u32)> {
         text.state().text.as_ref().unwrap().area_range.get()
+    }
+
+    #[test]
+    fn quit_requests_ask_the_app_only_while_it_listens() {
+        let surface = Surface::new(Environment::default());
+        assert!(!ask_quit(&surface), "quits as before");
+        surface.chrome.asks_quit.set(true);
+        assert!(ask_quit(&surface), "the app decides");
+        surface.chrome.asks_quit.set(false);
+        assert!(!ask_quit(&surface), "quits again");
     }
 
     #[test]
@@ -2138,6 +2354,10 @@ mod tests {
                         shift: true,
                         ..Default::default()
                     },
+                    scan: 0,
+                    extended: false,
+                    sys: false,
+                    translated: false,
                 },
             );
             let popup = surface.chrome.app_popup(Arc::from([]), None);

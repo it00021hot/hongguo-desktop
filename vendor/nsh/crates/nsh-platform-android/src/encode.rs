@@ -19,11 +19,11 @@
 use jni::objects::GlobalRef;
 use nsh_core::{
     AccessibilityCurrent, AccessibilityRole, AudioSession, AutoCapitalize, AutoFill, BorderStyle,
-    Checked, Color, Command, DialogButtonStyle, EditAction, InputConfig, KeyboardDismissMode,
-    KeyboardTaps, KeyboardType, LayoutCurve, LayoutProperty, LayoutTransition, LiveRegion,
-    ModalAnimation, ModalPresentation, MountBatch, MountItem, NativeProps, PointerEvents,
-    ResizeMode, ReturnKeyType, ScreenAnimation, ScreenConfig, SnapAlignment, StatusBarStyle,
-    SubmitBehavior, TextAlign, ViewKind, ViewProps, ViewStyle, WebSource,
+    Checked, Color, Command, DialogButtonStyle, EditAction, InputConfig, KeyCapture,
+    KeyboardDismissMode, KeyboardTaps, KeyboardType, LayoutCurve, LayoutProperty, LayoutTransition,
+    LiveRegion, ModalAnimation, ModalPresentation, MountBatch, MountItem, NativeProps,
+    PointerEvents, ResizeMode, ReturnKeyType, ScreenAnimation, ScreenConfig, SnapAlignment,
+    StatusBarStyle, SubmitBehavior, TextAlign, ViewKind, ViewProps, ViewStyle, WebSource,
     audio::AudioCommand,
     geometry::{DefiniteLength, REM_SIZE},
 };
@@ -629,6 +629,10 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                             });
                         }
                     }
+                    Command::CloseDialog(dialog) => {
+                        e.int(60);
+                        e.int(dialog as i32);
+                    }
                     Command::SetJsResponder { block } => {
                         e.int(14);
                         e.bool(block);
@@ -685,6 +689,12 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                             _ => -1,
                         });
                     }
+                    // `Mounter.orientations` reads the `ModalConfig`
+                    // bits (0: the app's own).
+                    Command::Orientations(bits) => {
+                        e.int(54);
+                        e.int(i32::from(bits));
+                    }
                     Command::ImageInfo { id, uri } => {
                         e.int(19);
                         e.int(id as i32);
@@ -712,6 +722,17 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                         e.int(22);
                         e.string(text);
                     }
+                    Command::SetClipboardItem(item) => match item.html {
+                        Some(html) => {
+                            e.int(56);
+                            e.string(item.text);
+                            e.string(html);
+                        }
+                        None => {
+                            e.int(22);
+                            e.string(item.text);
+                        }
+                    },
                     Command::ReadClipboard { id, has_only } => {
                         e.int(23);
                         e.int(id as i32);
@@ -721,6 +742,37 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                         e.int(26);
                         e.int(id as i32);
                         e.string(url);
+                    }
+                    // `Share.java`: the request, the title and the text
+                    // (the text and the URL on lines of their own), each
+                    // after whether it is there, then the files. Android's
+                    // sheet is no popover: the anchor is not sent.
+                    Command::Share { id, sheet } => {
+                        e.int(58);
+                        e.int(id as i32);
+                        e.bool(sheet.title.is_some());
+                        e.string(sheet.title.clone().unwrap_or_default());
+                        let text = sheet.combined_text();
+                        e.bool(text.is_some());
+                        e.string(text.unwrap_or_default());
+                        e.int(sheet.files.len() as i32);
+                        for file in sheet.files {
+                            e.string(file);
+                        }
+                    }
+                    // `AuthSession.java`: the request, the page, the callback
+                    // scheme and whether it is ephemeral.
+                    Command::AuthSession { id, page } => {
+                        e.int(59);
+                        e.int(id as i32);
+                        e.string(page.url);
+                        e.string(page.callback_scheme);
+                        e.bool(page.ephemeral);
+                    }
+                    // `AuthSession.java`: the request the app closed.
+                    Command::CloseAuthSession(id) => {
+                        e.int(61);
+                        e.int(id as i32);
                     }
                     // Answered by the sink (`host::answer_clipboard_reads`);
                     // images are not written to Android's clipboard.
@@ -739,13 +791,13 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                     }
                     // `Picker.java`: the request, the limit, the extensions
                     // offered (comma-separated; empty: any file) and the
-                    // largest file read.
+                    // largest file read (at most 512 MiB: an `int`).
                     Command::PickFiles { id, request } => {
                         e.int(45);
                         e.int(id as i32);
                         e.int(request.limit as i32);
                         e.string(nsh_core::file_dialog::extensions(&request.filters).join(","));
-                        e.int(nsh_core::picker::MAX_PICKED_FILE_BYTES as i32);
+                        e.int(i32::try_from(request.size_limit()).unwrap_or(i32::MAX));
                     }
                     // Turned into a mount item / `ScrollTo` by the core.
                     Command::LayoutAnimation(_)
@@ -758,13 +810,17 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                     | Command::ScrollToEnd { .. }
                     // Desktops only.
                     | Command::Desktop(_)
-                    // The web's history entries; the core sends it there only.
+                    // The app's address: Android keeps none (App Links only
+                    // come in).
                     | Command::SetAppUrl(_)
                     | Command::PushAppUrl(_)
                     // No host answers `nsh/host` here (`Environment::host`):
                     // the core rejects the calls first.
                     | Command::HostCall { .. }
                     | Command::HostPost { .. }
+                    // No desktop web view controls (`Environment::webview_requests`):
+                    // the core answers these first.
+                    | Command::WebViewRequest(_)
                     // No eyedropper (`Environment::screen_color`): the core
                     // answers no color first.
                     | Command::PickScreenColor { .. } => e.int(-1),
@@ -776,9 +832,16 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                     }
                     // `SystemUi.openPath`: the file at the path, a `content:`
                     // URI the app's FilesProvider serves, to the system's
-                    // viewer (`ACTION_VIEW`). `OpenPath` alone; the dialogs
-                    // have no answer on Android.
+                    // viewer (`ACTION_VIEW`); open dialogs use `Picker.java`
+                    // to copy provider streams into app-owned paths.
                     Command::FileRequest { id, request } => match *request {
+                        nsh_core::file_dialog::FileRequest::OpenDialog(dialog) => {
+                            e.int(57);
+                            e.int(id as i32);
+                            e.bool(dialog.multiple);
+                            e.bool(dialog.kind == nsh_core::file_dialog::OpenDialogKind::Folders);
+                            e.string(nsh_core::file_dialog::extensions(&dialog.filters).join(","));
+                        }
                         nsh_core::file_dialog::FileRequest::OpenPath(path) => {
                             e.int(28);
                             e.int(id as i32);
@@ -793,13 +856,38 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                             e.int(id as i32);
                         }
                     },
+                    // `CanvasRender.java` (`Mounter`'s op 55): the request,
+                    // the size in pixels, the scale, the format (0: PNG),
+                    // then the drawing as `CANVAS` carries it.
+                    Command::RenderCanvas {
+                        id,
+                        drawing,
+                        width,
+                        height,
+                        scale,
+                        format,
+                    } => {
+                        e.int(55);
+                        e.int(id as i32);
+                        e.int(width as i32);
+                        e.int(height as i32);
+                        e.float(scale);
+                        e.int(match format {
+                            nsh_core::canvas::render::ImageFormat::Png => 0,
+                            // `CanvasRender.encode` answers an error for a
+                            // format it does not encode.
+                            _ => -1,
+                        });
+                        canvas(&mut e, &drawing);
+                    }
                     // No speech recognizer (`Environment::speech`): the core
                     // ends the sessions first.
                     | Command::Speech(_)
                     // Trusted web view input is macOS's for now.
                     | Command::SendInput(_)
                     // No performance monitor on Android yet.
-                    | Command::PerfMonitor(_) => e.int(-1),
+                    | Command::PerfMonitor(_)
+                    | Command::PerfMonitorMode(_) => e.int(-1),
                     // `Audio.java`: the sub-opcode, then the command's
                     // fields (see `audio_command`).
                     Command::Audio(command) => {
@@ -816,12 +904,18 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                                 e.bool(ask);
                             }
                             N::Show { id, notification } => {
+                                let sound = notification
+                                    .sound_path()
+                                    .map(nsh_core::notifications::Notification::sound_resource_name)
+                                    .unwrap_or_default();
                                 e.int(1);
                                 e.int(id as i32);
                                 e.string(notification.id);
                                 e.string(notification.title);
                                 e.string(notification.body);
                                 e.bool(notification.silent);
+                                // The app's sound as a raw resource name, "" for none.
+                                e.string(sound);
                             }
                             N::Close(id) => {
                                 e.int(2);
@@ -832,6 +926,7 @@ pub(crate) fn encode(batch: MountBatch, web_generation: u64) -> Encoded {
                                 e.int(4);
                                 e.int(count as i32);
                             }
+                            N::CloseAll => e.int(5),
                             _ => e.int(-1),
                         }
                     }
@@ -950,6 +1045,31 @@ fn audio_command(e: &mut Encoded, command: AudioCommand) {
 
 /// The event kind with index `index` (`EventKind as u8`, the order of the
 /// constants in `Native.java`).
+/// `selectionMenu` (Mounter.java `selectionMenu`): the count, then per
+/// item its id (-1 a separator), whether it is enabled and its label.
+fn selection_menu(e: &mut Encoded, items: &[nsh_core::desktop::MenuItem]) {
+    use nsh_core::desktop::MenuItem;
+    let items: Vec<_> = items
+        .iter()
+        .filter(|item| !matches!(item, MenuItem::Submenu { .. }))
+        .collect();
+    e.int(items.len() as i32);
+    for item in items {
+        match item {
+            MenuItem::Action(action) => {
+                e.int(action.id as i32);
+                e.bool(action.enabled);
+                e.string(action.label.clone());
+            }
+            _ => {
+                e.int(-1);
+                e.bool(false);
+                e.int(-1);
+            }
+        }
+    }
+}
+
 pub(crate) fn kind_from(index: i32) -> Option<nsh_core::EventKind> {
     nsh_core::EventKind::ALL
         .get(usize::try_from(index).ok()?)
@@ -1176,18 +1296,28 @@ fn effects(e: &mut Encoded, s: &ViewStyle) {
         Cursor::NwseResize => 17,
         Cursor::NeswResize => 18,
     });
-    match s.transition.filter(|t| t.duration > 0.0) {
+    // The duration a spring takes to settle; then the curve: 0 a cubic
+    // Bézier's control points, 1 a spring's stiffness, damping and mass.
+    match s.transition.filter(|t| t.run_ms() > 0.0) {
         Some(t) => {
             e.int(t.properties.0 as i32);
-            e.float(t.duration);
+            e.float(t.run_ms());
             e.float(t.delay);
-            for v in t.easing {
+            let (curve, values) = match t.spring {
+                Some(spring) => (1, [spring.stiffness, spring.damping, spring.mass, 0.0]),
+                None => (0, t.easing),
+            };
+            e.int(curve);
+            for v in values {
                 e.float(v);
             }
         }
         None => {
             e.int(0);
-            for _ in 0..6 {
+            e.float(0.0);
+            e.float(0.0);
+            e.int(0);
+            for _ in 0..4 {
                 e.float(0.0);
             }
         }
@@ -1415,6 +1545,38 @@ fn view_props(e: &mut Encoded, p: &ViewProps) {
     }
     e.bool(p.selectable_view);
     e.bool(p.continues_text);
+    selection_menu(e, &p.selection_menu);
+    key_capture(e, &p.key_capture);
+    // `focusable` (Mounter.java `focusProps`): -1 unset, 0 false, 1 true.
+    e.int(match p.focusable {
+        None => -1,
+        Some(false) => 0,
+        Some(true) => 1,
+    });
+    // `key_parent` (Mounter.java `keyParents`): a portaled view's logical
+    // keyboard ancestor; -1 leaves the native/mounted parent.
+    e.int(p.key_parent.map_or(-1, |parent| parent as i32));
+}
+
+/// `Mounter.java` `viewProps`: the focused view's `captureKeys` policy, as
+/// `KeyCaptures.java` matches it (mode, and for `keys` the count and each
+/// canonical key id and its modifiers). A view's policy changes with its
+/// other props; the UI thread keeps the latest.
+fn key_capture(e: &mut Encoded, capture: &KeyCapture) {
+    match capture {
+        KeyCapture::None => e.int(0),
+        KeyCapture::All => e.int(1),
+        KeyCapture::Keys(keys) => {
+            e.int(2);
+            e.int(keys.len() as i32);
+            for key in keys.iter() {
+                e.int(crate::keymap::capture_key(key.key));
+                e.int(crate::keymap::capture_modifiers(key.modifiers));
+            }
+        }
+        // A future rule this Android runtime does not know captures none.
+        _ => e.int(0),
+    }
 }
 
 /// Index of `role` in `A11y.java`'s class name table.
@@ -1485,6 +1647,7 @@ fn layout_transition(e: &mut Encoded, t: Option<LayoutTransition>) {
         LayoutCurve::FittedSpring { damping_ratio } => (4, damping_ratio),
         LayoutCurve::Keyboard => (5, 0.0),
         LayoutCurve::Spring(_) => (6, 0.0),
+        LayoutCurve::Bezier(_) => (7, 0.0),
     };
     e.int(curve);
     e.float(damping);
@@ -1498,6 +1661,12 @@ fn layout_transition(e: &mut Encoded, t: Option<LayoutTransition>) {
             } else {
                 spring.progress(spring.settle_ms() * i as f32 / SPRING_SAMPLES as f32)
             });
+        }
+    }
+    if let LayoutCurve::Bezier(points) = t.curve {
+        // Java's `PathInterpolator` of the same control points.
+        for p in points {
+            e.float(p);
         }
     }
     e.int(match t.property {
@@ -1609,7 +1778,7 @@ fn input(e: &mut Encoded, c: &InputConfig) {
     e.bool(c.replaced);
 }
 
-// --- Canvas drawings (`CanvasBox.java`) -------------------------------------
+// --- Canvas drawings (`CanvasPainter.java`) ---------------------------------
 //
 // A word count, then the operations as 32-bit words: operation codes as in
 // `nsh_core::js::canvas` (`CV_*`), numbers as float bits, animated value
@@ -1801,6 +1970,9 @@ fn canvas(e: &mut Encoded, d: &nsh_core::canvas::Drawing) {
                 for v in source {
                     e.float(v);
                 }
+                // A missing size is the source's pixels over this many
+                // points, never the screen's density.
+                e.float(image.density());
                 e.nums(dest);
             }
         }
@@ -1940,6 +2112,38 @@ mod tests {
 
     use super::*;
 
+    /// `drawImage(uri, 1, 2)` encoded for `CanvasPainter.java`: the URI,
+    /// no source, the source's four floats, the file name's density, then
+    /// the destination with its missing size NaN.
+    #[test]
+    fn a_canvas_image_carries_its_file_name_s_density() {
+        use nsh_core::canvas::{CanvasImage, CanvasOp, Drawing, Num};
+        let nan = Num::Const(f32::NAN);
+        for (uri, density) in [("asset:/dot.png", 1.0), ("asset:/dot@3x.png", 3.0)] {
+            let drawing = Drawing {
+                ops: vec![CanvasOp::DrawImage {
+                    image: CanvasImage { uri: uri.into() },
+                    source: None,
+                    dest: [Num::Const(1.0), Num::Const(2.0), nan, nan],
+                }],
+                ..Drawing::default()
+            };
+            let mut e = Encoded::default();
+            canvas(&mut e, &drawing);
+            let words: Vec<u32> = e
+                .bytes
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect();
+            // The word count, the code, the URI's object, no source.
+            assert_eq!(&words[..4], &[12, 42, 0, 0]);
+            let floats: Vec<f32> = words[4..].iter().map(|w| f32::from_bits(*w)).collect();
+            assert_eq!(&floats[..7], &[0.0, 0.0, 0.0, 0.0, density, 1.0, 2.0]);
+            assert!(floats[7].is_nan() && floats[8].is_nan());
+            assert_eq!(floats.len(), 9);
+        }
+    }
+
     /// The ints a batch of one file request is encoded as.
     fn ints(request: FileRequest) -> Vec<i32> {
         let batch = MountBatch {
@@ -1959,7 +2163,7 @@ mod tests {
     }
 
     #[test]
-    fn open_path_is_sent_and_the_other_file_requests_fail() {
+    fn open_requests_are_sent_and_the_other_file_requests_fail() {
         // `COMMAND`, the view id, op 28, the request id, the path's
         // object index: `Mounter.java` opens the file and answers.
         assert_eq!(
@@ -1967,12 +2171,21 @@ mod tests {
             vec![COMMAND, 3, 28, 7, 0]
         );
 
+        assert_eq!(
+            ints(FileRequest::OpenDialog(file_dialog::OpenDialog::files())),
+            vec![COMMAND, 3, 57, 7, 0, 0, 0]
+        );
+        assert_eq!(
+            ints(FileRequest::OpenDialog(
+                file_dialog::OpenDialog::folders().multiple(true)
+            )),
+            vec![COMMAND, 3, 57, 7, 1, 1, 0]
+        );
         // `Environment::file_requests` is set, so the core waits for an
         // answer to every request: op 30 fails the rest instead of leaving
-        // `pick_paths`, `pick_save_path`, `reveal_path` and `move_to_trash`
+        // `pick_save_path`, `reveal_path` and `move_to_trash`
         // pending forever.
         for request in [
-            FileRequest::OpenDialog(file_dialog::OpenDialog::default()),
             FileRequest::SaveDialog(file_dialog::SaveDialog::default()),
             FileRequest::RevealPath("a".into()),
             FileRequest::MoveToTrash("a".into()),
@@ -1980,6 +2193,62 @@ mod tests {
             assert_eq!(ints(request), vec![COMMAND, 3, 30, 7]);
         }
     }
+    #[test]
+    fn a_canvas_render_carries_its_size_scale_and_drawing() {
+        use nsh_core::canvas::{CanvasOp, Drawing, Num, render::ImageFormat};
+
+        let drawing = Drawing {
+            ops: vec![CanvasOp::FillRect([
+                Num::Const(1.0),
+                Num::Const(2.0),
+                Num::Const(3.0),
+                Num::Const(4.0),
+            ])],
+            ..Drawing::default()
+        };
+        let batch = MountBatch {
+            items: vec![MountItem::Command {
+                id: nsh_core::ROOT_ID,
+                command: Command::RenderCanvas {
+                    id: 9,
+                    drawing: std::sync::Arc::new(drawing),
+                    width: 60,
+                    height: 40,
+                    scale: 2.0,
+                    format: ImageFormat::Png,
+                },
+            }],
+        };
+        let ints: Vec<i32> = encode(batch, 0)
+            .bytes
+            .chunks_exact(4)
+            .map(|chunk| i32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+        // `COMMAND`, the root, op 55 (`Mounter.java`), the request, the
+        // pixel size, the scale's bits, PNG, then `CANVAS`'s words: their
+        // count and fillRect (21) with its four numbers.
+        let f = |v: f32| v.to_bits() as i32;
+        assert_eq!(
+            ints,
+            vec![
+                COMMAND,
+                nsh_core::ROOT_ID as i32,
+                55,
+                9,
+                60,
+                40,
+                f(2.0),
+                0,
+                5,
+                21,
+                f(1.0),
+                f(2.0),
+                f(3.0),
+                f(4.0),
+            ]
+        );
+    }
+
     #[test]
     fn web_evaluations_carry_the_originating_engine_generation() {
         let encoded = encode(
@@ -2001,5 +2270,83 @@ mod tests {
             .collect();
         assert_eq!(ints, vec![COMMAND, 3, 51, -1, 0, 1, 2, 3]);
         assert!(matches!(&encoded.objects[0], Obj::Str(generation) if generation == "19"));
+    }
+    #[test]
+    fn view_props_carry_the_key_capture_policy() {
+        use nsh_core::keymap::{Key, Keystroke, Modifiers};
+
+        let mut props = ViewProps::default();
+        props.key_capture = KeyCapture::keys([
+            Keystroke {
+                key: Key::Char('a'),
+                modifiers: Modifiers::default(),
+            },
+            Keystroke {
+                key: Key::Left,
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                },
+            },
+        ]);
+        let encoded = encode(
+            MountBatch {
+                items: vec![MountItem::ViewProps { id: 2, props }],
+            },
+            0,
+        );
+        let ints: Vec<_> = encoded
+            .bytes
+            .chunks_exact(4)
+            .map(|chunk| i32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+        // The tail `Mounter.java` reads: mode, count, (key, modifiers)*,
+        // `focusable` (-1 unset), then `key_parent` (-1 none).
+        assert_eq!(
+            &ints[ints.len() - 8..],
+            &[
+                2,
+                2,
+                'a' as i32,
+                0,
+                crate::keymap::capture_key(Key::Left),
+                4,
+                -1,
+                -1
+            ]
+        );
+
+        for (focusable, expected) in [(None, -1), (Some(false), 0), (Some(true), 1)] {
+            let mut props = ViewProps::default();
+            props.focusable = focusable;
+            let encoded = encode(
+                MountBatch {
+                    items: vec![MountItem::ViewProps { id: 2, props }],
+                },
+                0,
+            );
+            let ints: Vec<_> = encoded
+                .bytes
+                .chunks_exact(4)
+                .map(|chunk| i32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect();
+            assert_eq!(ints[ints.len() - 2], expected);
+            assert_eq!(ints[ints.len() - 1], -1);
+        }
+
+        let mut props = ViewProps::default();
+        props.key_parent = Some(7);
+        let encoded = encode(
+            MountBatch {
+                items: vec![MountItem::ViewProps { id: 2, props }],
+            },
+            0,
+        );
+        let ints: Vec<_> = encoded
+            .bytes
+            .chunks_exact(4)
+            .map(|chunk| i32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+        assert_eq!(ints[ints.len() - 1], 7);
     }
 }

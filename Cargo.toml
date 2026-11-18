@@ -62,10 +62,10 @@ authors = ["hongguo-desktop contributors"]
 nsh-core = { path = "vendor/nsh/crates/nsh-core" }
 nsh-base = { path = "vendor/nsh/crates/nsh-base" }
 nsh-updater = { path = "vendor/nsh/crates/nsh-updater" }
-nsh-platform-macos = { path = "vendor/nsh/crates/nsh-platform-macos", default-features = false }
-nsh-platform-windows = { path = "vendor/nsh/crates/nsh-platform-windows", default-features = false }
-nsh-android-runtime = { package = "nsh-platform-android", path = "vendor/nsh/crates/nsh-platform-android", default-features = false }
-nsh-platform-ios = { path = "vendor/nsh/crates/nsh-platform-ios", default-features = false }
+nsh-platform-macos = { path = "vendor/nsh/crates/nsh-platform-macos", default-features = false, features = ["svg", "updater"] }
+nsh-platform-windows = { path = "vendor/nsh/crates/nsh-platform-windows", default-features = false, features = ["svg", "net", "media", "updater"] }
+nsh-android-runtime = { package = "nsh-platform-android", path = "vendor/nsh/crates/nsh-platform-android", default-features = false, features = ["svg"] }
+nsh-platform-ios = { path = "vendor/nsh/crates/nsh-platform-ios", default-features = false, features = ["svg"] }
 
 [patch.crates-io]
 wgpu-hal = { path = "vendor/wgpu-hal" }

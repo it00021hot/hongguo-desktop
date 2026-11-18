@@ -15,7 +15,7 @@ fn main() {
             nsh_platform_ios::Root::of::<hongguo_nsh::App>().app_id(&hongguo_nsh::metadata().id),
         ),
         nsh_platform_ios::AppOptions {
-            data_dir: Some(directory),
+            support_dir: Some(directory),
             ..Default::default()
         },
     );

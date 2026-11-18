@@ -96,7 +96,9 @@ Things that were found the hard way. Read the section of the area you change bef
   (`UIRefreshControl` at the bottom, scroll indicators), which would shift indices.
 - **Platforms clamp scroll offsets to the content**: UIKit clamps `contentOffset` when `contentSize` shrinks, Android's
   ScrollView clamps `scrollBy` to the child's current size. The core grows the content before a `ScrollBy` and scrolls
-  before shrinking it; Android sizes the content view at once in `setContentSize` (not at the next layout pass).
+  before shrinking it; Android sizes the content view at once in `setContentSize` (not at the next layout pass). What
+  a `scrollBy` or `scrollTo` (a command, an initial `contentOffset`) could not reach yet is owed on Android and paid as
+  the content grows (`ScrollBox.payOwed`), until the user scrolls: a pager's pages arriving after its offset.
 - **Scroll reports can predate the core's own scrolls**: each report carries how many `ScrollBy` / list `ScrollTo` the view
   has applied (`EngineControl::scroll(.., applied)`), and the core adds the ones still pending; otherwise a stale offset
   moves the window (and fires `onLoadMore`) backwards.
@@ -188,6 +190,10 @@ Things that were found the hard way. Read the section of the area you change bef
 - **Styles arrive before frames** (new views have a zero size): a shared radius goes straight to the layer (Core Animation clamps it itself);
   only paths, shadow paths, the content view and the image layer depend on the size, and they are rebuilt on `Frame` while `Decor::sized()`
   is true. Scaling radii by the CSS rule at a zero size once turned every rounded corner square.
+- **An input's insertion precedes its first frame and content box in a mount batch**: UIKit may draw an inserted
+  `UITextField` before the later `InputContent` sets its text insets, briefly placing text against the leading edge.
+  The iOS mounter pre-reads a newly created input's `Frame` and `InputContent` from that batch and applies both while
+  its container is still detached; do not defer or reorder its `Insert`, which would break `autoFocus`.
 - **A view's first style does not transition**: a mounting tree's views are styled after they are added to the window, so
   `window().is_some()` alone animates the first style from the defaults (a pill's corners growing out of a square). The
   mounter only transitions a view it has styled before (`Slot::styled`), as `nsh_core`'s `transition::restyle` and
@@ -216,6 +222,9 @@ Things that were found the hard way. Read the section of the area you change bef
   range the text never had (`NSMutableRLEArray` out of bounds). Inserting other text from the delegate during that
   paste crashes the same way. An input with `maxLength` therefore pastes by itself (`input::paste_text`): it clips the
   text, asks the delegate and calls `insertText:`, whose undo is right.
+- **UIKit passes nil where `UITextInput` declares a position or range nonnull** (a secondary click on selectable text
+  with nothing selected moves a nil position): a method a class defines with `define_class!` takes these as `Option`,
+  since a `&T` is a null reference then and objc2's debug-build nil check on messaging it aborts the app.
 - **UIKit implements the `UITextInputTraits` setters of `UITextField` by message forwarding**: objc2's debug-build signature
   check cannot find them on the class and panics, so `input.rs` sends them with a raw `objc_msgSend`.
 - **objc2 crates are used with `default-features = false`** and an explicit feature list in the root `Cargo.toml` (one feature per
@@ -265,6 +274,12 @@ Things that were found the hard way. Read the section of the area you change bef
   negative `additionalSafeAreaInsets` worked out from the window and the stack's frame alone. Deriving what UIKit
   granted by subtracting the compensation already applied looks equivalent and cannot heal: UIKit floors a safe area at
   zero, so after an overshoot that subtraction returns the value already applied, for good.
+- **iPadOS 26, the window controls' corner**: `safeAreaInsets` leaves out the controls a windowed app has at its
+  top-leading corner; the safe-area layout region with horizontal corner adaptation
+  (`edgeInsetsForLayoutRegion:`) covers them, and also pads both sides alike for the display's rounded corners
+  (left and right 9pt on an iPad Pro 11-inch in full screen, where `safeAreaInsets` has 0; in a window, left 66pt
+  for the controls and right 9.5pt for the window's corner). `RootView::safe_area` takes the region's inset only on
+  a side it insets further than the other, so full screen and iPhone keep `safeAreaInsets`.
 
 - **iOS, dismissing a modal that presents another**: `dismissViewControllerAnimated` called on a controller that is
   itself presenting one (a `Sheet` is a transparent modal over the modal it is in) dismisses only that one, and the outer
@@ -275,8 +290,20 @@ Things that were found the hard way. Read the section of the area you change bef
   press is a gesture recognizer, not a control. On iOS 26+ the window's `_UIDoubleTapInteraction` (a single-tap
   recognizer over the top 64 pt, `cancelsTouchesInView`, never simultaneous, action disabled) recognized first and
   prevented every press there, so a navigation bar's back button did nothing (seen on an iPhone foldable simulator; a
-  real tap through XCUITest reproduced it). `PressRecognizer` is not preventable by tap recognizers on a `UIWindow`
-  (`press.rs`, `is_window_tap`); edge-gesture gates are not taps and still cancel presses.
+  real tap through XCUITest reproduced it). The navigation bar has one of its own (iOS 27 simulator): it prevented
+  every press of the views an app puts in the header's slots, which the bar wraps in custom bar button items.
+  `PressRecognizer` is not preventable by tap recognizers on a `UIWindow` or a `UINavigationBar` (`press.rs`,
+  `is_system_tap`); edge-gesture gates are not taps and still cancel presses. That interaction is also the status bar's
+  tap, which scrolls the scroll views under it to their top: a press it did not prevent still scrolled the page back
+  to its top (opening a menu from the header did). Those taps wait for the press to fail
+  (`shouldBeRequiredToFailByGestureRecognizer:`), so a press takes its tap and a tap where nothing is pressed still
+  scrolls to the top.
+- **iOS, a tap recognizer on a view around pressables**: a `UITapGestureRecognizer` recognizes on release, where a
+  press ends too, and prevents the `PressRecognizer`s of the views inside its view: `cancelsTouchesInView = false`
+  leaves the views their touches, not the other recognizers their turn. The tap that focuses a `focusable` view
+  that takes no presses took every press inside it that way (a row's ⋯ button opened no menu, for a real tap on the
+  simulator as for a test's). `FocusTap` (`native_view.rs`) prevents no recognizer
+  (`canPreventGestureRecognizer:`), and fails on a touch on a stop inside its view, which takes the focus itself.
 - **iOS, a hardware keyboard's keys** reach the first responder as presses (`pressesBegan:withEvent:`) before
   UIKit's text system acts on them: a text input that does not call `super` for a press neither moves its caret,
   inserts a line break nor types it, and must not call `super` for that key's release either. A held key's press
@@ -320,6 +347,10 @@ Things that were found the hard way. Read the section of the area you change bef
   content rect within the view that started it: started from an editor's sink (a sliver at the caret) it sat on the
   caret whatever the rect said, over the selection's start handle, and took that handle's touches; it starts from the
   root view (`InputBox.openEditMenu`).
+- **Android, API levels and lint**: hosts that compile the Java runtime run Android Lint over it (NewApi,
+  WrongConstant), while NSH's own build runs only javac. A class or helper reached only behind `SDK_INT >= N` carries
+  `@TargetApi(N)`, as `Backdrop` does; a guard lint cannot see through (a helper that returns the check) is written at
+  the call site; an `int` setter typed with another class's constants takes those constants.
 - **Android, JNI**: cache classes and method ids in `JNI_OnLoad`; wrap every call from the (permanently attached) engine thread in
   a local frame (`java::with_env`), or local references pile up.
 - **Android, text**: `StaticLayout` ignores `maxLines` without an ellipsis (clip mode counts lines itself and the view clips);
@@ -344,6 +375,12 @@ Things that were found the hard way. Read the section of the area you change bef
   of its position, so a view moved by a fractional offset each frame blurs its shadows again every frame (on the GPU,
   each into a new render target, slow on PowerVR). `StackBox`'s push / pop slides move by whole pixels; going back to
   the gallery's index ran at about half the frame rate before (#519).
+- **Android, hidden views lose their display lists**: HWUI drops the display list of a RenderNode no longer drawn,
+  and `setVisibility` tells every view under the one that changes, whose background `Drawable.setVisible` calls
+  `invalidateSelf`. A whole screen hidden and shown again therefore records all of its views again (22–36 ms for the
+  gallery's index on a Pixel 10 Pro). `StackBox` keeps drawing the screen a pop reveals at alpha 0 while it is
+  `INVISIBLE` (which still keeps it out of touches, accessibility and focus), and `Decor.setVisible` does not
+  invalidate (#519).
 - **Android, opacity animations and outer box shadows**: at alpha < 1 with overlapping rendering (the default) HWUI composites the view into an offscreen buffer clipped to its bounds, cutting the outer box shadows the `Decor` draws outside them: the shadow vanishes for the whole animation and pops back when it ends. Decor-bearing views therefore report `hasOverlappingRendering() == false` while they carry outer shadows (the alpha then applies per draw op and the shadow fades with the content), at the cost of overlapping content inside such a view blending imprecisely while it fades.
 - **Android, JNI event maps intern their keys from a fixed list** (`Java_com_longbridge_nsh_Native_eventMap`): a new payload key must be
   added there or it is dropped silently.
@@ -373,6 +410,10 @@ Things that were found the hard way. Read the section of the area you change bef
   whether a rectangle is visible. `NshView` is a scroll container (`setScrollContainer(true)`) so that windows without a soft
   input mode resize instead of panning: the system picks the mode at the first layout, before the app's content is mounted,
   and a mode set from code afterwards is overridden. Windows that ask for `adjustPan` are left to the system.
+- **Android, the keyboard a gesture drives has no duration**: the back swipe that dismisses the keyboard (predictive back,
+  seen on Android 16) moves it by hand, and its `WindowInsetsAnimation` reports `getDurationMillis()` as -1. `KeyboardAnimation` takes the
+  keyboard's curve and duration from timed moves only: -1 kept as the duration makes `ValueAnimator.setDuration` throw
+  when the next input is focused in a scroll view (`Mounter.revealFocused`).
 - **Android, passive press feedback**: `activeStyle` / `active:` and `android.ripple` observe a touch without
   consuming it. The root's `TouchTracker` feeds style-only views through `Pressable`; `Box` and leaf views take
   clicks for their press handlers or text spans. Feedback is cancelled when scrolling, panning, pinching or rotation
@@ -506,8 +547,10 @@ Things that were found the hard way. Read the section of the area you change bef
   `maxLength`; `input::paste_text`, the agent's paste too, asks it first):
   typing goes through `UIKeyboardImpl`, which asks it, as the software keyboard does. Keys typed faster than a
   controlled input's value comes back lose characters, so keys come at a typist's pace.
-- **A finger at rest still reports its position**: a drag that stops sending events before it lifts keeps its last
-  velocity and flings. A drag whose path leaves the scroll view moves it much further than the finger.
+- **A finger at rest still moves**: a scroll view measures its speed from the moves that change its offset, so a drag
+  that stops sending events, or keeps reporting the same spot, before it lifts keeps its last velocity and flings. A
+  resting finger trembles a fraction of a point (`agent.rs`). A drag whose path leaves the scroll view moves it much
+  further than the finger.
 - **Interactive back needs system-delivered touches**: the agent's IOHID drags can start UIKit's navigation
   gestures in the simulator. Test with `app.drag` from an element at the leading edge; `app.back()` exercises
   the back button instead. On iOS 26 a leading-edge drag can be recognized by
@@ -673,6 +716,11 @@ Things that were found the hard way. Read the section of the area you change bef
   for `accessibilityElementsHidden`. `setAccessibilityChildren:` cannot be undone: `nil` leaves the view without
   children instead of AppKit's again, so a subtree shown again stayed out of reach; `NshView` answers
   `accessibilityChildren` itself (none while hidden or grouped, else `NSView`'s).
+- An `NSTextField` or `NSSecureTextField` subclass that overrides `accessibilityRole` and forwards to `super`
+  exposes `AXUnknown` to an external accessibility client (checked on macOS 27). Return `AXTextField` explicitly
+  for ordinary inputs; editable combo boxes keep `AXComboBox`. The secure field still supplies its
+  `AXSecureTextField` subrole and masked value. A direct getter call is not the same as an external AX query:
+  even a plain `NSTextField` returns `AXUnknown` directly while exposing `AXTextField` externally.
 - In-process screenshots (`cacheDisplayInRect:`, `renderInContext:`) ignore `maskedCorners`, `shadowPath`, Core Image
   filters and cut masks at the mask layer's bounds; they show no backdrop blur, sheets or `AVPlayerLayer` content, and
   `renderInContext:` no `WKWebView` pages either (`cacheDisplayInRect:` shows them: WebKit draws them for it). Pages
@@ -734,8 +782,9 @@ Things that were found the hard way. Read the section of the area you change bef
   need slack.
 - **Child windows cover everything a window draws** (the "airspace" limit): web views are WebView2 composition
   controllers in the window's DirectComposition tree for this reason (`compose.rs`); native components that bring an
-  `HWND` of their own still cover NSH content. Offscreen drawings of the window have no web views: the test
-  agent's screenshots capture them (`PrintWindow` with `PW_RENDERFULLCONTENT`).
+  `HWND` of their own still cover NSH content (one that brings a composition visual instead,
+  `NativeComponent::visual`, is stacked in order). Offscreen drawings of the window have no web views or composed
+  components: the test agent's screenshots capture them (`PrintWindow` with `PW_RENDERFULLCONTENT`).
 - **`IDCompositionVisual::AddVisual(visual, TRUE, NULL)` puts the visual below all its siblings**, not on top: to
   stack bottom to top, insert each one above the one added before it (`compose.rs`).
 - **A focused WebView2 page has the keyboard in a window of its own** (`Chrome_WidgetWin_0`, a child of the

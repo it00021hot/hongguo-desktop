@@ -8,6 +8,7 @@ import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.text.Layout;
+import android.text.Spanned;
 import android.text.TextWatcher;
 import android.text.method.ArrowKeyMovementMethod;
 import android.util.TypedValue;
@@ -21,6 +22,7 @@ import android.view.inputmethod.InputConnectionWrapper;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import java.text.BreakIterator;
 
 /** `<input>`: an EditText inside a container that carries the decoration. */
 @SuppressLint("ViewConstructor")
@@ -366,7 +368,7 @@ final class InputBox extends FrameLayout implements Node {
             default: ime = multiline && submit == NEWLINE ? EditorInfo.IME_ACTION_NONE : EditorInfo.IME_ACTION_DONE;
         }
         edit.setImeOptions(ime);
-        edit.setFilters(maxLength >= 0 ? new InputFilter[] {new InputFilter.LengthFilter(maxLength)} : new InputFilter[0]);
+        edit.setFilters(maxLength >= 0 ? new InputFilter[] {new CharLengthFilter(maxLength)} : new InputFilter[0]);
         // `readonly` keeps focus and selection, as the docs say: the text selects as a selectable TextView's does (a
         // long press on a word, the handles, Copy) while no key listener edits it and no keyboard comes up. Disabling
         // the EditText instead, as before, took the selection away too.
@@ -485,6 +487,42 @@ final class InputBox extends FrameLayout implements Node {
         String text = pendingText;
         pendingText = null;
         setValue(text, pendingCount);
+    }
+
+    /**
+     * `maxLength`: the user's edits keep the text within {@code max} characters, counted as Unicode code points (an
+     * emoji is one, though a Java string holds two chars for it), as on every platform; `LengthFilter` counts chars.
+     * An insertion longer than the room left goes in cut between user-perceived characters, never inside one (a
+     * letter with its accent, an emoji with its skin tone), as the core's `clip_chars` cuts. The app's value is
+     * never cut, as nowhere else.
+     */
+    private final class CharLengthFilter implements InputFilter {
+        private final int max;
+
+        CharLengthFilter(int max) {
+            this.max = max;
+        }
+
+        @Override
+        public CharSequence filter(CharSequence source, int start, int end, Spanned dest, int dstart, int dend) {
+            if (applying) return null;
+            int kept = Character.codePointCount(dest, 0, dstart)
+                    + Character.codePointCount(dest, dend, dest.length());
+            int room = max - kept;
+            if (Character.codePointCount(source, start, end) <= room) return null;
+            if (room <= 0) return "";
+            BreakIterator graphemes = BreakIterator.getCharacterInstance();
+            String text = source.subSequence(start, end).toString();
+            graphemes.setText(text);
+            int cut = 0;
+            int used = 0;
+            for (int next = graphemes.next(); next != BreakIterator.DONE; next = graphemes.next()) {
+                used += text.codePointCount(cut, next);
+                if (used > room) break;
+                cut = next;
+            }
+            return source.subSequence(start, start + cut);
+        }
     }
 
     /**
@@ -765,8 +803,47 @@ final class InputBox extends FrameLayout implements Node {
     }
 
     void focus() {
-        edit.requestFocus();
-        showKeyboard();
+        if (edit.isShown() && edit.hasWindowFocus() && edit.getWidth() > 0) {
+            edit.requestFocus();
+            showKeyboard();
+            return;
+        }
+        // A field focused as it mounts (`autoFocus`, or `ref.focus()` from a
+        // mount effect) is not laid out yet, or its window has no focus: the
+        // focus request fails, or the IME does not serve the field and drops
+        // the keyboard request. Wait until it is shown in a focused window.
+        if (pendingFocus != null) return;
+        pendingFocus = new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                if (!edit.isShown() || !edit.hasWindowFocus() || edit.getWidth() <= 0) return;
+                cancelPendingFocus();
+                edit.requestFocus();
+                // The IME serves the field once the focus change is dispatched.
+                edit.post(InputBox.this::showKeyboard);
+            }
+        };
+        getViewTreeObserver().addOnGlobalLayoutListener(pendingFocus);
+        getViewTreeObserver().addOnWindowFocusChangeListener(pendingWindowFocus);
+    }
+
+    /** {@link #focus()} waiting for the field to be shown in a focused window. */
+    private android.view.ViewTreeObserver.OnGlobalLayoutListener pendingFocus;
+    private final android.view.ViewTreeObserver.OnWindowFocusChangeListener pendingWindowFocus = focused -> {
+        if (focused && pendingFocus != null) pendingFocus.onGlobalLayout();
+    };
+
+    private void cancelPendingFocus() {
+        if (pendingFocus == null) return;
+        getViewTreeObserver().removeOnGlobalLayoutListener(pendingFocus);
+        getViewTreeObserver().removeOnWindowFocusChangeListener(pendingWindowFocus);
+        pendingFocus = null;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        cancelPendingFocus();
+        super.onDetachedFromWindow();
     }
 
     /**
@@ -788,21 +865,12 @@ final class InputBox extends FrameLayout implements Node {
     }
 
     void blur() {
+        cancelPendingFocus();
         if (!edit.hasFocus()) return;
         hideKeyboard();
-        // Prefer this field's window (a dialog's), not the activity host:
-        // host.requestFocus() cannot take focus out of another window, so the
-        // EditText would keep focus and the IME would stay / come back.
-        View root = getRootView();
-        if (root != null && root != mounter.host.getRootView()) {
-            root.setFocusable(true);
-            root.setFocusableInTouchMode(true);
-            root.requestFocus();
-        } else {
-            // clearFocus() would hand focus to the first focusable view, often
-            // another field; the (focusable) host holds it instead.
-            mounter.host.requestFocus();
-        }
+        // Keep focus in this window without selecting another input, and
+        // leave subsequent hardware keys on the window's dispatch path.
+        mounter.releaseFocusOf(this);
     }
 
     private void hideKeyboard() {

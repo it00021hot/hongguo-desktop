@@ -28,6 +28,7 @@ function App() {
         onMouseEnter={(e) => note(`in outer ${e.position.x},${e.position.y}`)}
         onMouseLeave={(e) => note(`out outer ${e.position.x},${e.position.y}`)}
         onWheel={(e) => note(`wheel ${e.position.x},${e.pagePosition.y} ${e.delta.x},${e.delta.y} ${e.deltaMode}${e.modifiers.control ? " ctrl" : ""}`)}
+        onPinch={(e) => note(`pinch ${e.position.x},${e.pagePosition.y} ${e.delta} ${e.phase}${e.modifiers.shift ? " shift" : ""}`)}
       >
         <View
           testID="inner"
@@ -76,7 +77,7 @@ fn start(name: &str) -> (Engine, Receiver<MountBatch>) {
         limits: nsh_engine::Limits::default(),
         ui_sets: Vec::new(),
         runtime: None,
-        data_dir: None,
+        support_dir: None,
         cache: nsh_engine::CacheOptions::off(),
         storage: None,
         clock: Default::default(),
@@ -88,6 +89,8 @@ fn start(name: &str) -> (Engine, Receiver<MountBatch>) {
         speech: None,
         audio: None,
         windows: None,
+        login_item: None,
+        data_dir: None,
     };
     (
         Engine::start(config, || ApproxTextEngine, ChannelSink(tx)).unwrap(),
@@ -179,7 +182,8 @@ fn mouse_handlers_are_in_the_event_masks_and_hear_their_events() {
         mask(&[
             EventKind::MouseEnter,
             EventKind::MouseLeave,
-            EventKind::Wheel
+            EventKind::Wheel,
+            EventKind::Pinch
         ])
     );
     assert_eq!(
@@ -231,6 +235,7 @@ fn a_move_with_a_button_down_reaches_on_mouse_move_with_the_button() {
             EventPayload::Touch(Box::new(TouchEvent {
                 phase: TouchPhase::Move,
                 timestamp: x as f64,
+                modifiers: Default::default(),
                 activated: None,
                 points: vec![TouchPoint {
                     id: 1,
@@ -240,6 +245,9 @@ fn a_move_with_a_button_down_reaches_on_mouse_move_with_the_button() {
                     location: nsh_core::geometry::point(px(x as f32), px(2.0)),
                     changed: true,
                     pointer_type: nsh_core::PointerType::Mouse,
+                    pressure: 0.5,
+                    tilt_x: 0.0,
+                    tilt_y: 0.0,
                 }],
             })),
         );
@@ -290,4 +298,34 @@ fn wheels_reach_on_wheel_with_their_delta_and_unit() {
         &rx,
         "log wheel 3,14 0,-1 lines ctrl|wheel 3,14 2.5,7 points",
     );
+}
+
+#[test]
+fn pinches_reach_on_pinch_with_their_delta_and_phase() {
+    let (engine, rx) = start("pinch");
+    let (_, outer, _) = first_frame(&rx);
+    let control = engine.control();
+    let pinch = |delta, phase, shift| {
+        EventPayload::Pinch(nsh_core::PinchEvent::new(
+            nsh_core::geometry::point(px(3.0), px(4.0)),
+            nsh_core::geometry::point(px(13.0), px(14.0)),
+            nsh_core::geometry::Percentage(delta),
+            phase,
+            Modifiers {
+                shift,
+                ..Default::default()
+            },
+        ))
+    };
+    control.dispatch_event(
+        outer,
+        EventKind::Pinch,
+        pinch(0.25, nsh_core::PinchPhase::Start, true),
+    );
+    control.dispatch_event(
+        outer,
+        EventKind::Pinch,
+        pinch(-0.5, nsh_core::PinchPhase::End, false),
+    );
+    until_log(&rx, "log pinch 3,14 0.25 start shift|pinch 3,14 -0.5 end");
 }

@@ -1445,11 +1445,12 @@ pub(crate) fn frame(surface: &Rc<Surface>) -> bool {
             return false;
         }
     };
-    // Only a window with web views has a composition: without one the
-    // frame is the one swap chain, drawn and presented as always.
+    // Only a window with web views or composed components has a composition:
+    // without one the frame is the one swap chain, drawn and presented as
+    // always.
     let composition = surface.composition();
-    // What changed, in pixels (`None`: everything). A window with web views
-    // draws its layers whole.
+    // What changed, in pixels (`None`: everything). A window with a
+    // composition draws its layers whole.
     let damage = surface.take_damage();
     let changed = damage
         .filter(|_| composition.is_none())
@@ -1956,6 +1957,9 @@ fn draw_into(
                 },
             }
             cx.clip_skip = 1;
+            // SAFETY: a COM call between BeginDraw and EndDraw: clears what
+            // the clip leaves.
+            unsafe { dc.Clear(Some(&background)) };
             cx.damage = Some(areas.to_vec());
             draw_view(&mut cx, &root, Mat4::new(), (0.0, 0.0));
             crate::chrome::draw(surface, hwnd, dc, scale, w);
@@ -1975,6 +1979,7 @@ fn draw_into(
     // SAFETY: closes the last `BeginDraw` (above, or a layer's); the target
     // is unset so that the swap chains can be resized later.
     let result = unsafe { dc.EndDraw(None, None) };
+    crate::shader::signal_drawn(gfx);
     // SAFETY: as above.
     unsafe { dc.SetTarget(None) };
     if let Some(err) = error {
@@ -3501,6 +3506,41 @@ mod tests {
             }
         }
         out
+    }
+
+    /// A dashed border on one side draws only that side: the sides without
+    /// a border show no dashes of it.
+    #[test]
+    fn a_dashed_border_on_one_side_draws_only_that_side() {
+        let Ok(gfx) = gfx::get() else {
+            return;
+        };
+        for scale in [1.0f32, 2.0] {
+            let size = ((120.0 * scale).ceil() as u32, (80.0 * scale).ceil() as u32);
+            let surface = Surface::new(Default::default());
+            surface.resized(size, scale);
+            let root = surface.root.clone();
+            let line = view(
+                Some(&root),
+                2,
+                ViewKind::View,
+                rect(10.0, 10.0, 100.0, 60.0),
+            );
+            {
+                let mut s = line.state_mut();
+                s.style.borders.widths.left = Points(2.0);
+                s.style.borders.colors = [Color(0xff0000ff); 4];
+                s.style.borders.style = nsh_core::BorderStyle::Dashed;
+            }
+            let into = target(&gfx, size);
+            draw_into(&surface, &gfx, &into, scale, false, None, None, None).unwrap();
+            let (x0, _, x1, _) =
+                red_extent(&read(&gfx, &into, size), size).expect("the left side is drawn");
+            assert!(
+                x0 as f32 >= 10.0 * scale - 1.0 && x1 as f32 <= 12.0 * scale + 1.0,
+                "scale {scale}: red from x {x0} to {x1}"
+            );
+        }
     }
 
     #[test]

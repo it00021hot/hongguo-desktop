@@ -176,6 +176,16 @@ impl AppView {
         self.inner.set_limits(limits);
     }
 
+    /// Gives the address of the apps this view loads (`UrlScheme.setUrl`)
+    /// to the system as the current `NSUserActivity` (Handoff;
+    /// [`SurfaceOptions::handoff`]). Applies from the next [`AppView::load`]:
+    /// a change removes the running app, as [`AppView::set_limits`] does.
+    pub fn set_handoff(&self, handoff: bool) {
+        if self.inner.state.borrow().options.handoff != handoff {
+            self.reconfigure(|options| options.handoff = handoff);
+        }
+    }
+
     /// Where the apps this view loads keep their caches (the images they
     /// downloaded) and how much each keeps ([`SurfaceOptions::cache`]). A
     /// change applies from the next [`AppView::load`].
@@ -187,7 +197,7 @@ impl AppView {
 
     /// The directory the storage (`nsh/storage`) of the apps this view loads
     /// is kept in (`storage.json` in it), overriding each app's own in
-    /// [`SurfaceOptions::data_dir`] (`None`: theirs). A change applies from
+    /// [`SurfaceOptions::support_dir`] (`None`: theirs). A change applies from
     /// the next [`AppView::load`].
     pub fn set_storage_directory(&self, dir: Option<std::path::PathBuf>) {
         if self.inner.state.borrow().options.storage != dir {

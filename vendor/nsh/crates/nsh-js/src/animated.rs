@@ -460,7 +460,7 @@ fn derived_hash(op: &AnimationOp) -> u64 {
     let mut h = rustc_hash::FxHasher::default();
     let mut f = |x: f32| (if x == 0.0 { 0.0f32 } else { x }).to_bits().hash(&mut h);
     let mut kind = 0u8;
-    let mut ids = [0u32; 2];
+    let mut ids = [0u32; 3];
     match op {
         AnimationOp::CreateInterpolate {
             input,
@@ -488,8 +488,12 @@ fn derived_hash(op: &AnimationOp) -> u64 {
         } => {
             kind = 1;
             ids[0] = *input;
-            f(*min);
-            f(*max);
+            for (i, o) in [min, max].into_iter().enumerate() {
+                match *o {
+                    nsh_core::animation::Operand::Node(n) => ids[i + 1] = n,
+                    nsh_core::animation::Operand::Const(c) => f(c),
+                }
+            }
             snap.hash(&mut h);
         }
         AnimationOp::CreateMath { a, b, .. } => {
@@ -561,15 +565,24 @@ unsafe extern "C" fn node_diff_clamp(
         Ok(id) => id,
         Err(e) => return e,
     };
+    let (min, max) = (arg(argc, argv, 0), arg(argc, argv, 1));
     let args = vec![
         int(input),
-        dup(cx, arg(argc, argv, 0)),
-        dup(cx, arg(argc, argv, 1)),
+        // Each bound a number or a node, read at each evaluation.
+        dup(cx, min),
+        dup(cx, max),
         // `{ snap }`: settles at the nearer bound when its scroll view
         // rests (undefined without options).
         get(cx, arg(argc, argv, 2), c"snap"),
     ];
-    derived(cx, vec![dup(cx, this)], ANIMATION_DIFF_CLAMP, args)
+    let mut inputs = vec![dup(cx, this)];
+    inputs.extend(
+        [min, max]
+            .into_iter()
+            .filter(|&v| node_id(cx, v).is_some())
+            .map(|v| dup(cx, v)),
+    );
+    derived(cx, inputs, ANIMATION_DIFF_CLAMP, args)
 }
 
 /// `a op b`: a node of two operands (nodes or numbers).
@@ -2169,7 +2182,7 @@ pub(crate) const EXPORTS: &[Item] = &[
    * bounds, it settles at the nearer one in 200 ms, easing out (a floating
    * bar shows or hides fully); at `max` only once this node reached
    * `max`, so a page scrolled less than the bar's height shows all of it. */
-  diffClamp(min: number, max: number, options?: { snap?: boolean }): AnimatedNode;
+  diffClamp(min: number | AnimatedNode, max: number | AnimatedNode, options?: { snap?: boolean }): AnimatedNode;
   add(b: AnimatedNode | number): AnimatedNode;
   sub(b: AnimatedNode | number): AnimatedNode;
   mul(b: AnimatedNode | number): AnimatedNode;
@@ -2229,7 +2242,7 @@ pub(crate) const EXPORTS: &[Item] = &[
         "createMotion",
         Export::Function(create_motion, 1),
         Ts::function(
-            "Creates a motion: an animated value for each channel (`opacity`, `translateX`,\n`translateY`, `rotate`, `rotateX`, `rotateY`, `scale`, `scaleX`, `scaleY`) at rest, bound\nwith `style={motion.style}` (or `opacity` and `transform` spread into a style), and\n`play(motion, options)` to run a preset (`\"shake\"`, `\"fadeInUp\"`, ...) or keyframes of\nyour own on them, natively. `enter` starts the values where that motion starts and\nplays it at once (the options also take its timing: `delay`, `duration`, ...). When the\nuser asks for less motion, motions land where they end without moving, unless\n`ignoreReduceMotion` is set.",
+            "Creates a motion: an animated value for each channel (`opacity`, `translateX`,\n`translateY`, `rotate`, `rotateX`, `rotateY`, `scale`, `scaleX`, `scaleY`) at rest, bound\nwith `style={motion.style}` (or `opacity` and `transform` spread into a style), and\n`play(motion, options)` to run a preset (`\"shake\"`, `\"fadeInUp\"`, ...) or keyframes of\nyour own on them, natively. `enter` starts the values where that motion starts and\nplays it at once (the options also take its timing: `delay`, `duration`, ..., or a\n`spring` to play it on: each channel then springs from where it is, keeping its velocity\nwhen it interrupts another motion). When the\nuser asks for less motion, motions land where they end without moving, unless\n`ignoreReduceMotion` is set.",
             &["(options?: MotionOptions): Motion"],
         ),
     ),
@@ -2368,11 +2381,21 @@ export interface KeyframesConfig extends KeyframeTiming {
  * `{ opacity: 0, translateY: 24 }`, with its `offset` and `easing`. */
 export type MotionFrame = { [C in MotionChannel]?: number | string } & { offset?: number; easing?: Easing };
 
+/** The spring a motion plays each channel on (`Animated.spring`'s
+ * `stiffness`, `damping` and `mass`, with its defaults: 170, 26, 1). */
+export type MotionSpring = Pick<SpringConfig, "stiffness" | "damping" | "mass">;
+
 /** A motion of your own: each channel's keyframes (`{ opacity: [0, 1],
  * translateY: [24, 0] }`) or a list of frames (`[{ opacity: 0 }, { opacity: 1
  * }]`), with how they play. */
 export interface MotionSpec extends KeyframeTiming {
   keyframes: { [C in MotionChannel]?: KeyframeValue[] } | MotionFrame[];
+  /** Plays each channel on this spring instead of through its keyframes:
+   * from where it is, keeping its velocity when the motion interrupts
+   * another, to where its keyframes end, after `delay`. The first keyframe
+   * is where `enter` starts it; `duration`, `easing`, `iterations` and the
+   * keyframes between are not used. */
+  spring?: MotionSpring;
   /** Plays even when the user asks for less motion. */
   ignoreReduceMotion?: boolean;
 }
@@ -2386,6 +2409,8 @@ export interface MotionPreset extends MotionSpec {
 
 /** Options of `play`: the motion's timing changed, and more. */
 export interface MotionPlayOptions extends KeyframeTiming {
+  /** Plays each channel on this spring (`MotionSpec`'s `spring`). */
+  spring?: MotionSpring;
   /** Plays even when the user asks for less motion. */
   ignoreReduceMotion?: boolean;
 }
@@ -2473,7 +2498,7 @@ export interface AnimatedModule {
   multiply(a: AnimatedNode, b: AnimatedNode | number): AnimatedNode;
   divide(a: AnimatedNode, b: AnimatedNode | number): AnimatedNode;
   modulo(a: AnimatedNode, b: AnimatedNode | number): AnimatedNode;
-  diffClamp(a: AnimatedNode, min: number, max: number, options?: { snap?: boolean }): AnimatedNode;
+  diffClamp(a: AnimatedNode, min: number | AnimatedNode, max: number | AnimatedNode, options?: { snap?: boolean }): AnimatedNode;
   /** The values a spring moves through from `from` (0), one per frame at
    * `fps` (60) until it rests: the exact curve the native driver runs. */
   sampleSpring(config: SpringConfig & { from?: number }, fps?: number): number[];
@@ -2772,6 +2797,37 @@ mod tests {
             ops.contains(&nsh_core::animation::AnimationOp::Release { node: 2 }),
             "{ops:?}"
         );
+    }
+
+    #[test]
+    fn a_diff_clamp_takes_animated_bounds() {
+        use nsh_core::animation::{AnimationOp as A, Operand};
+        let host = Host::new().unwrap();
+        host.eval_source(
+            r#"
+            import { AnimatedValue } from "nsh";
+            import { text } from "nsh:rt";
+            const drag = new AnimatedValue(0);
+            const max = new AnimatedValue(100);
+            const a = drag.diffClamp(0, max);
+            globalThis.report = () => text(String(a === drag.diffClamp(0, max)));
+            globalThis.keep = [drag, max, a];
+            "#,
+        )
+        .unwrap();
+        let bounds: Vec<(Operand, Operand)> = animation_ops(&host)
+            .into_iter()
+            .filter_map(|o| match o {
+                A::CreateDiffClamp { min, max, .. } => Some((min, max)),
+                _ => None,
+            })
+            .collect();
+        // Its upper bound is the node made right before it.
+        assert!(
+            matches!(bounds[..], [(Operand::Const(0.0), Operand::Node(_))]),
+            "{bounds:?}"
+        );
+        assert_eq!(report(&host).as_deref(), Some("true"));
     }
 
     #[test]

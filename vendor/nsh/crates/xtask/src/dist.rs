@@ -105,7 +105,7 @@ pub(crate) fn dist() -> anyhow::Result<()> {
                 if package == "nsh-linux-app" {
                     args.extend([
                         "--features",
-                        "js,shader,editor,highlight,math,plot,rich-editor,zlib,crypto",
+                        "js,shader,editor,highlight,math,plot,rich-editor,zlib,crypto,websocket,updater,svg,net,sound",
                     ]);
                 }
             }
@@ -465,6 +465,9 @@ const AAR_KEEP_RULES: &str = "\
 # Native Shell: libnsh.so finds these classes and members by name over JNI
 # and binds native methods by their Java names.
 -keep class com.longbridge.nsh.** { *; }
+# The WebSocket client's TLS verifier (rustls-platform-verifier) calls these
+# over JNI.
+-keep class org.rustls.platformverifier.** { *; }
 ";
 
 /// An Android library archive: the Java runtime and `libnsh.so` per ABI,

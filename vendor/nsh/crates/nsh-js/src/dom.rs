@@ -128,6 +128,8 @@ struct NodeData {
     /// Has a `panActivation`: becomes the responder when the platform
     /// activates its pan, and is not asked before.
     pan_gated: bool,
+    /// It was given a `selectionMenu`, whose functions go with it.
+    selection_menu: bool,
     /// Values of props that may hold native animation nodes (`style`,
     /// `pan`, ...), kept alive with the view (owned).
     retained: Vec<(std::borrow::Cow<'static, str>, JsValue)>,
@@ -479,6 +481,14 @@ pub(crate) const NODE_METHODS: &[(&str, c_int, &str, &str)] = &[
         ),
     ),
     (
+        "animateLayout",
+        1,
+        decl!("(transition?: LayoutAnimationAnimation): void"),
+        decl!(
+            "Animates the frames this view's change moves in this turn, with `transition` (a phase of `LayoutAnimation.configureNext`: `type`, `duration`, `delay`, `springDamping`, a physical spring's `stiffness` / `damping` / `mass`, `bezier`; easing in and out over 300 ms without one): its own frame and its subtree's, its siblings' and its ancestors' siblings' that it pushes, and the content of those that it resizes. The rest of the turn (a list that updates, live data) changes at once, as it would without it, and a view that gains or loses children does not carry the change into them. Insertions and removals are not animated. A `LayoutAnimation.configureNext` in the same turn animates every frame instead. E.g. a header that collapses over a list that keeps updating."
+        ),
+    ),
+    (
         "reveal",
         1,
         decl!("(options?: RevealOptions): void"),
@@ -638,6 +648,17 @@ unsafe extern "C" fn node_method(
                 qjs::JS_SetPropertyStr(cx, o, c"animated".as_ptr(), field(a0, c"animated"));
                 ("scrollTo", o)
             }
+            // The phase `update` of a layout animation sent to this node.
+            "animateLayout" => {
+                let o = qjs::JS_NewObject(cx);
+                let update = if qjs::JS_IsObject(a0) {
+                    qjs::JS_DupValue(cx, a0)
+                } else {
+                    qjs::JS_NewObject(cx)
+                };
+                qjs::JS_SetPropertyStr(cx, o, c"update".as_ptr(), update);
+                ("layoutAnimation", o)
+            }
             "scrollToEnd" if qjs::JS_IsUndefined(a0) => ("scrollToEnd", qjs::JS_NewObject(cx)),
             other => (
                 NODE_METHODS
@@ -681,6 +702,7 @@ fn new_node(cx: *mut JsContext, id: NodeId, text: bool, tag: Option<Tag>) -> JsV
         popped: UNDEFINED,
         touch: Vec::new(),
         pan_gated: false,
+        selection_menu: false,
         retained: Vec::new(),
         parent: DETACHED,
         children: Vec::new(),
@@ -969,6 +991,11 @@ unsafe extern "C" fn node_finalize(rt: *mut qjs::JSRuntime, obj: JsValue) {
         if data.id != ROOT {
             // Not the op queue: a finalizer may run while it is borrowed.
             d.shared.releases.borrow_mut().push(data.id);
+        }
+        // Trailing header bar handlers live as long as the page, a
+        // selection menu's as long as its view.
+        if data.tag == Some(Tag::Screen) || data.selection_menu {
+            crate::desktop::clear_header_rt(rt, data.id);
         }
         if data.tag == Some(Tag::Modal) {
             d.dialogs.set(d.dialogs.get().saturating_sub(1));
@@ -1449,6 +1476,14 @@ fn set_prop(
         }
         "tooltip" if followed(cx, name, value) => return bind_prop_with(cx, node, name, value),
         _ => {}
+    }
+    if name == "selectionMenu" {
+        // SAFETY: live node data.
+        unsafe { (*p).selection_menu = true };
+        return crate::desktop::set_selection_menu(cx, id, value);
+    }
+    if name == "headerRightItems" {
+        return crate::desktop::set_header_right_items(cx, id, value);
     }
     if let Some(prop) = nsh_core::js::host::style_patch_prop(name) {
         let prop = prop(part_style(cx, name, value)?);
@@ -3859,6 +3894,17 @@ unsafe extern "C" fn each_component(
     }
 }
 
+/// The owner node `id` was made under, if it is still live: what is
+/// rendered into the node later sees that owner's context.
+pub(crate) fn owner_of_node(cx: *mut JsContext, id: NodeId) -> u32 {
+    let p = dom(cx).by_id(id);
+    if p.is_null() {
+        return reactive::NONE_OWNER;
+    }
+    // SAFETY: live node data.
+    reactive::live_owner(cx, unsafe { (*p).owner })
+}
+
 /// Hands the pending exception of a listener of node `id` to the error
 /// boundary the node was made under: whether one caught it (else it stays
 /// pending, as before).
@@ -5071,6 +5117,9 @@ mod tests {
             const v = element("view");
             v.focus();
             v.blur();
+            // The frames its change moves, with its own transition.
+            v.animateLayout({ type: "bezier", bezier: [0.3, 0, 0, 1], duration: 200 });
+            v.animateLayout();
             globalThis.keep = [s, i, v];
             "#,
         )
@@ -5089,6 +5138,8 @@ mod tests {
                 "Command { id: 4, command: InsertText(\"pasted\") }",
                 "Command { id: 6, command: Focus }",
                 "Command { id: 6, command: Blur }",
+                "Command { id: 6, command: LayoutAnimation(LayoutAnimation { create: None, update: Some(LayoutTransition { curve: Bezier([0.3, 0.0, 0.0, 1.0]), property: Opacity, duration_ms: 200.0, delay_ms: 0.0 }), delete: None }) }",
+                "Command { id: 6, command: LayoutAnimation(LayoutAnimation { create: None, update: Some(LayoutTransition { curve: EaseInEaseOut, property: Opacity, duration_ms: 300.0, delay_ms: 0.0 }), delete: None }) }",
             ]
         );
     }
@@ -5160,9 +5211,7 @@ mod tests {
             first.iter().any(|o| matches!(
                 o,
                 Op::SetProp {
-                    prop: nsh_core::Prop::ComponentPropBinding(name, Some(_)),
-                    ..
-                } if &**name == "progress"
+                    prop: nsh_core::Prop::ComponentPropBinding(name, Some(_)), .. } if &**name == "progress"
             )),
             "{first:?}"
         );

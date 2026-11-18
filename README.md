@@ -1,6 +1,6 @@
 # 番果 · guava
 
-番果（guava）是基于 NSH 0.5.1 与 Rust 的非官方红果短剧客户端，桌面目标为 Windows 10 1809+ / Windows 11、macOS，另有独立 Android / iOS 宿主。
+番果（guava）是基于 NSH 0.6.0 与 Rust 的非官方红果短剧客户端，桌面目标为 Windows 10 1809+ / Windows 11、macOS，另有独立 Android / iOS 宿主。
 
 [English](README.en.md) · [使用声明](NOTICE) · [第三方组件](THIRD-PARTY-NOTICES.md)
 

@@ -75,6 +75,11 @@ pub struct TextBackground {
     /// The span that set it, so neighboring spans that look the same still
     /// get a box each.
     pub node: NodeId,
+    /// Room above the font's ascent (the span's top padding): drawing only,
+    /// as a CSS inline box's vertical padding, the line keeps its height.
+    pub top: Points,
+    /// Room below the font's descent (the span's bottom padding).
+    pub bottom: Points,
 }
 
 /// A piece of a laid out line, in visual order, for
@@ -123,6 +128,8 @@ impl BackgroundBox {
         let mut current: Option<BackgroundBox> = None;
         let mut emit = |b: Option<BackgroundBox>| {
             if let Some(mut b) = b {
+                b.ascent += b.background.top;
+                b.descent += b.background.bottom;
                 let x1 = (b.x + b.width).min(right);
                 b.x = b.x.max(left);
                 b.width = x1 - b.x;
@@ -200,7 +207,11 @@ impl ResolvedTextStyle {
     /// Applies the properties set on a node on top of the inherited style.
     #[inline]
     pub(crate) fn inherit(self, style: &TextStyle) -> Self {
-        let font_size = style.font_size.unwrap_or(self.font_size);
+        // Ems / percentages are of the inherited font size, like CSS.
+        let font_size = match style.font_size_em {
+            Some(em) => px(em * self.font_size.0),
+            None => style.font_size.unwrap_or(self.font_size),
+        };
         // A multiple follows each nested font size (unitless CSS
         // line-height); points stay points.
         let (line_height, line_height_multiple) = match (
@@ -450,6 +461,10 @@ impl TextAttachment {
 #[non_exhaustive]
 pub struct AttachmentAlignments {
     values: Vec<(u32, VerticalAlign)>,
+    /// How far below its top an attachment's own baseline is, where it
+    /// has one (the first baseline of the text in it): the bits of the points, so the table
+    /// compares and hashes.
+    baselines: Vec<(u32, u32)>,
 }
 
 impl AttachmentAlignments {
@@ -472,6 +487,56 @@ impl AttachmentAlignments {
         }
     }
 
+    /// How far below its top the attachment at `index` has its own
+    /// baseline (the first line of the text inside it), if it has one:
+    /// [`VerticalAlign::Baseline`] puts that on the line's baseline, as
+    /// CSS aligns an `inline-flex` box, where an attachment without one
+    /// stands on its bottom edge.
+    pub fn baseline(&self, index: u32) -> Option<Points> {
+        self.baselines
+            .binary_search_by_key(&index, |v| v.0)
+            .ok()
+            .map(|i| Points(f32::from_bits(self.baselines[i].1)))
+    }
+
+    /// Sets or clears the attachment's own baseline
+    /// ([`Self::baseline`]).
+    pub fn set_baseline(&mut self, index: u32, baseline: Option<Points>) {
+        match (
+            self.baselines.binary_search_by_key(&index, |v| v.0),
+            baseline,
+        ) {
+            (Ok(i), Some(b)) => self.baselines[i].1 = b.0.to_bits(),
+            (Ok(i), None) => {
+                self.baselines.remove(i);
+            }
+            (Err(i), Some(b)) => self.baselines.insert(i, (index, b.0.to_bits())),
+            (Err(_), None) => {}
+        }
+    }
+
+    /// The distance of attachment `a`'s top above the baseline in a line
+    /// of `font` ([`TextAttachment::ascent`]), by its alignment here: on
+    /// the baseline, an attachment with a baseline of its own
+    /// ([`Self::baseline`]) puts that one there. What every engine places
+    /// an attachment by.
+    pub fn ascent(&self, a: &TextAttachment, font: FontExtent) -> Points {
+        match (self.get(a.index), self.baseline(a.index)) {
+            (VerticalAlign::Baseline, Some(baseline)) => baseline.max(Points::ZERO).min(a.height),
+            (align, _) => a.ascent(font, align),
+        }
+    }
+
+    /// What attachment `a`'s line reserves for it above and below the
+    /// baseline ([`TextAttachment::extent`]), by its alignment here.
+    pub fn extent(&self, a: &TextAttachment, font: FontExtent) -> (Points, Points) {
+        let ascent = self.ascent(a, font);
+        (
+            ascent.max(Points::ZERO),
+            (a.height - ascent).max(Points::ZERO),
+        )
+    }
+
     /// Appends an attachment and records its alignment.
     pub fn push(
         &mut self,
@@ -486,7 +551,7 @@ impl AttachmentAlignments {
 
     /// Whether all attachments use the default baseline alignment.
     pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+        self.values.is_empty() && self.baselines.is_empty()
     }
 
     /// The text's layout hash including attachment alignment.
@@ -615,12 +680,34 @@ impl AttributedText {
 
     /// The text a screen reader reads: all of it but its hidden runs
     /// ([`ResolvedTextStyle::hidden`]); borrowed when none is.
+    ///
+    /// Empty attachments (no height: a span's padding) are no content and
+    /// are left out too.
     pub fn visible_text(&self) -> std::borrow::Cow<'_, str> {
-        if !self.has_hidden() {
+        let spacers = self.attachments.iter().any(|a| a.height <= Points::ZERO);
+        if !self.has_hidden() && !spacers {
             return std::borrow::Cow::Borrowed(&self.text);
         }
         let mut out = String::with_capacity(self.text.len());
         self.each_shown(0..self.len_utf16(), |s| out.push_str(s));
+        if spacers {
+            // Offsets in `out` shift where hidden runs were dropped: find the
+            // empty attachments by counting placeholders instead.
+            let shown: Vec<bool> = self
+                .attachments
+                .iter()
+                .filter(|a| !self.hidden_at(a.index))
+                .map(|a| a.height > Points::ZERO)
+                .collect();
+            let mut nth = 0;
+            out.retain(|c| {
+                if c != ATTACHMENT_CHAR {
+                    return true;
+                }
+                nth += 1;
+                shown.get(nth - 1).copied().unwrap_or(true)
+            });
+        }
         std::borrow::Cow::Owned(out)
     }
 
@@ -824,6 +911,43 @@ impl AttributedText {
             && spans_same_but_colors(spans, &other.spans)
     }
 
+    /// The characters (UTF-16 offsets; ascending, apart) drawn otherwise in
+    /// `other`, when the two texts differ at most in colors, hidden runs
+    /// and test metadata, as the core's colors-only path allows; `None`
+    /// when they differ in anything else. A platform that draws colors from
+    /// the text and keeps the layout redraws only where these lie.
+    pub fn recolored_ranges(&self, other: &Self) -> Option<Vec<std::ops::Range<u32>>> {
+        if !self.same_but_colors(other) {
+            return None;
+        }
+        let mut out: Vec<std::ops::Range<u32>> = Vec::new();
+        // Both cover the string end to end (`same_but_colors`): walk the
+        // pieces where they overlap.
+        let (mut a, mut b) = (self.spans.iter().peekable(), other.spans.iter().peekable());
+        while let (Some(x), Some(y)) = (a.peek(), b.peek()) {
+            let (start, end) = (x.start.max(y.start), x.end.min(y.end));
+            if start < end && x.style != y.style {
+                match out.last_mut() {
+                    Some(last) if last.end >= start => last.end = last.end.max(end),
+                    _ => out.push(start..end),
+                }
+            }
+            match x.end.cmp(&y.end) {
+                std::cmp::Ordering::Less => {
+                    a.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    b.next();
+                }
+                std::cmp::Ordering::Equal => {
+                    a.next();
+                    b.next();
+                }
+            }
+        }
+        Some(out)
+    }
+
     /// Equality of the content the platform draws, excluding test metadata.
     pub(crate) fn rendering_eq(&self, other: &Self) -> bool {
         // Enumerating the fields makes additions revisit this comparison.
@@ -945,6 +1069,16 @@ pub trait TextEngine {
     /// Size of the prepared text with an optional maximum width.
     fn measure(&self, prepared: &Self::Prepared, max_width: Option<Points>) -> Size<Points>;
 
+    /// How far below the text's top its first line's baseline is, laid out
+    /// `width` wide: a flex container aligning by baseline
+    /// (`align-items: baseline`) lines its items up by it, as CSS does. An
+    /// engine that does not know gives `None`, and the text is aligned by
+    /// its bottom edge, Taffy's fallback for a box without a baseline.
+    fn first_baseline(&self, prepared: &Self::Prepared, width: Points) -> Option<Points> {
+        let _ = (prepared, width);
+        None
+    }
+
     /// Whether each line takes all that fits and [`TextEngine::measure`]'s
     /// width is the widest line's: a maximum width between that width and
     /// the one measured then breaks the lines at the same places, so the
@@ -1057,6 +1191,10 @@ impl<T: TextEngine> TextEngine for std::rc::Rc<T> {
 
     fn measure(&self, prepared: &Self::Prepared, max_width: Option<Points>) -> Size<Points> {
         (**self).measure(prepared, max_width)
+    }
+
+    fn first_baseline(&self, prepared: &Self::Prepared, width: Points) -> Option<Points> {
+        (**self).first_baseline(prepared, width)
     }
 
     fn layout(&self, prepared: &Self::Prepared, size: Size<Points>) -> TextLayout {
@@ -1298,7 +1436,7 @@ impl TextEngine for ApproxTextEngine {
                 .map(|a| {
                     let metrics = FontExtent::new(size * 1.2, Points::ZERO, size * 0.5);
                     TextAttachment {
-                        height: a.ascent(metrics, alignments.get(a.index)),
+                        height: alignments.ascent(a, metrics),
                         ..*a
                     }
                 })
@@ -1306,6 +1444,11 @@ impl TextEngine for ApproxTextEngine {
             astral,
             lines,
         )
+    }
+
+    /// The bottom of the first line: the font's ascent is the line.
+    fn first_baseline(&self, &(_, font, ..): &Self::Prepared, _: Points) -> Option<Points> {
+        Some(font * 1.2)
     }
 
     fn measure(
@@ -1827,6 +1970,41 @@ mod tests {
         assert!(cache.get(1000, None).is_none(), "cold entries are evicted");
     }
 
+    /// An attachment with a baseline of its own stands on the line's by it
+    /// (the first baseline of the text in it), and the line reserves what reaches past each
+    /// side; the other alignments place its box, whatever is in it.
+    #[test]
+    fn an_attachments_own_baseline_stands_on_the_lines() {
+        let font = FontExtent::new(px(10.0), px(3.0), px(5.0));
+        let a = TextAttachment {
+            index: 4,
+            width: px(30.0),
+            height: px(20.0),
+        };
+        let mut alignments = AttachmentAlignments::default();
+        assert_eq!(alignments.ascent(&a, font), px(20.0));
+        alignments.set_baseline(4, Some(px(14.0)));
+        assert!(!alignments.is_empty());
+        assert_eq!(alignments.baseline(4), Some(px(14.0)));
+        assert_eq!(alignments.baseline(5), None);
+        assert_eq!(alignments.ascent(&a, font), px(14.0));
+        assert_eq!(alignments.extent(&a, font), (px(14.0), px(6.0)));
+        // Never past its own box.
+        alignments.set_baseline(4, Some(px(25.0)));
+        assert_eq!(alignments.extent(&a, font), (px(20.0), px(0.0)));
+        alignments.set_baseline(4, Some(px(14.0)));
+        alignments.set(4, VerticalAlign::TextTop);
+        assert_eq!(alignments.ascent(&a, font), px(10.0));
+        alignments.set(4, VerticalAlign::Baseline);
+        alignments.set_baseline(4, None);
+        assert!(alignments.is_empty());
+        // A text's layout is another with it.
+        let text = AttributedText::default();
+        let plain = alignments.layout_hash(&text);
+        alignments.set_baseline(4, Some(px(14.0)));
+        assert_ne!(alignments.layout_hash(&text), plain);
+    }
+
     #[test]
     fn attachments_sit_in_their_line_by_vertical_align() {
         // A font 10 above and 3 below the baseline, x height 5; a 20 pt
@@ -1880,6 +2058,31 @@ mod tests {
             small.extent(font, VerticalAlign::TextBottom),
             (px(0.0), px(3.0))
         );
+    }
+
+    /// The headless engine's first baseline is the bottom of its first
+    /// line, where it draws it, at any width.
+    #[test]
+    fn approx_engine_has_its_first_baseline_at_its_first_lines_bottom() {
+        let engine = ApproxTextEngine;
+        let mut t = AttributedText::default();
+        t.push(
+            "a long line\nand another",
+            ResolvedTextStyle {
+                font_size: px(10.0),
+                ..ResolvedTextStyle::default()
+            },
+        );
+        let prepared = engine.prepare(&t);
+        let layout = engine.layout(&prepared, engine.measure(&prepared, None));
+        let line = engine.lines(&layout).remove(0);
+        for width in [px(20.0), px(1000.0)] {
+            assert_eq!(
+                engine.first_baseline(&prepared, width),
+                Some(line.y + line.ascender)
+            );
+        }
+        assert_eq!(engine.first_baseline(&prepared, px(20.0)), Some(px(12.0)));
     }
 
     #[test]
@@ -2180,5 +2383,22 @@ mod tests {
         forged.extend([0; 6]); // the stream, padded to 4 bytes
         assert_eq!(forged.len(), 60);
         assert!(font_data(&forged).is_err());
+    }
+
+    #[test]
+    fn em_font_size_is_of_the_inherited_size() {
+        let parent = ResolvedTextStyle {
+            font_size: px(16.0),
+            ..ResolvedTextStyle::default()
+        };
+        let span = TextStyle {
+            font_size_em: Some(0.875),
+            letter_spacing_em: Some(0.1),
+            ..TextStyle::default()
+        };
+        let r = parent.inherit(&span);
+        assert_eq!(r.font_size, px(14.0));
+        // Other ems follow the resolved size.
+        assert!((r.letter_spacing.0 - 1.4).abs() < 1e-4);
     }
 }

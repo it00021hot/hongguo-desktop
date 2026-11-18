@@ -103,7 +103,47 @@ impl FollowTarget {
     }
 }
 
+/// An element another one names for assistive technologies
+/// ([`crate::AccessibilityProp::ActiveDescendant`],
+/// [`crate::AccessibilityProp::Controls`],
+/// [`crate::AccessibilityProp::DescribedBy`]): a node JS passes (a `ref`),
+/// or whatever element carries a Rust [`ElementRef`], looked up as the
+/// core commits, so the element may be rendered after the one naming it
+/// (a list's row made as the list lays out).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElementTarget(pub(crate) Named);
+
+/// What an [`ElementTarget`] names.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Named {
+    /// A node JS made.
+    Node(NodeId),
+    /// The node carrying a Rust ref.
+    Ref(RefTarget),
+}
+
+impl ElementTarget {
+    /// Node `node` (JS's ref).
+    pub(crate) fn of_node(node: NodeId) -> Self {
+        Self(Named::Node(node))
+    }
+
+    /// The node it names now.
+    pub(crate) fn node(&self) -> Option<NodeId> {
+        match &self.0 {
+            Named::Node(node) => Some(*node),
+            Named::Ref(target) => Some(target.0.node.get()).filter(|&n| n != 0),
+        }
+    }
+}
+
 impl ElementRef {
+    /// What names the element carrying it for assistive technologies
+    /// ([`ElementTarget`]); `None` once its owner is gone.
+    pub(crate) fn element_target(&self) -> Option<ElementTarget> {
+        self.target().map(|t| ElementTarget(Named::Ref(t)))
+    }
+
     pub(crate) fn new(executor: &Rc<Executor>) -> Self {
         Self(Kept::new(Rc::new(Target {
             node: Cell::new(0),
@@ -146,6 +186,20 @@ impl ElementRef {
     /// disabled or hidden stays unfocused.
     pub fn focus(&self) {
         self.send(Command::Focus);
+    }
+
+    /// [`Self::focus`] as `from` closes, given way to any other move of the
+    /// focus out of `from` in the same commit (a `focus()` from Rust or
+    /// JS): a popup closing gives the keyboard focus back to its trigger,
+    /// but not over the focus the choice that closed it moved elsewhere (an
+    /// item that starts editing a field). A move inside `from` does not
+    /// count: it is going, and keys typed ahead (Down, then Return) move
+    /// the focus to the item they choose in the commit that closes it. The
+    /// last one asked for in a commit is the one that counts.
+    #[doc(hidden)]
+    pub fn focus_back(&self, from: ElementRef) {
+        let from = from.node();
+        self.reach(|to, executor| executor.act(Action::FocusBack { to, from }));
     }
 
     /// Ends the press going on in the element (or inside it) without its
@@ -414,8 +468,8 @@ impl ElementRef {
     /// view took it. For a component whose own hit layer lies over content
     /// the app renders (a table's cells): that content's pressable views
     /// get the presses on them. The element's own `pointerEvents` do not
-    /// count; hover and press states stay the hit layer's. Await it in a
-    /// task.
+    /// count; press states stay the hit layer's, hovers are passed on with
+    /// [`Self::hover_at`]. Await it in a task.
     pub fn press_at(&self, press: crate::PressEvent) -> Answer<bool> {
         let (answer, slot) = Answer::new();
         let pending = slot.clone();
@@ -426,6 +480,21 @@ impl ElementRef {
             slot.borrow_mut().deliver(false);
         }
         answer
+    }
+
+    /// Passes a pointer on into the element, as [`Self::press_at`] does a
+    /// press: the views in it under `mouse.page_position` (in its root
+    /// view, as a pointer's) and the views around them up to the element
+    /// are hovered, with the layout of the last commit. Their `hover:`
+    /// classes and the `group-hover:` classes inside them apply, and those
+    /// that listen hear `onMouseEnter` / `onMouseLeave` as the views under
+    /// the pointer change and `onMouseMove` on each call. `None`: the
+    /// pointer left the element. For a component whose own hit layer lies
+    /// over content the app renders (a table's cells), from the hit layer's
+    /// `onMouseMove` and `onMouseLeave`. The element's own `pointerEvents`
+    /// do not count.
+    pub fn hover_at(&self, mouse: Option<crate::MouseEvent>) {
+        self.reach(|node, executor| executor.act(Action::HoverAt(node, mouse)));
     }
 
     /// How long the element's transitions run (`transition*`: the
@@ -443,6 +512,24 @@ impl ElementRef {
             .is_none()
         {
             slot.borrow_mut().deliver(std::time::Duration::ZERO);
+        }
+        answer
+    }
+
+    /// The text the element shows (the DOM's `textContent`): the texts
+    /// inside it in tree order, joined, with the commit this call goes out
+    /// with, so a text changed before it counts. What `display: none`
+    /// hides is left out; empty when no rendered element carries the ref.
+    /// For a component that matches its content's words (a menu's
+    /// typeahead). Await it in a task.
+    pub fn text_content(&self) -> Answer<String> {
+        let (answer, slot) = Answer::new();
+        let pending = slot.clone();
+        if self
+            .reach(|node, executor| executor.act(Action::TextContent(node, pending)))
+            .is_none()
+        {
+            slot.borrow_mut().deliver(String::new());
         }
         answer
     }

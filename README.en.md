@@ -1,6 +1,6 @@
 # guava · 番果
 
-guava (番果) is an unofficial Hongguo client built with NSH 0.5.1 and Rust. Desktop targets are Windows 10 1809+, Windows 11 and macOS; Android and iOS have dedicated hosts.
+guava (番果) is an unofficial Hongguo client built with NSH 0.6.0 and Rust. Desktop targets are Windows 10 1809+, Windows 11 and macOS; Android and iOS have dedicated hosts.
 
 [中文](README.md) · [Notice](NOTICE) · [Third-party notices](THIRD-PARTY-NOTICES.md)
 

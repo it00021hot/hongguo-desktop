@@ -9,18 +9,20 @@ use std::{
 };
 
 use nsh_core::{
+    desktop::QuitRequestOptions,
     geometry::{Size, px},
     platform::{Appearance, Locale},
 };
 use nsh_engine::{App, Bundle, ColorScheme, EngineConfig, Environment, Idiom, Limits, Os, Root};
 use objc2::{
-    MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained,
-    runtime::ProtocolObject, sel,
+    MainThreadMarker, MainThreadOnly, define_class, msg_send,
+    rc::Retained,
+    runtime::{AnyClass, AnyObject, ProtocolObject},
 };
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSApplicationTerminateReply, NSAutoresizingMaskOptions, NSEventModifierFlags, NSMenu,
-    NSMenuItem, NSScreen, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSApplicationTerminateReply, NSAutoresizingMaskOptions, NSScreen, NSView, NSWindow,
+    NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL,
@@ -33,7 +35,7 @@ use crate::{
 
 static UI_SETS: RwLock<Option<Vec<nsh_core::element::Registry>>> = RwLock::new(None);
 
-/// Sets the UI sets every engine serves (default: `nsh/base`); an app
+/// Sets the UI sets every engine serves (default: `nsh/base`'s core part, enough for a Rust app; hosts that run JS pass all of `nsh/base`, `nsh_base::registry()`); an app
 /// with Rust components of its own calls this before [`run_app`].
 pub fn set_ui_sets(sets: Vec<nsh_core::element::Registry>) {
     *UI_SETS.write().unwrap_or_else(|e| e.into_inner()) = Some(sets);
@@ -86,13 +88,20 @@ fn register_app_components(components: &crate::native::Components) {
     }
 }
 
-/// The UI sets engines serve.
+/// The UI sets engines serve: [`set_ui_sets`]'s, else `nsh/base`'s core
+/// part only. A Rust app makes `nsh/base`'s components by type, so
+/// registering every part would link every component into its binary;
+/// hosts that run JS register the sets their code imports.
 pub(crate) fn ui_sets() -> Vec<nsh_core::element::Registry> {
     UI_SETS
         .read()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
-        .unwrap_or_else(|| vec![nsh_base::registry()])
+        .unwrap_or_else(|| {
+            vec![nsh_base::registry_of([
+                nsh_base::parts::core as nsh_base::parts::Part
+            ])]
+        })
 }
 
 /// What [`run_app`] runs.
@@ -130,6 +139,13 @@ pub struct AppOptions {
     pub app_id: String,
     /// The window title.
     pub title: String,
+    /// The app's icon, an image file (a PNG, say): [`run_app`] makes it the
+    /// application's icon, which the Dock, the app switcher and its
+    /// notifications show. For a process without an app bundle of its own
+    /// (the development host: `nsh run` passes `nsh.json` `"icon"`); a
+    /// packaged app's bundle has its icon (`CFBundleIconFile`) and leaves
+    /// this `None`.
+    pub icon: Option<PathBuf>,
     /// The initial window size in points.
     pub size: (i32, i32),
     /// The display [`run_app`]'s window opens on, centered. `None` (the
@@ -181,17 +197,17 @@ pub struct AppOptions {
     /// release runner run apps on their own, with none
     /// ([`Limits::standalone`]). See [`AppView::set_limits`].
     pub limits: Limits,
-    /// Where the apps it runs keep their data, each in `<dir>/<app id>`
-    /// (`nsh.json` `"id"`, which travels with the bundle): `None` uses the
-    /// system's data directory ([`nsh_engine::data_dir`]); an app that
-    /// embeds nsh gives its own (its data directory + `/nsh`, say).
+    /// The app's own data directory, used as it is
+    /// ([`nsh_engine::EngineConfig::data_dir`]): the release runner's
+    /// `nsh.json` `"dataDir"`, the development host's `--data-dir`. `None`:
+    /// the one under its id in the system's directory for apps' data.
     pub data_dir: Option<PathBuf>,
     /// Where the apps it runs keep their caches (the images they
     /// downloaded) and how much each keeps: by default the system's cache
     /// directory, each app's in `<dir>/<app id>`. See [`AppView::set_cache`].
     pub cache: nsh_engine::CacheOptions,
     /// The apps' storage (`nsh/storage`), overriding the `storage.json` in
-    /// their directory of [`data_dir`](Self::data_dir).
+    /// their data directory.
     pub storage: Option<Arc<dyn nsh_engine::StorageBackend>>,
     /// The app this view runs owns the process's notifications: banners
     /// show while it is in front, presses come to it and the Dock's badge is
@@ -199,6 +215,12 @@ pub struct AppOptions {
     /// notification center delegate of its own keeps it. Without it the
     /// permission is `unavailable` and nothing shows. [`run_app`] sets it.
     pub notifications: bool,
+    /// The app [`run_app`] runs reads and changes the app bundle's login
+    /// item (`Application.loginItem()`: `SMAppService.mainApp`, which System
+    /// Settings lists under Login Items). False by default, and read by
+    /// [`run_app`]'s view only: a view embedded in another app has no login
+    /// item. The release runner sets it, except under `nsh run`.
+    pub login_item: bool,
     /// The embedding app's channel with the apps the view runs
     /// (`nsh/host`): their launch parameters, events to them and handlers of
     /// their calls and posts ([`AppView::host`]). One for every app the view
@@ -220,6 +242,13 @@ pub struct AppOptions {
     /// too, but never changes the host's window: the embedding app makes its
     /// window nonopaque and clear itself where it wants that.
     pub transparent: bool,
+    /// Gives the app's address (`UrlScheme.setUrl`) to the system as the
+    /// current `NSUserActivity`, so Handoff continues it on the user's other
+    /// devices (`nsh_platform_apple::handoff`). An address that is no web page needs
+    /// `<bundle id>.url` in the app's Info.plist `NSUserActivityTypes`.
+    /// False by default; [`run_app`] sets it when the bundle declares that
+    /// type (`nsh.json` `"handoff": true`).
+    pub handoff: bool,
 }
 
 impl Default for AppOptions {
@@ -230,6 +259,7 @@ impl Default for AppOptions {
             chunks: None,
             app_id: "com.longbridge.nsh.host".to_owned(),
             title: "nsh".to_owned(),
+            icon: None,
             size: (1200, 800),
             display: None,
             keep_size: false,
@@ -244,8 +274,10 @@ impl Default for AppOptions {
             cache: Default::default(),
             storage: None,
             notifications: false,
+            login_item: false,
             host: nsh_engine::HostChannel::default(),
             transparent: false,
+            handoff: false,
         }
     }
 }
@@ -322,6 +354,9 @@ pub struct AppView {
     options: RefCell<AppOptions>,
     /// The performance monitor's HUD, while it shows.
     fps: RefCell<Option<Rc<crate::fps::Hud>>>,
+    /// How the performance monitor shows ([`AppView::set_fps_mode`]): kept
+    /// while it is hidden, and switched by a click on its panel.
+    fps_mode: Rc<Cell<nsh_core::FpsMode>>,
     #[cfg(feature = "dev")]
     pub(crate) dev: RefCell<Option<crate::dev::DevSession>>,
 }
@@ -332,6 +367,9 @@ impl AppView {
         let surface = Surface::new(mtm, initial_environment());
         surface.appearance.set(options.appearance);
         surface.transparent.set(options.transparent);
+        if options.handoff {
+            *surface.handoff.borrow_mut() = Some(Default::default());
+        }
         let frame = NSRect::new(
             NSPoint::new(0.0, 0.0),
             NSSize::new(options.size.0 as f64, options.size.1 as f64),
@@ -359,6 +397,9 @@ impl AppView {
             container,
             options: RefCell::new(options),
             fps: RefCell::new(None),
+            fps_mode: Rc::new(Cell::new(
+                nsh_engine::perf::mode_by_env().unwrap_or_default(),
+            )),
             #[cfg(feature = "dev")]
             dev: RefCell::new(None),
         });
@@ -367,6 +408,12 @@ impl AppView {
         *view.surface.perf_toggle.borrow_mut() = Some(Box::new(move |show| {
             if let Some(view) = weak.upgrade() {
                 view.set_fps_monitor(show);
+            }
+        }));
+        let weak = Rc::downgrade(&view);
+        *view.surface.perf_mode.borrow_mut() = Some(Box::new(move |mode| {
+            if let Some(view) = weak.upgrade() {
+                view.set_fps_mode(mode);
             }
         }));
         if view.options.borrow().fps || nsh_engine::perf::enabled_by_env() {
@@ -424,7 +471,8 @@ impl AppView {
             limits: options.limits,
             ui_sets: ui_sets(),
             runtime: None,
-            data_dir: options.data_dir.clone().or_else(nsh_engine::data_dir),
+            support_dir: nsh_engine::support_dir(),
+            data_dir: options.data_dir.clone(),
             cache: options.cache.clone(),
             storage: options.storage.clone(),
             clock: Default::default(),
@@ -437,15 +485,19 @@ impl AppView {
             audio: None,
             // The app's windows of its own are this backend's.
             windows: None,
+            // The standalone app's alone (`run_app`), when its runner says.
+            login_item: (options.login_item && self.surface.standalone.get()).then(|| {
+                Arc::new(crate::login_item::LoginItem)
+                    as Arc<dyn nsh_core::desktop::LoginItemBackend>
+            }),
         };
         crate::image::set_asset_base(&self.surface, options.asset_base.clone());
         *self.surface.chunks.borrow_mut() = options.chunks.clone();
         self.surface
             .native
             .set_asset_base(options.asset_base.clone());
-        self.surface
-            .native
-            .set_app(&config.app, config.data_dir.as_deref());
+        self.surface.native.set_app(&config.app);
+        crate::native::warm_web_later(&self.surface);
         self.surface.start(config);
     }
 
@@ -469,9 +521,23 @@ impl AppView {
     pub fn set_fps_monitor(&self, show: bool) {
         let mut hud = self.fps.borrow_mut();
         match (show, hud.is_some()) {
-            (true, false) => *hud = Some(crate::fps::Hud::show(self)),
+            (true, false) => *hud = Some(crate::fps::Hud::show(self, self.fps_mode.clone())),
             (false, true) => *hud = None,
             _ => {}
+        }
+    }
+
+    /// How the performance monitor shows, now and whenever it shows later
+    /// (`setFpsMode`): its whole panel ([`nsh_core::FpsMode::Expanded`],
+    /// the default; `NSH_FPS=collapsed` or `hidden` start it otherwise),
+    /// a pill with the frame rate alone, colored by the frame budget
+    /// ([`nsh_core::FpsMode::Collapsed`]), or nothing while it still
+    /// measures and logs ([`nsh_core::FpsMode::Hidden`]). A click on the
+    /// panel switches between the first two.
+    pub fn set_fps_mode(&self, mode: nsh_core::FpsMode) {
+        self.fps_mode.set(mode);
+        if let Some(hud) = &*self.fps.borrow() {
+            hud.update();
         }
     }
 
@@ -544,12 +610,17 @@ fn initial_environment() -> Environment {
         os: Os::MacOs,
         idiom: Idiom::Desktop,
         screen_color: true,
+        canvas_render: true,
+        // `NSSharingServicePicker` (`crate::share`).
+        share: true,
         file_requests: true,
         speech: true,
         notifications: true,
         audio: true,
         web_input: true,
         web_evaluate: true,
+        webview_requests: true,
+        reads_active_descendants: true,
         // wgpu, in builds with it, until it finds no GPU.
         shaders: nsh_engine::shader::LINKED,
         ..Environment::default()
@@ -561,6 +632,8 @@ struct Running {
     window: Retained<NSWindow>,
     view: Rc<AppView>,
     keep_alive_on_close: bool,
+    quit_options: QuitRequestOptions,
+    quit_requests: QuitRequests,
     /// It runs in the background ([`AppOptions::background`]).
     #[cfg(feature = "dev")]
     background: bool,
@@ -569,6 +642,33 @@ struct Running {
     /// error does ([`dev_app_came`], [`dev_error_shown`]).
     #[cfg(feature = "dev")]
     held: Cell<bool>,
+}
+
+/// A confirmation is shared by all exit sources. A system request can
+/// join a confirmation already shown for Quit or the main window.
+#[derive(Default)]
+struct QuitRequests {
+    /// `Some(true)` also owes AppKit a termination reply.
+    pending: Option<bool>,
+    serial: u64,
+}
+
+impl QuitRequests {
+    /// Whether a new confirmation is needed. Starting a system request
+    /// changes the serial so an old timeout cannot cancel a later one.
+    fn request(&mut self, system: bool) -> bool {
+        let notify = self.pending.is_none();
+        if notify || (system && self.pending != Some(true)) {
+            self.serial += 1;
+            self.pending = Some(system);
+        }
+        notify
+    }
+
+    /// Clears the confirmation; whether AppKit needs an answer.
+    fn take(&mut self) -> bool {
+        self.pending.take() == Some(true)
+    }
 }
 
 /// Shows the standalone app's window as it launches: key, the app active,
@@ -756,6 +856,24 @@ define_class!(
             }
         }
 
+        // An address continued from another device (Handoff,
+        // `AppOptions::handoff`): a link like the others.
+        #[unsafe(method(application:continueUserActivity:restorationHandler:))]
+        fn continue_user_activity(
+            &self,
+            _app: &NSApplication,
+            activity: &objc2_foundation::NSUserActivity,
+            _restoration: &block2::DynBlock<dyn Fn(std::ptr::NonNull<AnyObject>)>,
+        ) -> bool {
+            match nsh_platform_apple::handoff::continued_url(activity) {
+                Some(url) => {
+                    url_scheme(url);
+                    true
+                }
+                None => false,
+            }
+        }
+
         // The app starts once the links it was launched with came.
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
@@ -769,6 +887,9 @@ define_class!(
 
         #[unsafe(method(applicationShouldTerminate:))]
         fn should_terminate(&self, app: &NSApplication) -> NSApplicationTerminateReply {
+            if let Some(reply) = ask_quit(system_quit()) {
+                return reply;
+            }
             finish_running(app);
             // The caller owns process termination after run_app returns.
             NSApplicationTerminateReply::TerminateCancel
@@ -880,12 +1001,26 @@ pub(crate) fn close_main_window(key: u64) -> bool {
 /// Stops its engine and returns from [`run_app`]. May be called from any thread;
 /// the request is dispatched to AppKit's main thread. With no standalone runner
 /// this has no effect; embedded hosts own their application lifecycle.
+/// With an intercepted system quit pending, runs the engine's cleanup
+/// first, then approves AppKit's process termination instead of returning.
 pub fn quit_app() {
     dispatch2::DispatchQueue::main().exec_async(|| {
         if RUNNING.with(|running| running.borrow().is_some())
             && let Some(mtm) = MainThreadMarker::new()
         {
-            finish_running(&NSApplication::sharedApplication(mtm));
+            let app = NSApplication::sharedApplication(mtm);
+            let system =
+                RUNNING.with(|running| running.borrow_mut().as_mut().unwrap().quit_requests.take());
+            // Stop the engine and flush storage before AppKit can exit
+            // the process. Only a system request uses AppKit termination;
+            // ordinary Quit still returns ownership to run_app's caller.
+            if system {
+                // Keep AppKit's event loop running to finish termination.
+                stop_running();
+                app.replyToApplicationShouldTerminate(true);
+            } else {
+                finish_running(&app);
+            }
         }
     });
 }
@@ -902,6 +1037,126 @@ pub(crate) fn restart_app() {
             finish_running(&NSApplication::sharedApplication(mtm));
         }
     });
+}
+
+/// Reports a standalone quit request without waiting for the engine.
+/// System requests keep AppKit's termination pending until answered.
+fn ask_quit(system: bool) -> Option<NSApplicationTerminateReply> {
+    let request = RUNNING.with(|running| {
+        let mut running = running.borrow_mut();
+        let running = running.as_mut()?;
+        let surface = running.view.surface();
+        if !surface.chrome.asks_quit.get() || (system && !running.quit_options.system) {
+            return None;
+        }
+        let extended = running.quit_options.system || running.quit_options.main_window_close;
+        let notify = !extended || running.quit_requests.request(system);
+        Some((surface.clone(), notify, running.quit_requests.serial))
+    });
+    let (surface, notify, serial) = request?;
+    if notify {
+        crate::chrome::ask_quit(&surface);
+    }
+    if system {
+        // AppKit gives logout two minutes. Explicitly cancel before that
+        // deadline rather than leaving our pending state behind.
+        let key = surface.key();
+        crate::surface::after(110_000, move || {
+            let expired = RUNNING.with(|running| {
+                running.borrow().as_ref().is_some_and(|running| {
+                    running.view.surface().key() == key
+                        && running.quit_requests.serial == serial
+                        && running.quit_requests.pending == Some(true)
+                })
+            });
+            if expired {
+                cancel_quit_request(key);
+            }
+        });
+        Some(NSApplicationTerminateReply::TerminateLater)
+    } else {
+        Some(NSApplicationTerminateReply::TerminateCancel)
+    }
+}
+
+/// The main close uses either the window's guard or the shared quit
+/// confirmation, never both. A retained window still hides on close.
+pub(crate) fn ask_main_window_quit(key: u64, close_on_press: bool) -> bool {
+    let ask = RUNNING.with(|running| {
+        running.borrow().as_ref().is_some_and(|running| {
+            running.view.surface().key() == key
+                && close_on_press
+                && !running.keep_alive_on_close
+                && running.quit_options.main_window_close
+        })
+    });
+    ask && ask_quit(false).is_some()
+}
+
+/// Configures only the standalone runner owning this surface.
+pub(crate) fn set_quit_request_options(key: u64, options: QuitRequestOptions) {
+    RUNNING.with(|running| {
+        if let Some(running) = running.borrow_mut().as_mut()
+            && running.view.surface().key() == key
+        {
+            running.quit_options = options;
+        }
+    });
+    cancel_quit_request(key);
+}
+
+/// Identifies the confirmation a deferred listener removal may cancel.
+pub(crate) fn pending_quit_request(key: u64) -> Option<u64> {
+    RUNNING.with(|running| {
+        let running = running.borrow();
+        let running = running.as_ref()?;
+        (running.view.surface().key() == key && running.quit_requests.pending.is_some())
+            .then_some(running.quit_requests.serial)
+    })
+}
+
+/// Resolves AppKit's pending request outside a mount or delegate callback.
+pub(crate) fn cancel_quit_request(key: u64) {
+    let system = RUNNING.with(|running| {
+        let mut running = running.borrow_mut();
+        running.as_mut().is_some_and(|running| {
+            running.view.surface().key() == key && running.quit_requests.take()
+        })
+    });
+    if system {
+        dispatch2::DispatchQueue::main().exec_async(move || {
+            let mtm = MainThreadMarker::new().unwrap();
+            NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(false);
+        });
+    }
+}
+
+/// Whether the quit AppKit asks about is the system's: logging out,
+/// restarting or shutting down send the app a quit Apple event with a
+/// reason (`keyAEQuitReason`); the Quit item, Command-Q and the Dock's
+/// Quit carry none.
+fn system_quit() -> bool {
+    /// `keyAEQuitReason`, `'why?'`.
+    const QUIT_REASON: u32 = u32::from_be_bytes(*b"why?");
+    let Some(class) = AnyClass::get(c"NSAppleEventManager") else {
+        return false;
+    };
+    // SAFETY: Foundation's shared Apple event manager and the event it
+    // handles now (nil outside one), on the main thread.
+    let event: Option<Retained<AnyObject>> = unsafe {
+        let manager: Option<Retained<AnyObject>> = msg_send![class, sharedAppleEventManager];
+        match manager {
+            Some(manager) => msg_send![&manager, currentAppleEvent],
+            None => None,
+        }
+    };
+    let Some(event) = event else {
+        return false;
+    };
+    // SAFETY: an `NSAppleEventDescriptor`'s attribute, nil when absent.
+    let reason: Option<Retained<AnyObject>> =
+        unsafe { msg_send![&event, attributeDescriptorForKeyword: QUIT_REASON] };
+    reason.is_some()
 }
 
 /// Ends the standalone event loop, returning process ownership to its caller.
@@ -950,9 +1205,29 @@ fn stop_event_loop(app: &NSApplication) {
 /// Stops the standalone app's engine (its window closes).
 fn stop_running() {
     if let Some(running) = RUNNING.with(|r| r.borrow_mut().take()) {
+        if running.quit_requests.pending == Some(true) {
+            NSApplication::sharedApplication(running.view.surface().mtm)
+                .replyToApplicationShouldTerminate(false);
+        }
         running.view.stop();
         drop(running.window);
     }
+}
+
+/// Makes the image file `path` the application's icon ([`AppOptions::icon`]);
+/// one that does not load leaves the icon it has, with a warning.
+fn set_app_icon(app: &NSApplication, path: &std::path::Path) {
+    use objc2::AnyThread as _;
+    let Some(image) = objc2_app_kit::NSImage::initWithContentsOfFile(
+        objc2_app_kit::NSImage::alloc(),
+        &NSString::from_str(&path.to_string_lossy()),
+    ) else {
+        log::warn!("the app's icon {} is not an image", path.display());
+        return;
+    };
+    // SAFETY: the setter is unsafe only because it might not take `None`;
+    // this passes an image.
+    unsafe { app.setApplicationIconImage(Some(&image)) };
 }
 
 /// Names the app `name` in the menu bar, which shows the bundle's name
@@ -985,14 +1260,17 @@ fn name_app(name: &str) {
 /// The caller can finish cleanup or restart after this function returns.
 pub fn run_app(source: AppSource, mut options: AppOptions) -> std::process::ExitCode {
     options.notifications = true;
+    options.handoff |= nsh_platform_apple::handoff::declared();
     let mtm = MainThreadMarker::new().expect("run_app must be called on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(activation_policy(&options));
+    if let Some(icon) = &options.icon {
+        set_app_icon(&app, icon);
+    }
     name_app(&options.title);
     crate::chrome::set_app_name(&options.title);
     let delegate: Retained<Delegate> = unsafe { msg_send![Delegate::alloc(mtm), init] };
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-    app.setMainMenu(Some(&main_menu(mtm, &options.title)));
 
     // nsh.json `window`: known before the window is made, so its first
     // frame has it.
@@ -1021,7 +1299,8 @@ pub fn run_app(source: AppSource, mut options: AppOptions) -> std::process::Exit
     // are now.
     let kept = match &loaded {
         Some(app) if launch.restore_bounds => EngineConfig {
-            data_dir: options.data_dir.clone().or_else(nsh_engine::data_dir),
+            support_dir: nsh_engine::support_dir(),
+            data_dir: options.data_dir.clone(),
             storage: options.storage.clone(),
             ..EngineConfig::new(app.clone())
         }
@@ -1056,6 +1335,7 @@ pub fn run_app(source: AppSource, mut options: AppOptions) -> std::process::Exit
     window.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     crate::system::open_window(&window, options.appearance);
     let view = AppView::new(mtm, options.clone());
+    crate::chrome::show_standard_menu(view.surface());
     view.surface().standalone.set(true);
     // The standalone window's attributes own its live transparency state;
     // the surface-only flag remains for embedded AppViews.
@@ -1100,6 +1380,8 @@ pub fn run_app(source: AppSource, mut options: AppOptions) -> std::process::Exit
             window,
             view,
             keep_alive_on_close: options.keep_alive_on_close,
+            quit_options: QuitRequestOptions::default(),
+            quit_requests: QuitRequests::default(),
             #[cfg(feature = "dev")]
             background: options.background,
             #[cfg(feature = "dev")]
@@ -1118,6 +1400,9 @@ pub fn run_app(source: AppSource, mut options: AppOptions) -> std::process::Exit
     drop(delegate);
     // The new process waits for this one to exit, so the caller's cleanup
     // after `run_app` returns still comes first.
+    // An update waiting for the app to quit replaces it now, before a
+    // restart starts it again.
+    nsh_core::restart::run_at_exit();
     if RESTART.take() {
         if cfg!(feature = "dev") {
             // `nsh run` ends with its host and stops the dev server: a host
@@ -1169,83 +1454,6 @@ fn center_on_display(window: &NSWindow, display: WindowDisplay) {
 fn secondary(frames: &[NSRect]) -> Option<usize> {
     let primary = frames.first()?;
     frames.iter().position(|f| f != primary)
-}
-
-/// The app menu (About, Hide, Quit), Edit (the text commands fields
-/// answer: undo, cut, copy, paste, select all) and Window (minimize, zoom,
-/// full screen, close).
-fn main_menu(mtm: MainThreadMarker, title: &str) -> Retained<NSMenu> {
-    let bar = NSMenu::new(mtm);
-    let item = |menu: &NSMenu, title: &str, action: Option<objc2::runtime::Sel>, key: &str| {
-        // SAFETY: the actions are AppKit's standard ones, sent down the
-        // responder chain.
-        let item = unsafe {
-            NSMenuItem::initWithTitle_action_keyEquivalent(
-                NSMenuItem::alloc(mtm),
-                &NSString::from_str(title),
-                action,
-                &NSString::from_str(key),
-            )
-        };
-        menu.addItem(&item);
-        item
-    };
-    let submenu = |name: &str| {
-        let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(name));
-        let holder = item(&bar, name, None, "");
-        holder.setSubmenu(Some(&menu));
-        menu
-    };
-    let app_menu = submenu(title);
-    item(
-        &app_menu,
-        &format!("About {title}"),
-        Some(sel!(orderFrontStandardAboutPanel:)),
-        "",
-    );
-    app_menu.addItem(&NSMenuItem::separatorItem(mtm));
-    item(&app_menu, &format!("Hide {title}"), Some(sel!(hide:)), "h");
-    let others = item(
-        &app_menu,
-        "Hide Others",
-        Some(sel!(hideOtherApplications:)),
-        "h",
-    );
-    others
-        .setKeyEquivalentModifierMask(NSEventModifierFlags::Command | NSEventModifierFlags::Option);
-    app_menu.addItem(&NSMenuItem::separatorItem(mtm));
-    item(
-        &app_menu,
-        &format!("Quit {title}"),
-        Some(sel!(terminate:)),
-        "q",
-    );
-
-    let edit = submenu("Edit");
-    item(&edit, "Undo", Some(sel!(undo:)), "z");
-    // An uppercase key equivalent is Shift with it.
-    item(&edit, "Redo", Some(sel!(redo:)), "Z");
-    edit.addItem(&NSMenuItem::separatorItem(mtm));
-    item(&edit, "Cut", Some(sel!(cut:)), "x");
-    item(&edit, "Copy", Some(sel!(copy:)), "c");
-    item(&edit, "Paste", Some(sel!(paste:)), "v");
-    item(&edit, "Select All", Some(sel!(selectAll:)), "a");
-
-    let window = submenu("Window");
-    item(&window, "Minimize", Some(sel!(performMiniaturize:)), "m");
-    item(&window, "Zoom", Some(sel!(performZoom:)), "");
-    let full = item(
-        &window,
-        "Enter Full Screen",
-        Some(sel!(toggleFullScreen:)),
-        "f",
-    );
-    full.setKeyEquivalentModifierMask(
-        NSEventModifierFlags::Command | NSEventModifierFlags::Control,
-    );
-    window.addItem(&NSMenuItem::separatorItem(mtm));
-    item(&window, "Close", Some(sel!(performClose:)), "w");
-    bar
 }
 
 #[cfg(test)]

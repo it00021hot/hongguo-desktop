@@ -401,6 +401,28 @@ pub struct SpanStyle {
     pub line_through: bool,
 }
 
+/// A view's style, as [`TestStep::ViewStyle`] answers it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct ViewStyle {
+    /// Its `backgroundColor`, `0xRRGGBBAA`; `None` when transparent.
+    pub background_color: Option<u32>,
+    /// Its own `opacity`.
+    pub opacity: f32,
+    /// The opacity it shows with: its own times every view's around it.
+    pub effective_opacity: f32,
+}
+
+impl Default for ViewStyle {
+    fn default() -> Self {
+        ViewStyle {
+            background_color: None,
+            opacity: 1.0,
+            effective_opacity: 1.0,
+        }
+    }
+}
+
 /// A step of a test on a host's app, named as `nsh/test` names them: views
 /// are found by selectors (`id:save`, `text:Add`, `role:button[Save]`), and
 /// actions are native input at the view the selector names.
@@ -536,6 +558,15 @@ pub enum TestStep {
     },
     /// Lets go of the pointer `DragAndHold` left down (`app.drop`).
     Drop,
+    /// An input method composes `text` in the input (`app.compose`):
+    /// marked text at the caret, in place of what it composed; empty, the
+    /// composition ends with nothing committed.
+    Compose {
+        /// Which input.
+        selector: String,
+        /// What it composes.
+        text: String,
+    },
     /// Drops local files on a view (`app.dropFiles`).
     DropFiles {
         /// Where.
@@ -613,6 +644,12 @@ pub enum TestStep {
         /// The selector.
         selector: String,
     },
+    /// The style of the view `selector` names (`app.viewStyle`): a
+    /// [`ViewStyle`], or null when none matches.
+    ViewStyle {
+        /// The selector.
+        selector: String,
+    },
     /// The dialogs the app showed, in order (`app.dialogs`): a list of
     /// `nsh_core::Dialog`s.
     Dialogs,
@@ -679,6 +716,11 @@ pub enum TestStep {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "query", rename_all = "snake_case")]
 pub enum SceneQuery {
+    /// The textual accessibility value of a composite input, if supplied.
+    InputValueText {
+        /// The input selector.
+        selector: String,
+    },
     /// How many batches the app applied and how long ago the last was.
     Activity,
     /// The app's errors since the last time, taken.

@@ -144,15 +144,26 @@ fn listed_fonts(
     size: CGFloat,
     weight: u16,
 ) -> Option<(CFRetained<CTFont>, Vec<CFRetained<CTFont>>)> {
-    let mut fonts = nsh_core::font_families(list).filter_map(|family| match family {
-        FamilyName::Named(name) => family_font(name, size, weight),
-        generic => Some(generic_font(generic, size, weight)),
+    let mut first = None;
+    let mut fallbacks = Vec::new();
+    nsh_core::for_each_font_family(list, |family| {
+        let font = match family {
+            FamilyName::Named(name) => family_font(name, size, weight),
+            generic => Some(generic_font(generic, size, weight)),
+        };
+        if let Some(font) = font {
+            if first.is_none() {
+                first = Some(font);
+            } else {
+                fallbacks.push(font);
+            }
+        }
     });
-    let Some(first) = fonts.next() else {
+    let Some(first) = first else {
         log::warn!("font family `{list}` is not available; using the system font");
         return None;
     };
-    Some((first, fonts.collect()))
+    Some((first, fallbacks))
 }
 
 /// `font` with `fallbacks` as its cascade list
@@ -707,8 +718,9 @@ impl CoreTextEngine {
                 Points(x as f32),
             )
         };
-        let top = a.ascent(font, align).0 as CGFloat;
-        let (up, down) = a.extent(font, align);
+        // By its own baseline where it has one (the first baseline of the text in it).
+        let top = alignments.ascent(a, font).0 as CGFloat;
+        let (up, down) = alignments.extent(a, font);
         let (up, down) = (up.0 as CGFloat, down.0 as CGFloat);
         // A fixed `lineHeight`: CoreText centers a line's own extent in
         // it, so a placeholder reaching past the font on one side only
@@ -757,14 +769,20 @@ impl CoreTextEngine {
         let string =
             CFMutableAttributedString::new(None, 0).expect("CFAttributedStringCreateMutable");
         let s = Some(&*string);
-        // SAFETY: valid mutable string and range.
-        unsafe {
-            CFMutableAttributedString::replace_string(
-                s,
-                WHOLE,
-                Some(&CFString::from_str(&text.text)),
-            )
+        // CFString's UTF-8 decoder consumes a leading BOM, even when the
+        // input is not an external representation. Keep it as a character:
+        // the spans and attachments count it in their UTF-16 offsets.
+        let content = if text.text.starts_with('\u{feff}') {
+            let utf16: Vec<u16> = text.text.encode_utf16().collect();
+            // SAFETY: a live buffer of exactly `utf16.len()` UTF-16 units;
+            // CFStringCreateWithCharacters copies it.
+            unsafe { CFString::with_characters(None, utf16.as_ptr(), utf16.len() as CFIndex) }
+                .expect("CFStringCreateWithCharacters")
+        } else {
+            CFString::from_str(&text.text)
         };
+        // SAFETY: valid mutable string and range.
+        unsafe { CFMutableAttributedString::replace_string(s, WHOLE, Some(&content)) };
         let length = text.spans.last().map_or(0, |span| span.end as CFIndex);
         CFMutableAttributedString::begin_editing(s);
         let set = |range: CFRange, key: &CFString, value: &CFType| {
@@ -1225,6 +1243,16 @@ impl TextEngine for CoreTextEngine {
             )
         };
         Size::new(Points(size.width as f32), Points(size.height as f32))
+    }
+
+    fn first_baseline(&self, prepared: &Prepared, width: Points) -> Option<Points> {
+        // Typeset at the size it measures `width` wide, as the text is laid
+        // out: its first line's origin is its baseline, from the box's
+        // bottom.
+        let layout = self.layout(prepared, self.measure(prepared, Some(width)));
+        let layout = layout.downcast::<CoreTextLayout>()?;
+        let first = layout.lines.first()?;
+        Some(Points((layout.height - first.origin.y) as f32))
     }
 
     fn layout(&self, prepared: &Prepared, size: Size<Points>) -> TextLayout {
@@ -1732,5 +1760,42 @@ mod hit_regressions {
             rects.is_empty(),
             "the token has no source character: {rects:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod first_baseline {
+    use super::*;
+
+    fn baseline(size: f32) -> (f32, nsh_core::TextLine) {
+        let engine = CoreTextEngine::default();
+        let mut text = AttributedText::default();
+        text.push(
+            "Chat",
+            ResolvedTextStyle {
+                font_size: Points(size),
+                ..Default::default()
+            },
+        );
+        let prepared = engine.prepare(&text);
+        let width = engine.measure(&prepared, None).width;
+        let baseline = engine
+            .first_baseline(&prepared, width)
+            .expect("a first line");
+        let laid = engine.layout(&prepared, engine.measure(&prepared, Some(width)));
+        (baseline.0, engine.lines(&laid).remove(0))
+    }
+
+    /// What `align-items: baseline` lines a text up by, as on macOS.
+    #[test]
+    fn is_where_the_first_line_is_drawn_and_grows_with_the_font() {
+        let (small, line) = baseline(12.0);
+        // The line is drawn its ascender above its baseline.
+        assert!(
+            (small - (line.y.0 + line.ascender.0)).abs() < 0.01,
+            "{small} {line:?}"
+        );
+        let (large, _) = baseline(24.0);
+        assert!(large > small * 1.5, "{small} {large}");
     }
 }

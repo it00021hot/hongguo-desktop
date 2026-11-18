@@ -63,8 +63,18 @@ impl Wake for TaskWaker {
 /// What a component or a task asks of the platform, applied by the core.
 pub(crate) enum Action {
     Command(NodeId, Command),
+    /// The keyboard focus back to node `to` as `from` closes, unless the
+    /// commit it goes out with moves it anywhere out of `from`
+    /// ([`super::ElementRef::focus_back`]).
+    FocusBack {
+        to: NodeId,
+        from: Option<NodeId>,
+    },
     /// A dialog; its answer resolves the slot.
     Dialog(Dialog, Rc<RefCell<Output<i32>>>),
+    /// Close the dialog whose answer resolves the slot, answering it as
+    /// dismissed ([`DialogCloser::close`]).
+    CloseDialog(Rc<RefCell<Output<i32>>>),
     /// The result of a module function JS waits for.
     Return(u32, super::JsResult),
     /// The pixel size of the image at the URI (its bytes stay loaded); the
@@ -118,10 +128,44 @@ pub(crate) enum Action {
     /// Lets the user pick a color on the screen; the color (none when
     /// cancelled or not supported) resolves the slot.
     PickScreenColor(AnswerSlot<Option<crate::Hsla>>),
+    /// Shows the system's share sheet ([`crate::share`]); how it ended, or
+    /// why it could not share, resolves the slot.
+    Share(
+        crate::share::ShareRequest,
+        AnswerSlot<Result<crate::share::ShareOutcome, crate::share::ShareError>>,
+    ),
+    /// Whether the platform shows a share sheet and the app's capabilities
+    /// grant `share`.
+    ShareAvailable(AnswerSlot<bool>),
+    /// Opens a web sign-in session ([`crate::auth_session`]); how it ended,
+    /// or why it could not run, resolves the slot.
+    AuthSession(
+        crate::auth_session::AuthSessionRequest,
+        AnswerSlot<
+            Result<crate::auth_session::AuthSessionOutcome, crate::auth_session::AuthSessionError>,
+        >,
+    ),
+    /// Closes the app's waiting web sign-in session, answering it as
+    /// cancelled ([`crate::element::close_auth_session`]).
+    CloseAuthSession,
+    /// Renders a drawing offscreen into an image
+    /// ([`crate::canvas::render`]); the image's bytes, or why not, resolve
+    /// the slot.
+    RenderCanvas(
+        Box<crate::canvas::render::RenderRequest>,
+        AnswerSlot<Result<Vec<u8>, super::JsError>>,
+    ),
     /// A speech recognition session's request ([`crate::speech`]).
     Speech(SpeechAction),
     /// A notification's request ([`crate::notifications`]).
     Notification(NotificationAction),
+    /// Reads whether the app launches at login (`None`) or turns it on
+    /// (`Some(true)`) or off; whether it is on after it, or why it could
+    /// not be read or changed, resolves the slot.
+    LoginItem(
+        Option<bool>,
+        AnswerSlot<Result<bool, crate::desktop::LaunchAtLoginError>>,
+    ),
     /// The next link the system hands the app ([`crate::url_scheme`])
     /// resolves the slot, those that came before first.
     NextUrlSchemeOpen(AnswerSlot<String>),
@@ -152,6 +196,19 @@ pub(crate) enum Action {
     /// Whether a web view shows a page here: the platform shows web views
     /// and the app holds `webview`; the answer resolves the slot.
     WebViewAvailable(AnswerSlot<bool>),
+    /// A decision on a download ([`crate::webview::downloads`]): the
+    /// destination to accept, a cancel, or a hand-over; its answer resolves
+    /// the slot.
+    DownloadDecision {
+        /// The web view's node.
+        node: NodeId,
+        /// The download's id.
+        id: String,
+        /// What the app decided.
+        decision: crate::webview::downloads::Decision,
+        /// Where the decision's answer goes.
+        answer: AnswerSlot<Result<(), String>>,
+    },
     /// A request on local paths for the platform
     /// ([`crate::file_dialog`]); its answer resolves the slot.
     FileRequest(crate::file_dialog::FileRequest, FileAnswer),
@@ -205,13 +262,22 @@ pub(crate) enum Action {
     ),
     /// Rejects a request that exceeded its deadline.
     WebEvaluationTimeout(u32),
+    /// An offscreen canvas render's deadline passed.
+    CanvasRenderTimeout(u32),
     /// How long the node's transitions run with the styles of the commit
     /// the action goes out with; the time resolves the slot.
     TransitionTime(NodeId, AnswerSlot<std::time::Duration>),
+    /// The text the node shows with the commit the action goes out with;
+    /// the text resolves the slot.
+    TextContent(NodeId, AnswerSlot<String>),
     /// Presses what a pointer at the press's page position would inside
     /// the node, with the layout of the commit the action goes out with;
     /// whether a view took it resolves the slot.
     PressAt(NodeId, crate::PressEvent, AnswerSlot<bool>),
+    /// Hovers what a pointer at the event's page position would inside
+    /// the node, with the layout of the last commit; `None`: the pointer
+    /// left.
+    HoverAt(NodeId, Option<crate::MouseEvent>),
 }
 
 /// What a speech recognition session asks of the core
@@ -262,6 +328,8 @@ pub(crate) enum NotificationAction {
     },
     /// Removes the notification called this.
     Close(String),
+    /// Removes every notification of the app's.
+    CloseAll,
     /// Sets the app's badge.
     SetBadge(u32),
     /// The id of the next notification pressed resolves the slot.
@@ -310,6 +378,9 @@ impl FileAnswer {
 pub(crate) enum ClipboardRead {
     /// The text (`""` when it holds none).
     Text(AnswerSlot<String>),
+    /// The text for `Clipboard.readText`: `None` when the person refused
+    /// the read (iOS's paste prompt answered with Don't Allow Paste).
+    CheckedText(AnswerSlot<Option<String>>),
     /// Whether it holds text.
     Has(AnswerSlot<bool>),
     /// The image (`None` when it holds none, or one over
@@ -322,6 +393,22 @@ pub(crate) enum ClipboardRead {
     HasImage(AnswerSlot<bool>),
     /// The `file:` URLs of the local files on it.
     Files(AnswerSlot<Vec<String>>),
+}
+
+/// One item to put on the system clipboard (`Clipboard.write`): the same
+/// content in several formats, as plain text and, for apps that paste
+/// formatting, as HTML. Named as GPUI's `ClipboardItem` and the DOM's,
+/// which also hold one item's representations; this one is a plain
+/// object of its formats (`{ text, html? }`).
+#[derive(Debug, Clone, Default, PartialEq, super::JsObject)]
+#[prop(exact)]
+#[non_exhaustive]
+pub struct ClipboardItem {
+    /// The content as plain text.
+    pub text: String,
+    /// The content as HTML (a fragment, as `text/html` on the web holds).
+    #[prop(skip_none)]
+    pub html: Option<String>,
 }
 
 /// An image read from the system clipboard (`Clipboard.readImage`).
@@ -426,6 +513,8 @@ pub(crate) struct Executor {
     pub(crate) quit: Rc<RefCell<super::quit::QuitListeners>>,
     /// The quit listeners' work still running ([`crate::Core::start_quit`]).
     pub(crate) quitting: Rc<std::cell::Cell<usize>>,
+    /// What hears the user ask to quit ([`super::desktop::on_quit_request`]).
+    pub(crate) quit_requests: Rc<RefCell<super::quit::QuitRequestListeners>>,
     /// The views' keyboard shortcuts.
     pub(crate) keys: Rc<RefCell<super::keys::ViewKeys>>,
     /// The views' menus' handlers.
@@ -771,6 +860,39 @@ impl<T> Answer<T> {
     pub(crate) fn new() -> (Self, Rc<RefCell<Output<T>>>) {
         let slot = Rc::new(RefCell::new(Output::default()));
         (Self { slot: slot.clone() }, slot)
+    }
+}
+
+impl Answer<i32> {
+    /// What closes the dialog this answer waits for, kept apart from the
+    /// answer (which a task usually takes): see [`DialogCloser`].
+    pub fn closer(&self) -> DialogCloser {
+        DialogCloser {
+            slot: self.slot.clone(),
+        }
+    }
+}
+
+/// Closes a dialog the app showed (`nsh_base::alert_dialog`) without the
+/// user, as when what it asks about went away (the user went elsewhere):
+/// made by [`Answer::closer`].
+#[derive(Clone)]
+pub struct DialogCloser {
+    slot: Rc<RefCell<Output<i32>>>,
+}
+
+impl std::fmt::Debug for DialogCloser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DialogCloser").finish_non_exhaustive()
+    }
+}
+
+impl DialogCloser {
+    /// Closes the dialog, as if the user dismissed it: its answer resolves
+    /// with -1 now, and the platform takes it off the screen. Nothing
+    /// happens once it was answered, or outside the engine.
+    pub fn close(&self) {
+        super::ambient::act_if_running(Action::CloseDialog(self.slot.clone()));
     }
 }
 

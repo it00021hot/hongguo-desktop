@@ -1085,6 +1085,22 @@ impl Host {
         });
     }
 
+    /// Publishes what the performance monitor measured last to JS (`nsh`'s
+    /// `perfStats()`): `None` while it does not measure.
+    pub fn set_perf_stats(&self, stats: Option<&nsh_core::platform::PerfStats>) {
+        self.guarded(Phase::Call, || {
+            self.cx.with(|cx| {
+                let raw = cx.as_raw().as_ptr();
+                let result = match crate::env::set_perf_stats(raw, stats) {
+                    Ok(()) => Ok(()),
+                    Err(()) => Err(rquickjs::Error::Exception),
+                };
+                self.report(&cx, result);
+            });
+            self.run_jobs();
+        });
+    }
+
     /// Publishes the design tokens the app is drawn with to JS (`token()`
     /// of `nsh`). Call before evaluating the bundle, then on every change.
     pub fn set_tokens(&self, tokens: std::sync::Arc<nsh_core::element::Tokens>) {
@@ -1289,6 +1305,17 @@ fn payload_object<'js>(cx: &Ctx<'js>, payload: &EventPayload) -> rquickjs::Resul
                 Some(button) => obj.set("button", button.name())?,
                 None => obj.set("button", Value::new_null(cx.clone()))?,
             }
+            obj.set("pointerType", e.pointer_type.name())?;
+            obj.set("pressure", e.pressure)?;
+            obj.set("tiltX", e.tilt_x)?;
+            obj.set("tiltY", e.tilt_y)?;
+        }
+        EventPayload::Key(event) => {
+            obj.set("key", event.key.as_str())?;
+            obj.set("code", event.code.as_str())?;
+            obj.set("modifiers", modifiers_object(cx, &event.modifiers)?)?;
+            obj.set("repeat", event.repeat)?;
+            obj.set("defaultPrevented", event.default_prevented)?;
         }
         EventPayload::Wheel(e) => {
             obj.set("position", point_object(cx, e.position)?)?;
@@ -1299,6 +1326,13 @@ fn payload_object<'js>(cx: &Ctx<'js>, payload: &EventPayload) -> rquickjs::Resul
             delta.set("y", y)?;
             obj.set("delta", delta)?;
             obj.set("deltaMode", e.delta.mode_name())?;
+            obj.set("modifiers", modifiers_object(cx, &e.modifiers)?)?;
+        }
+        EventPayload::Pinch(e) => {
+            obj.set("position", point_object(cx, e.position)?)?;
+            obj.set("pagePosition", point_object(cx, e.page_position)?)?;
+            obj.set("delta", e.delta.0)?;
+            obj.set("phase", e.phase.name())?;
             obj.set("modifiers", modifiers_object(cx, &e.modifiers)?)?;
         }
         EventPayload::ContextMenu(e) => {
@@ -1353,6 +1387,8 @@ fn payload_object<'js>(cx: &Ctx<'js>, payload: &EventPayload) -> rquickjs::Resul
         EventPayload::Picked { id, .. } => obj.set("id", *id)?,
         // The core answers these too.
         EventPayload::FileRequest { id, .. } => obj.set("id", *id)?,
+        // And offscreen canvas renders.
+        EventPayload::CanvasImage { id, .. } => obj.set("id", *id)?,
         // And speech sessions' events (`Speech`'s listeners get them).
         EventPayload::Speech { id, .. } => obj.set("id", *id)?,
         // And sounds' and players' events (their objects' listeners).
@@ -1454,6 +1490,10 @@ fn payload_object<'js>(cx: &Ctx<'js>, payload: &EventPayload) -> rquickjs::Resul
                 o.set("locationX", p.location.x.0)?;
                 o.set("locationY", p.location.y.0)?;
                 o.set("changed", p.changed)?;
+                o.set("pointerType", p.pointer_type.name())?;
+                o.set("pressure", p.pressure)?;
+                o.set("tiltX", p.tilt_x)?;
+                o.set("tiltY", p.tilt_y)?;
                 o.set("timestamp", touch.timestamp)?;
                 points.set(i, o)?;
             }
@@ -2239,6 +2279,54 @@ const report = (v) => text(String(v));
             assert_eq!(obj.get::<_, String>("button").unwrap(), "right");
             let pressed: Value = obj.get("pressedButton").unwrap();
             assert!(pressed.is_null());
+        });
+    }
+
+    #[test]
+    fn pinch_payload_is_as_declared() {
+        let host = Host::new().unwrap();
+        let event = nsh_core::PinchEvent::new(
+            point(px(1.0), px(2.0)),
+            point(px(11.0), px(22.0)),
+            nsh_core::geometry::Percentage(0.25),
+            nsh_core::PinchPhase::Start,
+            Default::default(),
+        );
+        host.cx.with(|cx| {
+            let value = payload_object(&cx, &EventPayload::Pinch(event)).unwrap();
+            let obj = value.as_object().unwrap();
+            assert_eq!(obj.get::<_, f64>("delta").unwrap(), 0.25);
+            assert_eq!(obj.get::<_, String>("phase").unwrap(), "start");
+            let page: rquickjs::Object = obj.get("pagePosition").unwrap();
+            assert_eq!(page.get::<_, f64>("y").unwrap(), 22.0);
+            let modifiers: rquickjs::Object = obj.get("modifiers").unwrap();
+            assert!(!modifiers.get::<_, bool>("shift").unwrap());
+        });
+    }
+
+    #[test]
+    fn mouse_payload_has_pen_fields() {
+        let host = Host::new().unwrap();
+        let mouse = nsh_core::MouseEvent::new(
+            point(px(1.0), px(2.0)),
+            point(px(1.0), px(2.0)),
+            Default::default(),
+            Some(nsh_core::MouseButton::Left),
+        );
+        let pen = mouse.with_pointer(nsh_core::PointerType::Pen, 0.75, 30.0, -15.0);
+        host.cx.with(|cx| {
+            let value = payload_object(&cx, &EventPayload::Mouse(mouse)).unwrap();
+            let obj = value.as_object().unwrap();
+            assert_eq!(obj.get::<_, String>("pointerType").unwrap(), "mouse");
+            // A device without pressure: the DOM's 0.5 with a button down.
+            assert_eq!(obj.get::<_, f64>("pressure").unwrap(), 0.5);
+            assert_eq!(obj.get::<_, f64>("tiltX").unwrap(), 0.0);
+            let value = payload_object(&cx, &EventPayload::Mouse(pen)).unwrap();
+            let obj = value.as_object().unwrap();
+            assert_eq!(obj.get::<_, String>("pointerType").unwrap(), "pen");
+            assert_eq!(obj.get::<_, f64>("pressure").unwrap(), 0.75);
+            assert_eq!(obj.get::<_, f64>("tiltX").unwrap(), 30.0);
+            assert_eq!(obj.get::<_, f64>("tiltY").unwrap(), -15.0);
         });
     }
 

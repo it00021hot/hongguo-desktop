@@ -50,10 +50,13 @@ fn answer(mut events: FetchEvents, head: HttpHead, body: Vec<u8>) {
 #[derive(Default)]
 struct EchoNetwork {
     cancelled: Arc<Mutex<Vec<String>>>,
+    /// Whether each request let the platform follow its redirects.
+    follows: Arc<Mutex<Vec<bool>>>,
 }
 
 impl Network for EchoNetwork {
     fn fetch(&self, request: HttpRequest, events: FetchEvents) -> Box<dyn FetchTask> {
+        self.follows.lock().unwrap().push(request.follow_redirects);
         let url = request.url.clone();
         if url.ends_with("/slow") {
             let cancelled = self.cancelled.clone();
@@ -134,7 +137,7 @@ fn fetch_round_trips_through_the_platform_network() {
         limits: nsh_engine::Limits::default(),
         ui_sets: Vec::new(),
         runtime: None,
-        data_dir: None,
+        support_dir: None,
         cache: nsh_engine::CacheOptions::off(),
         storage: None,
         clock: Default::default(),
@@ -146,6 +149,8 @@ fn fetch_round_trips_through_the_platform_network() {
         speech: None,
         audio: None,
         windows: None,
+        login_item: None,
+        data_dir: None,
     };
     let _engine = Engine::start(config, || ApproxTextEngine, Sink(tx)).unwrap();
     assert_eq!(
@@ -261,7 +266,7 @@ fn fetch_stays_within_the_capabilities() {
         limits: nsh_engine::Limits::default(),
         ui_sets: Vec::new(),
         runtime: None,
-        data_dir: None,
+        support_dir: None,
         cache: nsh_engine::CacheOptions::off(),
         storage: None,
         clock: Default::default(),
@@ -273,6 +278,8 @@ fn fetch_stays_within_the_capabilities() {
         speech: None,
         audio: None,
         windows: None,
+        login_item: None,
+        data_dir: None,
     };
     let _engine = Engine::start(config, || ApproxTextEngine, Sink(tx)).unwrap();
     assert_eq!(
@@ -369,7 +376,7 @@ fn path_rules_hold_for_every_request() {
         limits: nsh_engine::Limits::default(),
         ui_sets: Vec::new(),
         runtime: None,
-        data_dir: None,
+        support_dir: None,
         cache: nsh_engine::CacheOptions::off(),
         storage: None,
         clock: Default::default(),
@@ -381,6 +388,8 @@ fn path_rules_hold_for_every_request() {
         speech: None,
         audio: None,
         windows: None,
+        login_item: None,
+        data_dir: None,
     };
     let _engine = Engine::start(config, || ApproxTextEngine, Sink(tx)).unwrap();
     assert_eq!(
@@ -426,6 +435,7 @@ fn Fetcher() -> impl nsh_core::element::IntoElement {
 fn rust_components_fetch_through_the_platform_network() {
     let network = Arc::new(EchoNetwork::default());
     let cancelled = network.cancelled.clone();
+    let follows = network.follows.clone();
     let (tx, rx) = mpsc::channel();
     let config = EngineConfig {
         app: nsh_engine::App::Rust(nsh_core::element::Root::of::<Fetcher>()),
@@ -442,7 +452,7 @@ fn rust_components_fetch_through_the_platform_network() {
         limits: nsh_engine::Limits::default(),
         ui_sets: Vec::new(),
         runtime: None,
-        data_dir: None,
+        support_dir: None,
         cache: nsh_engine::CacheOptions::off(),
         storage: None,
         clock: Default::default(),
@@ -454,6 +464,8 @@ fn rust_components_fetch_through_the_platform_network() {
         speech: None,
         audio: None,
         windows: None,
+        login_item: None,
+        data_dir: None,
     };
     let _engine = Engine::start(config, || ApproxTextEngine, Sink(tx)).unwrap();
     let mut shown = Vec::new();
@@ -473,4 +485,7 @@ fn rust_components_fetch_through_the_platform_network() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(*cancelled.lock().unwrap(), ["https://example.com/slow"]);
+    // A Rust app reaches what the platform allows: its requests go out as
+    // they are, and the platform follows their redirects.
+    assert_eq!(*follows.lock().unwrap(), [true, true]);
 }

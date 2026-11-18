@@ -28,6 +28,7 @@ mod agent;
 mod animation;
 mod app;
 mod app_window;
+#[cfg_attr(not(feature = "media"), path = "audio_off.rs")]
 mod audio;
 mod canvas;
 mod chrome;
@@ -43,8 +44,10 @@ mod gfx;
 mod global_shortcut;
 mod image;
 mod input;
+mod keyboard;
 mod keymap;
 mod linking;
+mod login_item;
 mod mount;
 mod native;
 #[path = "native/presentation.rs"]
@@ -90,6 +93,7 @@ pub use crate::{
         AppOptions, AppSource, AppView, debug_output, fatal_error, run_app, set_components,
         set_ui_sets,
     },
+    compose::Placement,
     image::AssetBase,
     native::{ComponentContext, ComponentFactory, Components, NativeComponent, Wheel},
     native_presentation::NativePresentation,

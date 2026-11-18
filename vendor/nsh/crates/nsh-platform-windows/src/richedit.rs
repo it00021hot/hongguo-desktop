@@ -124,8 +124,7 @@ pub(crate) struct Props {
     pub(crate) bits: u32,
     /// The maximum length, in UTF-16 units.
     pub(crate) max_length: u32,
-    /// `ES_AUTOHSCROLL` / `ES_AUTOVSCROLL`: how the text scrolls (never a
-    /// scroll bar: there is no window to put one in).
+    /// Scroll-bar support and auto-scrolling flags. The host draws the indicators.
     pub(crate) scroll: u32,
     /// The character a password shows.
     pub(crate) password: u16,
@@ -200,6 +199,9 @@ struct Host {
     vtbl: *const HostVtbl,
     refs: Cell<u32>,
     hwnd: HWND,
+    /// The window the field shows in (`hwnd`'s, or one of the app's own):
+    /// where its client points are on the screen.
+    shown_in: Cell<HWND>,
     props: RefCell<Props>,
     caret: Cell<Caret>,
     notes: Cell<Notes>,
@@ -255,6 +257,7 @@ impl Editor {
             vtbl: &HOST_VTBL,
             refs: Cell::new(1),
             hwnd,
+            shown_in: Cell::new(hwnd),
             props: RefCell::new(props),
             caret: Cell::new(Caret::default()),
             notes: Cell::new(Notes::default()),
@@ -304,6 +307,11 @@ impl Editor {
     fn host(&self) -> &Host {
         // SAFETY: the editor holds a reference to the host.
         unsafe { &*self.host }
+    }
+
+    /// The field shows in window `hwnd`: the IME's candidates go by it.
+    pub(crate) fn show_in(&self, hwnd: HWND) {
+        self.host().shown_in.set(hwnd);
     }
 
     /// The host's properties, to read.
@@ -880,12 +888,12 @@ unsafe extern "system" fn tx_set_cursor(_: This, _: HCURSOR, _: BOOL) {
 
 unsafe extern "system" fn tx_screen_to_client(this: This, pt: *mut POINT) -> BOOL {
     // SAFETY: the window and a point from the caller.
-    unsafe { ScreenToClient(host(this).hwnd, pt) }
+    unsafe { ScreenToClient(host(this).shown_in.get(), pt) }
 }
 
 unsafe extern "system" fn tx_client_to_screen(this: This, pt: *mut POINT) -> BOOL {
     // SAFETY: as above.
-    unsafe { ClientToScreen(host(this).hwnd, pt) }
+    unsafe { ClientToScreen(host(this).shown_in.get(), pt) }
 }
 
 unsafe extern "system" fn tx_activate(_: This, old: *mut i32) -> HRESULT {
