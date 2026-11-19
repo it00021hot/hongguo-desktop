@@ -260,7 +260,16 @@ pub(crate) fn info(
         )
         .child(
             crate::features::player::presentation::player_episode_label(move || {
-                tr("player.epShort").replace("{index}", &model.get().episode.to_string())
+                model.with(|info| {
+                    let episode =
+                        tr("player.epShort").replace("{index}", &info.episode.to_string());
+                    if !is_desktop() {
+                        return episode;
+                    }
+                    let total =
+                        tr("player.totalEpisodes").replace("{count}", &info.total.to_string());
+                    format!("{episode} · {total}")
+                })
             })
             .number_of_lines(1),
         )
