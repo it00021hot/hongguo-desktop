@@ -54,6 +54,8 @@ fn native_components(components: &nsh_platform_ios::Components) {
 #[component]
 /// The Rust application root shared by the desktop and mobile hosts.
 pub fn App() -> impl IntoElement {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    window_modes::show_main_window();
     i18n::install();
     view_memory::provide();
     shell::PlayerOverlay::provide();

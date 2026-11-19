@@ -1,9 +1,11 @@
 use super::{
     Mode,
-    geometry::{Geometry, Modes, Plan},
+    geometry::{Geometry, Modes, Plan, Rect},
+    placement,
     privacy::{Effect, Privacy},
     wire::{Action, Request, Response, State},
 };
+use nsh_core::desktop::{WindowMode, WindowPlacement};
 use std::time::{Duration, Instant};
 
 pub(super) const TICK_SECONDS: f64 = 0.04;
@@ -26,8 +28,10 @@ struct Pending {
 
 pub(super) struct Capture {
     pub geometry: Geometry,
+    pub placement: WindowPlacement,
     pub fullscreen: bool,
     pub minimized: bool,
+    pub visible: bool,
     pub pointer_inside: Option<bool>,
     pub pinned: bool,
 }
@@ -52,15 +56,18 @@ pub(super) struct Desktop {
     privacy_paused: bool,
     start: Instant,
     pending: Option<Pending>,
+    frame_before_switch: Option<Rect>,
+    last_placement: Option<(Mode, WindowPlacement)>,
     last: Option<State>,
 }
 
 impl Desktop {
     pub fn new(window: Box<dyn Window>, emit: impl Fn(Event) + 'static) -> Self {
+        let frame = |mode| placement::load(mode).map(|placement| placement.bounds.into());
         Self {
             window,
             emit: Box::new(emit),
-            modes: Modes::default(),
+            modes: Modes::new(frame(Mode::Mini), frame(Mode::Portrait)),
             privacy: Privacy::default(),
             frameless: false,
             mini_controls_visible: true,
@@ -68,6 +75,8 @@ impl Desktop {
             privacy_paused: false,
             start: Instant::now(),
             pending: None,
+            frame_before_switch: None,
+            last_placement: None,
             last: None,
         }
     }
@@ -100,6 +109,7 @@ impl Desktop {
     }
     fn execute(&mut self, request: &Request) -> Result<bool, String> {
         let capture = self.window.capture()?;
+        self.remember_placement(&capture);
         let needs_windowed = matches!(
             request.action,
             Action::SetMode { .. }
@@ -125,6 +135,7 @@ impl Desktop {
         };
         if let Some(plan) = plan {
             self.window.apply(plan)?;
+            self.frame_before_switch = Some(capture.geometry.frame);
         }
         let frameless = match request.action {
             Action::SetFrameless { enabled } => enabled,
@@ -188,6 +199,7 @@ impl Desktop {
         let Ok(capture) = self.window.capture() else {
             return;
         };
+        self.remember_placement(&capture);
         if self
             .last
             .is_some_and(|state| state.fullscreen && !capture.fullscreen)
@@ -239,6 +251,7 @@ impl Desktop {
         }
         let result = (|| {
             let capture = self.window.capture()?;
+            self.remember_placement(&capture);
             if !capture.fullscreen {
                 if let Some(plan) =
                     self.modes
@@ -257,6 +270,33 @@ impl Desktop {
             log::warn!("[NSH window] cleanup failed: {error}");
         }
     }
+
+    fn remember_placement(&mut self, capture: &Capture) {
+        let frame = capture.geometry.frame;
+        if !capture.visible || capture.minimized || capture.fullscreen || !frame.is_valid() {
+            return;
+        }
+        // NSH can still report the outgoing frame while a placement request settles.
+        if self.frame_before_switch == Some(frame) {
+            return;
+        }
+        self.frame_before_switch = None;
+        if self.modes.fill {
+            return;
+        }
+        let mode = self.modes.mode;
+        let placement = if mode == Mode::Normal {
+            capture.placement
+        } else {
+            WindowPlacement::new(WindowMode::Normal, capture.placement.bounds)
+        };
+        if self.last_placement != Some((mode, placement)) {
+            self.modes.remember(frame);
+            placement::save(mode, placement);
+            self.last_placement = Some((mode, placement));
+        }
+    }
+
     fn snapshot(&self) -> State {
         let capture = self.window.capture().ok();
         State {

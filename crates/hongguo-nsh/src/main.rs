@@ -14,20 +14,19 @@ fn main() -> impl std::process::Termination {
     platform::set_components(hongguo_nsh::__nsh_native_components_macos);
     #[cfg(target_os = "windows")]
     platform::set_components(hongguo_nsh::__nsh_native_components_windows);
+    let metadata = hongguo_nsh::metadata();
     platform::run_app(
         platform::AppSource::Rust(
-            platform::Root::of::<hongguo_nsh::App>().app_id(&hongguo_nsh::metadata().id),
+            platform::Root::of::<hongguo_nsh::App>()
+                .app_id(&metadata.id)
+                .main_window(metadata.window.clone()),
         ),
         platform::AppOptions {
-            title: hongguo_nsh::metadata().name.clone(),
+            title: metadata.name.clone(),
             data_dir: std::env::var_os("GUAVA_DATA_DIR").map(std::path::PathBuf::from),
-            app_id: hongguo_nsh::metadata().id.clone(),
+            app_id: metadata.id.clone(),
             #[cfg(target_os = "windows")]
             output_color_mode: platform::OutputColorMode::Auto,
-            size: (
-                hongguo_nsh::metadata().window.default_size.width,
-                hongguo_nsh::metadata().window.default_size.height,
-            ),
             ..Default::default()
         },
     )

@@ -6,6 +6,8 @@ mod framework;
 mod geometry;
 #[cfg(target_os = "macos")]
 mod occlusion;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod placement;
 mod platform;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod privacy;
@@ -14,6 +16,8 @@ mod wire;
 use nsh_core::storage::Storage;
 use nsh_core::{desktop::WindowMode, prelude::*};
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) use placement::show_main_window;
 pub(crate) use types::{Mode, portrait_aspect};
 use types::{PHONE_ASPECT, REFIT_DELTA};
 pub(crate) use wire::State;

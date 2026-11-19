@@ -129,7 +129,11 @@ pub(crate) fn surface(
         .overflow_hidden()
         .child(when(
             move || {
-                modes.is_some_and(|modes| modes.state().mode != crate::window_modes::Mode::Normal)
+                modes.is_some_and(|modes| {
+                    let state = modes.state();
+                    !state.fullscreen
+                        && (state.frameless || state.mode != crate::window_modes::Mode::Normal)
+                })
             },
             crate::features::player::presentation::window_drag_bar,
         ))

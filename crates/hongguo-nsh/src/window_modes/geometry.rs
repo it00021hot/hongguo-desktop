@@ -1,4 +1,5 @@
 use super::types::{Mode, REFIT_DELTA};
+use nsh_core::geometry::{Bounds, Points, point, px, size};
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -7,6 +8,36 @@ pub(super) struct Rect {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+}
+
+impl Rect {
+    pub fn is_valid(self) -> bool {
+        [self.x, self.y, self.width, self.height]
+            .into_iter()
+            .all(f64::is_finite)
+            && self.width > 0.0
+            && self.height > 0.0
+    }
+}
+
+impl From<Bounds<Points>> for Rect {
+    fn from(bounds: Bounds<Points>) -> Self {
+        Self {
+            x: f64::from(bounds.origin.x.0),
+            y: f64::from(bounds.origin.y.0),
+            width: f64::from(bounds.size.width.0),
+            height: f64::from(bounds.size.height.0),
+        }
+    }
+}
+
+impl From<Rect> for Bounds<Points> {
+    fn from(frame: Rect) -> Self {
+        Self::new(
+            point(px(frame.x as f32), px(frame.y as f32)),
+            size(px(frame.width as f32), px(frame.height as f32)),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,11 +68,18 @@ pub(super) struct Modes {
     original: Option<Geometry>,
     mini: Option<Rect>,
     portrait: Option<Rect>,
-    normal_portrait: Option<Rect>,
     aspect: f64,
 }
 
 impl Modes {
+    pub fn new(mini: Option<Rect>, portrait: Option<Rect>) -> Self {
+        Self {
+            mini,
+            portrait,
+            ..Self::default()
+        }
+    }
+
     pub fn enter(
         &mut self,
         mode: Mode,
@@ -52,7 +90,6 @@ impl Modes {
         if self.mode == mode {
             return Ok(None);
         }
-        self.remember(geometry.frame);
         let original = *self.original.get_or_insert(geometry);
         let (frame, minimum, maximized) = match mode {
             Mode::Normal => {
@@ -60,9 +97,7 @@ impl Modes {
                 (original.frame, MINI_SIZE, original.maximized)
             }
             Mode::Mini => (
-                self.mini
-                    .filter(|frame| fits(*frame, geometry.work))
-                    .unwrap_or_else(|| mini(geometry.work)),
+                self.mini.unwrap_or_else(|| mini(geometry.work)),
                 MINI_MIN,
                 false,
             ),
@@ -72,18 +107,16 @@ impl Modes {
                 let frame = if self.fill {
                     portrait(geometry, true, aspect)
                 } else {
-                    self.portrait
-                        .filter(|frame| fits(*frame, geometry.work))
-                        .unwrap_or_else(|| {
-                            portrait(
-                                Geometry {
-                                    work: geometry.work,
-                                    ..original
-                                },
-                                false,
-                                aspect,
-                            )
-                        })
+                    self.portrait.unwrap_or_else(|| {
+                        portrait(
+                            Geometry {
+                                work: geometry.work,
+                                ..original
+                            },
+                            false,
+                            aspect,
+                        )
+                    })
                 };
                 (frame, PORTRAIT_MIN, false)
             }
@@ -91,7 +124,6 @@ impl Modes {
         self.mode = mode;
         if mode != Mode::Portrait {
             self.fill = false;
-            self.normal_portrait = None;
         }
         Ok(Some(Plan {
             frame,
@@ -116,12 +148,9 @@ impl Modes {
             return Ok(None);
         }
         let frame = if fill {
-            self.normal_portrait = Some(geometry.frame);
             portrait(geometry, true, aspect)
         } else {
-            self.normal_portrait
-                .take()
-                .filter(|frame| fits(*frame, geometry.work))
+            self.portrait
                 .unwrap_or_else(|| portrait(geometry, false, aspect))
         };
         self.fill = fill;
@@ -150,11 +179,11 @@ impl Modes {
             maximized: false,
         }))
     }
-    fn remember(&mut self, frame: Rect) {
+    pub fn remember(&mut self, frame: Rect) {
         match self.mode {
-            Mode::Normal => {}
             Mode::Mini => self.mini = Some(frame),
-            Mode::Portrait => self.portrait = Some(self.normal_portrait.unwrap_or(frame)),
+            Mode::Portrait if !self.fill => self.portrait = Some(frame),
+            _ => {}
         }
     }
 }
@@ -162,28 +191,14 @@ impl Modes {
 fn validate(geometry: Geometry, aspect: f64) -> Result<(), String> {
     if !geometry.scale.is_finite()
         || geometry.scale <= 0.0
-        || !valid(geometry.frame)
-        || !valid(geometry.work)
+        || !geometry.frame.is_valid()
+        || !geometry.work.is_valid()
         || !aspect.is_finite()
         || aspect <= 0.0
     {
         return Err("invalid window geometry or video aspect".into());
     }
     Ok(())
-}
-fn valid(rect: Rect) -> bool {
-    [rect.x, rect.y, rect.width, rect.height]
-        .into_iter()
-        .all(f64::is_finite)
-        && rect.width > 0.0
-        && rect.height > 0.0
-}
-fn fits(rect: Rect, work: Rect) -> bool {
-    valid(rect)
-        && rect.x >= work.x
-        && rect.y >= work.y
-        && rect.x + rect.width <= work.x + work.width
-        && rect.y + rect.height <= work.y + work.height
 }
 fn mini(work: Rect) -> Rect {
     let width = MINI_SIZE.0.min((work.width - 2.0 * MARGIN).max(1.0));

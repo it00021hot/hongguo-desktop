@@ -10,7 +10,11 @@
   "theme": "theme.json",
   "appearance": "system",
   "windows": { "installerLanguage": "ChineseSimplified", "displayName": "番果" },
-  "window": { "defaultSize": { "width": 1280, "height": 840 } },
+  "window": {
+    "defaultSize": { "width": 1280, "height": 840 },
+    "titleBar": { "style": "hidden", "height": 44 },
+    "defaultVisible": false
+  },
   "android": { "targetSdk": 37, "activity": "com.hongguo.nsh.MainActivity", "abis": ["arm64-v8a"] },
   "ios": {
     "infoPlist": {

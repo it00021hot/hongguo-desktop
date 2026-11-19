@@ -187,7 +187,6 @@ pub(crate) fn shell_with_theme(
             ))
             .child(menu.sheet(preferences));
     }
-    crate::native_window::install();
     let exit_requested = signal(false);
     tray::install(exit_requested);
     let collapsed = sidebar_preferences::collapsed();

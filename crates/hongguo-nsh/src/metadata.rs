@@ -1,12 +1,15 @@
 use std::sync::LazyLock;
 
+use nsh_core::desktop::MainWindowOptions;
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppMetadata {
     pub name: String,
     pub id: String,
     pub version: String,
-    pub window: WindowMetadata,
+    #[serde(deserialize_with = "deserialize_window")]
+    pub window: MainWindowOptions,
     pub native_host: NativeHostMetadata,
 }
 
@@ -17,16 +20,11 @@ pub struct NativeHostMetadata {
     pub display_names: std::collections::HashMap<String, String>,
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WindowMetadata {
-    pub default_size: WindowSize,
-}
-
-#[derive(serde::Deserialize)]
-pub struct WindowSize {
-    pub width: i32,
-    pub height: i32,
+fn deserialize_window<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<MainWindowOptions, D::Error> {
+    let window = serde::Deserialize::deserialize(deserializer)?;
+    MainWindowOptions::from_json(&window).map_err(serde::de::Error::custom)
 }
 
 pub fn metadata() -> &'static AppMetadata {

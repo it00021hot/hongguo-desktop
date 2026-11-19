@@ -1,10 +1,10 @@
 use super::{
     desktop::{Capture, Window},
-    geometry::{Geometry, Plan, Rect},
+    geometry::{Geometry, Plan},
     wire::Observation,
 };
 use nsh_core::{
-    desktop::{WindowAttributes, WindowFrame, WindowFrameStyle, WindowLevel, WindowMode},
+    desktop::{WindowAttributes, WindowFrameStyle, WindowLevel, WindowMode, WindowPlacement},
     element::desktop::{WindowRef, displays},
     prelude::*,
 };
@@ -92,21 +92,17 @@ impl Window for FrameworkWindow {
             .find(|screen| Some(screen.id) == state.display)
             .or_else(|| screens.iter().find(|screen| screen.primary))
             .ok_or("window display is unavailable")?;
-        let rect = |bounds: Bounds<Points>| Rect {
-            x: f64::from(bounds.origin.x.0),
-            y: f64::from(bounds.origin.y.0),
-            width: f64::from(bounds.size.width.0),
-            height: f64::from(bounds.size.height.0),
-        };
         Ok(Capture {
             geometry: Geometry {
-                frame: rect(state.bounds),
-                work: rect(screen.visible_bounds),
+                frame: state.placement.bounds.into(),
+                work: screen.visible_bounds.into(),
                 maximized: state.mode == WindowMode::Maximized,
                 scale: f64::from(state.scale_factor),
             },
+            placement: state.placement,
             fullscreen: state.mode == WindowMode::FullScreen,
             minimized: state.minimized,
+            visible: state.visible,
             pointer_inside: self.observation.get_untracked().pointer_inside,
             pinned: self.pinned.get(),
         })
@@ -119,21 +115,13 @@ impl Window for FrameworkWindow {
             px(plan.minimum.1 as f32),
         )));
         self.window.set(attributes);
-        if untracked(|| self.window.state())
-            .is_some_and(|state| state.mode == WindowMode::Maximized)
-        {
-            self.window.set_mode(WindowMode::Normal);
-        }
-        self.window.set_bounds(WindowFrame {
-            x: Some(px(plan.frame.x as f32)),
-            y: Some(px(plan.frame.y as f32)),
-            width: Some(px(plan.frame.width as f32)),
-            height: Some(px(plan.frame.height as f32)),
-            ..Default::default()
-        });
-        if plan.maximized {
-            self.window.set_mode(WindowMode::Maximized);
-        }
+        let mode = if plan.maximized {
+            WindowMode::Maximized
+        } else {
+            WindowMode::Normal
+        };
+        self.window
+            .set_placement(WindowPlacement::new(mode, plan.frame.into()));
         Ok(())
     }
 

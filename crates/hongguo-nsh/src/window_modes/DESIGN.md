@@ -12,10 +12,12 @@ Windows 使用 NSH frame、阴影、缩放边缘与系统圆角；小窗/无边�
 
 - Mini：480×270，工作区右下16点，最小360×180。隐藏应用顶栏/侧栏/底导航，顶部44点拖动带独立于播放控件显隐。macOS原生红绿灯、Windows等价窗口按钮跟随播放器Chrome显隐；标题、集数、简介、seek和紧凑播放按钮保持原操作。
 - Portrait：比例取 min(真实竖视频比,9/19.5)，普通高度至多工作区70%，最小360×400；保留44点顶栏，隐藏分类插槽/侧栏/底导航。铺满使用当前工作区，还原用户普通竖窗快照；换流比例变化超过1%才refit。
-- Frameless：保留几何并隐藏壳UI；macOS只隐藏红绿灯。与系统全屏互斥。Mini/Portrait互斥，退出恢复原始Normal快照；置顶意图独立于形态。
+- Frameless：保留几何、隐藏壳UI，复用播放器顶部44点拖动带；macOS只隐藏红绿灯。与系统全屏互斥。Mini/Portrait互斥，退出恢复原始Normal快照；置顶意图独立于形态。
 - Incognito：光标出窗先暂停，至少80ms后隐藏，回到原矩形显示且不夺焦点。保留用户手动暂停；最小化或老板键隐藏时不自动抢回。窗口藏显统一经NSH。
 - 全屏：使用系统过渡；从全屏切换其他形态，等待NSH窗口状态确认退出，再应用尺寸。确认超时明确报错。
 - 手机横屏：系统确认旋转后更新模式；Android只隐藏导航条。退出/移除宿主恢复方向策略和系统栏；系统拒绝或未确认时明确报错。
+
+普通、小窗、竖屏各自通过 NSH Storage 记住位置和尺寸。启动时先恢复普通窗口，再显示；进入小窗或竖屏时恢复对应形态。竖屏铺满保留铺满前的几何，最小化和全屏期间保留原记忆。恢复时由 NSH 校验当前显示器上的可见区域。
 
 框架窗口命令异步提交，实际最大化/全屏状态以NSH窗口事件为准。
 命令effect只订阅请求，窗口事件只驱动状态采样，避免窗口状态变化重放切换命令。
@@ -45,4 +47,5 @@ Windows检查显示状态、DWM cloak和屏幕区域，再扣除上方不透明�
 Desktop geometry, sizing, window modes, levels and visibility now use NSH window APIs.
 Native supplements only observe complete occlusion and the global cursor, or control macOS traffic lights.
 Existing mini, portrait, frameless, privacy and playback behavior is retained by the shared controller.
+Normal, mini and portrait placements persist independently in NSH Storage. Launch restores the normal window before showing it. Portrait fill, minimization and native full screen preserve the remembered windowed placement.
 Mobile orientation remains host-specific. Builds and static checks do not replace platform runtime acceptance.
