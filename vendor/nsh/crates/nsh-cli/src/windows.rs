@@ -158,6 +158,15 @@ fn installer(
     let icon_rel = Path::new(dir.file_name().unwrap_or_default())
         .join("nsh")
         .join("icon.ico");
+    let icon = if icon.is_file() {
+        let digest = nsh_updater::sha256(&fs::read(&icon)?);
+        Some(InnoIcon {
+            source: icon_rel.to_string_lossy().replace('/', "\\"),
+            filename: format!("icon-{}.ico", &digest[..12]),
+        })
+    } else {
+        None
+    };
     let mut script = inno_script(&InnoApp {
         name,
         display_name: config.display_name.as_deref().unwrap_or(name),
@@ -172,9 +181,7 @@ fn installer(
             .unwrap_or_else(|| name.to_owned()),
         exe: &exe_name,
         setup: &format!("{stem}-setup"),
-        icon: icon
-            .is_file()
-            .then(|| icon_rel.to_string_lossy().replace('/', "\\")),
+        icon,
     });
     if let Some(language) = &config.installer_language {
         anyhow::ensure!(
@@ -252,7 +259,12 @@ struct InnoApp<'a> {
     /// The installer's file name, without `.exe`.
     setup: &'a str,
     /// The app's `.ico`, the installer's icon too.
-    icon: Option<String>,
+    icon: Option<InnoIcon>,
+}
+
+struct InnoIcon {
+    source: String,
+    filename: String,
 }
 
 /// The Inno Setup script of `app`.
@@ -267,6 +279,14 @@ fn inno_script(app: &InnoApp<'_>) -> String {
     let dir_name = esc(&file_stem(app.name));
     let id = esc(app.id);
     let exe = esc(app.exe);
+    let installed_icon = app
+        .icon
+        .as_ref()
+        .map(|icon| format!("nsh\\{}", icon.filename));
+    let icon_path = installed_icon.as_deref().unwrap_or(app.exe);
+    let shortcut_icon = installed_icon.as_ref().map_or_else(String::new, |path| {
+        format!("; IconFilename: \"{{app}}\\{path}\"")
+    });
     let mut s = String::from("\u{feff}");
     s.push_str("; Made by `nsh package --target windows`; compile with Inno Setup 6 (ISCC.exe).\n");
     s.push_str("[Setup]\n");
@@ -285,10 +305,13 @@ fn inno_script(app: &InnoApp<'_>) -> String {
     s.push_str(&format!("OutputBaseFilename={}\n", esc(app.setup)));
     s.push_str("Compression=lzma2\nSolidCompression=yes\nWizardStyle=modern\n");
     s.push_str("CloseApplications=force\n");
-    s.push_str(&format!("UninstallDisplayIcon={{app}}\\{exe}\n"));
+    s.push_str(&format!(
+        "UninstallDisplayIcon={{app}}\\{}\n",
+        esc(icon_path)
+    ));
     s.push_str(&format!("UninstallDisplayName={name}\n"));
     if let Some(icon) = &app.icon {
-        s.push_str(&format!("SetupIconFile={}\n", esc(icon)));
+        s.push_str(&format!("SetupIconFile={}\n", esc(&icon.source)));
     }
     s.push_str("\n[Tasks]\n");
     s.push_str("Name: \"desktopicon\"; Description: \"{cm:CreateDesktopIcon}\"; GroupDescription: \"{cm:AdditionalIcons}\"; Flags: unchecked\n");
@@ -296,24 +319,24 @@ fn inno_script(app: &InnoApp<'_>) -> String {
     // The bundle and assets of the previous version go: a file it had and
     // this one has not must not stay.
     s.push_str("Type: filesandordirs; Name: \"{app}\\nsh\"\n");
-    if shortcut_name != dir_name {
-        for directory in ["autoprograms", "autodesktop"] {
-            s.push_str(&format!(
-                "Type: files; Name: \"{{{directory}}}\\{dir_name}.lnk\"\n"
-            ));
-        }
-    }
     s.push_str("\n[Files]\n");
     s.push_str(&format!(
         "Source: \"{}\\*\"; DestDir: \"{{app}}\"; Flags: ignoreversion recursesubdirs createallsubdirs\n",
         esc(app.source)
     ));
+    if let Some(icon) = &app.icon {
+        s.push_str(&format!(
+            "Source: \"{}\"; DestDir: \"{{app}}\\nsh\"; DestName: \"{}\"; Flags: ignoreversion\n",
+            esc(&icon.source),
+            icon.filename,
+        ));
+    }
     s.push_str("\n[Icons]\n");
     s.push_str(&format!(
-        "Name: \"{{autoprograms}}\\{shortcut_name}\"; Filename: \"{{app}}\\{exe}\"; AppUserModelID: \"{id}\"\n"
+        "Name: \"{{autoprograms}}\\{shortcut_name}\"; Filename: \"{{app}}\\{exe}\"; AppUserModelID: \"{id}\"{shortcut_icon}; Check: NshCanCreateShortcut('autoprograms')\n"
     ));
     s.push_str(&format!(
-        "Name: \"{{autodesktop}}\\{shortcut_name}\"; Filename: \"{{app}}\\{exe}\"; AppUserModelID: \"{id}\"; Tasks: desktopicon\n"
+        "Name: \"{{autodesktop}}\\{shortcut_name}\"; Filename: \"{{app}}\\{exe}\"; AppUserModelID: \"{id}\"{shortcut_icon}; Check: NshCanCreateShortcut('autodesktop'); Tasks: desktopicon\n"
     ));
     s.push_str("\n[Run]\n");
     s.push_str(&format!(
@@ -352,6 +375,13 @@ fn inno_script(app: &InnoApp<'_>) -> String {
         "    Result := Copy(Buffer, 1, Size - 1);\n",
         "end;\n\n",
     ));
+    s.push_str(&format!(
+        "const\n  NshShortcutName = '{}';\n  NshLegacyShortcutName = '{}';\n  NshExePath = '\\{exe}';\n  NshIconPath = '\\{}';\n\n",
+        pascal(&file_stem(app.display_name)),
+        pascal(&file_stem(app.name)),
+        pascal(icon_path),
+    ));
+    s.push_str(include_str!("windows-shortcuts.iss"));
     s.push_str(concat!(
         "function NshProgram(Command: String): String;\n",
         "var\n  Quote: Integer;\nbegin\n",
