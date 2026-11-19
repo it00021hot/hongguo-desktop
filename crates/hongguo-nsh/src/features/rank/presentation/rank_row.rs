@@ -44,11 +44,13 @@ pub(crate) fn rank_row(
                     move || data.get().rank > 0,
                     move || {
                         text(move || data.get().rank.to_string())
-                            .w_8()
+                            .min_w_14()
                             .flex_shrink_0()
                             .text_center()
                             .text_2xl()
                             .font_weight(FontWeight::BLACK)
+                            .tabular_nums()
+                            .number_of_lines(1)
                             .accessible(false)
                             .text_color(move || {
                                 if data.get().rank <= 3 {
