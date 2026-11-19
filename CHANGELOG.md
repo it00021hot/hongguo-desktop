@@ -9,6 +9,18 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.2] - 2026-11-19
+
+### 🐛 修复
+
+- 主窗口、小窗和竖屏窗口分别记住位置与尺寸，重新启动或切回对应模式时恢复。
+- 无边框播放时可拖动窗口顶部移动位置。退出无边框后，移动过的位置会在下次启动时恢复。
+- Windows 覆盖安装时刷新番果的快捷方式和图标，清理仍指向番果的旧名称快捷方式，保留其他应用的快捷方式和图标缓存。
+
+从 0.7.0 或更早版本升级需手动下载安装。需要迁移旧版数据时，请先备份并参照 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+English: The main, mini, and portrait windows now remember their size and position independently. Drag the top of the frameless player to move it. After leaving frameless mode, the new position is restored on the next launch. Windows upgrades refresh Guava’s shortcuts and icons and remove legacy shortcuts that still point to Guava. Install manually when upgrading from 0.7.0 or earlier, and back up your data before following the legacy migration instructions.
+
 ## [0.8.1] - 2026-11-18
 
 ### ⚡ 优化
