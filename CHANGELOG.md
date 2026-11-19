@@ -9,6 +9,17 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.3] - 2026-11-19
+
+### 🐛 修复
+
+- 修复 macOS 搜索框粘贴后联想有结果、输入框却仍显示占位提示的问题。
+- 桌面普通播放窗口的剧名下方恢复总集数，与当前集号一起显示。
+
+从 0.7.0 或更早版本升级需手动下载安装。需要迁移旧版数据时，请先备份并参照 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+English: Fixed pasted search text disappearing from the macOS search field while suggestions loaded. The normal desktop player shows the total episode count alongside the current episode. Install manually when upgrading from 0.7.0 or earlier, and back up your data before following the legacy migration instructions.
+
 ## [0.8.2] - 2026-11-19
 
 ### 🐛 修复
