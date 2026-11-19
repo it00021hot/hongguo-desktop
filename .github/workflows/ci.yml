@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      package:
+        description: Build and upload all three desktop packages
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       source_ref:
@@ -25,11 +30,11 @@ concurrency:
 jobs:
   format:
     if: inputs.package || github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(release):')
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          ref: ${{ inputs.source_ref || github.ref }}
+          ref: ${{ inputs.source_ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.99.1
@@ -58,5 +63,5 @@ jobs:
     needs: format
     uses: ./.github/workflows/nsh-desktop.yml
     with:
-      source_ref: ${{ inputs.source_ref || github.ref }}
+      source_ref: ${{ inputs.source_ref || github.sha }}
       package: ${{ inputs.package || false }}

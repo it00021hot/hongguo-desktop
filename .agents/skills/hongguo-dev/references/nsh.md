@@ -41,7 +41,7 @@ cargo build --workspace
 cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
 ```
 
-`make lint` 和提交钩子仅执行当前宿主门禁。可选 `make lint-macos` 另需两个 macOS Rust target 与 PATH 上的 `clang`、`clang++`、`llvm-ar`；已有的目标编译器环境变量不被覆盖。CI 全部使用 macOS runner：Windows 经 cargo-xwin 检查完整 MSVC 工作区，两种 Mac 架构各自原生构建。
+`make lint` 和提交钩子执行当前宿主门禁。可选 `make lint-macos` 另需两个 macOS Rust target 与 PATH 上的 `clang`、`clang++`、`llvm-ar`。CI 在 Ubuntu 运行共享检查，在 Windows x64 和两种 macOS 架构的 runner 上各自构建和检查工作区。
 
 Anime4K 的已入库 WGSL 与 `graph.json` 是维护源文件，保留版本、原始来源摘要与许可证；不执行上游 JavaScript 导出器。上述资源门禁复用 WGPU 同版本 Naga 校验 WGSL、模型入口、绑定、纹理顺序、工作组与 SHA-256。修改着色器后执行 `cargo build-tool enhancement-assets --patch` 输出哈希更新补丁，审核后精确应用；不改原始来源摘要来冒充新的上游版本。
 
@@ -49,7 +49,7 @@ Anime4K 的已入库 WGSL 与 `graph.json` 是维护源文件，保留版本、�
 
 SDK 从 `vendor/native-codecs` 自动解包、校验，日常不源码重建。单独准备可用 `cargo build-tool setup <Rust triple>`。源码重建见 `docs/native-media-build.md`；VVdeC 源码位于 `crates/hongguo-vvdec-sys/vendor/vvdec`。不得混入 FFmpeg、QuickJS 或旧播放器链。
 
-桌面 CI 统一由 macOS 打包。Windows 使用 Intel Mac runner，经 `cargo xwin build` 交叉链接 MSVC 目标，显式传递 `--target`，读取 `.cargo/config.toml` 的 rustflags，保留 `/STACK` 与 `crt-static`。Windows 检查及打包共用 `.github/actions/windows-cross` 准备 LLVM 19、固定 cargo-xwin 与 SDK 缓存；打包时再准备固定且校验 SHA-256 的 Wine、Inno Setup 6.7.4 与官方中文翻译，`winepath` 转换安装器路径。交叉构建必须有资源编译器（CI 用 llvm-rc shim）：`crates/hongguo-nsh/build.rs` 在编译期把图标与 manifest 嵌入 exe，turso 版本资源同理；PE 审计强制校验这些资源。macOS 两种架构各用原生 runner，沿用 `codesign`、`sips`、`iconutil`、PlistBuddy、ditto 与 hdiutil。媒体 SDK 按目标三元组选择。NSH 默认输出到调用目录的 `.nsh/out`，可用 `--out` 指定。Windows 生成 `guava/`、`guava.zip`；检测到 Inno Setup 时生成 `guava-setup.exe`，不再使用 NSIS。macOS 生成 `guava.app` 并由 NSH ad hoc 签名；当前分别打包 arm64 与 x86_64，不宣称支持通用媒体库包。交叉编译与 PE 审计不能代替 Windows 真机安装和播放验收。
+Windows CI 在 `windows-2025` 上使用原生 x64 MSVC、Windows SDK 和 `rc.exe`。显式构建 `x86_64-pc-windows-msvc`，读取 `.cargo/config.toml` 的 rustflags，包括 `/STACK` 和 `crt-static`。发版时先校验 Inno Setup 6.7.4 和官方简体中文翻译的 SHA-256，再由 NSH 调用 `ISCC.exe` 生成 `guava-setup.exe`。NSH 同时生成 `guava/` 和 `guava.zip`，PE 审计校验主程序图标、manifest 和运行时依赖。macOS 两种架构分别在原生 runner 上打包，由 NSH 对 `guava.app` 做 ad hoc 签名。媒体 SDK 按目标三元组选择。NSH 默认输出到调用目录的 `.nsh/out`，可用 `--out` 指定。安装和播放须在对应设备验收。
 
 本项目为纯 Rust 根组件，NSH 的 TSX `.nshpkg` 签名不适用；Windows 安装器不会自动获得 Authenticode 签名，交付时须明确实际签名状态。
 
@@ -69,7 +69,7 @@ iOS 需要完整 Xcode，最低 16.0。设备签名通过 NSH `--sign` 与 `--pr
 
 桌面产物由可复用 `.github/workflows/nsh-desktop.yml` 统一构建；`release.yml` 校验版本 tag 后复用 CI，通过全部产物、来源和 SHA-256 门禁后正式发布。手动触发默认保留草稿，显式勾选 `publish` 才公开。版本、原生归档与签名状态见 [桌面发版说明](../../../../docs/desktop-release.md)。普通分支 push 不创建远端 Release；推送版本 tag 需明确的发布授权。
 
-CI 先执行共享格式、资源、主题、版本与文件规模门禁，再并行执行 Windows/macOS 三目标工作区构建与严格 Clippy。发版通过 `package: true` 让各目标在同一 runner 上继续 NSH 打包，全部成功后才公开。普通 CI 不打包，dev push 不触发；main push 和目标为 main 的 PR 触发检查，`chore(release):` 合并提交由 tag 工作流负责完整验证以避免重复。移动端未正式发布，CI 不打包移动端。Android 正式签名可配置 `NSH_ANDROID_KEYSTORE_BASE64`、`NSH_ANDROID_KEY_ALIAS` 和 `NSH_KEYSTORE_PASSWORD` secrets；缺省仍是框架调试签名，不能当作商店发布验收。iOS 真机身份与 profile、macOS Developer ID/公证、Windows Authenticode 不凭空创建，均需使用方提供实际凭证并单独验收。
+CI 先执行共享格式、资源、主题、版本与文件规模门禁，再并行执行 Windows/macOS 三目标工作区构建与严格 Clippy。发版通过 `package: true` 让各目标在同一 runner 上继续 NSH 打包，全部成功后才公开。手动运行 `CI` 时勾选 `package` 可生成三份桌面产物，用于验证打包。`main` push 和目标为 `main` 的 PR 触发检查，`chore(release):` 提交由 tag 工作流执行完整验证。移动端未正式发布，CI 不打包移动端。Android 正式签名可配置 `NSH_ANDROID_KEYSTORE_BASE64`、`NSH_ANDROID_KEY_ALIAS` 和 `NSH_KEYSTORE_PASSWORD` secrets；缺省仍是框架调试签名，不能当作商店发布验收。iOS 真机身份与 profile、macOS Developer ID/公证、Windows Authenticode 不凭空创建，均需使用方提供实际凭证并单独验收。
 
 共享界面与服务装配归 `hongguo-nsh`。`features/<功能>/presentation` 保存专用呈现，`ui` 保存共享控件，`shell` 保存窗口和导航；业务只通过 service。详见 `docs/project-structure.md` 与 `crates/hongguo-nsh/DESIGN.md`。
 

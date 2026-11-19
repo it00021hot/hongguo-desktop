@@ -4,27 +4,25 @@
 
 ## 检查与产物
 
-普通分支 CI、桌面打包与发版均使用 macOS runner。格式、版本与更新日志门禁保持不变，三个桌面目标仍执行完整工作区构建与严格 Clippy：
+共享检查、发版预检与发布使用 `ubuntu-24.04`。Windows x64 和两种 macOS 架构分别在对应平台的 runner 上构建、运行严格 Clippy 和打包。
 
 每轮先通过格式、资源、主题、版本和文件规模门禁，再并行执行三个桌面目标（最多三个 runner）。每个目标在同一 runner 上完成工作区构建、严格 Clippy 和发版打包，复用工具链、SDK 与 Cargo 缓存；不再等全部目标检查结束后启动第二批打包任务。发布仍须等三个目标全部成功并通过产物校验。
 
-普通 CI 仅由 `main` push、目标为 `main` 的 PR 或手动操作触发，`dev` push 不触发。普通 CI 不打包；只有发版调用显式传入 `package: true` 才生成桌面产物。`chore(release):` 合并提交跳过重复的 main push 检查，由版本 tag 工作流执行完整检查与打包；发版调用不受该跳过条件影响。同一分支的更新会取消过期 CI，检查和打包使用不同并发组。
+普通 CI 由 `main` push、目标为 `main` 的 PR 或手动操作触发。发版流程会传入 `package: true`。手动运行 `CI` 时也可以勾选 `package`，从所选分支的同一提交并行构建三份桌面产物，完成后上传到该次运行的 Artifacts。`chore(release):` 提交由版本 tag 工作流执行完整检查与打包，以减少重复的 `main` push 检查。检查和打包使用不同的并发组。
 
-格式门禁和发版元数据步骤复用构建工具缓存；桌面检查与打包共用按目标划分的缓存。Windows 单独缓存固定版本 cargo-xwin 可执行文件和 MSVC SDK，避免重复源码安装；已有 LLVM 19 直接使用。归档产物上传不再额外压缩。实际耗时仍取决于 runner 排队、缓存命中和最慢的目标，不承诺固定完成时间。
+共享检查与发版元数据步骤复用构建工具缓存。桌面检查与打包共用按目标划分的 Cargo 缓存。归档产物上传时关闭额外压缩。实际耗时取决于 runner 排队、缓存命中和最慢的目标。
 
 | 目标 | Runner | 构建与打包 |
 | --- | --- | --- |
-| Windows x64 | `macos-15-intel` | cargo-xwin 交叉编译 MSVC，Wine 执行 Inno Setup |
+| Windows x64 | `windows-2025` | 原生 MSVC 编译，NSH 通过 Inno Setup 生成安装器 |
 | macOS Apple Silicon | `macos-15` | 原生编译、NSH 签名与 DMG |
 | macOS Intel | `macos-15-intel` | 原生编译、NSH 签名与 DMG |
 
-Windows 的检查与打包复用 `.github/actions/windows-cross`：LLVM 19、cargo-xwin 0.23.1、共享 MSVC SDK 缓存，保留静态 CRT、x86-64 指令基线和 8 MiB 主线程栈。交叉构建始终显式指定目标，防止从错误目录收集宿主产物。Windows 任务选择 Intel Mac，Wine 无需 Rosetta。
+Windows 任务启用 runner 自带的 x64 MSVC 工具链和 Windows SDK，显式构建 `x86_64-pc-windows-msvc`，沿用静态 CRT、x86-64 指令基线和 8 MiB 主线程栈。资源编译器 `rc.exe` 嵌入应用图标、DPI manifest 和 Turso 版本资源，Windows 上的 NSH 也能在打包时直接更新应用图标。PE 审计校验图标、manifest、架构、栈大小和运行时依赖。
 
-安装包步骤从固定来源下载 Wine 11.0_1、Inno Setup 6.7.4 及官方中文翻译，逐项核验 SHA-256；使用 runner 临时目录中的 Wine prefix，不写入应用业务数据。`iscc` 入口通过 `winepath` 转换脚本和输出路径，NSH 仍负责安装脚本生成和装包。Wine 只运行构建工具，不作为客户端依赖。macOS 沿用 Apple 的 `codesign`、`sips`、`iconutil`、`ditto` 和 `hdiutil`，签名与镜像审计完整保留。
+发版时在 Windows runner 临时目录中安装固定版本的 Inno Setup 6.7.4，校验安装器和官方简体中文翻译的 SHA-256。NSH 生成安装脚本并直接调用 `ISCC.exe`，同时生成用于应用内更新的便携 ZIP。macOS 使用 Apple 的 `codesign`、`sips`、`iconutil`、`ditto` 和 `hdiutil` 完成签名和镜像打包。
 
-Windows 交叉构建需要资源编译器：`crates/hongguo-nsh/build.rs` 在编译期把 `assets/icons/icon.ico` 与 DPI manifest 嵌入 exe（CI 用 llvm-rc shim，本机用既有 rc.exe 配置），turso 的版本资源同样依赖；PE 审计强制校验图标与 manifest 资源存在。NSH 交叉打包时提示“exe 使用默认图标”是它不知道编译期资源的误报，可忽略。
-
-Windows 安装器使用固定 Inno Setup 6.7.4 与 SHA-256 校验的官方中文翻译。安装器、桌面/开始菜单、卸载列表显示“番果”。默认安装路径、`com.guava.app` 与数据目录沿用现值。
+Windows 安装器、桌面和开始菜单快捷方式、卸载列表均显示“番果”。默认安装路径、`com.guava.app` 与数据目录沿用现值。
 
 每个平台生成带版本和架构的产物、来源/签名状态 JSON 与 SHA-256 清单：
 
@@ -57,8 +55,8 @@ Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未
 
 ## English
 
-After shared gates pass, the three desktop targets run in parallel. Each target builds, lints and (for releases only) packages on the same runner, reusing its toolchain and caches. Publication waits for all targets and artifact verification. Ordinary CI runs on main pushes and PRs targeting main, not dev pushes, and does not package. Release merge commits with the chore(release): prefix skip duplicate main-push checks; the tag workflow still runs all checks and packaging. Build tools and pinned cargo-xwin binaries are cached, and archived artifacts are uploaded without extra compression. Runner queues and cache hits still affect elapsed time.
+After shared gates pass, the three desktop targets run in parallel. Each target builds, lints and packages release artifacts on the same runner, reusing its toolchain and Cargo cache. Publication waits for all targets and artifact verification. Regular CI runs on pushes to `main`, pull requests targeting `main`, and manual dispatch. Select `package` when manually running `CI` to build and upload all three desktop packages from the same commit. Version tags trigger packaging and replace duplicate checks on release commits. Archived artifacts are uploaded without extra compression. Runner queues and cache hits affect elapsed time.
 
-All desktop CI, packaging and draft-release jobs use macOS runners. Intel Mac runners cross-compile Windows x64 through LLVM 19 and cargo-xwin 0.23.1; the shared `windows-cross` action also prepares checksum-verified Wine 11.0_1 and Inno Setup 6.7.4 when installers are needed. It uses a temporary Wine prefix and converts installer paths with `winepath`. Wine is a build tool only. Apple Silicon and Intel macOS packages use their respective native runners and Apple's signing and DMG tools. All three targets retain workspace builds and strict Clippy checks; Windows keeps its MSVC target, static CRT, baseline x86-64 instructions, 8 MiB stack and PE audit. Cross-compilation does not validate Windows runtime behavior.
+Shared checks, release preflight and publication run on `ubuntu-24.04`. The `windows-2025` runner builds Windows x64 with its native MSVC toolchain and Windows SDK. For releases, the workflow verifies SHA-256 for Inno Setup 6.7.4 and the official Simplified Chinese translation, then NSH calls `ISCC.exe` to build the installer. The Windows build uses the static CRT, baseline x86-64 instructions, an 8 MiB stack and PE auditing. Apple Silicon and Intel macOS packages use their respective native runners and Apple signing and DMG tools.
 
 A version tag runs the shared CI and publishes the release only after all target artifacts, provenance and SHA-256 manifests pass verification. Assets are staged in a draft before publication; failed checks do not publish a release. Manual runs keep a draft unless `publish` is selected. Windows remains unsigned; macOS uses ad hoc signing without notarization. Real-device installation/playback acceptance remains manual. Mobile is unreleased, so CI no longer packages mobile artifacts.

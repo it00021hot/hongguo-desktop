@@ -20,7 +20,7 @@ jobs:
       max-parallel: 3
       matrix:
         include:
-          - os: macos-15-intel
+          - os: windows-2025
             target: windows
             triple: x86_64-pc-windows-msvc
             args: ''
@@ -33,7 +33,6 @@ jobs:
             triple: x86_64-apple-darwin
             args: '--arch x86_64'
     runs-on: ${{ matrix.os }}
-    # macos-15-intel 上完整打包约需 130-150 分钟，90 会在 Package through NSH 中途被砍
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7.0.1
@@ -50,37 +49,61 @@ jobs:
           workspaces: |
             . -> target
             vendor/nsh -> ../../target/nsh-cli
-      - name: Prepare Windows cross compiler and installer
+      - name: Activate x64 MSVC and Windows SDK
         if: matrix.target == 'windows'
-        uses: ./.github/actions/windows-cross
-        with:
-          installer: ${{ inputs.package && 'true' || 'false' }}
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_INSTALLATION=%%I"
+          if not defined VS_INSTALLATION exit /b 1
+          call "%VS_INSTALLATION%\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          where cl.exe || exit /b 1
+          where rc.exe || exit /b 1
+          for %%I in ("%VCToolsInstallDir%\bin\Hostx64\x64" "%WindowsSdkVerBinPath%\x64") do >>"%GITHUB_PATH%" echo %%~fI
+          >>"%GITHUB_ENV%" echo INCLUDE=%INCLUDE%
+          >>"%GITHUB_ENV%" echo LIB=%LIB%
+          >>"%GITHUB_ENV%" echo LIBPATH=%LIBPATH%
+      - name: Install pinned Inno Setup and Chinese translation
+        if: matrix.target == 'windows' && inputs.package
+        shell: pwsh
+        env:
+          INNO_SHA256: a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c
+          TRANSLATION_SHA256: e0b0b350e2245f3c5e65586dfe43d574f6e7f06f2261149aba284954b3fc9a8d
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'inno-setup'
+          New-Item -ItemType Directory -Path $tools | Out-Null
+          $installer = Join-Path $tools 'installer.exe'
+          Invoke-WebRequest -MaximumRetryCount 3 -Uri 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe' -OutFile $installer
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash -ne $env:INNO_SHA256) {
+            throw 'Inno Setup installer SHA-256 mismatch'
+          }
+          $inno = Join-Path $tools 'compiler'
+          $setup = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$inno`"" -Wait -PassThru
+          if ($setup.ExitCode -ne 0 -or !(Test-Path -LiteralPath (Join-Path $inno 'ISCC.exe') -PathType Leaf)) {
+            throw "Inno Setup installation failed (exit $($setup.ExitCode))"
+          }
+          $translation = Join-Path $inno 'Languages/ChineseSimplified.isl'
+          Invoke-WebRequest -MaximumRetryCount 3 -Uri 'https://raw.githubusercontent.com/jrsoftware/issrc/6ef32198ef1f7b7b375cd4b6b90896c2a58eb4c2/Files/Languages/ChineseSimplified.isl' -OutFile $translation
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $translation).Hash -ne $env:TRANSLATION_SHA256) {
+            throw 'Inno Setup Chinese translation SHA-256 mismatch'
+          }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $inno -Encoding utf8
       - name: Prepare authenticated native SDK
+        run: cargo build-tool setup '${{ matrix.triple }}'
+      - name: Add macOS media library search path
+        if: matrix.target == 'macos'
         shell: bash
-        run: |
-          cargo build-tool setup '${{ matrix.triple }}'
-          if [ '${{ matrix.target }}' = macos ]; then
-            echo "DYLD_LIBRARY_PATH=$PWD/target/native-media/${{ matrix.triple }}/libde265-1.1.3/lib" >> "$GITHUB_ENV"
-          fi
-      - name: Build and lint the target workspace
-        shell: bash
-        run: |
-          cargo_args=()
-          if [ '${{ matrix.target }}' = windows ]; then
-            cargo_args+=(xwin)
-          fi
-          cargo "${cargo_args[@]}" build --locked --workspace --target '${{ matrix.triple }}'
-          cargo "${cargo_args[@]}" clippy --locked --workspace --target '${{ matrix.triple }}' --all-targets -- -D warnings -D clippy::allow_attributes
+        run: echo "DYLD_LIBRARY_PATH=$PWD/target/native-media/${{ matrix.triple }}/libde265-1.1.3/lib" >> "$GITHUB_ENV"
+      - name: Build the target workspace
+        run: cargo build --locked --workspace --target '${{ matrix.triple }}'
+      - name: Lint the target workspace
+        run: cargo clippy --locked --workspace --target '${{ matrix.triple }}' --all-targets -- -D warnings -D clippy::allow_attributes
       - name: Build the repository NSH CLI
         if: inputs.package
-        shell: bash
-        run: |
-          cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
-          echo "$PWD/target/nsh-cli/debug" >> "$GITHUB_PATH"
+        run: cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
       - name: Package through NSH
         if: inputs.package
-        shell: bash
-        run: nsh package crates/hongguo-nsh --target '${{ matrix.target }}' --out 'target/packages/${{ matrix.triple }}' ${{ matrix.args }}
+        run: ./target/nsh-cli/debug/nsh${{ matrix.target == 'windows' && '.exe' || '' }} package crates/hongguo-nsh --target '${{ matrix.target }}' --out 'target/packages/${{ matrix.triple }}' ${{ matrix.args }}
       - name: Audit and archive release artifacts
         if: inputs.package
         run: cargo build-tool release-assets '${{ matrix.triple }}' 'target/packages/${{ matrix.triple }}' 'target/release-assets/${{ matrix.triple }}'

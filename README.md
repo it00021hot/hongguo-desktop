@@ -51,7 +51,7 @@ Windows 扩展 HEVC 优先 D3D11 VLD，Main10 使用 P010；实际硬解不可�
 
 ## 桌面发版准备
 
-`0.7.0` 的 CI 全部使用 macOS runner 和固定 NSH CLI，构建 Windows x64、Apple Silicon 和 Intel Mac 产物。版本 tag 触发完整检查，全部产物与校验和通过后正式发布；手动运行默认保留草稿。Windows 暂不做 Authenticode 签名，Mac 为 ad hoc 签名、未公证；安装和播放仍需对应设备验收。版本、产物和操作步骤见 [桌面发版说明](docs/desktop-release.md)。
+桌面 CI 使用固定 NSH CLI，在 Windows 原生构建 x64 安装器，在对应 macOS runner 上打包 Apple Silicon 和 Intel 版本。共享检查、发版预检和发布在 Ubuntu 执行。版本 tag 触发完整检查，产物及校验和全部通过后公开发布。手动运行默认保留草稿。Windows 包未做 Authenticode 签名，macOS 包使用 ad hoc 签名。安装和播放仍需对应设备验收。具体流程见 [桌面发版说明](docs/desktop-release.md)。
 
 应用标识为 `com.guava.app`。Windows 数据目录为 `%APPDATA%\guava`，macOS 为 `~/Library/Application Support/guava`，数据库为 `guava.db`；`GUAVA_DATA_DIR` 可显式覆盖数据根。下载位于所选下载根下的 `guava/<剧名>`。移动端使用新应用 ID 的私有容器。旧版数据保留在原处，不自动迁移或删除。
 
