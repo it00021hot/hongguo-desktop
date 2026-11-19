@@ -1035,6 +1035,12 @@ macro_rules! define_field {
                     // editor's end (it implements NSTextDelegate).
                     let _: () = unsafe { msg_send![super(self), textDidEndEditing: notification] };
                     if let Some(cx) = self.ivars().get() {
+                        if let Some(input) = cx.input.upgrade() {
+                            let align = alignment(input.config.borrow().align);
+                            if self.alignment() != align {
+                                self.setAlignment(align);
+                            }
+                        }
                         cx.focus_changed(false);
                     }
                 }
@@ -2277,7 +2283,11 @@ pub(crate) fn config(surface: &Rc<Surface>, view: &NshView, config: &InputConfig
         Editor::Line { field, .. } => {
             field.setFont(Some(&font));
             field.setTextColor(Some(&color));
-            field.setAlignment(align);
+            // AppKit can replace live text with the cell's old value when setting field alignment.
+            // While editing, style the editor and update the field after it commits.
+            if field.currentEditor().is_none() {
+                field.setAlignment(align);
+            }
             field.setBaseWritingDirection(direction);
             field.setEditable(config.editable);
             field.setPlaceholderAttributedString(Some(&placeholder(config, &font, align)));

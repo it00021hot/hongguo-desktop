@@ -77,3 +77,7 @@ keeps Inno Setup's default language. Missing compiler translations fail compilat
 retaining the executable, install directory and AppId. Upgrades check each shortcut's
 target before cleanup or refresh. Shortcuts use a content-addressed icon, and Explorer
 receives item-level change notifications for the app's files and shortcuts.
+
+On macOS, live text alignment changes apply to the field editor while editing.
+The field's cell takes the new alignment after the edit commits so AppKit cannot
+restore the old cell contents over the active input.
