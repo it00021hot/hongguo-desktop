@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """生成应用图标：已确认的番果果实播放图标与 macOS 留白网格。
 
-只依赖 ImageMagick（`magick`）与 macOS 自带的 `iconutil`，不需要 Pillow——
-脚本会在缺工具时给出明确报错。
+使用 ImageMagick 生成 NSH 打包用的 PNG 和 Windows 资源编译用的 ICO。
 
 ## 图形来源（assets/icons/source.png）
 
@@ -34,30 +33,21 @@ CANVAS = 1024
 # macOS 标准网格：图形本体占画布的比例（824/1024，四周各留 100）
 PLATE = 824
 CORNER_RADIUS_RATIO = 0.225
-# 应用图标的常用分辨率。
-PNG_SIZES = (32, 128, 256, 512, 1024)
-# macOS .icns 的标准档位（每种各带 @2x）
-ICNS_SIZES = (16, 32, 128, 256, 512)
-
-
-def run(args: list[str]) -> None:
-    subprocess.run(args, check=True)
+# NSH 应用元数据及 Android 独立宿主使用的尺寸。
+PNG_SIZES = (512, 1024)
 
 
 def magick(*args: str, out: Path) -> None:
-    """跑一条 magick：`magick <args...> <out>`。"""
-    run(["magick", *args, str(out)])
+    subprocess.run(["magick", *args, str(out)], check=True)
 
 
 def require_tools() -> None:
-    missing = [t for t in ("magick",) if not shutil.which(t)]
-    if missing:
-        sys.exit(f"缺少工具：{', '.join(missing)}（brew install imagemagick）")
+    if not shutil.which("magick"):
+        sys.exit("缺少 magick（brew install imagemagick）")
 
 
-def build_master() -> Path:
-    """1024 画布 + 居中 824 图形（macOS 标准网格），落 /tmp 备用。"""
-    out = Path(tempfile.mkdtemp()) / "master.png"
+def build_master(directory: Path) -> Path:
+    out = directory / "master.png"
     plate = out.with_name("plate.png")
     magick(str(SOURCE), "-filter", "Lanczos", "-resize", f"{PLATE}x{PLATE}", out=plate)
     mask = out.with_name("mask.png")
@@ -76,12 +66,6 @@ def write_pngs(master: Path) -> None:
         magick(str(master), "-filter", "Lanczos", "-resize", f"{size}x{size}",
                out=ICON_DIR / f"{size}x{size}.png")
         print(f"wrote {size}x{size}.png")
-    # Retina 那档的惯例命名：128 点的 @2x = 256 像素
-    magick(str(master), "-filter", "Lanczos", "-resize", "256x256",
-           out=ICON_DIR / "128x128@2x.png")
-    print("wrote 128x128@2x.png (256x256)")
-    shutil.copyfile(master, ICON_DIR / "icon.png")
-    print("wrote icon.png (1024x1024)")
 
 
 def write_ico(master: Path) -> None:
@@ -91,36 +75,15 @@ def write_ico(master: Path) -> None:
     print("wrote icon.ico (16..256)")
 
 
-def write_icns(master: Path) -> None:
-    """macOS：走 iconutil 生成标准 iconset（16..512 及各自 @2x）。
-
-    PIL 的 ICNS 写出器只塞它拿到的几档、尺寸表常有缺口，Dock 取不到
-    对应档位就会拿小图放大——正是「装完图标发虚」的另一个来源。
-    """
-    if not shutil.which("iconutil"):
-        print("跳过 icon.icns：非 macOS（另有各尺寸 PNG 可用）")
-        return
-    with tempfile.TemporaryDirectory() as tmp:
-        iconset = Path(tmp) / "icon.iconset"
-        iconset.mkdir()
-        for size in ICNS_SIZES:
-            magick(str(master), "-filter", "Lanczos", "-resize", f"{size}x{size}",
-                   out=iconset / f"icon_{size}x{size}.png")
-            magick(str(master), "-filter", "Lanczos", "-resize", f"{size * 2}x{size * 2}",
-                   out=iconset / f"icon_{size}x{size}@2x.png")
-        run(["iconutil", "-c", "icns", "-o", str(ICON_DIR / "icon.icns"), str(iconset)])
-    print("wrote icon.icns (16..512 + @2x)")
-
-
 def main() -> None:
     require_tools()
     ICON_DIR.mkdir(parents=True, exist_ok=True)
     if not SOURCE.exists():
         sys.exit(f"缺少已确认的图标源 {SOURCE.relative_to(ROOT)}")
-    master = build_master()
-    write_pngs(master)
-    write_ico(master)
-    write_icns(master)
+    with tempfile.TemporaryDirectory() as tmp:
+        master = build_master(Path(tmp))
+        write_pngs(master)
+        write_ico(master)
 
 
 if __name__ == "__main__":
