@@ -1,6 +1,6 @@
 # 系统更新通知 / System notifications
 
-通知使用 NSH 0.6.0 的 `request_notification_permission`、`show_notification` 和
+通知使用 NSH 0.6.1 的 `request_notification_permission`、`show_notification` 和
 `next_notification_press`；权限、原生通知中心、投递与回执由框架管理。
 不再注册自定义通知组件，也不维护请求队列或直接调用平台通知 API。
 

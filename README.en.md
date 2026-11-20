@@ -82,7 +82,7 @@ Use your actual directories if customized. Migration copies the database and its
 
 ## Development and packaging
 
-The desktop UI uses NSH 0.6.0 and the app core uses Rust. Install Rust 1.99.1 and the SDK for your target, then build the pinned NSH CLI from the repository root.
+The desktop UI uses NSH 0.6.1 and the app core uses Rust. Install Rust 1.99.1 and the SDK for your target, then build the pinned NSH CLI from the repository root.
 
 ```sh
 cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli

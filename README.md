@@ -82,7 +82,7 @@ Windows 程序未做 Authenticode 签名。macOS 使用 ad hoc 签名，未经 A
 
 ## 开发与打包
 
-桌面界面使用 NSH 0.6.0，业务内核使用 Rust。准备 Rust 1.99.1 和对应平台 SDK 后，在仓库根构建固定版本的 NSH CLI。
+桌面界面使用 NSH 0.6.1，业务内核使用 Rust。准备 Rust 1.99.1 和对应平台 SDK 后，在仓库根构建固定版本的 NSH CLI。
 
 ```sh
 cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli

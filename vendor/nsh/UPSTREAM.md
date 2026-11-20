@@ -2,9 +2,9 @@
 
 Source: https://github.com/longbridge/nsh
 
-Release: v0.6.0
+Release: v0.6.1
 
-Commit: 554163758e30d2f62f814096a6327937dcb4fe49
+Commit: 2f51d8611677c8a6bbad937b39756e8d0cc45350
 
 The source snapshot keeps all upstream crates, workspace metadata and licenses,
 compile-time fixtures, and workspace member examples. The website and unrelated
@@ -54,7 +54,7 @@ directory; staging runs before desktop archives or Apple signing. Android uses
 the supplied dex/library directory and its optional manifest/resources/assets, while
 NSH still assembles, aligns and signs APK/AAB output. `android.activity` selects
 the embedding activity. Missing outputs or ABIs are fatal. This project-specific
-extension is not part of upstream 0.6.0; users must build this CLI. It preserves
+extension is not part of upstream 0.6.1; users must build this CLI. It preserves
 custom JNI components and static-codec relinking without maintaining a second
 packager or production signing pipeline. `android.abis` supplies the default ABI
 list and `nativeHost.displayNames` holds localized product names; UI catalogs and

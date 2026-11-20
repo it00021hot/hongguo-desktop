@@ -150,6 +150,10 @@ pub(crate) struct DrawCx<'a> {
     /// The composed items (web views) reached in this pass, in paint
     /// order, with where they go.
     pub(crate) composed: Vec<Composed>,
+    /// The views with `windows={{ backdrop }}` a see-through window's pass
+    /// reached, in paint order, with where they go ([`crate::backdrop`]);
+    /// `None` in other passes.
+    pub(crate) backdrops: Option<Vec<Placement>>,
     /// The window's pass of a surface with a composition: what is drawn
     /// after a composed item goes into the next layer.
     pub(crate) split: Option<Split<'a>>,
@@ -234,6 +238,7 @@ impl<'a> DrawCx<'a> {
             alpha: 1.0,
             fade: 1.0,
             composed: Vec::new(),
+            backdrops: None,
             split: None,
             clip_base: None,
             window: None,
@@ -308,6 +313,21 @@ impl<'a> DrawCx<'a> {
     /// drawn here: records where it goes, and what follows goes into the
     /// next layer.
     fn compose(&mut self, item: &Rc<dyn Hosted>, m: Mat4, size: (f32, f32), radii: [f32; 4]) {
+        let Some(at) = self.placement(m, size, radii) else {
+            return;
+        };
+        self.composed.push(Composed {
+            item: item.clone(),
+            at,
+        });
+        if let Some(split) = &mut self.split {
+            split.pending = true;
+        }
+    }
+
+    /// Where something of `size` points with `radii`, at `m`, goes in the
+    /// window (pixels), or `None` when it is empty or clipped away.
+    fn placement(&self, m: Mat4, size: (f32, f32), radii: [f32; 4]) -> Option<Placement> {
         let s = self.scale;
         let t = m.to_3x2();
         // The page's pixels are the view's points times the scale: the
@@ -338,21 +358,15 @@ impl<'a> DrawCx<'a> {
             || size_px.1 <= 0
             || crate::compose::is_empty(&crate::compose::intersect(bounds, clip))
         {
-            return;
+            return None;
         }
-        self.composed.push(Composed {
-            item: item.clone(),
-            at: Placement {
-                matrix,
-                size: size_px,
-                clip,
-                radii: radii.map(|r| r * s),
-                alpha: self.alpha,
-            },
-        });
-        if let Some(split) = &mut self.split {
-            split.pending = true;
-        }
+        Some(Placement {
+            matrix,
+            size: size_px,
+            clip,
+            radii: radii.map(|r| r * s),
+            alpha: self.alpha,
+        })
     }
 
     /// Something is about to be drawn: after a composed item, the pass
@@ -978,6 +992,14 @@ pub(crate) fn draw_content(cx: &mut DrawCx<'_>, view: &NshView, world: Mat4, pai
     crate::shader::take_backdrop(cx, view);
     let state = view.state();
     if paint_own {
+        if state.style.windows_backdrop.is_some() && cx.backdrops.is_some() {
+            let size = (state.frame.size.width.0, state.frame.size.height.0);
+            if let Some(at) = cx.placement(world, size, state.radii())
+                && let Some(backdrops) = &mut cx.backdrops
+            {
+                backdrops.push(at);
+            }
+        }
         crate::decor::draw_backdrop(cx, &state);
         crate::decor::draw_background(cx, &state);
         crate::shader::draw(cx, &state);
@@ -1452,8 +1474,15 @@ pub(crate) fn frame(surface: &Rc<Surface>) -> bool {
     // What changed, in pixels (`None`: everything). A window with a
     // composition draws its layers whole.
     let damage = surface.take_damage();
+    // So does one that shows backdrops: a frame finds where they go by
+    // drawing their views.
+    let backdrops = surface
+        .base
+        .borrow()
+        .as_ref()
+        .is_some_and(|b| b.has_backdrops());
     let changed = damage
-        .filter(|_| composition.is_none())
+        .filter(|_| composition.is_none() && !backdrops)
         .map(|rects| merged(pixel_rects(&rects, scale, size)));
     // All of it outside the window (an animation scrolled away): the window
     // already shows this frame, and drawing it whole would cost every frame.
@@ -1527,6 +1556,9 @@ pub(crate) fn frame(surface: &Rc<Surface>) -> bool {
             drop(swap);
             surface.items_placed(drawn.items, redraw.as_deref());
             surface.composed_placed(composition.as_deref(), drawn.composed, &drawn.layers);
+            if let Some(base) = surface.base.borrow().as_deref() {
+                base.backdrops_placed(&drawn.backdrops);
+            }
         }
         Err(err) if err.code() == D2DERR_RECREATE_TARGET => {
             drop(swap);
@@ -1710,6 +1742,8 @@ struct Drawn {
     composed: Vec<Composed>,
     /// The layers drawn: how many composed items are below each.
     layers: Vec<usize>,
+    /// Where the backdrop views drawn go.
+    backdrops: Vec<Placement>,
 }
 
 /// A window of the app's own as its frame draws it
@@ -1844,6 +1878,9 @@ pub(crate) fn window_frame(surface: &Rc<Surface>, frame: WindowFrame<'_>) -> boo
             }
             crate::surface::items_placed(placed, drawn.items, None);
             crate::surface::composed_placed(composed, composition, drawn.composed, &drawn.layers);
+            if let Some(base) = base {
+                base.backdrops_placed(&drawn.backdrops);
+            }
         }
         Err(err) if err.code() == D2DERR_RECREATE_TARGET => {
             *swap = None;
@@ -1907,6 +1944,11 @@ fn draw_into(
     // A window of the app's own draws its root alone; where its views were
     // painted is not the main window's.
     cx.records = !offscreen && window.is_none();
+    // A see-through window (it clears to transparent) shows the system's
+    // blur under its backdrop views.
+    if !offscreen && background.a <= 0.0 && crate::backdrop::supported() {
+        cx.backdrops = Some(Vec::new());
+    }
     let (w, h) = match window {
         Some(root) => {
             let size = root.state().frame.size;
@@ -1971,6 +2013,7 @@ fn draw_into(
     }
     let items = std::mem::take(&mut cx.drawn);
     let composed = std::mem::take(&mut cx.composed);
+    let backdrops = cx.backdrops.take().unwrap_or_default();
     let (layers, error) = match cx.split.take() {
         Some(s) => (s.layers, s.error),
         None => (Vec::new(), None),
@@ -1989,6 +2032,7 @@ fn draw_into(
         items,
         composed,
         layers,
+        backdrops,
     })
 }
 
@@ -2467,6 +2511,61 @@ mod tests {
         fill_with_damage_and_compare_whole(&surface, &gfx, &back, size, &areas);
         // SAFETY: the test's own window.
         let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(app.hwnd()) };
+    }
+
+    /// A see-through window's pass finds its `windows={{ backdrop }}`
+    /// views and where they go; an opaque window's draws the same view
+    /// with none ([`crate::backdrop`]).
+    #[test]
+    fn a_see_through_windows_pass_finds_its_backdrop_views() {
+        let Ok(gfx) = gfx::get() else {
+            return;
+        };
+        let size = (240, 140);
+        let backdrops = |transparent| {
+            let app = crate::app::AppView::new(
+                None,
+                crate::app::AppOptions {
+                    size: (240, 140),
+                    transparent,
+                    skip_taskbar: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let surface = app.surface().clone();
+            surface.resized(size, 1.0);
+            let card = view(
+                Some(&surface.root),
+                2,
+                ViewKind::View,
+                rect(10.0, 20.0, 100.0, 50.0),
+            );
+            {
+                let mut s = card.state_mut();
+                s.style.background_color = Color(0xffff_ff40);
+                s.style.border_radius = Points(12.0);
+                s.style.windows_backdrop = Some(nsh_core::WindowsBackdrop::default());
+            }
+            let back = target(&gfx, size);
+            let drawn = draw_into(&surface, &gfx, &back, 1.0, false, None, None, None).unwrap();
+            // SAFETY: the test's own window.
+            let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(app.hwnd()) };
+            drawn.backdrops
+        };
+        assert!(backdrops(false).is_empty());
+        let shown = backdrops(true);
+        if !crate::backdrop::supported() {
+            // Before Windows 11 there is no blur to place.
+            assert!(shown.is_empty());
+            return;
+        }
+        assert_eq!(shown.len(), 1);
+        let at = shown[0];
+        assert_eq!(at.size, (100, 50));
+        assert_eq!((at.matrix.M31, at.matrix.M32), (10.0, 20.0));
+        assert_eq!(at.radii, [12.0; 4]);
+        assert_eq!(at.alpha, 1.0);
     }
 
     /// A uniform background fill draws a rounded rectangle and makes no

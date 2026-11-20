@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const SYSTEM_DLLS: &str = "advapi32 avrt bcrypt bcryptprimitives cfgmgr32 combase comctl32 comdlg32 crypt32 cryptbase d2d1 d3d11 d3d12 d3dcompiler_47 dcomp dnsapi dwrite dwmapi dxgi gdi32 imm32 iphlpapi kernel32 kernelbase msimg32 msvfw32 ncrypt netapi32 ntdll ole32 oleacc oleaut32 opengl32 powrprof propsys psapi rpcrt4 secur32 setupapi shell32 shcore shlwapi uiautomationcore user32 userenv usp10 uxtheme version winhttp wininet winmm winspool ws2_32 wtsapi32 wintrust windowscodecs normaliz hid dbghelp mf mfplat mfreadwrite mfcore mfplay evr msmpeg2adec msmpeg2vdec xaudio2_8 xaudio2_9";
+const SYSTEM_DLLS: &str = "advapi32 avrt bcrypt bcryptprimitives cfgmgr32 combase comctl32 comdlg32 coremessaging crypt32 cryptbase d2d1 d3d11 d3d12 d3dcompiler_47 dcomp dnsapi dwrite dwmapi dxgi gdi32 imm32 iphlpapi kernel32 kernelbase msimg32 msvfw32 ncrypt netapi32 ntdll ole32 oleacc oleaut32 opengl32 powrprof propsys psapi rpcrt4 secur32 setupapi shell32 shcore shlwapi uiautomationcore user32 userenv usp10 uxtheme version winhttp wininet winmm winspool ws2_32 wtsapi32 wintrust windowscodecs normaliz hid dbghelp mf mfplat mfreadwrite mfcore mfplay evr msmpeg2adec msmpeg2vdec xaudio2_8 xaudio2_9";
 
 pub fn desktop_triple(platform: &str, arch: &str) -> Result<String> {
     match (platform, arch) {
