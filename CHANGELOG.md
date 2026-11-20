@@ -9,6 +9,18 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.4] - 2026-11-20
+
+### 🐛 修复
+
+- 修复 Windows 冷启动时推荐页首帧显示尺寸异常的问题。
+- 修复 Windows 任务栏显示空白图标的问题，更新包保留已有快捷方式引用的图标。
+- 修复排行榜名次数字换行的问题。
+
+从 0.7.0 或更早版本升级需手动下载安装。需要迁移旧版数据时，请先备份并参照 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+English: Fixed incorrect video sizing on first playback after a cold start on Windows, blank Windows taskbar icons, and rank numbers wrapping in the rankings. Install manually when upgrading from 0.7.0 or earlier, and back up your data before following the legacy migration instructions.
+
 ## [0.8.3] - 2026-11-19
 
 ### 🐛 修复
