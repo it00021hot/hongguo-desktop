@@ -644,7 +644,6 @@ impl Hosted for VideoItem {
             if let Some(color) = &frame.color {
                 if let Err(err) = color.draw(
                     cx.dc,
-                    natural,
                     rect_f(x, y, fw, fh),
                     crate::output::ui_color([1.0; 4])[0],
                 ) && !self.status.failed.replace(true)

@@ -1,21 +1,19 @@
 use windows::{
     Win32::Graphics::Direct2D::{
-        CLSID_D2D1ColorManagement, CLSID_D2D1ColorMatrix, CLSID_D2D1Scale,
+        CLSID_D2D1ColorManagement, CLSID_D2D1ColorMatrix,
         Common::{D2D_RECT_F, D2D1_COMPOSITE_MODE_SOURCE_OVER},
         D2D1_COLOR_SPACE_SCRGB, D2D1_COLOR_SPACE_SRGB,
         D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT,
         D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT, D2D1_COLORMATRIX_PROP_COLOR_MATRIX,
         D2D1_INTERPOLATION_MODE_LINEAR, D2D1_PROPERTY_TYPE_COLOR_CONTEXT,
-        D2D1_PROPERTY_TYPE_MATRIX_5X4, D2D1_PROPERTY_TYPE_VECTOR2, D2D1_SCALE_PROP_SCALE,
-        ID2D1Bitmap1, ID2D1DeviceContext, ID2D1Effect,
+        D2D1_PROPERTY_TYPE_MATRIX_5X4, ID2D1Bitmap1, ID2D1DeviceContext, ID2D1Effect,
     },
     core::{Interface, Result},
 };
-use windows_numerics::Vector2;
+use windows_numerics::Matrix3x2;
 
 pub(super) struct VideoColor {
     white: ID2D1Effect,
-    scale: ID2D1Effect,
 }
 
 impl VideoColor {
@@ -38,16 +36,13 @@ impl VideoColor {
             mapping.SetInput(0, bitmap, false);
             let white = dc.CreateEffect(&CLSID_D2D1ColorMatrix)?;
             white.SetInput(0, &mapping.GetOutput()?, false);
-            let scale = dc.CreateEffect(&CLSID_D2D1Scale)?;
-            scale.SetInput(0, &white.GetOutput()?, false);
-            Ok(Self { white, scale })
+            Ok(Self { white })
         }
     }
 
     pub(super) fn draw(
         &self,
         dc: &ID2D1DeviceContext,
-        natural: (f32, f32),
         destination: D2D_RECT_F,
         white_scale: f32,
     ) -> Result<()> {
@@ -73,33 +68,31 @@ impl VideoColor {
             0.0,
             0.0,
         ];
-        let scale = [
-            (destination.right - destination.left) / natural.0,
-            (destination.bottom - destination.top) / natural.1,
-        ];
-        let offset = Vector2 {
-            X: destination.left,
-            Y: destination.top,
-        };
-        // SAFETY: properties are fixed-size native floats; drawing occurs within BeginDraw/EndDraw.
+        // SAFETY: properties are fixed-size native floats; the context is in a draw pass.
         unsafe {
             self.white.SetValue(
                 D2D1_COLORMATRIX_PROP_COLOR_MATRIX.0 as u32,
                 D2D1_PROPERTY_TYPE_MATRIX_5X4,
                 matrix.map(f32::to_ne_bytes).as_flattened(),
             )?;
-            self.scale.SetValue(
-                D2D1_SCALE_PROP_SCALE.0 as u32,
-                D2D1_PROPERTY_TYPE_VECTOR2,
-                scale.map(f32::to_ne_bytes).as_flattened(),
-            )?;
+            let image = self.white.GetOutput()?;
+            // Direct2D resolves the effect's image bounds at the draw context's current DPI.
+            let bounds = dc.GetImageLocalBounds(&image)?;
+            let fit = Matrix3x2::scale(
+                (destination.right - destination.left) / (bounds.right - bounds.left),
+                (destination.bottom - destination.top) / (bounds.bottom - bounds.top),
+            ) * Matrix3x2::translation(destination.left, destination.top);
+            let mut world = Matrix3x2::identity();
+            dc.GetTransform(&mut world);
+            dc.SetTransform(&(fit * world));
             dc.DrawImage(
-                &self.scale.GetOutput()?,
-                Some(&offset),
+                &image,
+                None,
                 None,
                 D2D1_INTERPOLATION_MODE_LINEAR,
                 D2D1_COMPOSITE_MODE_SOURCE_OVER,
             );
+            dc.SetTransform(&world);
         }
         Ok(())
     }
