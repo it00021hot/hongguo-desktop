@@ -1,87 +1,121 @@
 # 番果 · guava
 
-番果（guava）是基于 NSH 0.6.0 与 Rust 的非官方红果短剧客户端，桌面目标为 Windows 10 1809+ / Windows 11、macOS，另有独立 Android / iOS 宿主。
+番果是适用于 **Windows 和 macOS** 的非官方红果短剧客户端。可以刷推荐、按条件找剧、从上次进度续播，也可以选择分集下载到本地。
 
-[English](README.en.md) · [使用声明](NOTICE) · [第三方组件](THIRD-PARTY-NOTICES.md)
-
-仅供非商业学习研究，与官方无关联，不存储或分发影视内容。使用前请阅读 [NOTICE](NOTICE) 与 [LICENSE](LICENSE)。
-
-## 新版体验
-
-`0.7.0` 桌面版使用 NSH 原生界面与 Rust 业务内核，支持 Windows 10 1809+ / Windows 11、macOS 14+，提供中文与英文界面、浅色与深色主题。
-
-| 功能       | 使用方式                                                             |
-| ---------- | -------------------------------------------------------------------- |
-| 沉浸刷剧   | 推荐、漫剧、真人剧频道，切换剧集并按观看历史续播                     |
-| 找剧与搜索 | 分类、排行榜、新剧与搜索联想；有片源的结果打开详情，纯关键词执行搜索 |
-| 播放控制   | 选集、倍速、清晰度、全屏、小屏、竖屏、置顶与无边框窗口               |
-| 弹幕与互动 | 弹幕及表情、评论、点赞、收藏、追更与预约                             |
-| 本地管理   | 下载队列、个人片库、一键合并与磁盘清理                               |
-| 桌面集成   | 托盘、老板键、快捷键与关闭确认                                       |
-
-在线媒体采用渐进缓存，预取遵循服务端下发的时段、数量和字节预算，并优先保障当前播放。高峰时段可能暂停预取；缓存命中也不意味着所有片源都能立即出画面。
+**[下载最新版](https://github.com/it00021hot/hongguo-desktop/releases/latest)** · [安装](#下载与安装) · [快速上手](#快速上手) · [更新日志](CHANGELOG.md) · [English](README.en.md)
 
 ## 下载与安装
 
-安装包见 [Releases](https://github.com/it00021hot/hongguo-desktop/releases)。Windows 提供中文安装器和便携 ZIP；macOS 按 Apple Silicon、Intel 分别提供 DMG 与压缩归档，DMG 内将应用拖入「Applications」即可安装。
+在 [最新版发布页](https://github.com/it00021hot/hongguo-desktop/releases/latest) 的 **Assets** 中，按文件名后缀选择安装包。
 
-当前版本为 `0.7.0`。Windows 暂无 Authenticode 签名，macOS 为 ad hoc 签名、未公证。Windows N 不在支持范围内。
+- **Windows x64**（Windows 10 1809+ 或 Windows 11，Windows N 除外）。运行 `windows-x86_64-setup.exe` 中文安装器，或完整解压 `windows-x86_64-portable.zip` 后打开 `guava.exe`。
+- **Mac · Apple 芯片（M 系列）**（macOS 14+）。选择 `macos-aarch64.dmg`。
+- **Mac · Intel 芯片**（macOS 14+）。选择 `macos-x86_64.dmg`。
 
-## 开发与打包
+可在 macOS 的「关于本机」查看芯片类型。打开对应的 DMG 后，将番果拖入「应用程序」。
 
-安装 Rust 与对应平台 SDK 后，在仓库根构建本项目固定的 NSH CLI（包含必要的原生宿主接入补丁），并将 `target/nsh-cli/debug` 加入当前终端 PATH：
+Windows 程序未做 Authenticode 签名。macOS 使用 ad hoc 签名，未经 Apple 公证。Android 和 iOS 宿主可从源码构建，GitHub Releases 提供桌面安装包。 [桌面发版说明](docs/desktop-release.md)
 
-```sh
-cargo build --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
-nsh run crates/hongguo-nsh
-nsh check crates/hongguo-nsh
-nsh package crates/hongguo-nsh --target macos
-```
+## 快速上手
 
-Windows 使用 `--target windows`，NSH 检测到 Inno Setup 时生成安装器；移动目标使用 `android`、`ios`、`ios-simulator`。应用元数据与平台打包配置统一位于 `crates/hongguo-nsh/nsh.json`。
-构建、打包、原生 SDK 维护与发版校验统一使用 `tools/build` 的 Rust 工具（`cargo build-tool <命令>`），无需 Node.js。
-格式检查使用 `cargo fmt -- --check`，着色器维护使用 `cargo build-tool enhancement-assets`；`make lint`、提交钩子与 CI 均无需 Node.js/npm。
-`make lint` 检查当前宿主；可选 `make lint-macos` 才需要额外的 macOS Rust target 与交叉工具链。工具通过 PATH 或环境变量定位，不绑定个人安装目录。
-普通开发自动校验、解包仓库随附的原生编解码 SDK，无需自行构建 FFmpeg、VVdeC 或 libde265。
-客户安装包内置所需解码库，不安装 WebView2 或 HEVC 商店插件。
+### 刷推荐、找一部剧
 
-播放以 NSH Video 为基础，缺失编码由 libde265 / VVdeC 补齐，原生播放器提供音轨与时钟。
-Windows 扩展 HEVC 优先 D3D11 VLD，Main10 使用 P010；实际硬解不可用才回退软解，不使用 FFmpeg。
-平台实际验证范围见 [解码验证记录](docs/nsh-decoder-validation.md)。
+打开「首页」浏览推荐、漫剧和真人剧。点击画面上的剧名进入详情，也可以在顶栏输入剧名或关键词。想按题材、时长和完结状态筛选时，打开「找剧」，那里也有排行榜和新剧。
 
-## 桌面发版准备
+### 选集、续播和调整画面
 
-桌面 CI 使用固定 NSH CLI，在 Windows 原生构建 x64 安装器，在对应 macOS runner 上打包 Apple Silicon 和 Intel 版本。共享检查、发版预检和发布在 Ubuntu 执行。版本 tag 触发完整检查，产物及校验和全部通过后公开发布。手动运行默认保留草稿。Windows 包未做 Authenticode 签名，macOS 包使用 ad hoc 签名。安装和播放仍需对应设备验收。具体流程见 [桌面发版说明](docs/desktop-release.md)。
+从「我的 → 历史」打开看过的剧，可以接着上次的进度看。播放时可选集、调倍速和清晰度，也可查看评论或发送带表情的弹幕。
 
-应用标识为 `com.guava.app`。Windows 数据目录为 `%APPDATA%\guava`，macOS 为 `~/Library/Application Support/guava`，数据库为 `guava.db`；`GUAVA_DATA_DIR` 可显式覆盖数据根。下载位于所选下载根下的 `guava/<剧名>`。移动端使用新应用 ID 的私有容器。旧版数据保留在原处，不自动迁移或删除。
+| 默认快捷键 | 操作 |
+| --- | --- |
+| <kbd>空格</kbd> | 播放或暂停 |
+| <kbd>←</kbd> / <kbd>→</kbd> | 快退或快进 5 秒 |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | 切剧或切集 |
 
-## 旧版数据
+可在「设置 → 播放快捷键」调整键位。
 
-0.7.0 及更早版本须到 Releases 手动安装一次 0.8.0。0.8.0 起，桌面端可在设置中下载并校验更新，点击「立即更新」自动安装并重启，保留当前设置和登录状态。安装目录须可写；旧版数据仍须按下述步骤手动迁移。
+**窗口模式**包括全屏、小窗、竖屏、置顶和无边框。主窗口、小窗和竖屏窗口分别记住上次的位置与大小。
 
-**0.7.0 默认不迁移旧版本数据**，首次启动使用独立的新数据库。使用 `hongguo.db` 的旧桌面版可按以下路径手动复制：
+**画质增强**提供锐化和 Anime4K 2×。在支持的设备上，Anime4K 适用于 1080p 及以下动漫片源。增强只作用于播放画面。
+
+### 下载分集、合并和清理
+
+- 在播放页打开 **「下载」**，选中单集或输入集数范围，再到侧栏的「下载」查看任务。
+- 在 **「一键合并」** 处理已下载的分集。同规格用「快速合并」无损直拼，混合规格可用「HEVC 合并」统一编码。
+- 在 **「磁盘清理」** 按剧删除本地文件，保留剧集档案以便日后重新下载。
+
+### 管理片库和桌面偏好
+
+「我的」集中查看历史、收藏、点赞、追更和预约。登录后可同步收藏与追更。「设置」可配置下载位置和快捷键。桌面端支持中英文、浅色和深色主题、系统托盘、退出确认，以及用于快速隐藏窗口的老板键。
+
+## 更新与数据
+
+**桌面版 0.8.0 起**，在「设置」依次选择「检查更新」和「下载更新」。校验完成后，点击「立即更新」安装并重启，保留现有设置和登录状态。应用所在目录需可写。**0.7.0 及更早版本**请先手动安装一次最新版。
+
+| 平台 | 默认数据目录 |
+| --- | --- |
+| Windows | `%APPDATA%\guava` |
+| macOS | `~/Library/Application Support/guava` |
+
+数据库文件为 `guava.db`。需要使用独立数据目录时，可设置 `GUAVA_DATA_DIR`。已下载视频位于所选下载目录下的 `guava/<剧名>`。
+
+### 旧版数据
+
+旧版数据库需手动迁移。以下操作会替换新版数据库，请先备份两边的数据。
+
+<details>
+<summary>展开迁移路径和步骤</summary>
 
 | 平台 | 旧数据库默认路径 | 新数据库默认路径 |
 | --- | --- | --- |
 | Windows | `%APPDATA%\hongguo-downloader\hongguo.db` | `%APPDATA%\guava\guava.db` |
 | macOS | `~/Library/Application Support/hongguo-downloader/hongguo.db` | `~/Library/Application Support/guava/guava.db` |
 
-1. 完全退出新旧版本，包括托盘后台进程，分别备份两个数据目录。
-2. 创建新数据目录（如尚不存在），将其中已有的 `guava.db` 及其旁路日志移入备份位置。
-3. **复制**旧 `hongguo.db` 到新目录并改名为 `guava.db`。若旧目录退出后仍有 `hongguo.db-wal`、`hongguo.db-shm` 或 `hongguo.db-journal`，须与主库成套复制，并分别改为 `guava.db-wal`、`guava.db-shm`、`guava.db-journal`；不要混用新旧日志，也不要在程序运行时只复制主库。
-4. 启动 0.7.0 并检查记录与设置。此操作替换新版本数据库，**不会合并**两边的数据；原库和备份请保留。
+1. 完全退出新旧版本，包括托盘后台进程，分别备份两边的数据目录。
+2. 如尚未创建新数据目录，先创建它。将其中已有的 `guava.db` 和旁路日志移到备份位置。
+3. **复制**旧 `hongguo.db` 到新目录并改名为 `guava.db`。如果旧目录仍有 `hongguo.db-wal`、`hongguo.db-shm` 或 `hongguo.db-journal`，与主库一起复制，并改为对应的 `guava.db-wal`、`guava.db-shm` 或 `guava.db-journal`。
+4. 启动新版，检查记录与设置，并保留原库和备份。
 
-设置过自定义数据目录时，以实际目录为准，0.7.0 使用 `GUAVA_DATA_DIR`。复制数据库不会搬移已下载视频或缓存，原文件路径仍需保持可访问。本说明适用于桌面数据库，不适用于移动端私有容器或更早的 JSON 数据文件。
+使用过自定义数据目录时，以实际路径为准。迁移仅复制数据库与旁路日志，已下载的视频和缓存仍在原路径。这些步骤适用于使用 `hongguo.db` 的旧桌面版。
 
-## 项目结构
+</details>
 
-共用图标、表情和语言资源位于 `assets/`；NSH 界面与装配在 `crates/hongguo-nsh`。
-功能页面与专用呈现归 `src/features/`，共享控件归 `src/ui/`，窗口与导航装配归 `src/shell/`。
-业务请求通过 `hongguo-service`，NSH 不直接依赖 API 客户端；ByteVC2 解码能力保持不变。
-工作区现为 30 个 crate（含 `tools/build` 构建工具）；编码契约归媒体类型层，GPU 增强归视频 GPU 层，HEVC 解析归容器层。
-全局快捷键、系统通知、桌面窗口基础操作与翻译优先使用 NSH 原生接口；平台补充仅保留框架缺失的能力。
-结构边界见 [项目结构](docs/project-structure.md)，命令及环境见 [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md)。
+## 开发与打包
 
-Tauri、GPUI 壳及其旧播放器、WebView 前端已从主线移除，完整旧版保存在
-[`codex/backup-tauri-final`](https://github.com/it00021hot/hongguo-desktop/tree/codex/backup-tauri-final)。
-旧版停止维护，不再提供功能更新和问题修复；当前开发与问题反馈以 NSH 新版为准。
+桌面界面使用 NSH 0.6.0，业务内核使用 Rust。准备 Rust 1.99.1 和对应平台 SDK 后，在仓库根构建固定版本的 NSH CLI。
+
+```sh
+cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
+```
+
+将 `target/nsh-cli/debug` 加入当前终端的 PATH，然后在仓库根运行。
+
+```sh
+nsh run crates/hongguo-nsh
+nsh check crates/hongguo-nsh
+```
+
+macOS 本地开发也可用 `make dev`，它会配置 VVdeC 的等待策略。打包使用 `nsh package crates/hongguo-nsh --target <目标>`，目标可选 `macos`、`windows`、`android`、`ios` 或 `ios-simulator`。Windows 安装器需要 Inno Setup。
+
+构建会校验并解包仓库随附的编解码 SDK。构建、打包和 `make lint` 无需 Node.js 或 npm。应用元数据和平台配置位于 [nsh.json](crates/hongguo-nsh/nsh.json)。
+
+### 播放实现
+
+普通视频通过 NSH Video 播放，专用解码器补齐 HEVC、ByteVC2 等播放场景。Windows 扩展 HEVC 优先使用 D3D11 硬解，硬解不可用时使用软件解码。在线播放使用渐进缓存，预取受服务端预算限制并优先保证当前播放。 [解码验证记录](docs/nsh-decoder-validation.md)
+
+## 文档与反馈
+
+| 文档 | 内容 |
+| --- | --- |
+| [NSH 开发说明](.agents/skills/hongguo-dev/references/nsh.md) | 工具链、各端打包与本地验证 |
+| [项目结构](docs/project-structure.md) | 界面、业务服务、播放和解码的模块边界 |
+| [桌面发版说明](docs/desktop-release.md) | Windows 和 macOS 的构建、签名与更新包 |
+| [文档索引](docs/README.md) | 专题文档与历史方案 |
+
+反馈问题时，请附应用版本、操作系统和复现步骤。播放问题可注明清晰度及是否启用了画质增强。 [提交 Issue](https://github.com/it00021hot/hongguo-desktop/issues)
+
+## 使用声明
+
+番果仅供个人非商业学习与研究，与红果短剧官方无关联。项目仓库不托管或分发影视内容。 [项目声明](NOTICE) · [许可证](LICENSE) · [第三方组件声明](THIRD-PARTY-NOTICES.md)
+
+早期 Tauri 和 GPUI 版本的源码可查阅 [历史备份](https://github.com/it00021hot/hongguo-desktop/tree/codex/backup-tauri-final)。

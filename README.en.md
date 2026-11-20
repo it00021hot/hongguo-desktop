@@ -1,72 +1,70 @@
 # guava · 番果
 
-guava (番果) is an unofficial Hongguo client built with NSH 0.6.0 and Rust. Desktop targets are Windows 10 1809+, Windows 11 and macOS; Android and iOS have dedicated hosts.
+guava is an unofficial Hongguo short drama client for **Windows and macOS**. Browse recommendations, find a series, pick up where you left off, or download selected episodes.
 
-[中文](README.md) · [Notice](NOTICE) · [Third-party notices](THIRD-PARTY-NOTICES.md)
+**[Download latest](https://github.com/it00021hot/hongguo-desktop/releases/latest)** · [Install](#download-and-install) · [Quick start](#quick-start) · [Changelog](CHANGELOG.md) · [中文](README.md)
 
-For noncommercial learning and research only. This project is unaffiliated with the official service and does not store or distribute media. Read [NOTICE](NOTICE) and [LICENSE](LICENSE).
+## Download and install
 
-## The new desktop client
+Open the [latest release](https://github.com/it00021hot/hongguo-desktop/releases/latest) and match the file name suffix under **Assets**.
 
-Version `0.7.0` uses native NSH views and a Rust application core. Desktop targets are Windows 10 1809+, Windows 11 and macOS 14+, with Chinese/English localization and light/dark themes.
+- **Windows x64** (Windows 10 1809+ or Windows 11, excluding Windows N). Run the Simplified Chinese installer ending in `windows-x86_64-setup.exe`, or extract the entire `windows-x86_64-portable.zip` before opening `guava.exe`.
+- **Mac · Apple silicon (M series)** (macOS 14+). Choose `macos-aarch64.dmg`.
+- **Mac · Intel** (macOS 14+). Choose `macos-x86_64.dmg`.
 
-| Feature                  | Available controls                                                                                               |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| Immersive feed           | Recommended, animated and live-action channels, episode navigation and history-based resume                      |
-| Discovery and search     | Categories, rankings, new releases and suggestions; media results open details, keyword suggestions run a search |
-| Playback                 | Episodes, speed, quality, fullscreen, mini player, portrait, always-on-top and borderless windows                |
-| Comments and interaction | Danmaku with emoji, comments, likes, favorites, follows and reservations                                         |
-| Local media              | Download queue, personal library, merging and disk cleanup                                                       |
-| Desktop integration      | System tray, boss key, shortcuts and exit confirmation                                                           |
+Find your chip type in About This Mac. Open the matching DMG and drag guava into Applications.
 
-Progressive media caching and prefetch use server-provided time windows, item counts and byte limits. Current playback takes priority; peak-hour policy may disable prefetch. A cache hit alone does not guarantee instant presentation for every source.
+The Windows executable is unsigned. macOS builds are ad hoc signed and have no Apple notarization. Android and iOS hosts can be built from source. GitHub Releases provides desktop packages. [Desktop release guide](docs/desktop-release.md)
 
-## Screenshots
+## Quick start
 
-These are real desktop screenshots. The search capture comes from feedback during this development round; the playback capture comes from the running local app.
+### Browse or find a series
 
-**Immersive playback and danmaku**
+Open **Home** to browse recommendations, animated dramas, and live-action dramas. Select the title on the video to open its details, or enter a title or keyword in the top search field. Open **Find** for filters such as genre, duration, and completion status, plus rankings and new releases.
 
-![guava desktop playback and danmaku](docs/screenshots/desktop-playback.png)
+### Resume and adjust playback
 
-**Media results and keyword suggestions**
+Open a series from **My → History** to resume. Choose an episode, playback speed, or quality in the player. You can also read comments and send danmaku with emoji.
 
-![Cover results and keyword-only search suggestions](docs/screenshots/search-suggestions.png)
+| Default shortcut | Action |
+| --- | --- |
+| <kbd>Space</kbd> | Play or pause |
+| <kbd>←</kbd> / <kbd>→</kbd> | Skip back or forward 5 seconds |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | Switch dramas or episodes |
 
-## Download and installation
+Change the playback shortcuts in **Settings**.
 
-See [Releases](https://github.com/it00021hot/hongguo-desktop/releases). Windows packages include a Chinese installer and a portable ZIP. Apple Silicon and Intel Mac packages include separate DMG images and compressed archives. Open the DMG and drag the app into Applications.
+**Window modes** include fullscreen, mini player, portrait, always on top, and borderless. The main, mini, and portrait windows each remember their own size and position.
 
-The current version is `0.7.0`. Windows packages are not Authenticode signed; macOS packages are ad hoc signed without notarization. Windows N is unsupported.
+**Video enhancement** offers sharpening and Anime4K 2×. Anime4K works with animated sources up to 1080p on supported devices. Enhancements apply to playback only.
 
-## Development and packaging
+### Download, merge, and clean up episodes
 
-Install Rust and platform SDKs. Build the pinned NSH CLI with the native-host integration patch, then add `target/nsh-cli/debug` to this terminal's PATH:
+- Choose **Download** in the player and select an episode or enter a range. Follow progress under **Downloads** in the sidebar.
+- Open **Merge** to join downloaded episodes. Use **Quick merge** for lossless joining when files match, or **HEVC merge** to re-encode mixed formats before joining.
+- Use **Storage** to remove local files by series while keeping the series record available for future downloads.
 
-```sh
-cargo build --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
-nsh run crates/hongguo-nsh
-nsh check crates/hongguo-nsh
-nsh package crates/hongguo-nsh --target macos
-```
+### Manage your library and desktop preferences
 
-Use `--target windows` on Windows; NSH generates an installer when Inno Setup is available. Mobile targets are `android`, `ios` and `ios-simulator`. App metadata and platform packaging options live in `crates/hongguo-nsh/nsh.json`.
-Building, packaging, native SDK maintenance and release verification use the Rust tool in `tools/build` (`cargo build-tool <command>`) and do not require Node.js.
-Formatting uses `cargo fmt -- --check`; shader maintenance uses `cargo build-tool enhancement-assets`. `make lint`, commit hooks and CI also require no Node.js/npm.
-`make lint` checks the current host. The optional `make lint-macos` requires additional macOS Rust targets and a cross toolchain. Tools are located through PATH or environment variables without fixed installation directories.
-Normal development verifies and extracts the bundled codec SDKs without building FFmpeg, VVdeC or libde265.
-Customer packages include their codec libraries and do not install WebView2 or HEVC Store extensions.
+**My** holds your history, collections, likes, follows, and reservations. Sign in to sync collections and follows. Set your download folder and shortcuts in **Settings**. The desktop app includes Chinese and English, light and dark themes, a system tray, quit confirmation, and a boss key to hide the window quickly.
 
-Playback uses NSH Video, supplemented by libde265/VVdeC and native audio clocks. Extended Windows HEVC prefers D3D11 VLD with P010 for Main10; software decoding is the fallback. No FFmpeg is used.
-See the [validation record](docs/nsh-decoder-validation.md) for actual platform coverage.
+## Updates and data
 
-The application identifier is `com.guava.app`. Data lives in `%APPDATA%\guava` on Windows and `~/Library/Application Support/guava` on macOS, with database `guava.db`; `GUAVA_DATA_DIR` overrides the data root. Downloads use `guava/<series>` under the selected download root. Mobile hosts use private containers under the new application identifier. Previous data remains untouched and is not automatically migrated or deleted.
+**Since 0.8.0**, use **Check for updates** and then **Download update** in Settings. Once the download is verified, select **Update now** to install and restart with your settings and login intact. The installation directory must be writable. If you are using **0.7.0 or earlier**, install the latest release manually once.
 
-## Previous-version data
+| Platform | Default data directory |
+| --- | --- |
+| Windows | `%APPDATA%\guava` |
+| macOS | `~/Library/Application Support/guava` |
 
-Version 0.6.x cannot automatically upgrade to 0.7.0 through the old app; download and install it manually from Releases. The 0.7.0 update checker reads GitHub release versions and opens the download page; it does not install updates automatically.
+The database is `guava.db`. Set `GUAVA_DATA_DIR` to use a separate data directory. Downloaded videos are stored under `guava/<series>` in your chosen download folder.
 
-**0.7.0 does not migrate previous-version data automatically.** It starts with a separate database. Previous desktop versions using `hongguo.db` can be imported manually:
+### Previous-version data
+
+Migrating an old database is a manual step. The copy replaces the new database, so back up both versions first.
+
+<details>
+<summary>Show migration paths and steps</summary>
 
 | Platform | Default old database | Default new database |
 | --- | --- | --- |
@@ -74,20 +72,50 @@ Version 0.6.x cannot automatically upgrade to 0.7.0 through the old app; downloa
 | macOS | `~/Library/Application Support/hongguo-downloader/hongguo.db` | `~/Library/Application Support/guava/guava.db` |
 
 1. Fully quit both versions, including tray processes, and back up both data directories.
-2. Create the new directory if necessary. Move its existing `guava.db` and associated journal files into the backup location.
-3. **Copy** the old `hongguo.db` into the new directory as `guava.db`. If `hongguo.db-wal`, `hongguo.db-shm` or `hongguo.db-journal` remain after shutdown, copy them together with the database and rename them to `guava.db-wal`, `guava.db-shm` and `guava.db-journal`. Do not mix old and new journal files or copy only the database while either app is running.
-4. Start 0.7.0 and check your records and settings. This replaces the new database; it **does not merge** the databases. Keep the original and backups.
+2. Create the new directory if needed. Move its existing `guava.db` and journal files to the backup location.
+3. **Copy** the old `hongguo.db` into the new directory as `guava.db`. If `hongguo.db-wal`, `hongguo.db-shm`, or `hongguo.db-journal` remain, copy them with the database and rename them to the corresponding `guava.db-wal`, `guava.db-shm`, or `guava.db-journal`.
+4. Start the new version, check your records and settings, and keep the original database and backups.
 
-Use your actual directories if customized; 0.7.0 uses `GUAVA_DATA_DIR`. Database copying does not move downloaded videos or caches, so their original paths must remain accessible. These steps apply to desktop databases, not mobile private containers or earlier JSON data files.
+Use your actual directories if customized. Migration copies the database and its journal files. Downloaded videos and caches stay at their original paths. These steps apply to older desktop versions that use `hongguo.db`.
 
-## Project structure
+</details>
 
-Shared icons, emoji and translations live in `assets/`. Feature pages and presentation live in `src/features/`, shared controls in `src/ui/`, and window/navigation composition in `src/shell/` inside `hongguo-nsh`.
-Business requests go through `hongguo-service`; NSH has no direct API-client dependency. ByteVC2 decoding is unchanged.
-The workspace contains 30 crates, including the build tool in `tools/build`: encoding contracts belong to media types, enhancement to video GPU, and HEVC parsing to the container layer.
-Global shortcuts, system notifications, desktop window operations and translations use native NSH APIs; platform supplements cover capabilities the framework does not expose.
-See [project structure](docs/project-structure.md) and the [NSH development guide](.agents/skills/hongguo-dev/references/nsh.md).
-Desktop CI uses the pinned NSH CLI to build the Windows x64 installer on Windows and Apple Silicon and Intel packages on their respective macOS runners. Shared checks, release preflight and publication run on Ubuntu. Version tags publish releases after all checks, artifacts and checksums pass. Manual runs keep a draft by default. Windows packages are unsigned and macOS packages use ad hoc signing. Installation and playback still require validation on the respective devices. See the [desktop release guide](docs/desktop-release.md).
-The Tauri/GPUI shells, their legacy players and the WebView frontend have been removed. Their complete backup is
-[`codex/backup-tauri-final`](https://github.com/it00021hot/hongguo-desktop/tree/codex/backup-tauri-final).
-Legacy versions are no longer maintained and receive no feature updates or bug fixes. Development and issue reports now target the NSH client.
+## Development and packaging
+
+The desktop UI uses NSH 0.6.0 and the app core uses Rust. Install Rust 1.99.1 and the SDK for your target, then build the pinned NSH CLI from the repository root.
+
+```sh
+cargo build --locked --manifest-path vendor/nsh/Cargo.toml -p nsh-cli --target-dir target/nsh-cli
+```
+
+Add `target/nsh-cli/debug` to your terminal's PATH, then run these commands from the repository root.
+
+```sh
+nsh run crates/hongguo-nsh
+nsh check crates/hongguo-nsh
+```
+
+On macOS, `make dev` also configures the VVdeC wait policy. To package, run `nsh package crates/hongguo-nsh --target <target>` with `macos`, `windows`, `android`, `ios`, or `ios-simulator`. Building a Windows installer requires Inno Setup.
+
+The build verifies and extracts the codec SDKs bundled in the repository. Building, packaging, and running `make lint` do not require Node.js or npm. See [nsh.json](crates/hongguo-nsh/nsh.json) for app metadata and platform options.
+
+### Playback implementation
+
+Standard video uses NSH Video, with bundled decoders covering additional HEVC and ByteVC2 playback cases. Windows prefers D3D11 hardware decoding for extended HEVC and uses software decoding when hardware decoding is unavailable. Online playback uses progressive caching. Prefetch follows server limits and gives current playback priority. [Decoder validation](docs/nsh-decoder-validation.md)
+
+## Documentation and feedback
+
+| Guide | Covers |
+| --- | --- |
+| [NSH development guide](.agents/skills/hongguo-dev/references/nsh.md) | Toolchains, packaging, and local verification |
+| [Project structure](docs/project-structure.md) | UI, services, playback, and decoder boundaries |
+| [Desktop release guide](docs/desktop-release.md) | Windows and macOS builds, signing, and update packages |
+| [Documentation index](docs/README.md) | Topic guides and historical plans |
+
+Include your app version, operating system, and steps to reproduce. For playback issues, include the video quality and whether enhancement was enabled. [Open an issue](https://github.com/it00021hot/hongguo-desktop/issues)
+
+## Project notice
+
+guava is for personal, noncommercial learning and research. It is unaffiliated with the official Hongguo service. The project repository does not host or distribute media. [Notice](NOTICE) · [License](LICENSE) · [Third-party notices](THIRD-PARTY-NOTICES.md)
+
+The early Tauri and GPUI implementations are available in the [legacy backup](https://github.com/it00021hot/hongguo-desktop/tree/codex/backup-tauri-final).
