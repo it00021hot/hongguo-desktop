@@ -1,2 +1,5 @@
-1 ICON "@NSH_ICON@"
 1 24 "@NSH_MANIFEST@"
+
+// Match the NSH packager's language for the icon group and its images.
+LANGUAGE 0, 0
+1 ICON "@NSH_ICON@"

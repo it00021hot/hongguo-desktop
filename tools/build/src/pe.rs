@@ -15,6 +15,7 @@ const OFFSET_MASK: u32 = 0x7fff_ffff;
 const SECTION_BYTES: usize = 40;
 const RESOURCE_HEADER_BYTES: usize = 16;
 const RESOURCE_ENTRY_BYTES: usize = 8;
+const APP_ICON_GROUP_ID: u32 = 1;
 
 fn range(bytes: &[u8], offset: usize, size: usize) -> Result<&[u8]> {
     bytes
@@ -226,20 +227,24 @@ pub fn validate(bytes: &[u8], app_id: &str) -> Result<Vec<String>> {
     let (rva, size) = image.directory(2)?;
     ensure!(rva != 0 && size != 0, "Missing icon and manifest resources");
     let root = image.map(rva, size)?;
+    let groups = image.payloads(root, 14)?;
+    let [(APP_ICON_GROUP_ID, group)] = groups.as_slice() else {
+        anyhow::bail!("Expected one Windows app icon group with ID {APP_ICON_GROUP_ID}");
+    };
     let icons = image.payloads(root, 3)?;
-    for (_, bytes) in image.payloads(root, 14)? {
-        let count = usize::from(u16_at(bytes, 4)?);
-        ensure!(u16_at(bytes, 2)? == 1 && count > 0, "Invalid icon group");
-        for entry in range(bytes, 6, count * 14)?.as_chunks::<14>().0 {
-            let id = u32::from(u16_at(entry, 12)?);
-            let size = u32_at(entry, 8)? as usize;
-            ensure!(
-                icons
-                    .iter()
-                    .any(|(icon_id, data)| *icon_id == id && data.len() == size),
-                "Missing icon image"
-            );
-        }
+    let count = usize::from(u16_at(group, 4)?);
+    ensure!(u16_at(group, 2)? == 1 && count > 0, "Invalid icon group");
+    for entry in range(group, 6, count * 14)?.as_chunks::<14>().0 {
+        let id = u32::from(u16_at(entry, 12)?);
+        let size = u32_at(entry, 8)? as usize;
+        ensure!(
+            icons
+                .iter()
+                .filter(|(icon_id, _)| *icon_id == id)
+                .map(|(_, data)| data.len())
+                .eq([size]),
+            "Expected one matching image for icon resource {id}"
+        );
     }
     for (_, bytes) in image.payloads(root, 24)? {
         validate_manifest(std::str::from_utf8(bytes)?, app_id)?;

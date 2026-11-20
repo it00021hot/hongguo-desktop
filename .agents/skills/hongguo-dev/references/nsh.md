@@ -53,7 +53,7 @@ Windows CI 在 `windows-2025` 上使用原生 x64 MSVC、Windows SDK 和 `rc.exe
 
 本项目为纯 Rust 根组件，NSH 的 TSX `.nshpkg` 签名不适用；Windows 安装器不会自动获得 Authenticode 签名，交付时须明确实际签名状态。
 
-Windows 的 `windows.displayName=番果` 控制安装器、桌面/开始菜单快捷方式和卸载列表名称；内部名称 `guava`、应用 ID 与数据目录保持原值。覆盖安装核对快捷方式的目标路径，只清理指向本次安装的旧名 `guava.lnk`。创建桌面入口沿用安装任务的选择。安装器以图标内容哈希命名快捷方式图标，更新指向本次安装的固定任务栏快捷方式，并按文件路径通知 Explorer 刷新。
+Windows 的 `windows.displayName=番果` 控制安装器、桌面/开始菜单快捷方式和卸载列表名称；内部名称 `guava`、应用 ID 与数据目录保持原值。覆盖安装核对快捷方式的目标路径，只清理指向本次安装的旧名 `guava.lnk`。创建桌面入口沿用安装任务的选择。快捷方式图标以内容哈希命名，由安装器和应用内更新包共同分发。
 
 Windows 安装与卸载提示通过 `windows.installerLanguage=ChineseSimplified` 使用 Inno Setup 官方简体中文翻译。固定 CLI 将该配置写入 `[Languages]`，不手改生成的 `.iss`。编译机的 `Languages/ChineseSimplified.isl` 若未随 Inno Setup 安装，须从[官方翻译页](https://jrsoftware.org/inno-setup/translations)取得兼容文件；本轮使用 Inno Setup 6.7.4，翻译固定为 `jrsoftware/issrc@6ef32198ef1f7b7b375cd4b6b90896c2a58eb4c2` 的同名文件，SHA-256 为 `e0b0b350e2245f3c5e65586dfe43d574f6e7f06f2261149aba284954b3fc9a8d`。
 

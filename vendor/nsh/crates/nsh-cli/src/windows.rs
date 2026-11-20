@@ -91,12 +91,19 @@ pub(crate) fn package(
     let version = config.version.as_deref().unwrap_or("1.0.0");
     let info = crate::package::desktop_app_json(config, name, id, version);
     fs::write(resources.join("app.json"), info.to_string())?;
-    if let Some(icon) = config.icon(crate::package::PackageTarget::Windows) {
+    let shortcut_icon = if let Some(icon) = config.icon(crate::package::PackageTarget::Windows) {
         let images = icon_images(icon)?;
-        fs::write(resources.join("icon.ico"), icon_file(&images))?;
+        let ico = icon_file(&images);
+        let digest = nsh_updater::sha256(&ico);
+        let filename = format!("icon-{}.ico", &digest[..12]);
+        fs::write(resources.join("icon.ico"), &ico)?;
+        fs::write(resources.join(&filename), &ico)?;
         set_icon(&exe, &images)
             .with_context(|| format!("embed {} in {}", icon.display(), exe.display()))?;
-    }
+        Some(filename)
+    } else {
+        None
+    };
     crate::native_host::stage(
         options.entry,
         "windows",
@@ -111,7 +118,15 @@ pub(crate) fn package(
         ui::path(&dir),
         ui::path(&archive)
     ));
-    installer(options.out, name, id, version, &dir, &exe, &config.windows)?;
+    installer(
+        options.out,
+        name,
+        id,
+        version,
+        &dir,
+        shortcut_icon,
+        &config.windows,
+    )?;
     if options.run {
         Command::new(&exe)
             .current_dir(&dir)
@@ -145,28 +160,11 @@ fn installer(
     id: &str,
     version: &str,
     dir: &Path,
-    exe: &Path,
+    shortcut_icon: Option<String>,
     config: &WindowsConfig,
 ) -> anyhow::Result<()> {
     let stem = file_stem(name);
     let script_path = out.join(format!("{stem}.iss"));
-    let exe_name = exe
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| format!("{stem}.exe"));
-    let icon = dir.join("nsh").join("icon.ico");
-    let icon_rel = Path::new(dir.file_name().unwrap_or_default())
-        .join("nsh")
-        .join("icon.ico");
-    let icon = if icon.is_file() {
-        let digest = nsh_updater::sha256(&fs::read(&icon)?);
-        Some(InnoIcon {
-            source: icon_rel.to_string_lossy().replace('/', "\\"),
-            filename: format!("icon-{}.ico", &digest[..12]),
-        })
-    } else {
-        None
-    };
     let mut script = inno_script(&InnoApp {
         name,
         display_name: config.display_name.as_deref().unwrap_or(name),
@@ -179,9 +177,9 @@ fn installer(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| name.to_owned()),
-        exe: &exe_name,
+        exe: &format!("{stem}.exe"),
         setup: &format!("{stem}-setup"),
-        icon,
+        icon: shortcut_icon,
     });
     if let Some(language) = &config.installer_language {
         anyhow::ensure!(
@@ -258,13 +256,8 @@ struct InnoApp<'a> {
     exe: &'a str,
     /// The installer's file name, without `.exe`.
     setup: &'a str,
-    /// The app's `.ico`, the installer's icon too.
-    icon: Option<InnoIcon>,
-}
-
-struct InnoIcon {
-    source: String,
-    filename: String,
+    /// The shortcut icon's file name under `nsh`, also used by the installer.
+    icon: Option<String>,
 }
 
 /// The Inno Setup script of `app`.
@@ -279,10 +272,7 @@ fn inno_script(app: &InnoApp<'_>) -> String {
     let dir_name = esc(&file_stem(app.name));
     let id = esc(app.id);
     let exe = esc(app.exe);
-    let installed_icon = app
-        .icon
-        .as_ref()
-        .map(|icon| format!("nsh\\{}", icon.filename));
+    let installed_icon = app.icon.as_ref().map(|icon| format!("nsh\\{icon}"));
     let icon_path = installed_icon.as_deref().unwrap_or(app.exe);
     let shortcut_icon = installed_icon.as_ref().map_or_else(String::new, |path| {
         format!("; IconFilename: \"{{app}}\\{path}\"")
@@ -310,8 +300,12 @@ fn inno_script(app: &InnoApp<'_>) -> String {
         esc(icon_path)
     ));
     s.push_str(&format!("UninstallDisplayName={name}\n"));
-    if let Some(icon) = &app.icon {
-        s.push_str(&format!("SetupIconFile={}\n", esc(&icon.source)));
+    if let Some(icon) = &installed_icon {
+        s.push_str(&format!(
+            "SetupIconFile={}\\{}\n",
+            esc(app.source),
+            esc(icon)
+        ));
     }
     s.push_str("\n[Tasks]\n");
     s.push_str("Name: \"desktopicon\"; Description: \"{cm:CreateDesktopIcon}\"; GroupDescription: \"{cm:AdditionalIcons}\"; Flags: unchecked\n");
@@ -324,13 +318,6 @@ fn inno_script(app: &InnoApp<'_>) -> String {
         "Source: \"{}\\*\"; DestDir: \"{{app}}\"; Flags: ignoreversion recursesubdirs createallsubdirs\n",
         esc(app.source)
     ));
-    if let Some(icon) = &app.icon {
-        s.push_str(&format!(
-            "Source: \"{}\"; DestDir: \"{{app}}\\nsh\"; DestName: \"{}\"; Flags: ignoreversion\n",
-            esc(&icon.source),
-            icon.filename,
-        ));
-    }
     s.push_str("\n[Icons]\n");
     s.push_str(&format!(
         "Name: \"{{autoprograms}}\\{shortcut_name}\"; Filename: \"{{app}}\\{exe}\"; AppUserModelID: \"{id}\"{shortcut_icon}; Check: NshCanCreateShortcut('autoprograms')\n"
@@ -376,10 +363,9 @@ fn inno_script(app: &InnoApp<'_>) -> String {
         "end;\n\n",
     ));
     s.push_str(&format!(
-        "const\n  NshShortcutName = '{}';\n  NshLegacyShortcutName = '{}';\n  NshExePath = '\\{exe}';\n  NshIconPath = '\\{}';\n\n",
+        "const\n  NshShortcutName = '{}';\n  NshLegacyShortcutName = '{}';\n  NshExePath = '\\{exe}';\n\n",
         pascal(&file_stem(app.display_name)),
         pascal(&file_stem(app.name)),
-        pascal(icon_path),
     ));
     s.push_str(include_str!("windows-shortcuts.iss"));
     s.push_str(concat!(

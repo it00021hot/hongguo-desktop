@@ -75,8 +75,8 @@ keeps Inno Setup's default language. Missing compiler translations fail compilat
 
 `windows.displayName` sets the installer, shortcut and uninstall-list labels while
 retaining the executable, install directory and AppId. Upgrades check each shortcut's
-target before cleanup or refresh. Shortcuts use a content-addressed icon, and Explorer
-receives item-level change notifications for the app's files and shortcuts.
+target before replacing it or removing a legacy shortcut. Shortcuts use a content-addressed
+icon included in both Windows installers and update archives.
 
 On macOS, live text alignment changes apply to the field editor while editing.
 The field's cell takes the new alignment after the edit commits so AppKit cannot
