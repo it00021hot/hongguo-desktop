@@ -4,7 +4,10 @@ use crate::ui::icon;
 use crate::ui::motion;
 use crate::ui::radii;
 use nsh_base::{OpenChangeReason, PopoverEvent, theme};
-use nsh_core::{element::ImageSrc, prelude::*};
+use nsh_core::{
+    element::{ImageSrc, Style, StyleRefinement},
+    prelude::*,
+};
 mod scroll;
 
 const DESKTOP_SUGGESTIONS_WIDTH: f32 = 384.0;
@@ -185,14 +188,13 @@ pub(crate) fn search_suggestions(
                                                         .set(entry.with(|(index, _)| *index));
                                                 })
                                                 .child(
-                                                    suggestion(option)
-                                                        .selected(move || {
-                                                            entry.with(|(index, _)| *index)
-                                                                == popup.selected.get()
-                                                        })
-                                                        .on_press(move || {
-                                                            pick(entry.with(|(index, _)| *index))
-                                                        }),
+                                                    suggestion(option, move || {
+                                                        entry.with(|(index, _)| *index)
+                                                            == popup.selected.get()
+                                                    })
+                                                    .on_press(move || {
+                                                        pick(entry.with(|(index, _)| *index))
+                                                    }),
                                                 )
                                         },
                                     )),
@@ -203,10 +205,15 @@ pub(crate) fn search_suggestions(
     )
 }
 
-fn suggestion(option: Memo<SearchSuggestion>) -> nsh_base::ButtonElement {
-    nsh_base::button()
-        .role(Some(nsh_core::AccessibilityRole::Option))
-        .accessibility_label(move || Some(option.with(|option| option.word.clone())))
+fn suggestion(option: Memo<SearchSuggestion>, selected: impl Fn() -> bool + 'static) -> View {
+    view()
+        .role(nsh_core::AccessibilityRole::Option)
+        .focusable(false)
+        .label(move || option.with(|option| option.word.clone()))
+        .accessibility_state(move || AccessibilityState {
+            selected: selected(),
+            ..Default::default()
+        })
         .w_full()
         .min_h(move || px(if is_desktop() { 34.0 } else { 48.0 }))
         .px_2p5()
@@ -218,7 +225,9 @@ fn suggestion(option: Memo<SearchSuggestion>) -> nsh_base::ButtonElement {
         .rounded(move || theme().radius)
         .text_color(move || theme().popover_foreground)
         .hover(|style| style.bg(move || theme().accent.opacity(0.6)))
-        .selected_style(|style| style.bg(move || theme().accent))
+        .selected_style(Style::from(
+            StyleRefinement::default().bg(move || theme().accent),
+        ))
         .active(|style| style.bg(move || theme().accent).opacity(0.8))
         .transition_colors()
         .duration(move || {
