@@ -9,6 +9,20 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.5] - 2026-11-20
+
+### ⚡ 优化
+
+- 桌面版启动时在后台检查更新。发现新版后，可前往设置下载和安装。
+
+### 🐛 修复
+
+- 修复 Windows 上鼠标点击搜索联想条目无效的问题。
+
+从 0.7.0 或更早版本升级需手动下载安装。需要迁移旧版数据时，请先备份并参照 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+English: The desktop app checks for updates in the background at launch. Download and install available updates in Settings. Fixed mouse clicks on search suggestions on Windows. Install manually when upgrading from 0.7.0 or earlier, and back up your data before following the legacy migration instructions.
+
 ## [0.8.4] - 2026-11-20
 
 ### 🐛 修复
