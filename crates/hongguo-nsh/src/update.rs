@@ -1,5 +1,6 @@
 use crate::{i18n::tr, ui};
 use nsh_core::prelude::*;
+use std::future::Future;
 
 mod desktop;
 const RELEASES: &str = "https://github.com/it00021hot/hongguo-desktop/releases/latest";
@@ -29,16 +30,103 @@ impl Default for Updates {
     }
 }
 
+pub(crate) fn check_on_startup() {
+    if is_desktop() {
+        let updates = global::<Updates>().get_untracked();
+        if !updates.checked.get_untracked() {
+            updates.check();
+        }
+    }
+}
+
+impl Updates {
+    fn check(self) {
+        self.run("update.checking", async move {
+            let update = desktop::check().await?;
+            self.available.set(update);
+            self.checked.set(true);
+            Ok(())
+        });
+    }
+
+    fn activate(self) {
+        if !is_desktop() {
+            self.run("update.checking", async {
+                if open_url(RELEASES).await {
+                    Ok(())
+                } else {
+                    Err(tr("update.releaseOpenFailed").to_string())
+                }
+            });
+        } else if let Some(path) = self.downloaded.get_untracked() {
+            self.run("update.installing", async move {
+                let update = self
+                    .available
+                    .get_untracked()
+                    .ok_or("missing update metadata")?;
+                desktop::install(path, update).await
+            });
+        } else if let Some(update) = self.available.get_untracked() {
+            self.run("update.downloadingArchive", async move {
+                let path = desktop::download(update).await?;
+                self.downloaded.set(Some(path));
+                Ok(())
+            });
+        } else {
+            self.check();
+        }
+    }
+
+    fn run(
+        self,
+        operation: &'static str,
+        work: impl Future<Output = Result<(), String>> + 'static,
+    ) {
+        if self.busy.get_untracked() {
+            return;
+        }
+        self.busy.set(true);
+        self.failure.set(SharedString::default());
+        self.operation.set(operation);
+        self.owner.run(move || {
+            spawn(async move {
+                let start = nsh_core::time::now();
+                log::info!("[NSH update] operation started operation={operation}");
+                let result = work.await;
+                let elapsed_ms = start.elapsed().as_millis();
+                match result {
+                    Ok(()) => log::info!(
+                        "[NSH update] operation completed operation={operation} elapsedMs={elapsed_ms}"
+                    ),
+                    Err(error) => {
+                        log::error!(
+                            "[NSH update] operation failed operation={operation} elapsedMs={elapsed_ms}: {error}"
+                        );
+                        let message = tr(match operation {
+                            "update.installing" => "update.installFailed",
+                            "update.downloadingArchive" => "update.downloadFailed",
+                            _ => "update.checkFailed",
+                        });
+                        self.failure.set(message.replace("{error}", &error).into());
+                    }
+                }
+                self.busy.set(false);
+            });
+        });
+    }
+}
+
 pub(crate) fn card() -> View {
+    let updates = global::<Updates>().get_untracked();
     let Updates {
-        owner,
         busy,
         checked,
         available,
         downloaded,
         operation,
         failure,
-    } = global::<Updates>().get_untracked();
+        ..
+    } = updates;
     crate::features::settings::presentation::form_surface(
         view()
             .gap_1p5()
@@ -69,60 +157,7 @@ pub(crate) fn card() -> View {
                             computed(move || available.get().is_some()),
                         )
                         .disabled(busy)
-                        .on_press(move || {
-                            if busy.get_untracked() {
-                                return;
-                            }
-                            busy.set(true);
-                            failure.set(SharedString::default());
-                            operation.set(if downloaded.get_untracked().is_some() {
-                                "update.installing"
-                            } else if available.get_untracked().is_some() {
-                                "update.downloadingArchive"
-                            } else {
-                                "update.checking"
-                            });
-                            owner.run(move || {
-                                spawn(async move {
-                                    let result = if !is_desktop() {
-                                        if open_url(RELEASES).await {
-                                            Ok(())
-                                        } else {
-                                            Err(tr("update.releaseOpenFailed").to_string())
-                                        }
-                                    } else if let Some(path) = downloaded.get_untracked() {
-                                        match available.get_untracked() {
-                                            Some(update) => desktop::install(path, update).await,
-                                            None => Err("missing update metadata".into()),
-                                        }
-                                    } else if let Some(update) = available.get_untracked() {
-                                        desktop::download(update)
-                                            .await
-                                            .map(|path| downloaded.set(Some(path)))
-                                    } else {
-                                        desktop::check().await.map(|update| {
-                                            available.set(update);
-                                            checked.set(true);
-                                        })
-                                    };
-                                    if let Err(error) = result {
-                                        log::error!("[NSH update] operation failed: {error}");
-                                        failure.set(
-                                            tr(match operation.get_untracked() {
-                                                "update.installing" => "update.installFailed",
-                                                "update.downloadingArchive" => {
-                                                    "update.downloadFailed"
-                                                }
-                                                _ => "update.checkFailed",
-                                            })
-                                            .replace("{error}", &error)
-                                            .into(),
-                                        );
-                                    }
-                                    busy.set(false);
-                                });
-                            });
-                        }),
+                        .on_press(move || updates.activate()),
                     ),
             )
             .child(crate::features::settings::presentation::form_hint(

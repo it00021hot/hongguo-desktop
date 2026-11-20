@@ -50,7 +50,7 @@ Change the playback shortcuts in **Settings**.
 
 ## Updates and data
 
-**Since 0.8.0**, use **Check for updates** and then **Download update** in Settings. Once the download is verified, select **Update now** to install and restart with your settings and login intact. The installation directory must be writable. If you are using **0.7.0 or earlier**, install the latest release manually once.
+The desktop app checks for updates at launch. You can also check manually in Settings. When a new version is available, select **Download update** in Settings. Once the download is verified, select **Update now** to install and restart with your settings and login intact. The installation directory must be writable. If you are using **0.7.0 or earlier**, install the latest release manually once.
 
 | Platform | Default data directory |
 | --- | --- |

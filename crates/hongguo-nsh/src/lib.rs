@@ -57,6 +57,7 @@ pub fn App() -> impl IntoElement {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     window_modes::show_main_window();
     i18n::install();
+    update::check_on_startup();
     view_memory::provide();
     shell::PlayerOverlay::provide();
     set_tokens(
