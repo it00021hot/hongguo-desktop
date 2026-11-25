@@ -25,9 +25,14 @@ linear scRGB on the GPU before drawing on an FP16 canvas, including the current
 display's SDR white scaling. The standard SDR canvas retains direct bitmap drawing.
 Refreshing this snapshot must keep the `Win32_Devices_Display` workspace feature,
 `SwapChain::presentation`, `ComponentContext::{output_color_info, drawing_device_generation}`,
+`AppOptions::output_color_mode` with `output::configure` in `AppView::make`,
 and the `output::{format, check_device, configure_swap_chain}` hooks in `gfx.rs`;
 upstream 0.7.0 dropped those surfaces. Remove this bridge when
 upstream provides equivalent native-video color management.
+macOS packaging signs nested `*.dylib` files inside the app bundle before
+signing the bundle itself, because `nativeHost` stage injects unsigned media
+libraries into `Contents/Frameworks`. Remove this when upstream signs nested
+code before `codesign --verify --deep --strict`.
 Android additionally exposes a
 conservative `SurfaceComposition.supports(View)` admission check: separate HDR
 surfaces are excluded under Canvas shaders/transitions, masks, rounded ancestor clipping,

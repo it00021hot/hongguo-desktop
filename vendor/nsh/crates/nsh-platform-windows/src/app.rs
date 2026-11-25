@@ -152,6 +152,8 @@ pub struct AppOptions {
     /// `desktop={{ windowDrag: true }}`. Top-level windows only; set when
     /// the window is made.
     pub transparent: bool,
+    /// Native composition precision. All windows on this UI thread share this mode.
+    pub output_color_mode: crate::OutputColorMode,
     /// Keeps the window out of the taskbar from the start (Electron's and
     /// Tauri's `skipTaskbar`); the app changes it with
     /// `Window.setSkipTaskbar`.
@@ -239,6 +241,7 @@ impl Default for AppOptions {
             icon: None,
             size: (1200, 800),
             transparent: false,
+            output_color_mode: crate::OutputColorMode::Sdr,
             skip_taskbar: false,
             components: Default::default(),
             appearance: Appearance::System,
@@ -311,6 +314,7 @@ impl AppView {
         options: AppOptions,
         composed: bool,
     ) -> windows::core::Result<Rc<AppView>> {
+        crate::output::configure(options.output_color_mode)?;
         let surface = Surface::new(initial_environment());
         surface.appearance.set(options.appearance);
         if options.notifications {

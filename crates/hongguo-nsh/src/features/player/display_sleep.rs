@@ -1,10 +1,10 @@
-use nsh_core::prelude::*;
-use std::cell::RefCell;
-use std::rc::Rc;
-
 pub(super) fn bind(active: impl Fn() -> bool + 'static) {
     #[cfg(target_os = "macos")]
     {
+        use nsh_core::prelude::*;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
         // Rc 而不是 stored：owner dispose 时 cleanup 再碰 Stored 会触发
         // “signal read or written after its owner was disposed”。释放靠 Guard::Drop。
         let guard = Rc::new(RefCell::new(macos::Guard::default()));

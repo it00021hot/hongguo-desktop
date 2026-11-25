@@ -3086,6 +3086,9 @@ pub(crate) fn codesign_macos(
     identity: &str,
     entitlements: Option<&Path>,
 ) -> anyhow::Result<()> {
+    if bundle.is_dir() {
+        sign_native_libraries(bundle, identity)?;
+    }
     let output = Command::new("codesign")
         .args(codesign_macos_args(bundle, identity, entitlements))
         .stdout(Stdio::null())
@@ -3125,7 +3128,11 @@ fn sign_native_libraries(directory: &Path, identity: &str) -> anyhow::Result<()>
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
-        if entry.file_type()?.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
             sign_native_libraries(&path, identity)?;
         } else if path
             .extension()
