@@ -9,6 +9,26 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.8] - 2026-11-25
+
+### ✨ 新增
+
+- 新增脱敏运行日志（`app.log`）与崩溃记录（`crash.log`），并在「设置 → 问题反馈与诊断」提供一键提交 GitHub Issue、复制诊断日志与打开日志目录入口。
+
+### ⚡ 优化
+
+- 优化连续播放切集与切剧时的画面衔接稳定性，修复尾帧过渡异常、缓冲提示时机及超时重试体验，播放失败点击重试会刷新失效直链并清理卡住的流缓存。
+- 设置页状态提示固定展示在顶部区域，无需滚动到底部即可查看各设置项操作反馈。
+
+### 🐛 修复
+
+- 修复 Windows 后台窗口生命周期误判导致无法播放黑屏的问题，并补充输出色彩模式协商日志以排查部分设备偏白异常。
+- 修复未登录状态下观看历史云端上报触发限流后仍反复请求的问题。
+
+从 0.7.0 或更早版本升级需手动下载安装。需要迁移旧版数据时，请先备份并参照 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+English: Added redacted runtime diagnostic logs (`app.log` / `crash.log`) and a feedback & diagnostics section in Settings with one-click GitHub Issue reporting, log copying, and log folder access. Improved episode/series transition smoothness and network timeout/retry handling (clearing stale stream & play URL caches on retry), and pinned the Settings status banner at the top. Fixed Windows window lifecycle detection causing black-screen playback failures, added output color mode negotiation logs, and added rate-limit backoff for signed-out watch history syncing. Install manually when upgrading from 0.7.0 or earlier, and back up your data before following the legacy migration instructions.
+
 ## [0.8.7] - 2026-11-25
 
 ### ⚡ 优化
