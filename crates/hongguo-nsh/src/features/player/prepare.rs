@@ -5,8 +5,10 @@ use hongguo_common::{
 };
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub(super) struct Playback {
-    pub(super) lease: MediaLease,
+    /// Shared so silent handoff can keep the outgoing lease alive until the next first frame.
+    pub(super) lease: Arc<MediaLease>,
     pub(super) resume_at: f64,
     pub(super) history: LocalHistoryItem,
     pub(super) next_episode: Option<u32>,
@@ -106,7 +108,7 @@ pub(super) async fn prepare(
         .prepare_codec_extension(resume_at)
         .map_err(AppError::Media)?;
     Ok(Playback {
-        lease,
+        lease: Arc::new(lease),
         resume_at,
         history,
         next_episode,

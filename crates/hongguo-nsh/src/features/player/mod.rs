@@ -12,6 +12,7 @@ pub(crate) use interaction::SocialMemory;
 pub(crate) use interaction::danmaku::DanmakuPreferences;
 pub(crate) use interaction::detail_social;
 pub(crate) use interaction::reviews_with_header;
+mod display_sleep;
 mod keyboard;
 mod lifecycle;
 
@@ -41,6 +42,8 @@ use crate::{
     ui,
 };
 use nsh_core::prelude::*;
+
+const PREFETCH_RECHECK_REMAINING_SECS: f64 = 15.0;
 
 pub(crate) fn page(session: SessionHandle, nav: Navigation, id: String, episode: u32) -> Screen {
     let owner = Route::Player(id.clone(), episode);
@@ -102,16 +105,33 @@ fn content(
     };
     provide_context(geometry);
     let window_modes = crate::window_modes::WindowModes::current();
+    let has_surface = signal(false);
     let buffering = signal(false);
     let pending_seek = signal(None::<f64>);
     let failure = signal(SharedString::default());
     let notice = signal(SharedString::default());
     let relay_notice = signal(SharedString::default());
+    let staged_playback = stored(None::<(String, u32, prepare::Playback)>);
+    let staged_layer = signal(None::<native::VideoSource>);
+    let stage_key = stored(None::<(String, u32)>);
+    let stage_task = stored(None::<nsh_core::element::Spawned<()>>);
     let source = resource(
         move || Some((selection.get(), definition.get(), reset_definition.get())),
         move |((id, episode), definition, reset_definition), _| {
             let session = session.with(|session| session.clone());
             let start_position = pending_seek.get_untracked();
+            let reused = staged_playback.with(|slot| {
+                slot.take_if(|(series, staged_episode, _)| {
+                    transport::reuse_staged(Some((series.as_str(), *staged_episode)), &id, episode)
+                })
+                .map(|(_, _, playback)| playback)
+            });
+            if reused.is_some() {
+                staged_layer.set(None);
+            }
+            if let Some(playback) = reused {
+                return bridge::request(async move { Ok(playback) });
+            }
             bridge::request(async move {
                 prepare::prepare(
                     session,
@@ -159,6 +179,11 @@ fn content(
         ) && !crate::boss_key::hidden()
             && window_modes.is_none_or(|modes| modes.can_play())
     });
+    display_sleep::bind(move || {
+        play_allowed.get()
+            && !paused.get()
+            && window_modes.is_some_and(|modes| modes.state().fullscreen)
+    });
     let danmaku = interaction::danmaku::observe(
         session,
         move || {
@@ -205,6 +230,17 @@ fn content(
         feed,
         relay_notice,
         move |series, episode| {
+            if let Some(chrome) = chrome::Chrome::current() {
+                chrome.begin_handoff();
+                chrome.arm_status_grace();
+            }
+            adopt_staged_playback(
+                staged_playback,
+                staged_layer,
+                source,
+                &series.series_id,
+                episode,
+            );
             batch(|| {
                 selection.set((series.series_id, episode));
                 position.set((0.0, 0.0));
@@ -220,23 +256,6 @@ fn content(
     );
     let relay_pending = relay.pending();
     let busy = computed(move || source.loading() || relay_pending.get());
-    let next = move || {
-        if busy.get() {
-            return;
-        }
-        direction.set(1);
-        if let Some(next) = source.with(|source| source.and_then(|source| source.next_episode)) {
-            batch(|| {
-                selection.update(|(_, episode)| *episode = next);
-                position.set((0.0, 0.0));
-                pending_seek.set(None);
-                reset_definition.set(false);
-                paused.set(false);
-            });
-        } else if !relay.advance() {
-            paused.set(true);
-        }
-    };
     let panels_open = computed(move || {
         menu_open.get().is_some()
             || download_open.get()
@@ -252,6 +271,27 @@ fn content(
     })
     .with_handoff(feed.map(navigation::FeedNavigation::quiet_handoff));
     provide_context(chrome);
+    let next = move || {
+        if busy.get() {
+            return;
+        }
+        direction.set(1);
+        if let Some(next) = source.with(|source| source.and_then(|source| source.next_episode)) {
+            chrome.begin_handoff();
+            chrome.arm_status_grace();
+            let series = selection.get_untracked().0;
+            adopt_staged_playback(staged_playback, staged_layer, source, &series, next);
+            batch(|| {
+                selection.update(|(_, episode)| *episode = next);
+                position.set((0.0, 0.0));
+                pending_seek.set(None);
+                reset_definition.set(false);
+                paused.set(false);
+            });
+        } else if !relay.advance() {
+            paused.set(true);
+        }
+    };
     effect(move || {
         if !source.loading()
             && !paused.get()
@@ -260,6 +300,107 @@ fn content(
         {
             chrome.mark_played();
         }
+    });
+    let prefetch_armed = stored(None::<(String, u32)>);
+    effect(move || {
+        let (series, episode) = selection.get();
+        let (at, duration) = position.get();
+        if source.loading()
+            || paused.get()
+            || duration <= 0.0
+            || duration - at > PREFETCH_RECHECK_REMAINING_SECS
+        {
+            return;
+        }
+        let Some(next_episode) =
+            source.with(|source| source.and_then(|source| source.next_episode))
+        else {
+            return;
+        };
+        let key = (series.clone(), next_episode);
+        if prefetch_armed.with(|armed| armed.as_ref() == Some(&key)) {
+            return;
+        }
+        prefetch_armed.replace(Some(key));
+        let state = session.with(|session| session.state.clone());
+        hongguo_service::play_service::schedule_following_episodes(&state, &series, episode);
+    });
+    effect(move || {
+        if chrome.silent_handoff()
+            || source.loading()
+            || paused.get()
+            || pending_seek.get().is_some()
+            || comments_open.get()
+            || download_open.get()
+            || !play_allowed.get()
+            || !session.with(|session| session.state.settings().auto_next_episode)
+        {
+            return;
+        }
+        let (series, episode) = selection.get();
+        let (at, duration) = position.get();
+        let remaining = duration - at;
+        let Some(next_episode) =
+            source.with(|source| source.and_then(|source| source.next_episode))
+        else {
+            return;
+        };
+        let key = (series.clone(), next_episode);
+        let already = stage_key.with(|armed| armed.as_ref() == Some(&key));
+        if !transport::should_stage_next(remaining, true, already) {
+            return;
+        }
+        stage_key.replace(Some(key));
+        if let Some(task) = stage_task.replace(None) {
+            task.cancel();
+        }
+        let origin = (series.clone(), episode);
+        let definition = definition.get();
+        let session = session.with(|session| session.clone());
+        let task = spawn(async move {
+            let prepared = bridge::request(prepare::prepare(
+                session,
+                origin.0.clone(),
+                next_episode,
+                definition,
+                false,
+                None,
+            ))
+            .await;
+            if selection.get_untracked() != origin {
+                return;
+            }
+            let Ok(playback) = prepared else {
+                return;
+            };
+            staged_playback.replace(Some((origin.0, next_episode, playback.clone())));
+            staged_layer.set(Some(native::VideoSource::from_playback(&playback)));
+        });
+        stage_task.replace(Some(task));
+    });
+    effect(move || {
+        if chrome.silent_handoff()
+            || source.loading()
+            || paused.get()
+            || pending_seek.get().is_some()
+            || comments_open.get()
+            || download_open.get()
+            || !play_allowed.get()
+            || !session.with(|session| session.state.settings().auto_next_episode)
+        {
+            return;
+        }
+        let (at, duration) = position.get();
+        if !transport::should_hold_outgoing(duration - at, duration, true) {
+            return;
+        }
+        if source
+            .with(|source| source.and_then(|source| source.next_episode))
+            .is_none()
+        {
+            return;
+        }
+        next();
     });
     let seasons = season_menu::observe(
         session,
@@ -302,6 +443,10 @@ fn content(
         if busy.get() || !transport::change_episode(selection.get_untracked().1, episode) {
             return;
         }
+        chrome.begin_handoff();
+        chrome.arm_status_grace();
+        let series = selection.get_untracked().0;
+        adopt_staged_playback(staged_playback, staged_layer, source, &series, episode);
         batch(|| {
             direction.set(if episode < selection.get_untracked().1 {
                 -1
@@ -445,6 +590,8 @@ fn content(
             video_size,
             comments_open,
             download_open,
+            has_surface,
+            staged: staged_layer,
         },
         move || danmaku.overlay(),
         next,
@@ -558,6 +705,15 @@ fn content(
                             return;
                         }
                     }
+                    chrome.begin_handoff();
+                    chrome.arm_status_grace();
+                    adopt_staged_playback(
+                        staged_playback,
+                        staged_layer,
+                        source,
+                        &series.series_id,
+                        episode,
+                    );
                     batch(|| {
                         selection.set((series.series_id, episode));
                         position.set((0.0, 0.0));
@@ -677,7 +833,13 @@ fn content(
         view()
             .gap_3()
             .child(when(
-                move || source.loading(),
+                move || {
+                    !chrome.silent_handoff()
+                        && transport::cold_status_loading(
+                            has_surface.get(),
+                            source.with(|source| source.is_some()),
+                        )
+                },
                 move || ui::status(move || tr("common.loading")),
             ))
             .child(when(
@@ -691,7 +853,7 @@ fn content(
                 },
             ))
             .child(when(
-                move || buffering.get(),
+                move || buffering.get() && !chrome.suppress_status(),
                 move || ui::status(move || tr("player.bufferingShort")),
             ))
             .child(ui::status(notice))
@@ -703,4 +865,25 @@ fn content(
         computed(move || controls_state.binge_bar_visible()),
     )
     .child(download::sheet(session, nav, download_open, source))
+}
+
+fn adopt_staged_playback(
+    staged_playback: Stored<Option<(String, u32, prepare::Playback)>>,
+    staged_layer: Signal<Option<native::VideoSource>>,
+    source: Resource<prepare::Playback, bridge::Failure>,
+    series: &str,
+    episode: u32,
+) {
+    let reused = staged_playback.with(|slot| {
+        slot.as_ref().and_then(|(sid, ep, playback)| {
+            transport::reuse_staged(Some((sid.as_str(), *ep)), series, episode)
+                .then(|| playback.clone())
+        })
+    });
+    if let Some(playback) = reused {
+        source.mutate(playback);
+        return;
+    }
+    staged_playback.replace(None);
+    staged_layer.set(None);
 }

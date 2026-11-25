@@ -3,6 +3,7 @@ use std::time::Duration;
 
 const HIDE_AFTER: Duration = Duration::from_secs(3);
 const QUIET_WINDOW: Duration = Duration::from_secs(8);
+const STATUS_GRACE: Duration = Duration::from_millis(500);
 
 /// A single auto-advance cue owned by the feed, which outlives its player row.
 #[derive(Clone, Copy)]
@@ -46,6 +47,9 @@ pub(crate) struct Chrome {
     quiet: Signal<bool>,
     quiet_until: Stored<Option<Instant>>,
     handoff: Stored<Option<QuietHandoff>>,
+    status_until: Stored<Option<Instant>>,
+    status_tick: Signal<u64>,
+    keeping_frame: Signal<bool>,
 }
 
 impl Chrome {
@@ -74,6 +78,9 @@ impl Chrome {
             quiet,
             quiet_until: stored(None),
             handoff: stored(None),
+            status_until: stored(None),
+            status_tick: signal(0),
+            keeping_frame: signal(false),
         };
         effect(move || {
             chrome.revision.get();
@@ -104,6 +111,7 @@ impl Chrome {
             handoff.clear();
         }
         self.quiet_until.replace(None);
+        // 不 clear_status_grace：控件唤醒不能打断切集 handoff / 状态抑制。
         batch(|| {
             self.quiet.set(false);
             self.visible.set(true);
@@ -141,6 +149,43 @@ impl Chrome {
         self.quiet_locally(until);
     }
 
+    pub fn arm_status_grace(self) {
+        let status_until = nsh_core::time::now() + STATUS_GRACE;
+        self.status_until.replace(Some(status_until));
+        self.status_tick.update(|tick| *tick += 1);
+        let status_tick = self.status_tick;
+        set_timeout(STATUS_GRACE, move || {
+            status_tick.update(|tick| *tick += 1);
+        });
+    }
+
+    pub fn begin_handoff(self) {
+        self.keeping_frame.set(true);
+    }
+
+    pub fn end_handoff(self) {
+        if self.keeping_frame.get_untracked() {
+            self.keeping_frame.set(false);
+        }
+    }
+
+    pub fn suppress_status(self) -> bool {
+        self.status_tick.get();
+        self.status_until
+            .with(|until| until.is_some_and(|until| nsh_core::time::now() < until))
+    }
+
+    /// 切集交接中：冻结旧层，新层在旧帧上交叉淡入，淡入完成后再卸旧层。
+    pub fn silent_handoff(self) -> bool {
+        self.keeping_frame.get()
+    }
+
+    fn clear_status_grace(self) {
+        if self.status_until.replace(None).is_some() {
+            self.status_tick.update(|tick| *tick += 1);
+        }
+    }
+
     fn quiet_locally(self, until: Instant) {
         batch(|| {
             self.quiet.set(true);
@@ -156,6 +201,7 @@ impl Chrome {
             handoff.clear();
         }
         self.quiet_until.replace(None);
+        self.clear_status_grace();
         if self.quiet.get_untracked() {
             self.quiet.set(false);
         }

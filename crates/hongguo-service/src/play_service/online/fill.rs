@@ -179,8 +179,8 @@ enum FillBudget {
 
 /// 续填在「预取填充还握着取流权」时的退避重试：预取正好在头部预算处收尾，
 /// 这一次 begin_fetch 会失败；不重试就会留下「头部之后永远没人续填」的缝。
-const RESUME_RETRY_ATTEMPTS: u8 = 8;
-const RESUME_RETRY_DELAY: Duration = Duration::from_millis(200);
+const RESUME_RETRY_ATTEMPTS: u8 = 16;
+const RESUME_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 /// 条目转正为当前集后的**续填**：渐进已注册、URL/代理存在条目里，直接把余下字节按序填满（当前集优先级，不礼让）。
 /// 没有它，只填了头部的条目在被切上后，播放追上填充前沿就只能超时——「滚回来就黑屏」的另一半。

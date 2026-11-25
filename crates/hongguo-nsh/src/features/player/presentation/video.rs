@@ -22,6 +22,13 @@ pub(crate) fn player_source_motion(direction: i32) -> Motion {
     )
 }
 
+pub(crate) fn player_crossfade() -> MotionSpec {
+    MotionSpec::new(
+        KeyframeTiming::new(crate::ui::motion::PLAYER_CROSSFADE_MS).easing(Easing::EaseOut),
+    )
+    .values(MotionChannel::Opacity, [0.0, 1.0])
+}
+
 pub(crate) fn player_stage() -> View {
     view()
         .flex_1()

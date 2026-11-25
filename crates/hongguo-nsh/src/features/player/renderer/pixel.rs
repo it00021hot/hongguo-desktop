@@ -48,6 +48,16 @@ pub(super) fn mount(state: State, callbacks: Callbacks) -> View {
             .flex_1()
             .element_ref(&state.control.reference)
             .opacity(state.opacity)
+            .bind_motion(&state.motion)
+            .transition_opacity()
+            .duration(move || {
+                if reduce_motion() {
+                    0.0
+                } else {
+                    crate::ui::motion::PLAYER_CROSSFADE_MS
+                }
+            })
+            .ease_out()
             .prop(STATE_PROP, move || {
                 serde_json::to_value(props.get()).expect("typed pixel video props")
             })

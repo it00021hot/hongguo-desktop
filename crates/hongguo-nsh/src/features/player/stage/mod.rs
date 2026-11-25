@@ -186,7 +186,13 @@ pub(crate) fn surface(
                 .justify_center()
                 .pointer_events(PointerEvents::BoxNone)
                 .child(status),
-        );
+        )
+        .style_with(move |style| {
+            let hide = is_desktop()
+                && modes.is_some_and(|modes| modes.state().fullscreen)
+                && chrome.is_some_and(|chrome| !chrome.shown().get());
+            style.cursor(if hide { Cursor::None } else { Cursor::Auto })
+        });
     match chrome {
         Some(chrome) => surface
             .on_mouse_enter(move |_: &nsh_core::MouseEvent| chrome.moved())

@@ -56,6 +56,7 @@ pub(super) struct State {
     pub volume: Signal<f32>,
     pub muted: Memo<bool>,
     pub opacity: Memo<f32>,
+    pub motion: Motion,
     pub paused: Memo<bool>,
     pub active: Memo<bool>,
     pub resize_mode: Memo<hongguo_nsh_video_api::ResizeMode>,
@@ -145,6 +146,16 @@ fn mount_native(
             .volume(state.volume)
             .muted(state.muted)
             .opacity(state.opacity)
+            .bind_motion(&state.motion)
+            .transition_opacity()
+            .duration(move || {
+                if reduce_motion() {
+                    0.0
+                } else {
+                    crate::ui::motion::PLAYER_CROSSFADE_MS
+                }
+            })
+            .ease_out()
             .paused(state.paused)
             .on_load(move |info: &VideoInfo| (callbacks.get().load)(info))
             .on_progress(move |info: &VideoProgress| (callbacks.get().progress)(info))

@@ -29,6 +29,12 @@ fn remembered_codec(vid: &str, definition: u32) -> String {
         .unwrap_or_default()
 }
 
+fn prune_codecs(c: &StreamCache) {
+    STREAM_CODECS
+        .lock()
+        .retain(|(vid, definition), _| c.exists(vid, *definition));
+}
+
 /// 预取（换剧 + 连播共用）的并发上限：每路要先走「取流表 + 探针链」再排填充门闸，
 /// 多路同时探针会在慢网/弱机上抢当前播放的带宽与 CPU；2 路足够让下一个目标先热。
 const PREFETCH_CONCURRENCY: usize = 2;
@@ -93,10 +99,27 @@ pub async fn prepare(
     // 正在被 `<video>` 读的那条流就被逐掉，播放追上缓冲前沿只能超时。
     // set_current 内已跑 retain_playing_set（连播接力同路，不依赖 prepare）。
     c.set_current(vid);
+    prune_codecs(c);
 
     // 还没有键可查：先做一次很小的接口调用把流表拿回来，解析出的真实档位才是缓存的键；
     // 贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
     let cap = crate::device::stream_cap();
+    // 预取已留下流表 + ready 档时，跳过取流表网络往返，直接按既有政策选档起播。
+    if hongguo_api::play_url::cached_play(vid, definition, cap).is_some()
+        && let Ok(selection) = super::super::resolution::select(
+            state,
+            vid,
+            progress_key,
+            definition,
+            hongguo_api::resolution_policy::Purpose::Playback,
+        )
+        .await
+        && let Some(hit) = prepared(c, vid, selection.play.definition, selection.automatic)
+    {
+        // 只续填选中档：其它档若一并升格会把多路整集灌进内存。
+        resume_fill(state, vid, selection.play.definition, progress_key);
+        return Ok(hit);
+    }
     fetch_with_registry(state, vid, progress_key, definition, cap).await?;
     let selection = super::super::resolution::select(
         state,
@@ -148,6 +171,7 @@ pub async fn prepare(
         if let Err(e) = filled {
             log::warn!("[Online] 填充 {owned} 失败: {e}");
             c.remove(&owned, want);
+            prune_codecs(c);
         }
     });
 
@@ -172,7 +196,7 @@ fn prepared(
 
 /// 预取一集的流（沉浸流「一切就下一部」的后台铺垫）：提前走完「取流表 + 建渐进流」
 /// 两步贵的前置，数据后台渐进填充；用户真滚过去时 `prepare` 命中 ready，首帧只等头部数据区间。
-/// 幂等（已有条目/已在取流静默返回）；失败同样静默——预取是锦上添花，不把噪音推给前端。
+/// 幂等（ready / 正在取流静默返回；空壳条目会清掉再取）；失败静默——预取是锦上添花。
 pub async fn prefetch_stream(
     state: &AppState,
     vid: &str,
@@ -208,8 +232,12 @@ pub async fn prefetch_stream(
     .await?
     .play;
     let want = play.definition;
-    if c.is_fetching(vid, want) || c.exists(vid, want) {
+    if c.is_fetching(vid, want) || c.ready(vid, want).is_some() {
         return Ok(());
+    }
+    if c.exists(vid, want) {
+        c.remove(vid, want);
+        prune_codecs(c);
     }
     if !c.begin_fetch(vid, want) {
         return Ok(());
@@ -240,6 +268,7 @@ pub async fn prefetch_stream(
         if let Err(e) = filled {
             log::warn!("[Online] 预取填充 {owned} 失败: {e}");
             c.remove(&owned, want);
+            prune_codecs(c);
         }
     });
     Ok(())

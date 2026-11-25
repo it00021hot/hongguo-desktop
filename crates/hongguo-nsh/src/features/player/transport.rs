@@ -5,6 +5,90 @@ pub(super) struct DefinitionChange {
     pub reset_definition: bool,
 }
 
+/// Start preparing the next native source this far from the end.
+pub(super) const HANDOFF_STAGE_REMAINING_SECS: f64 = 8.0;
+/// Freeze the outgoing picture this far from the end, before native End paints black.
+/// Wider than the shown progress interval so a tick cannot skip the window.
+pub(super) const HANDOFF_HOLD_REMAINING_SECS: f64 = 0.5;
+pub(super) const INCOMING_PROGRESS_INTERVAL_MS: f32 = 50.0;
+
+/// 「加载中」只在没有可播画面、且 resource 尚无 Playback 时出现。
+pub(super) fn cold_status_loading(has_surface: bool, has_playback: bool) -> bool {
+    !has_surface && !has_playback
+}
+
+pub(super) fn incoming_picture_ready(loaded: bool, seeking: bool, progressed: bool) -> bool {
+    loaded && !seeking && progressed
+}
+
+pub(super) fn can_promote_incoming(
+    incoming_url: &str,
+    resource_url: Option<&str>,
+    picture_ready: bool,
+) -> bool {
+    picture_ready && resource_url == Some(incoming_url)
+}
+
+pub(super) fn can_finish_handoff(
+    incoming_url: &str,
+    resource_url: Option<&str>,
+    picture_ready: bool,
+    faded: bool,
+) -> bool {
+    faded && can_promote_incoming(incoming_url, resource_url, picture_ready)
+}
+
+pub(super) fn incoming_opacity(revealing: bool) -> f32 {
+    if revealing { 1.0 } else { 0.0 }
+}
+
+pub(super) fn should_stage_next(remaining: f64, auto_next: bool, already_staged: bool) -> bool {
+    auto_next
+        && !already_staged
+        && remaining.is_finite()
+        && remaining > HANDOFF_HOLD_REMAINING_SECS
+        && remaining <= HANDOFF_STAGE_REMAINING_SECS
+}
+
+pub(super) fn should_hold_outgoing(remaining: f64, duration: f64, auto_next: bool) -> bool {
+    auto_next
+        && duration.is_finite()
+        && duration > HANDOFF_HOLD_REMAINING_SECS
+        && remaining.is_finite()
+        && (0.0..=HANDOFF_HOLD_REMAINING_SECS).contains(&remaining)
+}
+
+pub(super) fn reuse_staged(staged: Option<(&str, u32)>, series: &str, episode: u32) -> bool {
+    staged == Some((series, episode))
+}
+
+pub(super) fn incoming_candidate<'a>(
+    shown_url: Option<&str>,
+    staged_url: Option<&'a str>,
+    resource_url: Option<&'a str>,
+) -> Option<&'a str> {
+    staged_url
+        .filter(|url| shown_url != Some(*url))
+        .or_else(|| resource_url.filter(|url| shown_url != Some(*url)))
+}
+
+pub(super) fn outgoing_paused(
+    handoff: bool,
+    play_allowed: bool,
+    current: bool,
+    user_paused: bool,
+) -> bool {
+    handoff || !play_allowed || !current || user_paused
+}
+
+pub(super) fn incoming_paused(picture_ready: bool) -> bool {
+    picture_ready
+}
+
+pub(super) fn drop_shown_without_resource(loading: bool, handoff: bool) -> bool {
+    !loading && !handoff
+}
+
 pub(super) fn change_definition(
     current: Option<u32>,
     requested: Option<u32>,
@@ -84,5 +168,107 @@ impl LoadLatch {
                 0.0
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cold_status_loading_only_without_surface_or_playback() {
+        assert!(cold_status_loading(false, false));
+        assert!(!cold_status_loading(true, false));
+        assert!(!cold_status_loading(false, true));
+        assert!(!cold_status_loading(true, true));
+    }
+
+    #[test]
+    fn incoming_picture_ready_needs_load_progress_and_no_seek() {
+        assert!(!incoming_picture_ready(true, false, false));
+        assert!(!incoming_picture_ready(true, true, true));
+        assert!(!incoming_picture_ready(false, false, true));
+        assert!(incoming_picture_ready(true, false, true));
+    }
+
+    #[test]
+    fn can_promote_incoming_only_when_resource_owns_ready_url() {
+        assert!(!can_promote_incoming("next", Some("next"), false));
+        assert!(!can_promote_incoming("next", Some("current"), true));
+        assert!(!can_promote_incoming("next", None, true));
+        assert!(can_promote_incoming("next", Some("next"), true));
+    }
+
+    #[test]
+    fn handoff_keeps_outgoing_until_the_incoming_fade_finishes() {
+        assert!(!can_finish_handoff("next", Some("next"), true, false));
+        assert!(!can_finish_handoff("next", Some("next"), false, true));
+        assert!(can_finish_handoff("next", Some("next"), true, true));
+    }
+
+    #[test]
+    fn incoming_stays_transparent_until_the_crossfade_starts() {
+        assert_eq!(incoming_opacity(false), 0.0);
+        assert_eq!(incoming_opacity(true), 1.0);
+    }
+
+    #[test]
+    fn should_stage_next_in_the_overlap_window() {
+        assert!(!should_stage_next(15.0, true, false));
+        assert!(should_stage_next(8.0, true, false));
+        assert!(should_stage_next(1.0, true, false));
+        assert!(!should_stage_next(0.5, true, false));
+        assert!(!should_stage_next(4.0, false, false));
+        assert!(!should_stage_next(4.0, true, true));
+    }
+
+    #[test]
+    fn should_hold_outgoing_near_end_once_the_title_has_length() {
+        assert!(!should_hold_outgoing(0.5, 0.1, true));
+        assert!(should_hold_outgoing(0.5, 60.0, true));
+        assert!(should_hold_outgoing(0.0, 60.0, true));
+        assert!(!should_hold_outgoing(1.0, 60.0, true));
+        assert!(!should_hold_outgoing(0.1, 60.0, false));
+    }
+
+    #[test]
+    fn reuse_staged_only_for_the_matching_episode() {
+        assert!(reuse_staged(Some(("s", 2)), "s", 2));
+        assert!(!reuse_staged(Some(("s", 2)), "s", 3));
+        assert!(!reuse_staged(None, "s", 2));
+    }
+
+    #[test]
+    fn incoming_candidate_keeps_shown_and_prefers_staged() {
+        assert_eq!(
+            incoming_candidate(Some("a"), Some("b"), Some("c")),
+            Some("b")
+        );
+        assert_eq!(
+            incoming_candidate(Some("a"), Some("a"), Some("c")),
+            Some("c")
+        );
+        assert_eq!(incoming_candidate(Some("a"), Some("a"), Some("a")), None);
+        assert_eq!(incoming_candidate(None, None, Some("a")), Some("a"));
+    }
+
+    #[test]
+    fn outgoing_stays_frozen_during_handoff() {
+        assert!(outgoing_paused(true, true, true, false));
+        assert!(!outgoing_paused(false, true, true, false));
+        assert!(outgoing_paused(false, true, true, true));
+    }
+
+    #[test]
+    fn incoming_holds_after_first_picture() {
+        assert!(!incoming_paused(false));
+        assert!(incoming_paused(true));
+    }
+
+    #[test]
+    fn drop_shown_only_when_resource_is_gone_and_not_handing_off() {
+        assert!(!drop_shown_without_resource(true, false));
+        assert!(!drop_shown_without_resource(false, true));
+        assert!(drop_shown_without_resource(false, false));
     }
 }

@@ -25,6 +25,19 @@ impl Gate {
     }
 }
 
-pub(super) fn end_is_blocked(user_paused: bool, pending_seek: bool) -> bool {
-    user_paused || pending_seek
+pub(super) fn end_is_blocked(user_paused: bool, pending_seek: bool, handoff: bool) -> bool {
+    user_paused || pending_seek || handoff
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn end_is_blocked_during_handoff_so_native_end_cannot_black_the_cut() {
+        assert!(end_is_blocked(false, false, true));
+        assert!(end_is_blocked(true, false, false));
+        assert!(end_is_blocked(false, true, false));
+        assert!(!end_is_blocked(false, false, false));
+    }
 }
