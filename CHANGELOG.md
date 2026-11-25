@@ -9,6 +9,20 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.7] - 2026-11-25
+
+### ⚡ 优化
+
+- 全屏（桌面）或横屏（手机）播放时，Windows、macOS、iOS、Android 都会阻止系统休眠。
+
+### 🐛 修复
+
+- 修复观看历史删除后一直停在「删除中」的问题；未登录时只删除本机记录。
+
+从 0.7.0 或更早版本升级需手动下载安装。需要迁移旧版数据时，请先备份并参照 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+English: Full-screen playback on desktop or landscape playback on phones keeps the display awake on Windows, macOS, iOS, and Android. Deleting watch history no longer gets stuck on “Deleting”; signed-out users only remove local records. Install manually when upgrading from 0.7.0 or earlier, and back up your data before following the legacy migration instructions.
+
 ## [0.8.6] - 2026-11-25
 
 ### ⚡ 优化

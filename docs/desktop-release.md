@@ -1,6 +1,6 @@
 # NSH 桌面发版
 
-本流程面向 Windows x64、macOS Apple Silicon 与 Intel。移动端未正式发布，普通 CI 不再打包移动端产物。当前版本为 `0.8.6`、NSH build `12`。
+本流程面向 Windows x64、macOS Apple Silicon 与 Intel。移动端未正式发布，普通 CI 不再打包移动端产物。当前版本为 `0.8.7`、NSH build `13`。
 
 ## 检查与产物
 
@@ -45,7 +45,7 @@ Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未
 
 1. 确认 `Cargo.toml` 工作区版本、`Cargo.lock` 所有工作区成员版本与 `crates/hongguo-nsh/nsh.json` 一致；NSH build 单调增加，更新 `CHANGELOG.md` 对应段落。
 2. 在本机执行 `cargo build-tool release-preflight`，通过构建、严格检查和实际安装/播放验收后合入发版提交。
-3. 获得发布授权后推送合入 `main` 的提交和对应 `v0.8.6` tag。tag push 触发 `NSH Desktop Release`，所有门禁通过后自动公开为最新正式版本。
+3. 获得发布授权后推送合入 `main` 的提交和对应 `v0.8.7` tag。tag push 触发 `NSH Desktop Release`，所有门禁通过后自动公开为最新正式版本。
 4. 流程验证 tag、版本、更新日志及实际包元数据，使用同一提交完成全部桌面检查和打包，校验来源与 SHA-256 并保留旧版更新清单，再创建草稿并正式公开。检查失败时不会公开 Release；重复运行发现已有 Release 会失败，不覆盖现有附件。
 5. 手动运行 workflow 时填写已存在的 tag，默认只生成草稿；勾选 `publish` 才正式公开。跨平台安装与播放的真实验收状态须如实说明。
 
