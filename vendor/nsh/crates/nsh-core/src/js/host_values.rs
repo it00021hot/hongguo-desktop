@@ -10,7 +10,7 @@ use crate::{
     MacOsBackdropMaterial, MacOsBackdropState, ModalProp, Prop, RevealOptions, ScreenProp,
     ScrollAlignment, ScrollProp, StatusBarSetting, StatusBarStyle, Viewability, WindowsBackdrop,
     WindowsBackdropMaterial,
-    element::{ElementTarget, TsTypes},
+    element::{ElementTarget, ScrollEdgeTarget, TsTypes},
     geometry::{Bounds, Percentage, Points, point, size},
     mount::ModalConfig,
     ops::OverlayProp,
@@ -18,7 +18,7 @@ use crate::{
     props::{AccessibilityActionDef, AccessibilityValue, Checked, PanActivation, Ripple},
 };
 
-/// `"none"`, `"all"`, or the canonical keystrokes a view captures
+/// `"none"`, `"all"`, `"text"`, or the canonical keystrokes a view captures
 /// (`"mod+k"`, `"shift+tab"`): parsed once here with the shortcut rules
 /// and this platform's `mod`, which the engine's environment names
 /// ([`crate::element::try_apple_keys`]); a JS host decoding outside that
@@ -33,7 +33,7 @@ impl HostValue for crate::KeyCapture {
     }
 
     fn ts_type(_: &mut TsTypes) -> String {
-        "\"none\" | \"all\" | readonly string[]".into()
+        "\"none\" | \"all\" | \"text\" | readonly string[]".into()
     }
 }
 
@@ -137,8 +137,8 @@ impl HostValue for RevealOptions {
     }
 }
 
-/// A list's `contentStyle`: the padding properties (numbers) and
-/// `gap` / `rowGap` / `columnGap`.
+/// A list's `contentStyle`: the padding properties (numbers),
+/// `gap` / `rowGap` / `columnGap`, and cross-axis `alignItems`.
 impl HostValue for ListContentStyle {
     fn decode<I: HostInput>(input: &I, _: &mut HostCx) -> Option<Self> {
         let n = |key| points(input, key);
@@ -146,6 +146,16 @@ impl HostValue for ListContentStyle {
         let inline = n("paddingHorizontal").unwrap_or(all);
         let block = n("paddingVertical").unwrap_or(all);
         let gap = n("gap").unwrap_or_default();
+        let align_items = input
+            .field("alignItems")
+            .and_then(|v| v.as_string())
+            .and_then(|v| match v.as_str() {
+                "stretch" => Some(taffy::AlignItems::STRETCH),
+                "flex-start" => Some(taffy::AlignItems::FLEX_START),
+                "center" => Some(taffy::AlignItems::CENTER),
+                "flex-end" => Some(taffy::AlignItems::FLEX_END),
+                _ => None,
+            });
         Some(ListContentStyle {
             padding: EdgeInsets {
                 top: n("paddingTop").unwrap_or(block),
@@ -155,16 +165,17 @@ impl HostValue for ListContentStyle {
             },
             row_gap: n("rowGap").unwrap_or(gap),
             column_gap: n("columnGap").unwrap_or(gap),
+            align_items,
         })
     }
 
     fn ts_type(types: &mut TsTypes) -> String {
         types.declare("ListContentStyle", |_| {
-            "/** Padding and gaps of a list's content (`contentStyle`). */\n\
+            "/** Padding, gaps and cell alignment of a list's content (`contentStyle`). */\n\
              export interface ListContentStyle {\n  padding?: number;\n  paddingHorizontal?: number;\n  \
              paddingVertical?: number;\n  paddingTop?: number;\n  paddingRight?: number;\n  \
              paddingBottom?: number;\n  paddingLeft?: number;\n  gap?: number;\n  rowGap?: number;\n  \
-             columnGap?: number;\n}"
+             columnGap?: number;\n  alignItems?: \"stretch\" | \"flex-start\" | \"center\" | \"flex-end\";\n}"
                 .into()
         })
     }
@@ -193,6 +204,29 @@ impl HostValue for MacOsBackdrop {
                 "/** The material a view draws with on macOS (`macos={{{{ backdrop }}}}`). */\n\
                  export interface MacOsBackdrop {{\n  material?: {material};\n  \
                  blending?: {blending};\n  state?: {state};\n}}"
+            )
+        })
+    }
+}
+
+/// `ios={{ scrollEdgeElement }}`: `{ scrollView, edge }`, the scroll
+/// view a ref holds and the edge (`"bottom"` when left out or unknown);
+/// without a scroll view it is none.
+impl HostValue for ScrollEdgeTarget {
+    fn decode<I: HostInput>(input: &I, cx: &mut HostCx) -> Option<Self> {
+        let scroll_view = input.field("scrollView")?.node()?;
+        let edge = field::<crate::ScrollEdge, _>(input, "edge", cx).unwrap_or_default();
+        Some(ScrollEdgeTarget::of_node(scroll_view, edge))
+    }
+
+    fn ts_type(types: &mut TsTypes) -> String {
+        let edge = <crate::ScrollEdge as HostValue>::ts_type(types);
+        types.declare("ScrollEdgeElement", |_| {
+            format!(
+                "/** The scroll view a view floats over and the edge of it the view sits at \
+                 (`ios={{{{ scrollEdgeElement }}}}`). */\n\
+                 export interface ScrollEdgeElement {{\n  scrollView: ViewRef;\n  \
+                 edge?: {edge};\n}}"
             )
         })
     }
@@ -293,10 +327,11 @@ impl HostValue for Viewability {
     }
 }
 
-/// `{ activeOffsetX, activeOffsetY, failOffsetX, failOffsetY }` (points;
-/// the sign is ignored).
+/// `{ activeOffsetX, activeOffsetY, failOffsetX, failOffsetY, direction,
+/// edge }` (points, the sign ignored; an unknown `direction` or `edge` is
+/// left out).
 impl HostValue for PanActivation {
-    fn decode<I: HostInput>(input: &I, _: &mut HostCx) -> Option<Self> {
+    fn decode<I: HostInput>(input: &I, cx: &mut HostCx) -> Option<Self> {
         if !input.is_object() {
             return None;
         }
@@ -306,11 +341,32 @@ impl HostValue for PanActivation {
             active_offset_y: offset("activeOffsetY"),
             fail_offset_x: offset("failOffsetX"),
             fail_offset_y: offset("failOffsetY"),
+            direction: field(input, "direction", cx),
+            edge: field(input, "edge", cx),
         })
     }
 
-    fn ts_type(_: &mut TsTypes) -> String {
-        "PanActivation".into()
+    fn ts_type(types: &mut TsTypes) -> String {
+        let direction = <crate::PanDirection as HostValue>::ts_type(types);
+        let edge = <crate::PanEdge as HostValue>::ts_type(types);
+        types.declare("PanActivation", |_| {
+            format!(
+                "/** When a view's pans activate (`panActivation`; react-native-gesture-handler's\n \
+                 * `activeOffsetX` / `failOffsetY`), decided natively on the main thread as the\n \
+                 * finger moves: past an active offset the view becomes the responder, its `pan`\n \
+                 * starts and the scroll views around it can no longer take the touches; past a\n \
+                 * fail offset first it never does, and they keep them. Distances in points along\n \
+                 * one axis, either direction; without active offsets it activates after 10 points. */\n\
+                 export interface PanActivation {{\n  \
+                 activeOffsetX?: number;\n  activeOffsetY?: number;\n  \
+                 failOffsetX?: number;\n  failOffsetY?: number;\n  \
+                 /** The one way it activates in: a drag the other way, or mostly across it, fails it. */\n  \
+                 direction?: {direction};\n  \
+                 /** Only a finger that goes down within 20 points of this edge of the screen (the\n   \
+                 * window on desktops, the page on the web) starts it, moving away from the edge. */\n  \
+                 edge?: {edge};\n}}"
+            )
+        })
     }
 }
 

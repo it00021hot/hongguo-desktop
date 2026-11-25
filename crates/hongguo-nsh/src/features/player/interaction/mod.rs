@@ -148,12 +148,14 @@ fn controls(
                 use crate::features::player::stage::RailAction;
                 match action {
                     RailAction::Comments => comments_open.set(true),
-                    RailAction::Share => target.with(|target| {
-                        set_clipboard(format!(
-                            "{} https://hongguoduanju.com/detail?series_id={}",
-                            target.title, target.series_id
-                        ))
-                    }),
+                    RailAction::Share => {
+                        target.with(|target| {
+                            drop(set_clipboard(format!(
+                                "{} https://hongguoduanju.com/detail?series_id={}",
+                                target.title, target.series_id
+                            )));
+                        });
+                    }
                     RailAction::Like => submit(Action::Like),
                     RailAction::Collect => submit(Action::Collect),
                     RailAction::Follow => submit(Action::Follow),

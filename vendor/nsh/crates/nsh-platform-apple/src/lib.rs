@@ -6,13 +6,26 @@
 
 pub mod audio;
 pub mod canvas_image;
+// CoreText attribute keys, RTL decoration spans and truncated-line alignment
+// shared by `nsh-platform-macos` and `nsh-platform-ios`, no API of apps':
+// hidden from the docs, so it stays out of what NSH keeps compatible.
+#[doc(hidden)]
+pub mod core_text;
 pub mod handoff;
 // Which images of a decoded file the macOS and iOS backends show, no API of
 // apps': hidden from the docs, so it stays out of what NSH keeps compatible.
 #[doc(hidden)]
 pub mod image_source;
+// The path monitor and the cellular data permission behind `network()`,
+// read by the backends' environments, no API of apps': hidden from the
+// docs, so it stays out of what NSH keeps compatible.
+#[doc(hidden)]
+pub mod network;
 pub mod notifications;
-pub mod speech;
+// How drawn text splits into screen reader elements on macOS and iOS, no API
+// of apps': hidden from the docs, so it stays out of what NSH keeps compatible.
+#[doc(hidden)]
+pub mod text_access;
 // The logger NSH's release runners and its iOS SDK install, no API of apps':
 // hidden from the docs, so it stays out of what NSH keeps compatible.
 #[doc(hidden)]

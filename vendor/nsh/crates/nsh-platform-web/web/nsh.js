@@ -61,6 +61,11 @@ const FOCUSED = 4;
  * modality as it is (`inputWith`). */
 const MODALITY_KEYS_SKIPPED = new Set(["Shift", "Control", "Alt", "AltGraph", "Meta", "CapsLock", "Fn", "Hyper", "Super", "OS"]);
 const PRESS_EVENTS = ["onPress", "onLongPress", "onPressIn", "onPressOut"];
+/** A view listening to one of these receives files dragged in from the system. */
+const FILE_DROP_EVENTS = ["onFileDrop", "onFileDragEnter", "onFileDragLeave"];
+/** The most files one drop reads, and the most bytes it reads in all (as `Picker.pickFiles`). */
+const FILE_DROP_LIMIT = 100;
+const FILE_DROP_MAX_BYTES = 512 * 1024 * 1024;
 /** The press listeners other than `onLongPress`, which alone leaves the taps to the views around. */
 const TAP_EVENTS = ["onPress", "onPressIn", "onPressOut"];
 const MOUSE_EVENTS = ["onMouseEnter", "onMouseLeave", "onMouseMove"];
@@ -72,6 +77,22 @@ const MOUSE_BUTTON_NAMES = ["left", "middle", "right", "back", "forward"];
 const MOUSE_BUTTON_BITS = [1, 4, 2, 8, 16];
 /** The keys whose press or release is reported as a mouse move. */
 const MOUSE_MODIFIER_KEYS = new Set(["Control", "Alt", "Shift", "Meta"]);
+/** A link the browser can open itself, drawn as an `a`: a `Link` with an
+ * `href`, and a link of text that goes somewhere (`fillRun`). */
+const LINK_SELECTOR = "a.nsh-v[href], a.nsh-link[href]";
+/** The schemes of the addresses a link of text is drawn as an `a` for
+ * (`textLinkAddress`): what a browser opens from a page. */
+const TEXT_LINK_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:"]);
+
+/**
+ * Whether pointer event `e` holds a modifier key. A click with one on a link
+ * (`LINK_SELECTOR`) is the browser's, which opens the link in a new tab (Cmd
+ * or Ctrl), a new window (Shift) or downloads it (Alt); a plain one is the
+ * app's (`installInput`, `pointerDown`).
+ */
+function heldModifier(e) {
+  return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
+}
 // What lays out a field's text, copied to the hidden copy that finds its
 // caret (`caretBounds`).
 const CARET_STYLE = [
@@ -83,8 +104,21 @@ const CARET_STYLE = [
 /** `accessibilityRole`s whose ARIA role has another name; others are the same. */
 const ARIA_ROLES = {
   none: null, header: "heading", image: "img", imagebutton: "button", keyboardkey: "button", adjustable: "slider",
-  search: "searchbox", text: null, summary: "status", togglebutton: "button", dropdownlist: "combobox",
+  search: "searchbox", textbox: "textbox", text: null, summary: "status", togglebutton: "button",
+  dropdownlist: "combobox",
 };
+
+/** Reconcile accessibility props with the element's current attributes. */
+function setAriaAttribute(el, name, value) {
+  const next = value == null || value === false ? null : String(value);
+  if (el.getAttribute(name) === next) return;
+  if (next === null) el.removeAttribute(name);
+  else el.setAttribute(name, next);
+}
+
+/** Elements a browser's Tab stops at without a `tabindex` (`elementTag`'s
+ * links and `web={{ element }}` values). */
+const NATIVE_STOPS = "a[href], button, input, select, textarea, summary, [contenteditable]";
 
 /**
  * The HTML element a view or text is drawn as, from what its props say it
@@ -109,6 +143,13 @@ const BAR_THICK = 4;
 const BAR_MARGIN = 2;
 const BAR_GRAB = 12;
 const BAR_HOLD = 700;
+/** How long (ms) an animated scroll command of the core's takes here, the
+ * length its own animation runs for on the other platforms (`nsh-core`'s
+ * `scroll::ANIMATION`, eased out cubically): the browser's
+ * `behavior: "smooth"` takes about a second over a long distance, and
+ * starts over every time a command retargets it, which a list does as it
+ * measures the rows the scroll passes. */
+const SCROLL_MS = 300;
 
 /* Keyframe animations (animate-spin, -ping, -pulse, -bounce) run with
    animation-composition: add: their transforms follow the view's own (as the
@@ -134,6 +175,10 @@ const VELOCITY_WINDOW = 100;
  * when no animation frame did (`keepDeadline`, `moveScreens`, ...): more
  * than a frame, so that while the page shows its frames always come first. */
 const LATE_MS = 50;
+/** How long after its time a frame's `requestAnimationFrame` callbacks may
+ * run and still step the native animations at that time (`frameTime`):
+ * later than that, a task held the frame. */
+const FRAME_HELD_MS = 16;
 /** How long a dialog waits for the two frames before it comes in
  * (`present`): far more than two frames, so it only waits that long while
  * frames stop (a hidden tab). */
@@ -224,6 +269,13 @@ const KEYFRAMES = `
 .nsh-pan { touch-action: none; }
 .nsh-pan-x { touch-action: pan-y; }
 .nsh-pan-y { touch-action: pan-x; }
+/* A pan of one way leaves the other way to the browser where it can tell
+   them apart (CSS's pan-right scrolls right: the finger moves left), else
+   the other axis only. */
+.nsh-pan-right { touch-action: pan-y; touch-action: pan-right pan-y; }
+.nsh-pan-left { touch-action: pan-y; touch-action: pan-left pan-y; }
+.nsh-pan-down { touch-action: pan-x; touch-action: pan-x pan-down; }
+.nsh-pan-up { touch-action: pan-x; touch-action: pan-x pan-up; }
 .nsh-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Scroll indicators: a thin, translucent thumb with no track, as on phones,
    rather than the platform's scrollbar (with arrow buttons on Windows).
@@ -231,6 +283,8 @@ const KEYFRAMES = `
    are set, so those are only for browsers without them (Firefox). */
 .nsh-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
 .nsh-scroll::-webkit-scrollbar-track, .nsh-scroll::-webkit-scrollbar-corner { background: transparent; }
+.nsh-scroll::-webkit-scrollbar-track:vertical { margin: var(--nsh-bar-t, 0) 0 var(--nsh-bar-b, 0); }
+.nsh-scroll::-webkit-scrollbar-track:horizontal { margin: 0 var(--nsh-bar-r, 0) 0 var(--nsh-bar-l, 0); }
 .nsh-scroll::-webkit-scrollbar-thumb { border-radius: 3px; background: rgba(128,128,128,.45); }
 @supports not selector(::-webkit-scrollbar) {
   .nsh-scroll { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,.45) transparent; }
@@ -308,6 +362,10 @@ img.nsh-fill { pointer-events: none; }
 .nsh-scroll.nsh-oy.nsh-oy { overflow-x: hidden; overflow-y: auto; overscroll-behavior-x: auto; }
 .nsh-scroll.nsh-oxy.nsh-oxy { overflow: auto; }
 .nsh-scroll.nsh-onone.nsh-onone { overflow: hidden; }
+/* A scroll view whose content fits along its axis has nothing to scroll
+   (\`nsh-fits\`): a swipe along it scrolls the scroll view around it, as on
+   Android, instead of stopping at its \`contain\` and moving nothing. */
+.nsh-scroll.nsh-fits.nsh-fits { overscroll-behavior: auto; }
 .nsh-scroll.nsh-zoom.nsh-zoom { touch-action: none; }
 .nsh-snap-x { scroll-snap-type: x mandatory; }
 .nsh-snap-y { scroll-snap-type: y mandatory; }
@@ -323,6 +381,10 @@ img.nsh-fill { pointer-events: none; }
 .nsh-selectable, .nsh-selectable * { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 .nsh-selectable ::selection { background: var(--nsh-selection, Highlight); }
 .nsh-link { cursor: pointer; }
+/* A link of text drawn as an a (fillRun) looks as the span it would be:
+   its run's color and decoration, none of the browser's link blue,
+   underline or focus ring. */
+a.nsh-link { color: inherit; text-decoration: none; outline: none; }
 /* With the desktop idiom text is selectable as on a web page unless it is
    set off (selectable={false}) or inside something that takes presses
    or touches (nsh-press). */
@@ -394,6 +456,16 @@ img.nsh-fill { pointer-events: none; }
 .nsh-dialog button.cancel { font-weight: 600; }
 .nsh-desktop .nsh-dialog button.cancel { font-weight: 500; }
 .nsh-dialog button.destructive { color: #ff3b30; }
+.nsh-dialog button:disabled { opacity: .4; }
+.nsh-dialog-input { display: block; box-sizing: border-box; width: calc(100% - 32px); margin: 0 16px 16px; padding: 6px 8px;
+  border: 0.5px solid rgba(0,0,0,.25); border-radius: 7px; background: #fff; color: inherit; outline: none;
+  font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.nsh-dialog h3 + .nsh-dialog-input { margin-top: 14px; }
+.nsh-desktop .nsh-dialog-input { width: 100%; margin: 12px 0 0; padding: 7px 10px; border: 1px solid #e5e5e5;
+  border-radius: 8px; font-size: 14px; }
+.nsh-desktop .nsh-dialog-input:focus { border-color: #a3a3a3; }
+.nsh-dark .nsh-dialog-input { background: rgba(28,28,30,.9); border-color: rgba(255,255,255,.2); }
+.nsh-desktop.nsh-dark .nsh-dialog-input { background: #0a0a0a; border-color: #262626; }
 .nsh-dark .nsh-dialog { background: rgba(44,44,46,.97); color: #fff; }
 .nsh-dark .nsh-dialog button { border-top-color: rgba(255,255,255,.15); color: #0a84ff; }
 .nsh-dark .nsh-dialog button.destructive { color: #ff453a; }
@@ -507,6 +579,26 @@ function webShareAllowed() {
   const doc = typeof document === "undefined" ? undefined : document;
   const policy = doc?.permissionsPolicy ?? doc?.featurePolicy;
   return typeof policy?.allowsFeature === "function" ? policy.allowsFeature("web-share") : true;
+}
+
+/** The kinds `network()` names for `navigator.connection.type`'s. */
+const CONNECTION_KINDS = {
+  wifi: "wifi", cellular: "cellular", ethernet: "wired", none: "none",
+  bluetooth: "other", wimax: "other", mixed: "other", other: "other",
+};
+
+/**
+ * How the page reaches the network (`network()`): `none` while the
+ * browser says it is offline (`navigator.onLine`, which is true whenever
+ * the browser has a link, even one without the internet), else the link
+ * `navigator.connection` names (Chromium on Android; desktop browsers name
+ * none: `unknown`). The link is expensive when it is cellular, constrained
+ * when the user asked to save data (`saveData`).
+ */
+function webNetwork(nav = typeof navigator === "undefined" ? undefined : navigator) {
+  const connection = nav?.connection;
+  const kind = nav?.onLine === false ? "none" : CONNECTION_KINDS[connection?.type] ?? "unknown";
+  return { kind, expensive: kind === "cellular", constrained: connection?.saveData === true };
 }
 
 /** The browser's time zone (`Asia/Shanghai`), Intl's default; "" when unknown. */
@@ -678,9 +770,6 @@ function swapClass(el, slot, name) {
   el[slot] = name;
 }
 
-/** Fills a run with `text`, the characters of links (`parts`: `[from, to,
- * link]`, UTF-16) in spans inside it that name their link (`links`):
- * inline, they keep the run's shaping and bidi order. */
 /**
  * The one color text view `el` is drawn in (null: several, which its runs
  * carry): on the element, which the runs inherit it from, so a change of it
@@ -706,21 +795,42 @@ function setTextColor(el, color) {
   }
 }
 
+/**
+ * Fills a run with `text`, the characters of links (`parts`: `[from, to,
+ * link]`, UTF-16) in elements inside it that name their link (`links`):
+ * inline, they keep the run's shaping and bidi order. A link that takes
+ * presses and goes somewhere a browser opens (its `address`,
+ * `textLinkAddress`) is an `a`, as a `Link` is: the browser shows where it
+ * goes, a click with a modifier key or the middle button opens it there
+ * (`LINK_SELECTOR`), and its menu is the browser's link menu
+ * (`contextMenu`). Any other link is a span.
+ */
 function fillRun(run, text, parts, links) {
   if (!parts) {
     run.textContent = text;
     return;
   }
   let at = 0;
-  for (const [from, to, link] of parts) {
+  for (const [from, to, index] of parts) {
     if (from > at) run.append(text.slice(at, from));
-    const span = document.createElement("span");
-    span.textContent = text.slice(from, to);
-    span._link = links[link];
+    const link = links[index];
+    const presses = PRESS_EVENTS.some((e) => link.events?.has(e));
+    const el = document.createElement(presses && link.address ? "a" : "span");
+    el.textContent = text.slice(from, to);
+    el._link = link;
+    if (el.localName === "a") {
+      el.setAttribute("href", link.address);
+      // A drag selects its characters, as a span's do. Tab passes it, as
+      // it passes every link of text here: the core's stops of links of
+      // text (`TextLink::focus_stop`) come to the web in a change of their
+      // own (docs/dev/elements.md, "Keyboard focus").
+      el.draggable = false;
+      el.tabIndex = -1;
+    }
     // A link's pointer over the I-beam of selectable text, as a browser's
     // `<a>` and the other desktops' link spans.
-    if (PRESS_EVENTS.some((e) => span._link.events.has(e))) span.classList.add("nsh-link");
-    run.append(span);
+    if (presses) el.classList.add("nsh-link");
+    run.append(el);
     at = to;
   }
   if (at < text.length) run.append(text.slice(at));
@@ -736,6 +846,24 @@ function runPoint(run, offset) {
     offset -= node.length;
   }
   return node ? [node, node.length] : [run, 0];
+}
+
+/** The character standing for an attachment in a text's content. */
+const ATTACHMENT = String.fromCharCode(0xfffc);
+
+/**
+ * The copy texts (`copyText`) of a text's attachments that a copy puts
+ * `before` run `run`'s characters (else after them, before the line's
+ * break), of those in the selected UTF-16 range `start..end`. `copies` are
+ * `[offset, text, run, before]`, as the text's mount item sends them: the
+ * runs hold no attachments.
+ */
+function copiesAround(copies, run, before, start, end) {
+  let out = "";
+  for (const [at, text, r, b] of copies ?? []) {
+    if (r === run && !!b === before && at >= start && at < end) out += text;
+  }
+  return out;
 }
 
 /** The offset in a run of a boundary (`container`, `offset`) inside it. */
@@ -795,10 +923,15 @@ function webBridge(token) {
 /// Blink's shape cache around 5 MB.
 const MEASURE_ROUNDS = 5000;
 
+/// The context text is measured with: a `<canvas>` element where there is a
+/// document. On macOS, Chrome 69 to 103 crash the renderer when an
+/// `OffscreenCanvas` context's `font` names `BlinkMacSystemFont`, as the
+/// system font stack (`src/text/css.rs`) does; a `<canvas>` measures the same
+/// font the DOM draws.
 function measureContext() {
-  const canvas = typeof OffscreenCanvas !== "undefined"
-    ? new OffscreenCanvas(1, 1)
-    : document.createElement("canvas");
+  const canvas = typeof document !== "undefined"
+    ? document.createElement("canvas")
+    : new OffscreenCanvas(1, 1);
   return canvas.getContext("2d");
 }
 
@@ -1180,10 +1313,12 @@ class Player {
         font_ascent: (fp, fl) => this.metrics(this.str(fp, fl))[0],
         font_descent: (fp, fl) => this.metrics(this.str(fp, fl))[1],
         font_x_height: (fp, fl) => this.metrics(this.str(fp, fl))[2],
-        register_font: (fp, fl, dp, dl, weight, italic) => {
+        register_font: (fp, fl, dp, dl, weight, maxWeight, italic) => {
           const family = this.str(fp, fl);
           const data = this.bytes(dp, dl).slice();
-          const face = new FontFace(family, data, { weight: String(weight), style: italic ? "italic" : "normal" });
+          // A variable font gets its `wght` range: one value would pin the axis.
+          const range = maxWeight > weight ? `${weight} ${maxWeight}` : String(weight);
+          const face = new FontFace(family, data, { weight: range, style: italic ? "italic" : "normal" });
           document.fonts.add(face);
           this.fontLoading(face.load());
         },
@@ -1235,9 +1370,9 @@ class Player {
           if (url.length <= cap) this.bytes(p, cap).set(url);
           return url.length;
         },
-        fetch_start: (id, mp, ml, up, ul, hp, hl, bp, bl, kind, follow) =>
+        fetch_start: (id, mp, ml, up, ul, hp, hl, bp, bl, kind, follow, cp, cl) =>
           this.fetchStart(id, this.str(mp, ml), this.str(up, ul), JSON.parse(this.str(hp, hl)),
-            kind === 1 ? this.bytes(bp, bl).slice() : null, kind === 2, follow !== 0),
+            kind === 1 ? this.bytes(bp, bl).slice() : null, kind === 2, follow !== 0, this.str(cp, cl)),
         fetch_send: (id, p, l) => this.fetchSend(id, this.bytes(p, l).slice()),
         fetch_finish: (id) => this.requests.get(id)?.finish?.(),
         fetch_pause: (id, paused) => this.fetchPause(id, paused !== 0),
@@ -1263,6 +1398,7 @@ class Player {
         // (the error handed over with `nsh_storage_reply`).
         storage_load: (pp, pl) => this.storage(() => {
           const prefix = this.str(pp, pl);
+          this.followStorage(prefix);
           const entries = Object.create(null);
           for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
@@ -1611,6 +1747,49 @@ class Player {
     return done;
   }
 
+  /**
+   * Follows what other tabs of the origin change in the app's storage,
+   * kept under `prefix` (`storage_load`): a tab gets a `storage` event for
+   * each `localStorage` change the others make, never for its own.
+   */
+  followStorage(prefix) {
+    (this.storagePrefixes ??= new Set()).add(prefix);
+    if (this.storageListener) return;
+    this.storageListener = (e) => this.storageChanged(e);
+    window.addEventListener("storage", this.storageListener);
+  }
+
+  /**
+   * Hands the engine a change another tab made to the app's storage: the
+   * value this tab reads now rather than the event's `newValue`, which a
+   * write this tab made since the other tab's may have replaced. A `key`
+   * of null is `localStorage.clear()`: the engine reads the entries again.
+   */
+  storageChanged(e) {
+    let area;
+    try {
+      area = localStorage;
+    } catch {
+      return;
+    }
+    if (e.storageArea !== area) return;
+    for (const prefix of this.storagePrefixes) {
+      let kind = 2, key = "", value = "";
+      if (e.key !== null) {
+        if (!e.key.startsWith(prefix)) continue;
+        key = e.key.slice(prefix.length);
+        try {
+          value = area.getItem(e.key);
+        } catch {
+          continue;
+        }
+        kind = value === null ? 0 : 1;
+      }
+      this.call((w) => this.withStrings([prefix, key, value ?? ""], (pp, pl, kp, kl, vp, vl) =>
+        w.nsh_storage_changed(pp, pl, kp, kl, vp, vl, kind)));
+    }
+  }
+
   /** Calls `f(ptr, len, ...)` for each string, freeing them afterwards. */
   withStrings(strings, f) {
     const passed = strings.map((s) => {
@@ -1829,6 +2008,26 @@ class Player {
    * first: a side module, or an export of a module published whole.
    */
   async loadData(name) {
+    // A part of nsh/base a Rust app made a component of by name, or the
+    // shaders of a Rust app (`feature:shader`): its side module, or its
+    // gate in a module published whole; then the engine makes or draws
+    // what waited for it. Nothing comes back on failure: the component or
+    // shader keeps showing nothing, and the next one asks again.
+    const lazy = /^(part|feature):(.+)$/.exec(name);
+    if (lazy) {
+      const gate = `nsh_${lazy[1]}_${lazy[2]}`;
+      const after = () => this.call((w) => this.withStrings([gate], (p, l) => w.nsh_after_gate(p, l)));
+      try {
+        if (this.options.sides?.[gate]) await this.loadSide(gate, this.options.sides);
+        else this.wasm[gate]?.();
+        after();
+      } catch (err) {
+        console.warn("[nsh]", `${err.message ?? err} (${gate})`);
+        // The runtime asks for a feature once at a time: it may ask again.
+        if (lazy[1] === "feature") after();
+      }
+      return;
+    }
     const url = this.data?.[name] ?? new URL(`nsh-${name}.bin`, import.meta.url);
     let bytes = null;
     try {
@@ -1906,6 +2105,9 @@ class Player {
     clearTimeout(this.keeper?.timer);
     this.keeper = null;
     this.browserHost?.stop();
+    this.storagePrefixes?.clear();
+    if (this.storageListener) window.removeEventListener("storage", this.storageListener);
+    this.storageListener = null;
     this.wasm?.nsh_stop();
     } finally { this.stopping = false; }
   }
@@ -1969,8 +2171,24 @@ class Player {
     this.frame = requestAnimationFrame((now) => {
       this.frame = 0;
       this.frameAt = performance.now();
-      this.call((w) => w.nsh_frame(now));
+      this.call((w) => w.nsh_frame(this.frameTime(now), 1));
     });
+  }
+
+  /**
+   * The time an animation frame steps the native animations at: the
+   * frame's (when it began, so the steps keep the display's pace), unless a
+   * task held the frame, and then when its callbacks run. A press handled
+   * before them runs the app's code, which may mount a sheet and start its
+   * entrance; stepped at the frame's time, that entrance would start before
+   * it was asked for, and its first drawn step would be as far along as the
+   * press took (a slow one showed the sheet nearly in place). Never earlier
+   * than the frame before.
+   */
+  frameTime(now) {
+    const at = this.frameAt - now > FRAME_HELD_MS ? this.frameAt : now;
+    this.steppedAt = Math.max(at, this.steppedAt ?? at);
+    return this.steppedAt;
   }
 
   /** `keepDeadline` once the call into the engine that asked for a frame
@@ -2013,7 +2231,7 @@ class Player {
       this.keeper = null;
       if (!(this.frameAt >= at)) {
         this.frameAt = performance.now();
-        this.call((w) => w.nsh_frame(this.frameAt));
+        this.call((w) => w.nsh_frame(this.frameAt, 0));
       }
       this.keepDeadline();
     }, Math.max(0, at + LATE_MS - now));
@@ -2061,12 +2279,18 @@ class Player {
     resolution();
     addEventListener("languagechange", changed);
     addEventListener("resize", changed);
+    // `network()`: the browser going on- and offline, and its link where it
+    // names one (`navigator.connection`, Chromium's).
+    addEventListener("online", changed);
+    addEventListener("offline", changed);
+    navigator.connection?.addEventListener?.("change", changed);
     // `lifecycle()`: hidden (another tab, a minimized window) or without
     // the focus. The time zone (`localeSettings()`) is read again then too: browsers tell no
     // change of the system's zone, which the user makes away from the page.
     document.addEventListener("visibilitychange", changed);
     addEventListener("focus", changed);
     addEventListener("blur", changed);
+    this.watchPageCache(changed);
     visualViewport?.addEventListener("resize", changed);
     visualViewport?.addEventListener("scroll", changed);
     new MutationObserver(changed).observe(document.documentElement, { attributes: true, attributeFilter: ["dir", "lang"] });
@@ -2075,6 +2299,30 @@ class Player {
     this.safeProbe.className = "nsh-probe";
     document.body.append(this.safeProbe);
     if (this.viewportOverlays) this.installFloats();
+  }
+
+  /** A page the browser keeps in its back / forward cache (a `pagehide`
+   * that is `persisted`) is in the background until a `pageshow` brings it
+   * back: the app sees the pair of edges whether or not the browser tells
+   * `visibilitychange` around them. A page that is discarded (`pagehide`
+   * not `persisted`) ends its app instead (`watchPageEnd`). Neither
+   * listener keeps a page out of that cache. */
+  watchPageCache(changed) {
+    const cached = (value) => (event) => {
+      if (!event.persisted) return;
+      this.pageCached = value;
+      changed();
+    };
+    window.addEventListener("pagehide", cached(true));
+    window.addEventListener("pageshow", cached(false));
+  }
+
+  /** The app's state (`lifecycle()`): `background` while the page is
+   * hidden (another tab, a minimized window) or in the back / forward
+   * cache, else whether it has the focus. */
+  lifecycle() {
+    if (this.pageCached || document.visibilityState === "hidden") return "background";
+    return document.hasFocus() ? "active" : "inactive";
   }
 
   /** The page's insets covered by system UI, where they overlap the root
@@ -2124,11 +2372,12 @@ class Player {
       keyboard: this.keyboardHeight(),
       appleKeyboard: APPLE,
       host: Boolean(this.options.host),
-      lifecycle: document.visibilityState === "hidden"
-        ? "background"
-        : document.hasFocus() ? "active" : "inactive",
+      lifecycle: this.lifecycle(),
+      network: webNetwork(),
       timeZone: timeZoneName(),
       screenColor: typeof window.EyeDropper === "function",
+      // `writeClipboard` reports each write's result.
+      clipboardWriteResult: true,
       share: webShareAllowed(),
       notifications: typeof window.Notification === "function",
       audio: typeof (window.AudioContext ?? window.webkitAudioContext) === "function",
@@ -2248,6 +2497,29 @@ class Player {
     if (this.readingHosts?.size) this.orderReading();
     if (this.relating?.size) this.linkRelations();
     if (this.viewportOverlays) this.syncFloats();
+    if (this.autoFocusing?.size) this.focusAppeared();
+  }
+
+  /** The `autoFocus` inputs the batch put in the page take the focus now,
+   * in the turn that applied it: a batch an event's handler made is still
+   * in that event, where iOS Safari raises the keyboard for a focus (and
+   * only there: not from a timer after it). One not in the page yet (its
+   * container comes in a later batch) waits for that batch; one removed
+   * meanwhile is forgotten. Like a focus command's, the focus is this
+   * press's (`pressFocus`): the mouse events the browser makes of a touch
+   * would otherwise take it away, the finger being over the views the
+   * press replaced. */
+  focusAppeared() {
+    for (const el of this.autoFocusing) {
+      if (this.views.get(el._id) !== el) {
+        this.autoFocusing.delete(el);
+        continue;
+      }
+      if (!el.isConnected) continue;
+      this.autoFocusing.delete(el);
+      el._field?.focus();
+      this.pressFocus = el._field ?? null;
+    }
   }
 
   /** The DOM id of view `id`: unique on the page, beside other players. */
@@ -2393,8 +2665,8 @@ class Player {
       el._applied = 0;
       el.addEventListener("scroll", () => this.scrolled(el), { passive: true });
       el.addEventListener("scrollend", () => this.scrollEnded(el));
-      // The user takes over a smooth scroll of the core's (`op_sb`).
-      const takeOver = () => { el._smooth = null; };
+      // The user takes over a scroll animation of the core's.
+      const takeOver = () => this.endScrollAnimation(el, false);
       for (const type of ["wheel", "pointerdown", "touchstart", "keydown"]) el.addEventListener(type, takeOver, { passive: true });
     }
     if (kind === "screen") el.classList.add("nsh-screen");
@@ -2583,10 +2855,16 @@ class Player {
     // A stack laid out at no size (`display: none`: a tab not selected) or
     // at one again changes whether it shows (`stackShown`).
     const emptied = el._kind === "stack" && el._frame && !(el._frame[2] > 0 && el._frame[3] > 0) !== !(w > 0 && h > 0);
+    const seen = this.seenByKeys(el);
     el._frame = [x, y, w, h];
+    if (resized && el._kind === "scroll") this.scrollFits(el);
     // No size: nothing of its own shows (`.nsh-empty`).
     el.classList.toggle("nsh-empty", !(w > 0 && h > 0));
     if (emptied) this.syncHistorySoon();
+    if (seen !== this.seenByKeys(el)) {
+      if (el._pressable || el._props?.focusable || el.matches?.(NATIVE_STOPS)) this.updateFocusable(el);
+      if (el._field) this.fieldStop(el);
+    }
     this.placeFrame(el);
     this.readingChanged(el.parentNode);
     if (resized && el._corners) this.placeCorners(el);
@@ -2754,9 +3032,12 @@ class Player {
     el.style.setProperty(prop, value);
   }
 
-  op_t([, id, cx, cy, , , runs, styles, selectable, selection, color, backgrounds, links]) {
+  op_t([, id, cx, cy, , , runs, styles, selectable, selection, color, backgrounds, links, copies]) {
     const el = this.view(id);
     if (!el) return;
+    // What its attachments copy as (`copyText`): `[offset, text, run,
+    // before]`, by where the copy puts them among the runs.
+    el._copyTexts = copies?.length ? copies : null;
     setTextColor(el, color ?? null);
     if (!this.updateRuns(el, cx, cy, runs, styles, backgrounds, links)) this.replaceRuns(el, cx, cy, runs, styles, backgrounds, links);
     el.classList.toggle("nsh-selectable", !!selectable);
@@ -2817,6 +3098,7 @@ class Player {
       if (span.style.top !== top) span.style.top = top;
       if (span.firstChild.data !== text) span.firstChild.data = text;
       span._start = start;
+      span._run = i;
       if (after) span._after = after;
       else delete span._after;
     });
@@ -2856,9 +3138,14 @@ class Player {
         `border-radius:${r}px;background:${color}`;
       frag.append(box);
     }
-    // Nested texts that take presses: `[node, events]`, which runs name.
-    const spans = (links ?? []).map(([node, events]) => ({ node, events: new Set(events) }));
-    for (const [x, y, text, style, start, parts, after] of runs) {
+    // Nested texts that take presses: `[node, events, href?]`, which runs
+    // name; one that goes somewhere a browser opens is drawn as an `a`.
+    const spans = (links ?? []).map(([node, events, href]) => ({
+      node,
+      events: new Set(events),
+      address: this.textLinkAddress(href),
+    }));
+    runs.forEach(([x, y, text, style, start, parts, after], i) => {
       const span = document.createElement("span");
       const name = this.styleClass(styles[style]);
       span.className = name ? `nsh-run ${name}` : "nsh-run";
@@ -2866,15 +3153,17 @@ class Player {
       fillRun(span, text, parts, spans);
       // Where its characters are in the text (UTF-16, as JS strings).
       span._start = start;
+      // Which run it is (attachments' copy texts name it).
+      span._run = i;
       // The line's break, for copying (`copy`).
       if (after) span._after = after;
       if (el._animation.color) span.style.color = el._animation.color;
       frag.append(span);
-    }
+    });
     for (const span of [...el.querySelectorAll(":scope > .nsh-run, :scope > .nsh-run-bg")]) span.remove();
     el.insertBefore(frag, el.firstChild);
     this.lineBreaks(el);
-    if (spans.some((l) => l.events.has("onMouseEnter") || l.events.has("onMouseLeave"))) {
+    if (!el._linkHoverListeners && spans.some((l) => l.events.has("onMouseEnter") || l.events.has("onMouseLeave"))) {
       this.installLinkHover(el);
     }
   }
@@ -2888,8 +3177,7 @@ class Player {
    * listeners read the spans the runs have now.
    */
   installLinkHover(el) {
-    if (el._linkHover !== undefined) return;
-    el._linkHover = null;
+    el._linkHoverListeners = true;
     const follow = (e) => {
       if (e.pointerType !== "mouse") return;
       const link = e.type === "pointerleave" ? null : (e.target?._link ?? null);
@@ -2954,7 +3242,8 @@ class Player {
     if (!position) {
       if (!always) return null;
       const r = el.getBoundingClientRect();
-      position = [e.clientX - r.left, e.clientY - r.top];
+      const z = this.cssZoom(el);
+      position = [(e.clientX - r.left) / z, (e.clientY - r.top) / z];
     }
     const [pageX, pageY] = this.point(e);
     const held = MOUSE_BUTTONS.find(([bit]) => e.buttons & bit);
@@ -2977,11 +3266,14 @@ class Player {
     // The focus is reported whatever is tracked (the core works out
     // `focus-within` from it): it stays; the rest is forgotten.
     el._states = (el._states || 0) & FOCUSED;
-    if (states & HOVERED && !el._hoverListeners) {
-      el._hoverListeners = true;
-      el.addEventListener("pointerenter", (e) => e.pointerType === "mouse" && this.setState(el, HOVERED, true));
-      el.addEventListener("pointerleave", () => this.setState(el, HOVERED, false));
-    }
+    if (states & HOVERED && !el._hoverListeners) this.installHover(el);
+  }
+
+  /** `hover:` of view `el` (`op_ts`), from the mouse's pointer events. */
+  installHover(el) {
+    el._hoverListeners = true;
+    el.addEventListener("pointerenter", (e) => e.pointerType === "mouse" && this.setState(el, HOVERED, true));
+    el.addEventListener("pointerleave", () => this.setState(el, HOVERED, false));
   }
 
   /** Tells the core the input modality (0 the keyboard, 1 a pointer);
@@ -3026,9 +3318,9 @@ class Player {
   /**
    * The view drawn as the HTML element `elementTag` gives it (`h1`, `a`,
    * `p`, `nav`, ...), else a `div`: the element is replaced by one of that
-   * tag carrying its attributes, children and fields, so search engines
-   * and the page's markup see the document's structure while the layout,
-   * styles and events stay the view's. Views whose element holds a
+   * tag carrying its attributes, children, fields and listeners, so search
+   * engines and the page's markup see the document's structure while the
+   * layout, styles and events stay the view's. Views whose element holds a
    * control of its own (images, scroll views, canvases, ...) keep theirs.
    */
   retag(el, tag) {
@@ -3042,10 +3334,13 @@ class Player {
     next.append(...el.childNodes);
     el.replaceWith(next);
     this.views.set(el._id, next);
-    if (el._mouseEvents) {
-      next._mouseEvents = false;
-      this.installMouse(next);
-    }
+    // Listeners stay with the element they were added to, and a new view's
+    // tracked states and events come before the props that name its tag
+    // (a `Link`'s `href`): the flags copied above say which to add again.
+    if (el._mouseEvents) this.installMouse(next);
+    if (el._hoverListeners) this.installHover(next);
+    if (el._focusListeners) this.installFocus(next);
+    if (el._linkHoverListeners) this.installLinkHover(next);
     if (tag === "a") next.draggable = false;
     return next;
   }
@@ -3060,13 +3355,15 @@ class Player {
   /** ARIA attributes from the accessibility props (`op_vp`). */
   updateAria(el) {
     const p = el._props ?? {};
-    const set = (name, value) => (value == null || value === false ? el.removeAttribute(name) : el.setAttribute(name, String(value)));
+    const set = (name, value) => setAriaAttribute(el, name, value);
     const role = ARIA_ROLES[p.role] ?? (p.role && p.role !== "none" ? p.role : el._pressable ? "button" : null);
     // A combo box that is an input is its field, which keeps the focus
     // (`fieldAria`).
     set("role", el._field && p.role === "combobox" ? null : role);
-    set("aria-label", el._field ? null : p.label ?? el._textLabel);
-    set("aria-description", el._field ? null : p.hint);
+    if (!el._field) {
+      set("aria-label", p.label ?? el._textLabel);
+      set("aria-description", p.hint);
+    }
     set("aria-disabled", p.disabled && "true");
     set("aria-selected", p.selected && "true");
     set("aria-checked", p.checked);
@@ -3086,6 +3383,7 @@ class Player {
     set("aria-valuetext", text);
     set("aria-live", p.live);
     set("aria-hidden", p.hidden && "true");
+    set("aria-orientation", p.orientation);
     if (p.activeDescendant != null || p.controls != null || p.describedBy != null || el._related) {
       // Linked once the batch is applied (`linkRelations`).
       el._related = p.activeDescendant != null || p.controls != null || p.describedBy != null;
@@ -3096,46 +3394,77 @@ class Player {
   /** The stops of the keyboard focus (Tab), as `ViewProps::focus_stop`
    * decides: pressables (Enter and Space press them) unless `focusable`
    * false, and any `focusable` view, pressable or not (its keys reach it
-   * through the app's keymap); never disabled ones or those hidden from
-   * assistive technologies. */
+   * through the app's keymap); never disabled ones, those hidden from
+   * assistive technologies or those with no area (`seenByKeys`). */
   updateFocusable(el) {
     const p = el._props;
-    const focusable = (p?.focusable ?? !!el._pressable) && !p?.disabled && !p?.hidden;
+    const seen = this.seenByKeys(el);
+    const focusable = (p?.focusable ?? !!el._pressable) && !p?.disabled && !p?.hidden && seen;
     if (focusable) el.tabIndex = 0;
-    // Programmatic focus only for what screen-reader focus moved to.
-    else if (el._a11yFocus) el.tabIndex = -1;
+    // Programmatic focus only for what screen-reader focus moved to; an
+    // element Tab reaches without a `tabindex` (a link, `web={{ element }}`)
+    // keeps none while it has no area.
+    else if (el._a11yFocus || (!seen && el.matches?.(NATIVE_STOPS))) el.tabIndex = -1;
     else if (el.hasAttribute("tabindex")) el.removeAttribute("tabindex");
     // No longer a stop with the focus on it: it leaves, as on macOS (browsers
     // move it without a `blur`, which would leave `focus:` on).
     if (!focusable && !el._a11yFocus && document.activeElement === el) el.blur();
-    if (focusable && !el._focusListeners) {
-      el._focusListeners = true;
-      // `focus:` classes and `onFocus` follow the keyboard focus (the
-      // browser draws a ring only then), not the focus a click would give.
-      el.addEventListener("focus", () => {
-        if (!el._focusCall && !el.matches(":focus-visible")) return;
-        this.keyFocus(el);
-      });
-      el.addEventListener("blur", () => {
-        this.setState(el, FOCUSED, false);
-        if (!el._keyFocus) return;
-        el._keyFocus = false;
-        this.event(el._id, "onBlur");
-      });
-    }
+    if (focusable && !el._focusListeners) this.installFocus(el);
     this.updateAria(el);
+  }
+
+  /** `focus:` classes, `onFocus` and `onBlur` of Tab stop `el`
+   * (`updateFocusable`): they follow the keyboard focus (the browser draws
+   * a ring only then), not the focus a click would give. */
+  installFocus(el) {
+    el._focusListeners = true;
+    el.addEventListener("focus", () => {
+      if (!el._focusCall && !el.matches(":focus-visible")) return;
+      this.keyFocus(el);
+    });
+    el.addEventListener("blur", () => {
+      this.setState(el, FOCUSED, false);
+      if (!el._keyFocus) return;
+      el._keyFocus = false;
+      this.event(el._id, "onBlur");
+    });
+  }
+
+  /** Whether the keyboard reaches view `el` (a Tab stop, an input's
+   * field): it has an area. The core lays out each view of a
+   * `display: none` subtree at no size, which hides nothing in a browser,
+   * so Tab would stop at what it holds; macOS keeps the same rule
+   * (`NshView::seen_by_keys`), and browsers already pass by
+   * `visibility: hidden`. A view before its first frame counts: its props
+   * come first, and the frame then decides. */
+  seenByKeys(el) {
+    const f = el._frame;
+    return !f || (f[2] > 0 && f[3] > 0);
+  }
+
+  /** Input `el`'s field is a Tab stop while its view and its content box
+   * have an area (`seenByKeys`); one that hides with the focus in it gives
+   * the focus up, as a hidden Tab stop does. */
+  fieldStop(el) {
+    const field = el._field;
+    if (!field) return;
+    const c = el._content;
+    const seen = this.seenByKeys(el) && (!c || (c[2] > 0 && c[3] > 0));
+    if (seen) field.removeAttribute("tabindex");
+    else field.tabIndex = -1;
+    if (!seen && document.activeElement === field) field.blur();
   }
 
   /** The name, description and states of input view `el` go on its `field`:
    * the field is the element screen readers read as the input. */
   fieldAria(el, field) {
     const p = el._props ?? {};
-    const set = (name, value) => (value == null || value === false ? field.removeAttribute(name) : field.setAttribute(name, String(value)));
+    const set = (name, value) => setAriaAttribute(field, name, value);
     set("aria-label", (p.label ?? el._textLabel) || null);
     set("aria-description", p.hint || null);
     // Props may arrive before the field exists; its wrapper then held the name.
-    el.removeAttribute("aria-label");
-    el.removeAttribute("aria-description");
+    setAriaAttribute(el, "aria-label", null);
+    setAriaAttribute(el, "aria-description", null);
     set("aria-invalid", p.invalid && "true");
     // A combo box's field is the combo box: the focus stays in it while
     // its list is open, and its active descendant is the highlighted row.
@@ -3166,7 +3495,7 @@ class Player {
     }
     el._focusCall = true;
     try {
-      el.focus({ focusVisible: true });
+      el.focus({ focusVisible: true, preventScroll: true });
     } finally {
       el._focusCall = false;
     }
@@ -3174,18 +3503,22 @@ class Player {
 
   /** What touches on `el` leave to the browser: nothing on views with
    * native pans, pinches or rotations; a `panActivation` gate along one
-   * axis leaves scrolling along the other. Views that take presses or
-   * touches are marked: text in them is not selected by default. */
+   * axis leaves scrolling along the other, and one with a way the drags
+   * the other way too, where the browser offers it. Views that take
+   * presses or touches are marked: text in them is not selected by
+   * default. */
   updateTouchAction(el) {
     const pan = el._gestures?.pan || el._events.has("onPanStart") || el._events.has("onPanEnd");
     const pinch = el._gestures?.pinch || el._gestures?.rotation;
     el.classList.toggle("nsh-press", !!(el._pressable || pan || pinch || el._events.has("onTouch")));
     const gate = el._props?.panActivation;
-    const horizontal = gate && gate[0] != null && gate[1] == null;
-    const vertical = gate && gate[1] != null && gate[0] == null;
+    const way = gate ? this.panWay(gate) : undefined;
+    const horizontal = gate && (way ? way === "left" || way === "right" : gate[0] != null && gate[1] == null);
+    const vertical = gate && (way ? way === "up" || way === "down" : gate[1] != null && gate[0] == null);
     el.classList.toggle("nsh-pan", !!(pinch || (pan && !horizontal && !vertical)));
-    el.classList.toggle("nsh-pan-x", !pinch && !!horizontal);
-    el.classList.toggle("nsh-pan-y", !pinch && !!vertical);
+    el.classList.toggle("nsh-pan-x", !pinch && !way && !!horizontal);
+    el.classList.toggle("nsh-pan-y", !pinch && !way && !!vertical);
+    for (const w of ["left", "right", "up", "down"]) el.classList.toggle(`nsh-pan-${w}`, !pinch && way === w);
   }
 
   // Layout animations (`LayoutAnimation`): frames move, new views appear
@@ -4455,6 +4788,7 @@ class Player {
     const el = this.view(id);
     if (!el?._spacer) return;
     el._content = [w, h];
+    this.scrollFits(el);
     this.placeLayer(el);
     this.snapMarkers(el);
     // The last sticky cell travels to the end of the content.
@@ -4465,12 +4799,15 @@ class Player {
     const el = this.view(id);
     if (!el) return;
     el._applied++;
-    // A smooth scroll of the core's in flight moves with it, as on the
-    // native backends: setting the offset would stop it.
-    if (el._smooth) {
-      el._smooth = [el._smooth[0] + dx, el._smooth[1] + dy];
-      el.scrollTo({ left: el._smooth[0], top: el._smooth[1], behavior: "smooth" });
-      return;
+    // A scroll animation of the core's in flight moves with the content,
+    // as on the native backends (`nsh-core`'s `shifted`): it goes on from
+    // the content it was on.
+    const s = el._smooth;
+    if (s) {
+      s.fromX += dx;
+      s.fromY += dy;
+      s.x += dx;
+      s.y += dy;
     }
     // So does a glide of the wheel's or the keys' (`scrollSmoothly`):
     // its next frame would put the offset back.
@@ -4488,7 +4825,17 @@ class Player {
     const el = this.view(id);
     if (!el) return;
     const refresh = el._behavior?.refreshIndicator?.height !== behavior.refreshIndicator?.height;
+    const bar = String(this.barInset(el)) !== String(behavior.bar ?? [0, 0, 0, 0]);
     el._behavior = behavior;
+    // The browser's own indicator (phones) keeps its track within the
+    // insets where its scroll bar can be styled (`.nsh-scroll`'s track).
+    if (bar) {
+      const [top, right, bottom, left] = this.barInset(el);
+      el.style.setProperty("--nsh-bar-t", `${top}px`);
+      el.style.setProperty("--nsh-bar-r", `${right}px`);
+      el.style.setProperty("--nsh-bar-b", `${bottom}px`);
+      el.style.setProperty("--nsh-bar-l", `${left}px`);
+    }
     // A refresh in progress keeps the room of the indicator now showing.
     if (refresh && el._refreshing && !el._pulling && el._pull > 0) this.animatePull(el, this.refreshSpace(el));
     if (refresh) this.updateSpinner(el);
@@ -4512,6 +4859,17 @@ class Player {
     const axes = scroll === "hidden" ? "nsh-onone" : zooms ? "nsh-oxy" : el._horizontal ? "nsh-ox" : "nsh-oy";
     swapClass(el, "_overflow", axes);
     el.classList.toggle("nsh-zoom", zooms);
+    this.scrollFits(el);
+  }
+
+  /** Whether the content of scroll view `el` fits along its axis, which
+   * leaves it nothing to scroll (`nsh-fits`): its overscroll is the scroll
+   * view's around it then, as a native Android scroll view hands its parent
+   * what it cannot take. A zoomable view keeps its own. */
+  scrollFits(el) {
+    const axis = el._horizontal ? 0 : 1;
+    const fits = !!el._content && !!el._frame && !this.zooms(el) && el._content[axis] <= el._frame[2 + axis] + 0.5;
+    el.classList.toggle("nsh-fits", fits);
   }
 
   snapMarkers(el) {
@@ -4670,12 +5028,27 @@ class Player {
     const h = !!el._horizontal;
     const view = h ? el.clientWidth : el.clientHeight;
     const total = h ? el.scrollWidth : el.scrollHeight;
-    if (total <= view + 0.5 || view <= 4 * BAR_MARGIN) return null;
-    const track = view - 2 * BAR_MARGIN;
+    // Its track keeps within the view's `scrollbarInset`.
+    const [top, right, bottom, left] = this.barInset(el);
+    const [before, after] = h ? [left, right] : [top, bottom];
+    const room = view - before - after;
+    if (total <= view + 0.5 || room <= 4 * BAR_MARGIN) return null;
+    const track = room - 2 * BAR_MARGIN;
     const len = Math.min(track, Math.max(32, (track * view) / total));
     const max = total - view;
     const t = Math.min(Math.max((h ? el.scrollLeft : el.scrollTop) / max, 0), 1);
-    return [BAR_MARGIN + t * (track - len), len, track - len, max];
+    return [before + BAR_MARGIN + t * (track - len), len, track - len, max];
+  }
+
+  /** `el`'s `scrollbarInset`: `[top, right, bottom, left]`. */
+  barInset(el) {
+    return el._behavior?.bar ?? [0, 0, 0, 0];
+  }
+
+  /** The edge `el`'s bar runs along (its right, or a horizontal view's bottom), moved in by its inset. */
+  barEdge(el) {
+    const [, right, bottom] = this.barInset(el);
+    return el._horizontal ? el.clientHeight - bottom : el.clientWidth - right;
   }
 
   /** Shows `el`'s bar where its content is; it fades after `BAR_HOLD`
@@ -4693,7 +5066,7 @@ class Player {
       el.insertBefore(el._bar, el.firstChild);
     }
     const [start, len] = thumb;
-    const edge = (el._horizontal ? el.clientHeight : el.clientWidth) - BAR_THICK - BAR_MARGIN;
+    const edge = this.barEdge(el) - BAR_THICK - BAR_MARGIN;
     el._bar.firstChild.style.cssText = el._horizontal
       ? `left:${start}px;top:${edge}px;width:${len}px;height:${BAR_THICK}px`
       : `left:${edge}px;top:${start}px;width:${BAR_THICK}px;height:${len}px`;
@@ -4707,8 +5080,10 @@ class Player {
     const thumb = this.barThumb(el);
     if (!thumb) return false;
     const r = el.getBoundingClientRect();
-    const [x, y] = [e.clientX - r.left, e.clientY - r.top];
-    const [along, across, edge] = el._horizontal ? [x, y, el.clientHeight] : [y, x, el.clientWidth];
+    const z = this.cssZoom(el);
+    const [x, y] = [(e.clientX - r.left) / z, (e.clientY - r.top) / z];
+    const [along, across] = el._horizontal ? [x, y] : [y, x];
+    const edge = this.barEdge(el);
     return across >= edge - BAR_GRAB && across <= edge && along >= thumb[0] - 4 && along <= thumb[0] + thumb[1] + 4;
   }
 
@@ -4746,7 +5121,8 @@ class Player {
     const el = p.scroll;
     const thumb = this.barThumb(el);
     if (!thumb || thumb[2] <= 0) return;
-    const d = ((el._horizontal ? e.clientX : e.clientY) - p.start) * (thumb[3] / thumb[2]);
+    const z = this.cssZoom(el);
+    const d = (((el._horizontal ? e.clientX : e.clientY) - p.start) / z) * (thumb[3] / thumb[2]);
     if (el._horizontal) el.scrollLeft = p.offset + d;
     else el.scrollTop = p.offset + d;
   }
@@ -4781,9 +5157,15 @@ class Player {
   /** The browser's scrolling stopped: the end, unless the scroll is driven
    * here (`drive`) or a finger still holds it. */
   scrollEnded(el) {
+    // A browser wheel's scroll goes on while its events keep coming
+    // (`wheelNatively`): a `scrollend` between two notches is not its end,
+    // which waits for the fallback, as one scroll of nsh's ends once.
+    if (el._wheelAt && performance.now() - el._wheelAt < 200) return;
     clearTimeout(el._commandEnd);
     el._commandEnd = 0;
-    el._smooth = null;
+    // A scroll animation of the core's (`animateScroll`) is driven here:
+    // every frame of it sets the offset, and the `scrollend` the frame
+    // before it drew is not its end. It ends on its own last frame.
     if (el._driven || el._touchDrag) return;
     // The browser's end of a scroll that ended here (`ownEnd`).
     const own = el._ownEnd;
@@ -4971,12 +5353,13 @@ class Player {
     }
     if (p.takes) e.preventDefault();
     const r = p.el.getBoundingClientRect();
+    const z = this.cssZoom(p.el);
     const [pageX, pageY] = this.point(e);
     // Nothing changes at the end, as on the native backends.
     const delta = phase === 2 ? 0 : e.scale / (p.scale || 1) - 1;
     p.scale = e.scale;
     this.event(p.el._id, "onPinch", {
-      position: { x: e.clientX - r.left, y: e.clientY - r.top },
+      position: { x: (e.clientX - r.left) / z, y: (e.clientY - r.top) / z },
       pagePosition: { x: pageX, y: pageY },
       delta,
       phase: phase === 0 ? "start" : phase === 1 ? "move" : "end",
@@ -5431,6 +5814,7 @@ class Player {
       el._field = field;
       el.append(field);
       if (el._content) this.placeContent(el);
+      else this.fieldStop(el);
     }
     swapClass(field, "_class", this.styleClass(css));
     this.fieldAria(el, field);
@@ -5470,7 +5854,8 @@ class Player {
     this.inputScrolled(el, field);
     if (config.autoFocus && !el._autoFocused) {
       el._autoFocused = true;
-      setTimeout(() => field.focus(), 0);
+      // Focused once the batch has put it in the page (`focusAppeared`).
+      (this.autoFocusing ??= new Set()).add(el);
     }
   }
 
@@ -5522,11 +5907,38 @@ class Player {
         if (submit === "blurAndSubmit") field.blur();
       }
     });
+    // `selectTextOnFocus`: focus selects the whole text, however it comes. A
+    // press that focuses the field places the caret after the focus (on
+    // its mousedown or its mouseup, by browser), so the press's mouseup
+    // selects it again unless the press made its own selection: a drag's
+    // range, a Shift-click's extension, or a second click on the focused
+    // field (a double click's word).
+    field.addEventListener("pointerdown", (e) => {
+      if (document.activeElement === field) field._selectOnUp = false;
+      else field._shiftPress = e.shiftKey;
+    });
+    const pressEnded = () => { field._shiftPress = false; };
+    field.addEventListener("pointerup", pressEnded);
+    field.addEventListener("pointercancel", pressEnded);
+    field.addEventListener("mouseup", (e) => {
+      if (!field._selectOnUp) return;
+      field._selectOnUp = false;
+      if (field.selectionStart !== field.selectionEnd) return;
+      e.preventDefault();
+      field.setSelectionRange(0, field.value.length);
+      this.selectionChanged(el, field);
+    });
     field.addEventListener("focus", () => {
       this.setState(el, FOCUSED, true);
       this.event(el._id, "onFocus");
+      if (el._config?.selectTextOnFocus && !field._shiftPress) {
+        field.setSelectionRange(0, field.value.length);
+        field._selectOnUp = true;
+        this.selectionChanged(el, field);
+      }
     });
     field.addEventListener("blur", () => {
+      field._selectOnUp = false;
       this.setState(el, FOCUSED, false);
       this.event(el._id, "onBlur");
     });
@@ -5539,9 +5951,9 @@ class Player {
   }
 
   /** Reports how far `el`'s textarea scrolled, and its text's height and
-   * its viewport's, while a built-in bar takes its indicator's place. */
+   * its viewport's, while a bar of the app's follows it (`reportScroll`). */
   inputScrolled(el, field) {
-    if (!el._config?.replaced || field.tagName !== "TEXTAREA") return;
+    if (!el._config?.reportScroll || field.tagName !== "TEXTAREA") return;
     const now = [field.scrollTop, field.clientWidth, field.scrollHeight, field.clientHeight];
     if (field._scrolled?.every((v, i) => v === now[i])) return;
     field._scrolled = now;
@@ -5621,10 +6033,13 @@ class Player {
     const text = data?.getData("text/plain") ?? "";
     const html = data?.getData("text/html") ?? "";
     const files = [...(data?.files ?? [])];
+    // A file larger than `pasteMaxSize` is not read: its name, type and size.
+    const max = el._config?.pasteMaxSize ?? Infinity;
+    const read = files.filter((f) => f.size <= max);
     // A file manager's files are local paths the page cannot read: their
     // `file:` URLs, when the browser lists them.
     const uris = (data?.getData("text/uri-list") ?? "").split(/\r?\n/).filter((u) => u.startsWith("file:"));
-    Promise.all(files.map((f) => f.arrayBuffer())).then((buffers) => {
+    Promise.all(read.map((f) => f.arrayBuffer())).then((buffers) => {
       const size = buffers.reduce((n, b) => n + b.byteLength, 0);
       const bytes = new Uint8Array(size);
       let at = 0;
@@ -5635,7 +6050,13 @@ class Player {
       const json = JSON.stringify({
         text,
         html,
-        files: files.map((f, i) => ({ name: f.name || "image.png", type: f.type, size: buffers[i].byteLength })),
+        files: files.map((f) => {
+          const i = read.indexOf(f);
+          const name = f.name || "image.png";
+          return i < 0
+            ? { name, type: f.type, size: f.size, read: false }
+            : { name, type: f.type, size: buffers[i].byteLength };
+        }),
         uris,
       });
       this.call(() => this.withStrings([json, bytes], (jp, jl, bp, bl) => this.wasm.nsh_paste(el._id, jp, jl, bp, bl)));
@@ -5724,6 +6145,7 @@ class Player {
     field.style.top = `${y}px`;
     field.style.width = `${w}px`;
     field.style.height = `${h}px`;
+    this.fieldStop(el);
     // Its text may wrap elsewhere now.
     this.caretMoved(el, field);
   }
@@ -5971,9 +6393,12 @@ class Player {
     // keeps them, with their depths) are foreign, below this one's.
     this.historySession = newHistorySession();
     // The current entry's place, and the depth of each entry up to the
-    // newest (what a back of the app's own goes back over).
+    // newest (what a back of the app's own goes back over), and the address
+    // each had when the player last wrote it or was on it (what
+    // `takeOverEntry` checks the entry under against).
     this.historyIndex = 0;
     this.historyDepths = [0];
+    this.historyUrls = [location.href];
     history.replaceState(this.historyState(0), "");
     // The app's first entry's place in the tab's history, where the
     // browser says (`navigationIndex`): a state-less entry before it is the
@@ -6008,6 +6433,7 @@ class Player {
     const index = this.historyIndex;
     this.historyIndex = 0;
     this.historyDepths = [0];
+    this.historyUrls.length = 1;
     this.historyDepth = 0;
     if (!index) return;
     this.ignoredPops++;
@@ -6021,6 +6447,8 @@ class Player {
     history.pushState(this.historyState(depth, index), "", url);
     this.historyDepths.length = index;
     this.historyDepths.push(depth);
+    this.historyUrls.length = index;
+    this.historyUrls.push(location.href);
     this.historyIndex = index;
   }
 
@@ -6039,6 +6467,28 @@ class Player {
     } catch {
       return String(href);
     }
+  }
+
+  /**
+   * The `href` a link of text going to `href` (`TextView`'s links,
+   * `AttributedText::link_hrefs`) is drawn with as an `a` (`fillRun`), as a
+   * `Link`'s is (`linkHref` under the site's base), or null to draw it as a
+   * span: an address a browser opens from a page (`TEXT_LINK_SCHEMES`: a
+   * web page, a path of the site, mail and phone links). An `#anchor` is a
+   * heading of the text's own document, and any other scheme (an app's own
+   * routes, `javascript:`) is the app's to route: a span.
+   */
+  textLinkAddress(href) {
+    href = href?.trim();
+    if (!href || href.startsWith("#")) return null;
+    let url;
+    try {
+      url = new URL(href, this.siteBase ?? document.baseURI);
+    } catch {
+      return null;
+    }
+    if (!TEXT_LINK_SCHEMES.has(url.protocol)) return null;
+    return this.siteBase ? url.href : href;
   }
 
   /** What the app's relative addresses and links resolve against: the
@@ -6069,9 +6519,43 @@ class Player {
       return;
     }
     this.pageUrl = resolved.href;
+    if (push && this.earlyPushed) {
+      // An entry of its own was written for this task's push already
+      // (`pushEarly`): the turn's last address is that entry's.
+      push = false;
+    }
     if (push) this.pageUrlPush = true;
     this.pageUrlSets = (this.pageUrlSets ?? 0) + 1;
-    this.syncHistorySoon();
+    this.syncHistorySoon(push);
+  }
+
+  /** Whether an address pushed now can have its entry at once, in the task
+   * the app pushed it in: no page has an entry (no modal, no stack screen
+   * above its first), none is going, and no traversal is waited for. Then
+   * nothing later in the turn can take an entry away under it. */
+  canPushEarly() {
+    if (this.historyDepth || this.ignoredPops || this.dismissing > 0 || this.popAnswer) return false;
+    if ([...(this.root?.children ?? [])].some((el) => el._kind === "modal")) return false;
+    return this.backDepth() === 0;
+  }
+
+  /**
+   * A push with no page open (a list's row that opens a screen of its own
+   * address): the entry is written now, before the browser draws the new
+   * screen, not a task later (`syncHistorySoon`). Chrome on Android pictures
+   * an entry as the page leaves it and shows that picture under a back
+   * swipe; written after the new screen was drawn, the entry under it was
+   * pictured with that screen. Later addresses of the same task replace
+   * this entry's (in a turn the last one wins). With a page open it waits as
+   * before: a sheet's dismissal can reach the player a task after the push,
+   * and an entry written early would be gone back over with the sheet's.
+   */
+  pushEarly() {
+    this.earlyPushed = true;
+    setTimeout(() => {
+      this.earlyPushed = false;
+    }, 0);
+    this.syncHistory();
   }
 
   // The document's title: a mounted `Head`'s (`nsh/web`), else the main
@@ -6120,8 +6604,13 @@ class Player {
     return depth;
   }
 
-  syncHistorySoon() {
-    if (!this.history || this.historySync) return;
+  /** Writes the turn's entries a task later, once all of it reached the
+   * player; with `push` (an address pushed) at once when it can
+   * (`pushEarly`). */
+  syncHistorySoon(push = false) {
+    if (!this.history) return;
+    if (push && this.canPushEarly()) return this.pushEarly();
+    if (this.historySync) return;
     this.historySync = setTimeout(() => {
       this.historySync = 0;
       this.syncHistory();
@@ -6132,7 +6621,9 @@ class Player {
     const depth = this.backDepth();
     const have = this.historyDepth;
     for (let i = have + 1; i <= depth; i++) this.pushEntry(i);
-    if (depth < have) {
+    if (depth < have && this.takeOverEntry(depth)) {
+      // The address is on the entry the page that went had (`takeOverEntry`).
+    } else if (depth < have) {
       // Back over the entries above `depth`, the addresses the user typed
       // at those depths included; a level that has no entry left gets one
       // once the traversal lands.
@@ -6159,6 +6650,7 @@ class Player {
         // Absolute: `setPageUrl` resolved it.
         if (push) this.pushEntry(depth, url);
         else history.replaceState(history.state, "", url);
+        this.historyUrls[this.historyIndex] = url;
         this.shownUrl = url;
         if (!this.historyIndex) this.firstUrl = url;
       } catch (error) {
@@ -6166,6 +6658,45 @@ class Player {
       }
     }
     if (!this.ignoredPops) this.syncTitle();
+  }
+
+  /**
+   * A turn that takes away the one page whose entry is the current one (a
+   * modal, a stack's screen) and pushes an address (a sheet's item that
+   * opens a page of the app's): the address takes that entry over, at the
+   * depth of the pages left, instead of going back over it and pushing an
+   * entry of its own once the traversal lands. Nothing waits for a
+   * traversal, and the entry under it is not left again. A browser pictures
+   * an entry as the page leaves it, and Chrome on Android shows that
+   * picture under a back swipe: left again here, after the app's new page
+   * was drawn (the traversal lands a task or more later), the entry under
+   * it was pictured with that page. Its picture stays the one taken as the
+   * page that went came. Not with entries after the current one (the user
+   * went back onto it), which a push drops and this would keep. Nor with
+   * the address of the entry under it (a sheet with an address of its own
+   * closing onto its opener's), which the back lands on and the push then
+   * makes nothing of: here two entries of one address would have a back
+   * between them that moves nothing. Returns whether it did.
+   */
+  takeOverEntry(depth) {
+    const url = this.pageUrl;
+    if (url == null || !this.pageUrlPush || url === location.href) return false;
+    if (this.entryAtDepth(depth) !== this.historyIndex - 1 || this.historyDepths.length !== this.historyIndex + 1) return false;
+    const under = this.historyUrls[this.historyIndex - 1];
+    if (under == null || url === under) return false;
+    this.pageUrl = null;
+    this.pageUrlPush = false;
+    try {
+      // Absolute: `setPageUrl` resolved it.
+      history.replaceState(this.historyState(depth), "", url);
+    } catch (error) {
+      this.showError(`UrlScheme.setUrl(${JSON.stringify(url)}): ${error?.message ?? error}`);
+    }
+    this.historyDepths[this.historyIndex] = depth;
+    this.historyUrls[this.historyIndex] = url;
+    this.historyDepth = depth;
+    this.shownUrl = url;
+    return true;
   }
 
   popState(e) {
@@ -6193,6 +6724,8 @@ class Player {
         const index = this.historyIndex + 1;
         this.historyDepths.length = index;
         this.historyDepths.push(have);
+        this.historyUrls.length = index;
+        this.historyUrls.push(location.href);
         this.historyIndex = index;
         history.replaceState(this.historyState(have, index), "");
         this.tellAddress("address");
@@ -6211,6 +6744,7 @@ class Player {
       // it are an earlier load's too.
       this.historySession = newHistorySession();
       this.historyDepths = [0];
+      this.historyUrls = [location.href];
       history.replaceState(this.historyState(0), "");
       this.historyBase = navigationIndex();
       this.firstUrl = location.href;
@@ -6223,6 +6757,7 @@ class Player {
     const reason = index < this.historyIndex ? "back" : "forward";
     this.historyIndex = index;
     this.historyDepths[index] = at;
+    this.historyUrls[index] = location.href;
     if (at > have) {
       // Forward to a screen the stack no longer has: an address the app is
       // handed from outside, as a link (`open`), and its pages' entries go
@@ -6979,6 +7514,15 @@ class Player {
         if (el?._field) el._field.blur();
         else document.activeElement?.blur?.();
         break;
+      case "clearSelection": {
+        // The selection of the selectable view `el` is, is in or holds:
+        // `selectionchange` then reports `""`.
+        const sel = getSelection();
+        const anchor = sel?.rangeCount ? sel.anchorNode : null;
+        const area = anchor && this.areaOf(anchor.nodeType === 1 ? anchor : anchor.parentElement);
+        if (el && area && (el.contains(area) || area.contains(el))) sel.removeAllRanges();
+        break;
+      }
       case "setSelection": el?._field?.setSelectionRange(args[0], args[1]); break;
       case "insertText": {
         // As the user's typing: the browser's undo history keeps it and
@@ -7004,23 +7548,21 @@ class Player {
           el._field.scrollTo({ top: args[1], behavior: args[2] ? "smooth" : "instant" });
           break;
         }
-        el._applied++;
-        this.stopGlide(el, args[0], args[1]);
-        el._smooth = args[2] ? [args[0], args[1]] : null;
-        el.scrollTo({ left: args[0], top: args[1], behavior: args[2] ? "smooth" : "instant" });
+        this.scrollCommand(el, args[0], args[1], args[2]);
         break;
       case "scrollToEnd": {
         if (!el) break;
-        el._applied++;
         const [x, y] = el._horizontal ? [el.scrollWidth, 0] : [0, el.scrollHeight];
-        this.stopGlide(el, x, y);
-        el.scrollTo({ left: x, top: y, behavior: args[0] ? "smooth" : "instant" });
+        this.scrollCommand(el, x, y, args[0]);
         break;
       }
       case "zoomTo": if (el) this.zoomCommand(el, ...args); break;
       case "setResponder": this.responderBlocks = !!args[0]; break;
       case "clearResponder": this.responderBlocks = false; break;
-      case "dialog": this.dialog(args[0], args[1], args[2], args[3], args[4] ?? [], args[5] ?? true, args[6] ?? false); break;
+      case "dialog":
+        this.dialog(args[0], args[1], args[2], args[3], args[4] ?? [], args[5] ?? true, args[6] ?? false,
+          args[7] ?? null, args[8] ?? null, args[9] ?? false, args[10] ?? false);
+        break;
       case "closeDialog": this.closeDialog(args[0]); break;
       case "reload": {
         const frame = el?._frameEl;
@@ -7072,8 +7614,8 @@ class Player {
       case "playerClose": this.playerClose(args[0]); break;
       case "setBadge": this.setBadge(args[0]); break;
       case "openUrl": this.event(ROOT_ID, "onOpenUrl", { id: args[0], opened: this.openUrl(args[1]) }); break;
-      case "setClipboard": this.writeClipboard(args[0]); break;
-      case "setClipboardItem": this.writeClipboard(args[0], args[1] ?? undefined); break;
+      case "setClipboard": this.writeClipboard(args[0], undefined, (written) => this.event(ROOT_ID, "onClipboardWrite", { written })); break;
+      case "setClipboardItem": this.writeClipboard(args[0], args[1] ?? undefined, (written) => this.event(ROOT_ID, "onClipboardWrite", { written })); break;
       case "readClipboard": this.readClipboard(args[0], args[1]); break;
       case "setClipboardImage": this.writeClipboardImage(args[0]); break;
       case "readClipboardImage": this.readClipboardImage(args[0], args[1]); break;
@@ -7124,7 +7666,7 @@ class Player {
           el.tabIndex = -1;
           el._a11yFocus = true;
         }
-        el.focus();
+        el.focus({ preventScroll: true });
         break;
       default: break;
     }
@@ -7231,8 +7773,8 @@ class Player {
    * context; some browsers want a gesture), then a copy command over a
    * selected offscreen text area.
    */
-  writeClipboard(text, html) {
-    if (navigator.userActivation?.isActive !== false && this.copyCommand(text, html)) return;
+  writeClipboard(text, html, done = () => {}) {
+    if (navigator.userActivation?.isActive !== false && this.copyCommand(text, html)) return done(true);
     const copy = () => {
       const focused = document.activeElement;
       const area = document.createElement("textarea");
@@ -7241,20 +7783,21 @@ class Player {
       document.body.append(area);
       // Safari copies only a selection.
       area.select();
-      this.copyCommand(text, html);
+      const written = this.copyCommand(text, html);
       area.remove();
       // The selection took the focus from the field that had it (a
       // RichEditor's input).
       if (focused && focused !== document.body && focused.isConnected) focused.focus({ preventScroll: true });
+      done(written);
     };
     if (html !== undefined && navigator.clipboard?.write && typeof ClipboardItem === "function") {
       const item = new ClipboardItem({
         "text/plain": new Blob([text], { type: "text/plain" }),
         "text/html": new Blob([html], { type: "text/html" }),
       });
-      navigator.clipboard.write([item]).catch(copy);
+      navigator.clipboard.write([item]).then(() => done(true), copy);
     } else if (html === undefined && navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).catch(copy);
+      navigator.clipboard.writeText(text).then(() => done(true), copy);
     } else {
       copy();
     }
@@ -8219,7 +8762,7 @@ class Player {
    * browser's `fetch`, its head and body chunks reported back as they come.
    * A streamed body (`streamed`) is collected until `fetch_finish`.
    */
-  fetchStart(id, method, url, headers, body, streamed, follow) {
+  fetchStart(id, method, url, headers, body, streamed, follow, cache) {
     const request = { controller: new AbortController(), paused: false, resume: null, reader: null, done: false };
     this.requests.set(id, request);
     const report = (f) => {
@@ -8230,7 +8773,7 @@ class Player {
       this.requests.delete(id);
     };
     const send = async (body) => {
-      const init = { method, headers: new Headers(), body, redirect: follow ? "follow" : "manual", signal: request.controller.signal };
+      const init = { method, headers: new Headers(), body, redirect: follow ? "follow" : "manual", cache: cache || "default", signal: request.controller.signal };
       for (const [name, value] of headers) {
         try {
           init.headers.append(name, value);
@@ -8325,9 +8868,13 @@ class Player {
    * buttons in a row, the last regular one the default), otherwise as
    * iOS's alert and action sheet. Answers the button's index, -1 when
    * dismissed (a click beside it, or Escape, when cancelable); Escape
-   * presses the cancel button if any (`keyDown`, `_cancel`).
+   * presses the cancel button if any (`keyDown`, `_cancel`). An alert with
+   * `input` (not null) has a text field starting with it, focused, its
+   * text answered as `value`: Enter in it presses the default button, and
+   * while a `required` field is empty only the cancel buttons are enabled.
    */
-  dialog(dialogId, title, message, buttons, styles, cancelable, sheet) {
+  dialog(dialogId, title, message, buttons, styles, cancelable, sheet, input = null, placeholder = null,
+    selectAll = false, required = false) {
     // `AlertDialog` always brings the app's actions: no label of NSH's own.
     const list = buttons;
     const style = (i) => styles[i] ?? "default";
@@ -8353,8 +8900,10 @@ class Player {
       if (restore?.isConnected) restore.focus({ preventScroll: true });
       return true;
     };
+    let field = null;
     const close = (index) => {
-      if (takeDown()) this.event(ROOT_ID, "onDialog", { id: dialogId, index });
+      if (!takeDown()) return;
+      this.event(ROOT_ID, "onDialog", field ? { id: dialogId, index, value: field.value } : { id: dialogId, index });
     };
     backdrop._dialogId = dialogId;
     backdrop._takeDown = takeDown;
@@ -8412,6 +8961,15 @@ class Player {
         p.textContent = message;
         box.append(p);
       }
+      if (input !== null) {
+        field = document.createElement("input");
+        field.type = "text";
+        field.className = "nsh-dialog-input";
+        field.value = input;
+        if (placeholder !== null) field.placeholder = placeholder;
+        field.setAttribute("aria-label", title ?? message ?? placeholder ?? "");
+        box.append(field);
+      }
       const actions = document.createElement("div");
       // Desktop: up to three in a row; iOS: two side by side.
       const row = desktop ? list.length <= 3 : list.length === 2;
@@ -8429,6 +8987,23 @@ class Player {
       });
       focus ??= actions.firstChild;
       box.append(actions);
+      if (field) {
+        const all = [...actions.children];
+        const enable = () => {
+          if (!required) return;
+          const empty = field.value === "";
+          all.forEach((b, i) => { b.disabled = empty && style(i) !== "cancel"; });
+        };
+        enable();
+        field.addEventListener("input", enable);
+        field.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" || e.isComposing) return;
+          e.preventDefault();
+          const b = all[preferred];
+          if (b && !b.disabled) close(preferred);
+        });
+        focus = field;
+      }
     }
     backdrop.addEventListener("click", (e) => e.target === backdrop && down === backdrop && cancelable && close(-1));
     backdrop.append(box);
@@ -8437,6 +9012,10 @@ class Player {
     (this.dialogs ??= []).push(backdrop);
     this.scopeFocus();
     focus?.focus({ preventScroll: true });
+    if (field) {
+      if (selectAll) field.select();
+      else field.setSelectionRange(field.value.length, field.value.length);
+    }
   }
 
   /** Takes back the dialog `dialog` showed as `dialogId` (`closeDialog`), reporting nothing: the core answered it. */
@@ -8501,9 +9080,16 @@ class Player {
         const [sx, sy = sx] = style.scale.split(" ").map(Number);
         [a, b, c, d] = [sx * a, sy * b, sx * c, sy * d];
       }
+      const zoom = parseFloat(style.zoom);
+      if (zoom > 0 && zoom !== 1) [a, b, c, d] = [zoom * a, zoom * b, zoom * c, zoom * d];
       // Top-layer views ignore their DOM ancestors' transforms (including
-      // the preserved app scale inside an elevated iframe).
-      if (node.classList?.contains("nsh-viewport")) break;
+      // the preserved app scale inside an elevated iframe), while CSS zoom
+      // still scales them through their ancestors.
+      if (node.classList?.contains("nsh-viewport")) {
+        const z = this.cssZoom(node.parentElement);
+        if (z !== 1) [a, b, c, d] = [z * a, z * b, z * c, z * d];
+        break;
+      }
     }
     const r = el.getBoundingClientRect();
     const det = a * d - b * c;
@@ -8557,6 +9143,7 @@ class Player {
 
   installInput() {
     const root = this.root;
+    this.installFileDrop(root);
     // What the user gives input with, told before it acts (the capture
     // phase, ahead of the app's handlers and the browser's focus moves):
     // the core shows the focus by it (`focus-visible:`), as the browser
@@ -8574,14 +9161,22 @@ class Player {
     }, { passive: false });
     // A link (`Link` with an `href`) is the app's to press: a plain click
     // stays in the app (its `onPress`), a click with a modifier or the
-    // middle button opens its `href` as the browser would.
+    // middle button opens its `href` as the browser would, and the link
+    // takes no press then (`pointerDown`).
     root.addEventListener("click", (e) => {
-      const link = e.target instanceof Element ? e.target.closest("a.nsh-v[href]") : null;
-      if (link && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) e.preventDefault();
+      const link = e.target instanceof Element ? e.target.closest(LINK_SELECTOR) : null;
+      if (link && e.button === 0 && !heldModifier(e)) e.preventDefault();
     });
     window.addEventListener("pointermove", (e) => this.pointerMove(e), { passive: false });
     window.addEventListener("pointerup", (e) => this.pointerUp(e, false));
     window.addEventListener("pointercancel", (e) => this.pointerUp(e, true));
+    window.addEventListener("blur", () => {
+      this.hoverButtons = 0;
+      for (const [pointerId, p] of [...this.pointers]) {
+        p.scrolls = null;
+        this.pointerUp({ pointerId, buttons: 0 }, true);
+      }
+    });
     // A drag never drags images or text out of the app.
     root.addEventListener("dragstart", (e) => e.preventDefault());
     root.addEventListener("mousedown", (e) => this.mouseDown(e));
@@ -8637,6 +9232,8 @@ class Player {
   contextMenu(e, keyboard = false) {
     const view = this.viewOf(e.target);
     if (!view) return false;
+    // A link of text drawn as an `a` (`fillRun`), inside `view`.
+    const textLink = e.target?.closest?.("a.nsh-link[href]") ?? null;
     for (const el of this.ancestors(view)) {
       if (el._events?.has("onContextMenu")) {
         e.preventDefault();
@@ -8650,17 +9247,20 @@ class Player {
           at = { clientX: rtl ? r.right : r.left, clientY: r.bottom, target: e.target };
         }
         const [pageX, pageY] = this.point(at);
+        const z = this.cssZoom(el);
         this.event(el._id, "onContextMenu", {
-          position: { x: at.clientX - r.left, y: at.clientY - r.top },
+          position: { x: (at.clientX - r.left) / z, y: (at.clientY - r.top) / z },
           pagePosition: { x: pageX, y: pageY },
           modifiers: { control: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, platform: e.metaKey },
           pointerType: ["mouse", "pen", "touch"].includes(pointerType) ? pointerType : pointerType && "mouse",
         });
         return true;
       }
-      // A link (`Link` with an `href`) the app shows no menu for has
-      // the browser's: open in a new tab, copy the link.
+      // A link (`Link` with an `href`, or a link of the text that is `view`)
+      // the app shows no menu for has the browser's: open in a new tab,
+      // copy the link.
       if (el.localName === "a" && el.hasAttribute("href")) return true;
+      if (el === view && textLink) return true;
       if (el.matches(".nsh-field, .nsh-selectable")) return false;
     }
     return false;
@@ -8777,10 +9377,16 @@ class Player {
 
   /** The view that holds the keyboard focus in this player, when it is a
    * view of the app's and not a native field, page or video, which keeps
-   * its own keys. */
+   * its own keys. With nothing focused (the page's body, or the root),
+   * the window's root hears the keys, as `document.body` does: the newest
+   * modal's root while one is presented. A system dialog keeps its keys. */
   keyFocusView() {
     const focus = document.activeElement;
-    if (!focus || focus === document.body || !this.root.contains(focus)) return null;
+    if (!focus || focus === document.body || focus === this.root) {
+      if (this.dialogs?.length) return null;
+      return this.topModal() ?? this.root;
+    }
+    if (!this.root.contains(focus)) return null;
     if (focus.isContentEditable || focus.closest?.(".nsh-field, [contenteditable], iframe, video")) return null;
     return this.viewOf(focus);
   }
@@ -8894,7 +9500,7 @@ class Player {
     // (`nsh_key_event`), as a browser delivers the release to whatever has
     // the focus now.
     let captured = false;
-    if (this.wasm && !e.isComposing && e.keyCode !== 229) {
+    if (this.wasm && !e.isComposing && e.keyCode !== 229 && this.takesKeys()) {
       const keyView = this.keyFocusView();
       if (keyView && this.keyInterest(keyView)) captured = this.rawKey(keyView, false, e, keyCode(e));
     }
@@ -8928,8 +9534,9 @@ class Player {
    * selectable view, texts on one row (their boxes overlap vertically: a
    * table's cells) are joined by a tab instead, a text that continues the
    * one before it (`continuesText`: a wrapped line's later part) by
-   * nothing, and attachments (U+FFFC) and hidden runs are left out, as
-   * the native platforms copy. */
+   * nothing, attachments (which the runs do not hold) give their copy texts
+   * (`copyText`) where the layout put them among the runs, and hidden runs
+   * are left out, as the native platforms copy. */
   copyText(e) {
     if (e.target.closest?.(".nsh-field")) return;
     const out = this.selectedText();
@@ -8955,6 +9562,13 @@ class Player {
     let lastArea = null;
     let lastBox = null;
     let found = false;
+    // The runs the selection reaches, and the UTF-16 range it covers in
+    // each text: the attachments in it are copied (as their `copyText`).
+    // A run that starts with a truncated line's `…` has no offset and
+    // leaves the range as it is: an attachment between it and the next
+    // run of its line is copied only when the selection goes on past it.
+    const reached = [];
+    const covered = new Map();
     for (const run of (only ?? this.root).querySelectorAll(".nsh-run")) {
       // Text that cannot be selected is not copied, as by the browser.
       if (!range.intersectsNode(run) || !this.selectableText(run)) continue;
@@ -8963,7 +9577,14 @@ class Player {
       if (!text) continue;
       const from = run.contains(range.startContainer) ? runOffset(run, range.startContainer, range.startOffset) : 0;
       const to = run.contains(range.endContainer) ? runOffset(run, range.endContainer, range.endOffset) : text.length;
-      if (from >= to) continue;
+      reached.push([run, text, from, to]);
+      if (run._start == null || !run.parentNode._copyTexts) continue;
+      const span = covered.get(run.parentNode);
+      const start = run._start + from, end = run._start + Math.max(from, to);
+      covered.set(run.parentNode, span ? [Math.min(span[0], start), Math.max(span[1], end)] : [start, end]);
+    }
+    const write = (run, s) => {
+      if (!s) return;
       found = true;
       const area = this.areaOf(run.parentNode);
       if (last !== run.parentNode) {
@@ -8977,15 +9598,23 @@ class Player {
         lastArea = area;
         lastBox = box;
       }
-      // A hidden run (`visibility: hidden` on a span) keeps its place but
-      // is not copied; the line's break after it still is.
-      if (getComputedStyle(run).visibility === "hidden") {
-        if (to === text.length && run._after) out += run._after;
-        continue;
+      out += s;
+    };
+    for (const [run, text, from, to] of reached) {
+      const span = covered.get(run.parentNode);
+      const copies = (before) => span ? copiesAround(run.parentNode._copyTexts, run._run, before, span[0], span[1]) : "";
+      write(run, copies(true));
+      if (from < to) {
+        found = true;
+        // A hidden run (`visibility: hidden` on a span) keeps its place
+        // but is not copied; the line's break after it still is.
+        if (getComputedStyle(run).visibility !== "hidden") {
+          const part = text.slice(from, to);
+          write(run, this.areaOf(run.parentNode) ? part.replaceAll(ATTACHMENT, "") : part);
+        }
       }
-      const part = text.slice(from, to);
-      out += area ? part.replaceAll("\uFFFC", "") : part;
-      if (to === text.length && run._after) out += run._after;
+      write(run, copies(false));
+      if (from < to && to === text.length && run._after) write(run, run._after);
     }
     if (!found) return null;
     return given ? out : out.replace(/\s+$/, "");
@@ -9005,9 +9634,50 @@ class Player {
     return (this.selectedText(area, before) ?? "").length;
   }
 
+  /** The box around the selection's characters in `area` (`[x, y, width,
+   * height]` in the area, from its top left corner, as its layout places
+   * it), or null when they show nowhere: the boxes of the selected parts of
+   * the texts it reaches, united, as the native platforms report it
+   * (`SelectionModel::selected_bounds`). */
+  selectionBounds(area) {
+    const sel = getSelection();
+    if (!sel?.rangeCount || sel.isCollapsed) return null;
+    const range = sel.getRangeAt(0);
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    for (const run of area.querySelectorAll(".nsh-run")) {
+      // The runs a copy takes (`selectedText`).
+      if (!range.intersectsNode(run) || !this.selectableText(run)) continue;
+      if (getComputedStyle(run).visibility === "hidden") continue;
+      const part = document.createRange();
+      part.selectNodeContents(run);
+      if (run.contains(range.startContainer)) part.setStart(range.startContainer, range.startOffset);
+      if (run.contains(range.endContainer)) part.setEnd(range.endContainer, range.endOffset);
+      for (const r of part.getClientRects()) {
+        // The empty box at a line's end where the selection only reaches its break.
+        if (r.width <= 0 || r.height <= 0) continue;
+        left = Math.min(left, r.left);
+        top = Math.min(top, r.top);
+        right = Math.max(right, r.right);
+        bottom = Math.max(bottom, r.bottom);
+      }
+    }
+    if (left > right) return null;
+    // In the area's own points: a transform around it (a scaled player,
+    // a zoomed scroll view) scales what the browser measures on screen.
+    const box = area.getBoundingClientRect();
+    const sx = area.offsetWidth ? box.width / area.offsetWidth : 1;
+    const sy = area.offsetHeight ? box.height / area.offsetHeight : 1;
+    return [(left - box.left) / sx, (top - box.top) / sy, (right - left) / sx, (bottom - top) / sy];
+  }
+
   /** The document's selection changed: the selectable view it is in (the
-   * outermost) hears its text (`onSelectionChange`), and one it left hears
-   * "" (nothing selected), each only when its text changed. */
+   * outermost) hears its text (`onSelectionChange`) with the box around it
+   * as of now (`bounds`, to which the core adds `pageBounds`), and one it
+   * left hears "" (nothing selected), each only when its text or the box
+   * changed (the same text selected elsewhere is a change). */
   areaSelectionChanged() {
     const sel = getSelection();
     const anchor = sel?.rangeCount ? sel.anchorNode : null;
@@ -9020,14 +9690,23 @@ class Player {
         this.event(last._id, "onSelectionChange", { text: "", start: 0 });
       }
       last._selectedText = "";
+      last._selectedBox = "";
     }
     if (!area) return;
     this._selectedArea = area;
     if (!area._events?.has("onSelectionChange")) return;
     const text = this.selectedText(area) ?? "";
-    if (text === (area._selectedText ?? "")) return;
+    const box = text ? this.selectionBounds(area) : null;
+    const key = box ? box.join() : "";
+    if (text === (area._selectedText ?? "") && key === (area._selectedBox ?? "")) return;
     area._selectedText = text;
-    this.event(area._id, "onSelectionChange", { text, start: text ? this.selectionStart(area) : 0 });
+    area._selectedBox = key;
+    const payload = { text, start: text ? this.selectionStart(area) : 0 };
+    if (box) {
+      const [x, y, width, height] = box;
+      payload.bounds = { origin: { x, y }, size: { width, height } };
+    }
+    this.event(area._id, "onSelectionChange", payload);
   }
 
   /** Select all and Escape in selectable text with a selection: within it. */
@@ -9097,8 +9776,10 @@ class Player {
    * A wheel or touchpad scroll goes to the innermost scroll view along its
    * axis that can move that way (a vertical wheel scrolls a horizontal view
    * when no vertical one can), and stays on it until the scroll ends
-   * (events 200 ms apart). Notches glide; Ctrl + wheel (a touchpad's pinch)
-   * pinches the view under the pointer and never zooms the page.
+   * (events 200 ms apart). Where the browser would scroll the same view, it
+   * does (`wheelNatively`): its notches glide as every page's. Otherwise
+   * notches glide here; Ctrl + wheel (a touchpad's pinch) pinches the view
+   * under the pointer and never zooms the page.
    */
   wheel(e) {
     // A view listening to `onWheel` nearer than the scroll views under the
@@ -9130,16 +9811,28 @@ class Player {
       };
       const el = chain.find((v) => !!v._horizontal === horizontal && can(v, horizontal ? dx : dy))
         ?? (horizontal ? null : chain.find((v) => v._horizontal && can(v, dy)));
+      // The browser scrolls it itself, with its own smooth wheel and the
+      // touchpad's momentum, when it would pick the same view: the
+      // innermost along the scroll's axis (`overscroll-behavior: contain`
+      // keeps the scroll on it at its edge, as `wheelLock` does), not
+      // snapping (one snap point per scroll) and without a content layer
+      // (zoom, pull to refresh), whose offsets are nsh's.
+      const native = !!el && !el._snapPoints && !el._layer
+        && el === chain.find((v) => !!v._horizontal === horizontal);
       // Nothing to scroll: the page around may, unless a dialog or an
       // alert covers it.
-      this.wheelLock = lock = el ? { el, total: 0, snapped: false } : null;
+      this.wheelLock = lock = el ? { el, total: 0, snapped: false, native } : null;
       if (!lock) {
         if (this.viewportDialogs && e.target.closest?.(".nsh-viewport")) e.preventDefault();
         return;
       }
     }
-    e.preventDefault();
     lock.t = now;
+    if (lock.native) {
+      this.wheelNatively(lock.el);
+      return;
+    }
+    e.preventDefault();
     const el = lock.el;
     const d = el._horizontal ? dx || dy : dy;
     if (el._snapPoints) {
@@ -9156,6 +9849,30 @@ class Player {
     // deltas. Its magnitude cannot distinguish a notch from a finger.
     const smooth = e.deltaMode !== 0;
     this.scrollSmoothly(el, el._horizontal ? d : 0, el._horizontal ? 0 : d, smooth);
+  }
+
+  /**
+   * A wheel the browser scrolls `el` with (`wheel`): Chrome and Safari
+   * send a mouse's notches in pixels, as a touchpad's deltas, so nsh could
+   * not tell them apart and moved each notch at once, where every page
+   * glides. The offsets reach the core as any scroll's do (`scrolled`).
+   * A glide of the keys' stops where it is, without an end: the wheel's
+   * scroll goes on from there. The end is the browser's `scrollend` once
+   * no event came for 200 ms (`scrollEnded`: one scroll, as nsh's own
+   * wheels end once), or 200 ms after the last scroll event where it sends
+   * none (`waitCommandEnd`, which `scrolled` keeps waiting while it moves).
+   */
+  wheelNatively(el) {
+    el._wheelAt = performance.now();
+    const a = el._glide;
+    if (a) {
+      cancelAnimationFrame(a.frame);
+      clearTimeout(a.timer);
+      clearTimeout(a.watch);
+      el._glide = null;
+      this.drive(el, -1);
+    }
+    this.waitCommandEnd(el);
   }
 
   /**
@@ -9187,10 +9904,11 @@ class Player {
     this.wheelTaker = takes ? { el, t: now } : null;
     if (!el) return false;
     const r = el.getBoundingClientRect();
+    const z = this.cssZoom(el);
     const [pageX, pageY] = this.point(e);
     const page = e.deltaMode === 2 ? this.size[1] : 1;
     this.event(el._id, "onWheel", {
-      position: { x: e.clientX - r.left, y: e.clientY - r.top },
+      position: { x: (e.clientX - r.left) / z, y: (e.clientY - r.top) / z },
       pagePosition: { x: pageX, y: pageY },
       delta: { x: e.deltaX * page, y: e.deltaY * page },
       deltaMode: e.deltaMode === 1 ? "lines" : "points",
@@ -9207,8 +9925,9 @@ class Player {
     const a = el._props?.panActivation;
     if (!a) return true;
     const [ax, ay, fx, fy] = a;
-    const x = ax != null || fy != null;
-    const y = ay != null || fx != null;
+    const way = this.panWay(a);
+    const x = way ? way === "left" || way === "right" : ax != null || fy != null;
+    const y = way ? !x : ay != null || fx != null;
     if (x === y) return true;
     let [dx, dy] = [e.deltaX, e.deltaY];
     if (e.shiftKey && !dx) [dx, dy] = [dy, 0];
@@ -9305,16 +10024,8 @@ class Player {
    * the view where it is moves nothing, and no `scrollend` follows, so its
    * `onScrollEnd` is sent here. */
   stopGlide(el, x, y) {
-    const a = el._glide;
-    if (!a) return;
-    cancelAnimationFrame(a.frame);
-    clearTimeout(a.timer);
-    clearTimeout(a.watch);
-    el._glide = null;
-    this.drive(el, -1);
-    // Browsers clamp the offsets of scrolls.
-    const stays = (to, at, max) => Math.min(Math.max(to, 0), max) === at;
-    if (stays(x, el.scrollLeft, el.scrollWidth - el.clientWidth) && stays(y, el.scrollTop, el.scrollHeight - el.clientHeight)) {
+    if (!this.cancelGlide(el)) return;
+    if (this.scrolledTo(el, x, y)) {
       this.ownEnd(el);
     } else {
       // A fractional destination may round back to the current offset,
@@ -9322,6 +10033,98 @@ class Player {
       // keep this fallback waiting through their scroll events.
       this.waitCommandEnd(el);
     }
+  }
+
+  /** Stops `el`'s glide where it is, for something that takes it over;
+   * whether there was one. */
+  cancelGlide(el) {
+    const a = el._glide;
+    if (!a) return false;
+    cancelAnimationFrame(a.frame);
+    clearTimeout(a.timer);
+    clearTimeout(a.watch);
+    el._glide = null;
+    this.drive(el, -1);
+    return true;
+  }
+
+  /** `ScrollTo` and `ScrollToEnd` of the core: puts `el` at (`x`, `y`),
+   * animating it over `SCROLL_MS` when `animated`. */
+  scrollCommand(el, x, y, animated) {
+    el._applied++;
+    if (!animated) {
+      this.endScrollAnimation(el, false);
+      this.stopGlide(el, x, y);
+      el.scrollTo({ left: x, top: y, behavior: "instant" });
+      return;
+    }
+    // The animation below ends the scroll it takes over, so the glide
+    // only stops.
+    this.cancelGlide(el);
+    this.animateScroll(el, x, y);
+  }
+
+  /** Moves `el` to (`x`, `y`) over `SCROLL_MS`, eased out cubically, as
+   * the core animates a scroll of its own on the other platforms. A
+   * command that retargets one in flight carries on from where it is, as
+   * the core's `animate_to` does. */
+  animateScroll(el, x, y) {
+    let a = el._smooth;
+    if (!a) {
+      a = el._smooth = { fromX: 0, fromY: 0, x: 0, y: 0, start: 0, frame: 0, step: null, watch: 0 };
+      a.step = (now) => this.stepScroll(el, a, now);
+      this.drive(el, 1);
+    }
+    a.fromX = el.scrollLeft;
+    a.fromY = el.scrollTop;
+    a.x = x;
+    a.y = y;
+    a.start = performance.now();
+    // Its frames stopped (a hidden tab): it is where it was going, and
+    // ends there, as a glide's do (`scrollSmoothly`). One timer an
+    // animation, not one a frame.
+    clearTimeout(a.watch);
+    a.watch = setTimeout(() => {
+      el.scrollLeft = a.x;
+      el.scrollTop = a.y;
+      this.endScrollAnimation(el, true);
+    }, SCROLL_MS + 200);
+    if (!a.frame) a.frame = requestAnimationFrame(a.step);
+  }
+
+  /** One frame of `el`'s scroll animation (`animateScroll`). */
+  stepScroll(el, a, now) {
+    const t = Math.min((now - a.start) / SCROLL_MS, 1);
+    const k = 1 - (1 - t) ** 3;
+    el.scrollLeft = a.fromX + (a.x - a.fromX) * k;
+    el.scrollTop = a.fromY + (a.y - a.fromY) * k;
+    if (t < 1) {
+      a.frame = requestAnimationFrame(a.step);
+      return;
+    }
+    a.frame = 0;
+    this.endScrollAnimation(el, true);
+  }
+
+  /** `el`'s scroll animation is over: `reached` when it ran to its target,
+   * which ends the scroll, rather than being taken over by input or a
+   * command that does not animate. */
+  endScrollAnimation(el, reached) {
+    const a = el._smooth;
+    if (!a) return;
+    cancelAnimationFrame(a.frame);
+    clearTimeout(a.watch);
+    el._smooth = null;
+    this.drive(el, -1);
+    if (reached) this.ownEnd(el);
+  }
+
+  /** Whether `el` is where a scroll to (`x`, `y`) leaves it: browsers
+   * clamp the offsets of scrolls. A fractional destination they round
+   * away from lands elsewhere, and ends on the fallback below. */
+  scrolledTo(el, x, y) {
+    const at = (to, pos, max) => Math.min(Math.max(to, 0), max) === pos;
+    return at(x, el.scrollLeft, el.scrollWidth - el.clientWidth) && at(y, el.scrollTop, el.scrollHeight - el.clientHeight);
   }
 
   /** Ends a command rounded to the current offset when no browser event
@@ -9408,10 +10211,137 @@ class Player {
     return [e.clientX / sx - left, e.clientY / sy - top];
   }
 
-  /** The scale layer `layer` is drawn at (`scaleLayer`): its points are
-   * the window's divided by it. */
+  /**
+   * Files dragged in from the system (`onFileDragEnter`, `onFileDragLeave`,
+   * `onFileDrop`): the nearest view up from the one under the pointer that
+   * listens takes the drag. Only there is the browser's default (opening
+   * the file) cancelled; elsewhere the page behaves as without NSH. Only
+   * file drags count: text and links dragged in are left alone. Moving
+   * between a receiver's children enters and leaves nothing.
+   */
+  installFileDrop(root) {
+    const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes("Files");
+    const receiver = (target) => {
+      for (let el = target; el && el !== root.parentNode; el = el.parentNode) {
+        if (el._events && FILE_DROP_EVENTS.some((n) => el._events.has(n))) return el;
+      }
+      return null;
+    };
+    let current = null;
+    let leaveTimer = 0;
+    const leave = () => {
+      clearTimeout(leaveTimer);
+      leaveTimer = 0;
+      const old = current;
+      current = null;
+      if (old?._events.has("onFileDragLeave")) this.event(old._id, "onFileDragLeave");
+    };
+    const track = (e) => {
+      if (!hasFiles(e)) return;
+      const el = receiver(e.target);
+      clearTimeout(leaveTimer);
+      leaveTimer = 0;
+      if (el !== current) {
+        leave();
+        current = el;
+        if (el?._events.has("onFileDragEnter")) {
+          // Only the types: the browser keeps the files until the drop.
+          const mimeTypes = [...e.dataTransfer.items].filter((i) => i.kind === "file").map((i) => i.type);
+          this.fileDrop(el, 0, { mimeTypes, files: [] }, []);
+        }
+      }
+      if (el?._events.has("onFileDrop")) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }
+    };
+    root.addEventListener("dragenter", track);
+    root.addEventListener("dragover", track);
+    // A leave toward a child is followed at once by its enter: leave only
+    // when none comes.
+    root.addEventListener("dragleave", (e) => {
+      if (!hasFiles(e) || !current) return;
+      clearTimeout(leaveTimer);
+      leaveTimer = setTimeout(leave, 50);
+    });
+    root.addEventListener("drop", (e) => {
+      if (!hasFiles(e)) return;
+      const el = receiver(e.target);
+      const target = current;
+      clearTimeout(leaveTimer);
+      leaveTimer = 0;
+      current = null;
+      if (target && target !== el && target._events.has("onFileDragLeave")) this.event(target._id, "onFileDragLeave");
+      if (!el?._events.has("onFileDrop")) return;
+      e.preventDefault();
+      // The items are only readable in this handler: keep the `File`s now.
+      // Directories are left out (their `File` has no bytes to read).
+      const files = [];
+      const mimeTypes = [];
+      for (const item of e.dataTransfer.items) {
+        if (item.kind !== "file") continue;
+        mimeTypes.push(item.type);
+        if (item.webkitGetAsEntry?.()?.isDirectory) continue;
+        const file = item.getAsFile();
+        if (file && files.length < FILE_DROP_LIMIT) files.push(file);
+      }
+      const [x, y] = this.point(e);
+      const app = this.app;
+      let budget = FILE_DROP_MAX_BYTES;
+      Promise.all(files.map(async (f) => {
+        if (f.size > budget) return null;
+        budget -= f.size;
+        try {
+          return new Uint8Array(await f.arrayBuffer());
+        } catch {
+          return undefined;
+        }
+      })).then((buffers) => {
+        if (app !== this.app) return;
+        const parts = [];
+        const meta = [];
+        files.forEach((f, i) => {
+          const b = buffers[i];
+          if (b === undefined) return; // Unreadable: left out.
+          if (b === null) console.warn(`nsh: the dropped ${f.name} is not read: past ${FILE_DROP_MAX_BYTES} bytes a drop`);
+          meta.push({ name: f.name, type: f.type, size: b ? b.byteLength : f.size, read: !!b, lastModified: f.lastModified });
+          if (b) parts.push(b);
+        });
+        this.fileDrop(el, 1, { mimeTypes, x, y, files: meta }, parts);
+      });
+    });
+  }
+
+  /** Sends a file drag (`kind` 0: enter, 1: drop) of `el` to the engine, with the read files' bytes. */
+  fileDrop(el, kind, info, parts) {
+    const size = parts.reduce((n, b) => n + b.byteLength, 0);
+    const bytes = new Uint8Array(size);
+    let at = 0;
+    for (const b of parts) {
+      bytes.set(b, at);
+      at += b.byteLength;
+    }
+    const json = JSON.stringify(info);
+    this.call(() => this.withStrings([json, bytes], (jp, jl, bp, bl) => this.wasm.nsh_file_drop(el._id, kind, jp, jl, bp, bl)));
+  }
+
+  /** Effective CSS zoom factor on `el` (accumulated through ancestors). */
+  cssZoom(el) {
+    if (el && typeof el.currentCSSZoom === "number" && el.currentCSSZoom > 0) return el.currentCSSZoom;
+    if (typeof getComputedStyle !== "function") return 1;
+    let z = 1;
+    for (let node = el; node; node = node.parentElement) {
+      const v = parseFloat(getComputedStyle(node).zoom);
+      if (v > 0) z *= v;
+    }
+    return z;
+  }
+
+  /** The scale layer `layer` is drawn at (`scaleLayer`), including external CSS zoom. */
   layerScale(layer) {
-    return (layer && this.frameScale) || [1, 1];
+    const [fx, fy] = (layer && this.frameScale) || [1, 1];
+    const z = this.cssZoom(layer || this.root);
+    return [fx * z, fy * z];
   }
 
   /** The top left of `el` in the coordinates `point` gives for `layer`. */
@@ -9434,7 +10364,8 @@ class Player {
   origin(layer) {
     if (layer) return [0, 0];
     const r = this.root.getBoundingClientRect();
-    return [r.left, r.top];
+    const [sx, sy] = this.layerScale(null);
+    return [r.left / sx, r.top / sy];
   }
 
   touchEvent(phase, changedId, activated) {
@@ -9485,6 +10416,11 @@ class Player {
     if (e.pointerType === "mouse") this.hoverButtons = e.buttons;
     Player.active = this;
     if (e.button > 0) return;
+    // A click with a modifier key on a link is the browser's, as a middle
+    // click is: it opens the link in a new tab or window (the click
+    // listener of `installInput` leaves it to the browser), so the link
+    // does not also take the press and open it here.
+    if (heldModifier(e) && e.target?.closest?.(LINK_SELECTOR)) return;
     if (e.pointerType === "mouse" && this.desktopUI && this.grabBar(e)) return;
     // A drag selects in selectable text and fields instead of panning a
     // zoomable view.
@@ -9508,6 +10444,10 @@ class Player {
     // pinch here.
     const scrollView = isField ? null : chain.find((v) => v._kind === "scroll") ?? null;
     const link = isField ? null : this.linkPress(e.target, target);
+    // An edge pan starts only from its edge of the page (of the window for
+    // a dialog over it): away from it, neither of its pans does.
+    const [w, h] = layer ? [innerWidth, innerHeight] : [this.root.clientWidth, this.root.clientHeight];
+    const admits = (v) => this.startsAt(v._props?.panActivation, x, y, w, h);
     const p = {
       x, y, layer, startX: x, startY: y, t: performance.now(), vx: 0, vy: 0,
       pointerType: e.pointerType,
@@ -9517,14 +10457,14 @@ class Player {
       // What presses report: the modifier keys at the press and its clicks.
       modifiers: { control: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, platform: e.metaKey },
       clicks: e.pointerType === "mouse" ? this.clickCount(x, y) : 1,
-      pan: chain.find((v) => v._gestures?.pan || v._events.has("onPanStart") || v._events.has("onPanEnd")) ?? null,
+      pan: chain.find((v) => (v._gestures?.pan || v._events.has("onPanStart") || v._events.has("onPanEnd")) && admits(v)) ?? null,
       scroll: !selects && scrollView && e.pointerType !== "mouse" && this.zooms(scrollView) ? scrollView : null,
       // Touch scrolling is the browser's, reported from here (`touchScroll`).
       scrolls: e.pointerType === "touch" ? chain.filter((v) => v._kind === "scroll") : null,
       zoom: chain.find((v) => this.zooms(v) && v._behavior.pinch) ?? null,
       pinch: chain.find((v) => v._gestures?.pinch || v._gestures?.rotation) ?? null,
       // `panActivation`: decided here as the pointer moves (PanActivation::decide).
-      gate: chain.find((v) => v._props?.panActivation) ?? null,
+      gate: chain.find((v) => v._props?.panActivation && admits(v)) ?? null,
       gateState: 0,
       states: chain.filter((v) => v._tracked & PRESSED),
       mode: null,
@@ -9676,10 +10616,15 @@ class Player {
     const gated = p.gate && p.gateState !== 2;
     if (gated && p.gateState === 1) e.preventDefault();
     if (!p.mode && Math.hypot(tx, ty) > 6) {
-      if (p.pan) {
+      // A pan with a `panActivation` starts when that activates; failed, the
+      // drag is the views' around it.
+      const activation = p.pan?._props?.panActivation;
+      const decision = !p.pan || !activation ? !!p.pan : this.decideActivation(activation, tx, ty);
+      if (decision === false) p.pan = null;
+      if (decision) {
         p.mode = "pan";
-        this.call((w) => w.nsh_pan(p.pan._id, 0, 0, 0, 0, 0));
-      } else if (p.scroll && !gated) {
+        this.call((w) => w.nsh_pan(p.pan._id, 0, 0, 0, 0, 0, p.startX, p.startY));
+      } else if (!p.pan && p.scroll && !gated) {
         p.mode = "scroll";
         p.at = [p.scroll.scrollLeft, p.scroll.scrollTop];
         p.dragged = [0, 0];
@@ -9696,7 +10641,7 @@ class Player {
     if (p.mode === "pan") {
       e.preventDefault();
       const [vx, vy] = this.velocity(p);
-      this.call((w) => w.nsh_pan(p.pan._id, 1, tx, ty, vx, vy));
+      this.call((w) => w.nsh_pan(p.pan._id, 1, tx, ty, vx, vy, p.startX, p.startY));
     } else if (p.mode === "scroll") {
       e.preventDefault();
       const d = [p.dragged[0] - tx, p.dragged[1] - ty];
@@ -9788,17 +10733,56 @@ class Player {
   /** The gate's node id when its pan activates with this move (else undefined). */
   decideGate(p, dx, dy) {
     if (!p.gate || p.gateState !== 0) return undefined;
-    const [ax, ay, fx, fy] = p.gate._props.panActivation;
-    const past = (limit, d) => limit != null && Math.abs(d) > limit;
-    if (past(fx, dx) || past(fy, dy)) {
+    const decision = this.decideActivation(p.gate._props.panActivation, dx, dy);
+    if (decision === false) {
       p.gateState = 2;
       return undefined;
     }
-    const active = ax == null && ay == null ? Math.hypot(dx, dy) > 10 : past(ax, dx) || past(ay, dy);
-    if (!active) return undefined;
+    if (!decision) return undefined;
     p.gateState = 1;
     this.pressOut(p, false);
     return p.gate._id;
+  }
+
+  /** The way `panActivation` `a` (`[activeX, activeY, failX, failY,
+   * direction, edge]`) activates in, if any: away from its edge, else its
+   * direction (`PanActivation::way`). */
+  panWay(a) {
+    const away = { left: "right", right: "left", top: "down", bottom: "up" };
+    return a[5] != null ? away[a[5]] : a[4] ?? undefined;
+  }
+
+  /** `PanActivation::decide` on a drag by (dx, dy): true activates, false
+   * fails, undefined waits. */
+  decideActivation(a, dx, dy) {
+    const [ax, ay, fx, fy] = a;
+    const past = (limit, d) => limit != null && Math.abs(d) > limit;
+    if (past(fx, dx) || past(fy, dy)) return false;
+    const way = this.panWay(a);
+    if (way) {
+      const horizontal = way === "left" || way === "right";
+      const along = (way === "right" || way === "down" ? 1 : -1) * (horizontal ? dx : dy);
+      const across = Math.abs(horizontal ? dy : dx);
+      const limit = (horizontal ? ax : ay) ?? 10;
+      if (along > limit && along >= across) return true;
+      const acrossFails = (horizontal ? fy : fx) == null && across > limit && across > along;
+      return -along > limit || acrossFails ? false : undefined;
+    }
+    const active = ax == null && ay == null ? Math.hypot(dx, dy) > 10 : past(ax, dx) || past(ay, dy);
+    return active ? true : undefined;
+  }
+
+  /** `PanActivation::starts_at`: whether a pointer going down at (x, y) in
+   * an area of `w` × `h` may start the pans of a view with `panActivation`
+   * `a`: anywhere without an edge, else within 20 points of it. */
+  startsAt(a, x, y, w, h) {
+    switch (a?.[5]) {
+      case "left": return x <= 20;
+      case "right": return x >= w - 20;
+      case "top": return y <= 20;
+      case "bottom": return y >= h - 20;
+      default: return true;
+    }
   }
 
   pointerUp(e, cancelled) {
@@ -9828,7 +10812,7 @@ class Player {
       // Released after a pause: no speed left.
       this.track(p, performance.now());
       const [vx, vy] = this.velocity(p);
-      this.call((w) => w.nsh_pan(p.pan._id, cancelled ? 3 : 2, p.x - p.startX, p.y - p.startY, vx, vy));
+      this.call((w) => w.nsh_pan(p.pan._id, cancelled ? 3 : 2, p.x - p.startX, p.y - p.startY, vx, vy, p.startX, p.startY));
     } else if (p.mode === "scroll") {
       this.scrollEvent(p.scroll, "onScrollDragEnd");
       this.track(p, performance.now());

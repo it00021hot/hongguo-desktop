@@ -736,6 +736,27 @@ fn select_all(surface: &Rc<Surface>, id: NodeId) {
     }
 }
 
+/// `ref.clearSelection()` on `view` (`Command::ClearSelection`): clears
+/// the selections of the areas that are `view`, inside it or around it.
+pub(crate) fn clear_in(surface: &Surface, view: &NshView) {
+    let within = |inner: &NshView, outer: &NshView| {
+        let mut current = Some(inner.clone());
+        while let Some(v) = current {
+            if &v == outer {
+                return true;
+            }
+            current = v.parent_view();
+        }
+        false
+    };
+    let ids: Vec<NodeId> = surface.selection.areas.borrow().keys().copied().collect();
+    for id in ids {
+        if view_of(surface, id).is_some_and(|area| within(&area, view) || within(view, &area)) {
+            clear(surface, id);
+        }
+    }
+}
+
 /// Clears area `id`'s selection.
 fn clear(surface: &Surface, id: NodeId) {
     let changed = surface
@@ -857,6 +878,25 @@ fn in_control(view: &NshView) -> bool {
                 .any(|&k| s.events.contains(k))
         {
             return true;
+        }
+        drop(s);
+        current = v.parent_view();
+    }
+    false
+}
+
+/// Whether a view between text `view` and its area (the area included)
+/// sets a cursor: as CSS inherits `cursor`, the texts inside show it, not
+/// the I-beam.
+pub(crate) fn cursor_above(view: &NshView) -> bool {
+    let mut current = view.parent_view();
+    while let Some(v) = current {
+        let s = v.state();
+        if s.style.cursor != nsh_core::Cursor::Auto {
+            return true;
+        }
+        if s.props.selectable_view {
+            return false;
         }
         drop(s);
         current = v.parent_view();

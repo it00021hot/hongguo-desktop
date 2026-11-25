@@ -47,7 +47,10 @@ use windows::{
             },
             DirectWrite::{DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory2},
             Dxgi::{
-                Common::{DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_UNKNOWN, DXGI_SAMPLE_DESC},
+                Common::{
+                    DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN,
+                    DXGI_SAMPLE_DESC,
+                },
                 CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_PRESENT,
                 DXGI_PRESENT_PARAMETERS, DXGI_SCALING_NONE, DXGI_SWAP_CHAIN_DESC1,
                 DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT,
@@ -95,6 +98,7 @@ pub(crate) fn get() -> Result<std::rc::Rc<Gfx>> {
 /// invalidates device resources made so far.
 pub(crate) fn lost() {
     log::warn!("the graphics device was lost; recreating it");
+    crate::text::invalidate_rendering_params();
     GFX.with(|g| g.borrow_mut().take());
     GENERATION.with(|g| g.set(g.get() + 1));
 }
@@ -107,12 +111,10 @@ pub(crate) fn generation() -> u64 {
 
 impl Gfx {
     fn new() -> Result<Gfx> {
-        let d3d = create_d3d(D3D_DRIVER_TYPE_HARDWARE)
-            .and_then(crate::output::check_device)
-            .or_else(|err| {
-                log::warn!("no hardware Direct3D device ({err}); drawing with WARP");
-                create_d3d(D3D_DRIVER_TYPE_WARP).and_then(crate::output::check_device)
-            })?;
+        let d3d = create_d3d(D3D_DRIVER_TYPE_HARDWARE).or_else(|err| {
+            log::warn!("no hardware Direct3D device ({err}); drawing with WARP");
+            create_d3d(D3D_DRIVER_TYPE_WARP)
+        })?;
         let options = D2D1_FACTORY_OPTIONS {
             debugLevel: D2D1_DEBUG_LEVEL_NONE,
         };
@@ -208,7 +210,7 @@ pub(crate) fn dwrite() -> IDWriteFactory2 {
 pub(crate) fn target_properties(scale: f32, premultiplied: bool) -> D2D1_BITMAP_PROPERTIES1 {
     D2D1_BITMAP_PROPERTIES1 {
         pixelFormat: D2D1_PIXEL_FORMAT {
-            format: crate::output::format(),
+            format: DXGI_FORMAT_B8G8R8A8_UNORM,
             alphaMode: if premultiplied {
                 D2D1_ALPHA_MODE_PREMULTIPLIED
             } else {
@@ -456,7 +458,7 @@ impl SwapChain {
         let desc = DXGI_SWAP_CHAIN_DESC1 {
             Width: size.0.max(1),
             Height: size.1.max(1),
-            Format: crate::output::format(),
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
             Stereo: false.into(),
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
@@ -486,7 +488,6 @@ impl SwapChain {
         size: (u32, u32),
         premultiplied: bool,
     ) -> Result<SwapChain> {
-        crate::output::configure_swap_chain(&swap)?;
         // One frame in flight, as a window always had, so input is drawn by
         // the next vblank. Set on this swap chain, not the device, and waited
         // for without blocking ([`SwapChain::ready`]): with the waitable
@@ -623,17 +624,5 @@ impl SwapChain {
         self.shown = result.is_ok();
         self.last = if result.is_ok() { changed } else { None };
         result
-    }
-
-    pub(crate) fn presentation(&self) -> crate::NativePresentation {
-        let mut statistics = windows::Win32::Graphics::Dxgi::DXGI_FRAME_STATISTICS::default();
-        let statistics = unsafe { self.swap.GetFrameStatistics(&mut statistics) }
-            .ok()
-            .map(|_| statistics);
-        crate::NativePresentation {
-            submitted_at: std::time::Instant::now(),
-            present_count: unsafe { self.swap.GetLastPresentCount() }.ok(),
-            statistics,
-        }
     }
 }

@@ -33,6 +33,11 @@ pub struct Modifiers {
     pub shift: bool,
     /// Command on Apple platforms; the Super (Windows) key elsewhere.
     pub cmd: bool,
+    /// AltGr (the DOM's `getModifierState("AltGraph")`): the key's
+    /// character came from the layout's AltGr level, so Control and Alt are
+    /// held to type text rather than for a shortcut. Only key events set
+    /// it; shortcuts never name or match it.
+    pub alt_graph: bool,
 }
 
 /// A key, by what it is on the US layout.
@@ -218,7 +223,7 @@ impl Key {
     }
 
     /// The key of Android key code `code` (`KeyEvent.KEYCODE_*`); the
-    /// keypad's digits and Enter too.
+    /// keypad's digits and Enter, and the D-pad's center (Enter), too.
     pub fn from_android_keycode(code: i32) -> Option<Key> {
         Some(match code {
             7..=16 => Key::Char(char::from(b'0' + (code - 7) as u8)),
@@ -229,7 +234,7 @@ impl Key {
             22 => Key::Right,
             61 => Key::Tab,
             62 => Key::Char(' '),
-            66 | 160 => Key::Enter,
+            23 | 66 | 160 => Key::Enter,
             67 => Key::Backspace,
             92 => Key::PageUp,
             93 => Key::PageDown,
@@ -721,9 +726,10 @@ pub struct KeyBinding {
     /// ([`KeyMatch::Notify`]): Tab still moves the focus, a text input
     /// still types. Else the platform consumes the key.
     pub pass_through: bool,
-    /// The window it belongs to, as its root node ([`crate::ROOT_ID`] for
-    /// the main window, a dialog root for a window of the app's own): it
-    /// fires only for keys pressed there. `None`: in any window.
+    /// The window it belongs to, as its root node (a dialog root for a
+    /// window of the app's own): it fires only for keys pressed there.
+    /// `None`: in any window. [`crate::ROOT_ID`] is the app root, which is
+    /// app-wide in window model v2 (it is not a user window).
     pub window: Option<crate::NodeId>,
     /// It is the keys of the view with the keyboard focus (a component's,
     /// bound while its part has the focus or its popup is open): Return
@@ -731,6 +737,12 @@ pub struct KeyBinding {
     /// ([`Keymap::find_at`]). Other bindings of those keys give way to the
     /// focused control.
     pub for_focus: bool,
+    /// It comes before the views' bindings of its keystroke, not after
+    /// them: an app takes a key a focused component binds (a query editor's
+    /// mod+enter over the editor's own), for as long as it keeps the
+    /// binding. The root's table puts such bindings after the others
+    /// (`Core::keymap`), where the newest that may fire wins.
+    pub over_focused: bool,
 }
 
 impl KeyBinding {
@@ -750,6 +762,7 @@ impl KeyBinding {
             pass_through: false,
             window: None,
             for_focus: false,
+            over_focused: false,
         }
     }
 
@@ -771,6 +784,13 @@ impl KeyBinding {
     /// `for_focus` ([`Self::for_focus`]).
     pub fn focus_keys(mut self, for_focus: bool) -> KeyBinding {
         self.for_focus = for_focus;
+        self
+    }
+
+    /// The binding coming before the views' bindings of its keystroke when
+    /// `over_focused` ([`Self::over_focused`]).
+    pub fn over_focused(mut self, over_focused: bool) -> KeyBinding {
+        self.over_focused = over_focused;
         self
     }
 }
@@ -855,7 +875,7 @@ impl Keymap {
     /// fires bindings that ask for it. A binding that passes the key
     /// through gives [`KeyMatch::Notify`], and its held key's auto-repeats
     /// go on ([`KeyMatch::None`]) unless it repeats.
-    /// The key is pressed in the main window ([`Self::find_in`]).
+    /// The key is pressed with the app root as the window ([`Self::find_in`]).
     pub fn find(&self, keystroke: Keystroke, editing: bool, repeat: bool) -> KeyMatch {
         self.find_in(crate::ROOT_ID, keystroke, editing, repeat)
     }
@@ -943,7 +963,7 @@ mod tests {
     fn a_windows_binding_takes_only_its_windows_keys() {
         let escape = Keystroke::parse_with("escape", true).unwrap();
         let k = |id| KeyBinding::new(id, escape, When::Always, false);
-        // JS's (any window), the main window's, then window 7's.
+        // JS's (any window), the app root's, then window 7's.
         let table = Keymap::new(vec![
             k(1),
             k(2).in_window(crate::ROOT_ID),
@@ -1060,8 +1080,9 @@ mod tests {
         assert_eq!(Key::from_android_keycode(20), Some(Key::Down));
         assert_eq!(Key::from_android_keycode(76), Some(Key::Char('/')));
         assert_eq!(Key::from_android_keycode(160), Some(Key::Enter));
+        assert_eq!(Key::from_android_keycode(23), Some(Key::Enter));
         assert_eq!(Key::from_android_keycode(59), None);
-        for code in (0..=300).filter(|c| *c != 160 && !(144..=153).contains(c)) {
+        for code in (0..=300).filter(|c| *c != 23 && *c != 160 && !(144..=153).contains(c)) {
             if let Some(key) = Key::from_android_keycode(code) {
                 assert_eq!(key.android_keycode(), Some(code), "{key:?}");
             }
@@ -1079,6 +1100,7 @@ mod tests {
                 alt,
                 shift,
                 cmd,
+                alt_graph: false,
             },
             key,
         }

@@ -710,11 +710,11 @@ fn offscreen_children(
 fn draw_children(cx: &mut DrawCx<'_>, view: &NshView, base: Mat4) {
     view.with_children(|children| {
         for child in children {
-            let origin = {
+            let place = {
                 let s = child.state();
-                view.state().child_origin(s.frame, s.shift)
+                view.state().child_place(s.frame, s.shift)
             };
-            crate::render::draw_view(cx, child, base, origin);
+            crate::render::draw_view(cx, child, base, place);
         }
     });
 }
@@ -900,7 +900,7 @@ pub(crate) fn draw(cx: &mut DrawCx<'_>, state: &ViewState) {
     let Some(bitmap) = shader.bitmap(cx.dc, state.id) else {
         return;
     };
-    cx.push_clip_rounded(crate::geom::rect(0.0, 0.0, w, h), state.radii());
+    cx.push_clip_rounded_shapes(crate::geom::rect(0.0, 0.0, w, h), state.radii());
     draw_bitmap(cx, &bitmap, state.frame.size, shader.view.overflow().0);
     cx.pop();
 }

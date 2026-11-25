@@ -64,7 +64,8 @@ Things that were found the hard way. Read the section of the area you change bef
   (`pixel`, `span`): `round(to) - round(from)` in points differs in its last bits with where the edges are, and a 28 point
   row at 2.625 (73.5 pixels) has every other edge on a half pixel, which an `f32`'s hair rounds either way. As a scroll
   moved DataTable's body a pixel, every frame in it was sent again (460–1000 mount items a frame on a Pixel 10 Pro instead
-  of 3); a half pixel is snapped first, so it always rounds up.
+  of 3); a half pixel is snapped first, so it always rounds up. A box thinner than a pixel never rounds to nothing
+  (`edges`): a 0.5 point rule at one pixel per point keeps a pixel inside its parent, and its neighbours still meet.
 - **The core keeps its own layout tree** (`core/layout_tree.rs`: Taffy's algorithms over the core's nodes through Taffy's low-level
   traits, as `TaffyTree` runs them, call for call). `TaffyTree::mark_dirty` stops at the first node whose cache is already empty, taking
   its ancestors for dirty too; nodes of a `display: none` subtree and absolutely positioned ones always have empty caches while the nodes
@@ -156,6 +157,12 @@ Things that were found the hard way. Read the section of the area you change bef
   callbacks. Visibility changes synchronize the newly visible stack after the batch. `TabBar.hidden` and the
   visible stack's request are independent reasons: each updates its own state, and either keeps the bar hidden.
 
+- **A `TabBar`'s element takes no press of its own** (`pointerEvents: box-none`, `mobile.rs`): the bar's view fills it
+  while the bar shows, and the bar takes every press. An element left `auto` answers UIKit's hit test in the strip it
+  keeps while the bar is out of sight (`hidden`, or a pushed page's `hidesBottomBarWhenPushed` moving it below the
+  bottom), and swallows the presses of a control the app draws there (a floating action bar); turning the bar's
+  `userInteractionEnabled` off in `apply_bottom_hidden` does not help, the element still hit-tests to itself (#3043).
+
 - **A standalone `UITabBar` can establish its natural height before its native component host is sized** (verified on
   the iOS 27 simulator). Flexible-height autoresizing then adds the host's height to that initial height. In
   `system_tab_bar.rs`, fill the immediate host's bounds exactly during layout, and report intrinsic height with
@@ -168,6 +175,15 @@ Things that were found the hard way. Read the section of the area you change bef
 
 - **UIFont and CTFont are toll-free bridged**: the text engine gets system fonts with `UIFont::systemFontOfSize_weight` and uses them as
   CTFonts (verified by rendering). CoreText attributes must use CT keys (colors are CGColors), not UIKit's NSForegroundColor.
+- **CoreText synthesizes no italic** (macOS too; verified on macOS 26 and the iOS 26 simulator): a family without an italic face (PingFang,
+  Hiragino, a family shipped without its italic files) has no italic copy (`CTFontCreateCopyWithSymbolicTraits` returns
+  NULL), and the fonts an italic face falls back to stay upright (CJK in SF's italic). A shear in a font's matrix leans
+  it, and CoreText draws the fonts it falls back to from it with the same matrix; a matrix on a cascade list's
+  descriptors (`kCTFontMatrixAttribute`) is ignored. So such a family's italic is the font leaning
+  (`core_text::italic`), and `core_text::slant_fallbacks` typesets an italic span that has characters its font lacks
+  and sets each run in an upright fallback font to that font leaning. `CTLineDraw` draws each run in its font's matrix,
+  `CTRunDraw` in the context's text matrix alone: macOS, which draws run by run (`draw_glyphs`), sets each run's
+  (`CTRunGetTextMatrix`) first.
 - **Catalyst's Mac idiom does not support `UIRefreshControl`** (attaching one throws `_UICatalystUnsupportedMacIdiomBehavior`): in the Mac
   idiom the pull is detected in the scroll delegate and shown with a spinner + contentInset; iOS uses the native control unless the
   app draws its own indicator (`refreshIndicator`), which `UIRefreshControl` cannot give way to: then it takes the Mac idiom's way,
@@ -181,7 +197,11 @@ Things that were found the hard way. Read the section of the area you change bef
   changes. A stack laid out in the frame its first screen arrives leaves the bar at an inline title's height
   (`sizeThatFits` gives the large one). `fit_large_title` sizes the bar when a stack shows a screen whose content is
   at its top. A scroll view on screen that starts to adjust its insets (`contentInsetAdjustmentBehavior` automatic)
-  keeps its offset under the header. The mounter moves it to its top when it switches.
+  keeps its offset under the header. The mounter moves it to its top when it switches. Toggling `headerLargeTitle` in
+  place on the top screen also leaves `UINavigationBar.sizeThatFits` at inline height when enabling large titles, so
+  `follow_large_title` toggles `setNavigationBarHidden` off/on to expand the bar (`fit_large_title` afterwards) and
+  calls `sizeToFit` to shrink it when turning large titles off, while switching `contentInsetAdjustmentBehavior` between
+  `Automatic` and `Never`.
 - **Mac idiom custom pull to refresh**: on release, the system's bounce already targets the old inset (back to 0), so changing only
   `contentInset` hides the spinner; once refreshing starts, the offset is animated to the top inset plus the refresh room on the next main-queue turn. Synthetic
   tests need continuous scroll events with phases (began / changed / ended); plain wheel events never overscroll.
@@ -289,6 +309,11 @@ Things that were found the hard way. Read the section of the area you change bef
   itself presenting one (a `Sheet` is a transparent modal over the modal it is in) dismisses only that one, and the outer
   modal stays on screen with its content already gone: a blank screen when a sheet and its modal close together.
   `ModalHost::dismiss` dismisses through `presentingViewController`, which takes the modal and everything above it.
+  So a modal shown while another leaves (one closed and one opened in the same batch) must not be presented over the
+  leaving one: the mounter dismisses first and presents the new modal once the old one is gone, and presents again
+  the modals the app still shows that went along. A dismissal still waiting for another transition to end counts as
+  leaving too. A modal also leaves with the subtree it is in, not only when its own node is removed, and reports its
+  close (`onClose`) once gone, also when its node was released in the same batch (as JS does when the app closes it).
 
 - **iOS, presses near the top of the window**: UIKit attaches tap recognizers to the window that skip `UIControl`s, and a
   press is a gesture recognizer, not a control. On iOS 26+ the window's `_UIDoubleTapInteraction` (a single-tap
@@ -344,6 +369,13 @@ Things that were found the hard way. Read the section of the area you change bef
 
 ## Android
 
+- **Android, the stack's `Toolbar` and the views it holds**: `Toolbar` lays its own title out before the views it
+  holds, whatever their gravity, so a `headerLeft` added as a `START` view showed after a plain `title`. It measures
+  the views it holds in child order but lays the `START` ones out in reverse in RTL, so no order of separate views puts
+  a leading item before a title in both directions without the title's measure missing the item's width. A page with a
+  `headerLeft` and a plain `title` holds both in one `HeaderRow` (`StackBox`), which mirrors itself and measures the
+  item first; `Mounter` resizes a header item in either parent. A margin on a view the toolbar holds left no gap on an
+  API 35 emulator: the gap is the title's own padding.
 - **Android, responders inside pressable views**: a view that takes no press of its own (a `RichEditor`'s selection
   handle) leaves the touch to the nearest pressable ancestor, which keeps tracking it: it raised its long press while a
   finger held the handle and its press on the lift. `SetJsResponder` with a block ends the presses of the ancestors
@@ -351,10 +383,37 @@ Things that were found the hard way. Read the section of the area you change bef
   content rect within the view that started it: started from an editor's sink (a sliver at the caret) it sat on the
   caret whatever the rect said, over the selection's start handle, and took that handle's touches; it starts from the
   root view (`InputBox.openEditMenu`).
+- **Android, activities made again for a configuration change**: a change the manifest cannot declare (an overlay
+  changing resource paths: the navigation mode, the wallpaper's colors) destroys and recreates the activity in the
+  same process. `AppActivity` and `DevActivity` keep the running `NshView` across it
+  (`onRetainNonConfigurationInstance`): its views are made with a `MutableContextWrapper` of the activity, which moves
+  to the new one, so nothing keeps the old activity. Windows of the activity's own (modal dialogs, alerts, menus,
+  date pickers) must leave the old activity before it is destroyed, or they leak with it (`WindowLeaked`); code that
+  needs the `Activity` unwraps the context (`SystemUi.activity`), never tests `instanceof Activity`.
 - **Android, API levels and lint**: hosts that compile the Java runtime run Android Lint over it (NewApi,
   WrongConstant), while NSH's own build runs only javac. A class or helper reached only behind `SDK_INT >= N` carries
   `@TargetApi(N)`, as `Backdrop` does; a guard lint cannot see through (a helper that returns the check) is written at
   the call site; an `int` setter typed with another class's constants takes those constants.
+- **Android, accessibility state changes**: a service reads an `AccessibilityDelegate`'s node only when it queries
+  it, and nothing tells it that a new delegate says something else. A screen reader's double tap is the app's press:
+  `A11y.performAccessibilityAction` takes `ACTION_CLICK`, so the framework sends no `TYPE_VIEW_CLICKED`, and the new
+  state arrives batches later. What TalkBack does with each event (its compositor rules): on a `TYPE_VIEW_CLICKED`
+  it queries the source node again and says its checked state, else its selected state, else expanded / collapsed
+  (from the node, not the event's flags), with a tick and a vibration, and the click stops reading from the top; it
+  says no checked state for a node with a state description, so a checked change must change the description, as a
+  `CompoundButton`'s does since API 30. On a content change of type `STATE_DESCRIPTION` (64) it says the node's
+  state description when the node or an ancestor has the accessibility focus; it reads the description through
+  androidx's node compat, which before API 30 is the extras entry
+  `androidx.view.accessibility.AccessibilityNodeInfoCompat.STATE_DESCRIPTION_KEY`, so the type and the entry work
+  from API 26. A seek bar's or progress bar's state description change says its range when it has no description
+  (a `RANGE_TYPE_FLOAT` range is said as the number, a percentage only for `RANGE_TYPE_PERCENT`). A content change
+  of an undefined type only refreshes its copy of the node. `A11y.changed` sends one of them after the new delegate
+  is installed (`A11yChanges`): a click only within a second of TalkBack's click on the view or an ancestor (a
+  change the app makes alone is not a click; a keyboard Enter goes through `performClick`, which sends the
+  framework's own click), state descriptions at once (as `View.setStateDescription`: the framework's merged
+  content changes come from the views' common ancestor, which has no focus), refreshes through
+  `notifySubtreeAccessibilityStateChanged` (merged by the framework). Sending while
+  `AccessibilityManager.isEnabled()` is false throws on the main thread.
 - **Android, JNI**: cache classes and method ids in `JNI_OnLoad`; wrap every call from the (permanently attached) engine thread in
   a local frame (`java::with_env`), or local references pile up.
 - **Android, text**: `StaticLayout` ignores `maxLines` without an ellipsis (clip mode counts lines itself and the view clips);
@@ -378,18 +437,68 @@ Things that were found the hard way. Read the section of the area you change bef
 - **Android, shadows moved by fractions of a pixel**: Skia caches a shadow's blurred mask keyed on the subpixel part
   of its position, so a view moved by a fractional offset each frame blurs its shadows again every frame (on the GPU,
   each into a new render target, slow on PowerVR). `StackBox`'s push / pop slides move by whole pixels; going back to
-  the gallery's index ran at about half the frame rate before (#519).
+  the gallery's index ran at about half the frame rate before (#519). Box shadows no longer draw shadow layers on a
+  hardware canvas (next point); text shadows and a `<Canvas>`'s still do.
+- **Android, box shadows on a hardware canvas**: a shadow layer of the box's path, clipped by that path, is blurred
+  and clipped again on every frame a box moves in. Four boxes as large as the screen, each with an outer shadow and a
+  1 px inset rim, slid at 32 ms a frame on an emulator (p50; 6 ms without the shadows). `Decor.drawCachedShadow`
+  draws each layer once, unclipped, into a bitmap of the smallest box with the same corners (as Android 8's
+  `drawShadowSlices`), at a pixel for every quarter of its blur, and stretches it in slices cut along the clip's edge:
+  pieces on the hidden side are left out, and the squares of the corners' curves (each as wide as its side's
+  corners need) come from a second bitmap drawn clipped at full size, so no path is clipped as the box is drawn
+  (clipping those squares by the path as they were drawn still cost ~2 ms a frame of the emulator's RenderThread).
+  A layer blurred by less than 8 px is at full size anyway: it is drawn clipped into its bitmap, and its slices are
+  drawn whole, as fewer pieces matter where every backdrop recorded behind the box draws them again. The middle of
+  an inset shadow is left out: it lies more than twice the blur from where it casts. A shadow whose bitmaps would
+  take more than a quarter of the 8 MiB cache (a spread of the screen's size) is drawn as a shadow layer, as
+  before. The same boxes slide at 10 ms a frame.
+- **Android, clipping to continuous corners**: a continuous corner is a path of cubics, not a round rect, and Skia's
+  GPU backend has no analytic clip for such a path: it clips through a coverage mask made in software for each draw
+  inside it, at that draw's bounds, uploaded as a texture of its own and never reused (the clip is new each time the
+  display list plays). The gallery's index, whose banner of ~330 canvas dots and cards clip to continuous corners,
+  uploaded ~440 textures on every frame it drew (8 ms of a Pixel 10 Pro's RenderThread while scrolling, 64 ms in the
+  first frame of a slide that draws it into a layer, #519). Such a box neither clips by outline nor by `clipPath`:
+  `Box.drawInCorners` draws its children clipped to rectangles (the shape's box but its corners' squares, which
+  Skia clips exactly) and into a small layer per corner's square, where it erases what lies outside the corner, a
+  path that stays the same while the box does, so Skia keeps its coverage. Layers of the whole box would do too, a
+  little faster, but on the gallery's index they kept the GPU cache ~50 MB over its 125 MB budget on a Pixel 10 Pro,
+  where the corners' squares bring it under (performance). A box
+  too small for a middle between its corners' squares takes one layer; a software canvas still clips by path.
+- **Android, backdrop blur**: `Backdrop` records what lies behind the view into a `RenderNode` before every frame,
+  and hwui draws that whole node into a layer and blurs it every frame. The node is recorded at the size where the
+  blur's deviation is 4 px (Skia's GPU blur scales its input down to that before blurring anyway) and stretched
+  back by its own scale, a property the RenderThread applies (a scale in the view's display list would stay stale
+  when an older backdrop's pre-draw records the view first, #2101); a view with nothing on screen
+  (`getGlobalVisibleRect`) records nothing. Four glass views of about the screen's size, without shadows, slid at
+  34 ms a frame on an emulator, 12 ms after. Every blurred view still records and blurs its backdrop again on
+  every frame, also when nothing behind it changed: a drawer sliding over blurred panes makes each of them blur
+  again (31 ms a frame on the emulator, 17 ms with the panes not blurred).
 - **Android, hidden views lose their display lists**: HWUI drops the display list of a RenderNode no longer drawn,
   and `setVisibility` tells every view under the one that changes, whose background `Drawable.setVisible` calls
   `invalidateSelf`. A whole screen hidden and shown again therefore records all of its views again (22–36 ms for the
   gallery's index on a Pixel 10 Pro). `StackBox` keeps drawing the screen a pop reveals at alpha 0 while it is
   `INVISIBLE` (which still keeps it out of touches, accessibility and focus), and `Decor.setVisible` does not
   invalidate (#519).
+- **Android, focusing a view that is not shown**: `requestFocus` fails on a view that is not shown, and a page's
+  `focus()` (from a timer of the render, say) can arrive in the batch that pushes it, the engine merging a wake-up's
+  commits into one batch, whose commands run before `finishNavigation` places the page (a transition shader also
+  keeps it `INVISIBLE` while it runs). `Mounter` keeps such a request (`PendingFocus`) and tries it again at the
+  batch's end and on each frame until the view is shown, or gives it up after 3 s (#2323). The frames come from a
+  `Choreographer` callback, posted only while a request waits, not from the host's `ViewTreeObserver`: a dialog's
+  content shows in the dialog's own window, whose tree the host's observer never hears from, while `Choreographer`
+  frames reach every window of the thread.
 - **Android, opacity animations and outer box shadows**: at alpha < 1 with overlapping rendering (the default) HWUI composites the view into an offscreen buffer clipped to its bounds, cutting the outer box shadows the `Decor` draws outside them: the shadow vanishes for the whole animation and pops back when it ends. Decor-bearing views therefore report `hasOverlappingRendering() == false` while they carry outer shadows (the alpha then applies per draw op and the shadow fades with the content), at the cost of overlapping content inside such a view blending imprecisely while it fades.
 - **Android, JNI event maps intern their keys from a fixed list** (`Java_com_longbridge_nsh_Native_eventMap`): a new payload key must be
   added there or it is dropped silently.
 - **Android, inputs' `pointerEvents`**: `InputBox` is a `FrameLayout`, not a `Box`: it keeps `pointerEvents` itself and
   refuses touches in `dispatchTouchEvent` for `none` / `box-none`, and `TouchTracker.deepest` reads it as a `Box`'s.
+- **Android, hovers and `pointerEvents`**: a hover goes to the topmost view under the pointer that handles it, and a
+  clickable view handles it whatever its `pointerEvents`, so `Box` routes hovers as it routes touches
+  (`dispatchHoverEvent`, `onInterceptHoverEvent`, `onHoverEvent`). TalkBack's touch exploration is hovers too: an inert
+  overlay that took them kept the screen reader from the views under it. `ViewGroup` keeps its own hover state
+  (hover targets, whether it is hovered itself) and sends no exit or enter when only `pointerEvents` changes, so `Box`
+  sends itself the exit when it turns inert while hovered, and the enter when it stops being `box-none` under the
+  pointer. `tests/hover-routing/run.py` checks the routing on a device or emulator.
 - **Android, inputs**: `EditText` reconfiguration (input type, filters, single line) sets the same text again and fires
   `afterTextChanged`: only text that differs from the last known one counts as an edit, or JS values are rejected as stale.
   Soft keyboards edit through the input connection (`KeyConnection`: composing text, commits, deletes), hardware keys arrive
@@ -444,6 +553,13 @@ Things that were found the hard way. Read the section of the area you change bef
   child sees it, with the same slop as `ZScroll`, so the pager took every horizontal drag of a zoomed image. `ZScroll`
   asks its parents not to intercept from the down (`requestDisallowInterceptTouchEvent`) while it has content to pan and
   gives that back when the drag has nothing to move or pushes past an edge a scroll view around can go on from.
+- **Android, moving a scroll view during its fling**: `ScrollView` / `HorizontalScrollView` keep their fling's
+  `OverScroller` private, and `computeScroll` sets the position the curve reached every frame, so a `scrollTo` during a
+  fling lasts one frame: the core's anchoring `ScrollBy` (rows above a list's viewport measured mid-fling) was undone
+  and the visible rows jumped by it, while a slow drag over the same rows kept them still. `VScroll` and `HScroll` run
+  their flings themselves (`ScrollBox.Glide`: the platform's `OverScroller.fling` arguments, plus the shifts
+  `scrollByPx` applied). Starting a new fling from the moved position instead goes farther than the rest of the curve:
+  repeated over a run of measured rows it sped the fling up and ran it far past its end.
 - **Android, safe area**: `NshView` reports only the parts of the system bars / keyboard that overlap it (like UIKit's
   `safeAreaInsets`), so embedded views below a toolbar get no top inset. Overlays use the same overlap (`topInset()`).
 - **Android, dev assets come over plain HTTP**, which apps block by default (API 28+): the dev host APK and `nsh-dev.aar` set
@@ -453,8 +569,18 @@ Things that were found the hard way. Read the section of the area you change bef
 - **Android, the back key without `OnBackInvokedCallback`** (below 13, or `enableOnBackInvokedCallback` off): the window
   sends `KEYCODE_BACK` down the focus path, then the activity's `onKeyDown` / `onKeyUp` take it (`onBackPressed`), so an
   unfocused view only hears it through `View.addOnUnhandledKeyEventListener` (API 28+, called by the decor view between
-  the two, whatever has focus). With the callback in effect the window turns the key into the callback before any view,
-  so `NshView` taking the key never doubles its callback (seen on Android 16, both settings).
+  the two, whatever has focus). A listener that takes the down gets the press's repeats and its release directly, before
+  any view (`ViewRootImpl`'s `UnhandledKeyManager`), so the focus path never sees them: `NshView` hands them to
+  `KeyDispatch` for the raw `onKeyUp`.
+- **Android, the back key with `OnBackInvokedCallback`** (13 and later, the packaged manifest's default): the window turns
+  the release into `onBackInvoked` / `onBackCancelled` before any view (`ViewRootImpl`'s `doOnBackKeyEvent`). Android 13
+  to 15 send the views neither the down nor the up; from Android 15 QPR1 the window sends the down on and, after the
+  callback, the up marked cancelled; Android 16 QPR2's `predictiveBackStopKeycodeBackForwarding` flag keeps both from the
+  views again. `KeyDispatch` reports the release at the callback, from the down it saw, and not again for that key-up
+  (`BackRelease`); `NshView` taking the key never doubles its callback, as the cancelled up does not go back (seen on an
+  Android 16 emulator, both settings; the version boundaries are AOSP's source). A modal's dialog, whose key listener
+  takes Back, follows the same rule (`ModalHost`): a key-up that is cancelled, or whose down it did not see, does not go
+  back, or one press would close it (or ask it to) twice.
 - **Android 8 (API 26 and 27) lacks three things the runtime uses from API 28**, and gets each another way, checked with
   `Build.VERSION.SDK_INT` so Android 9 and later draw as before:
   - Weights: `Typeface.create(family, weight, italic)` is API 28. The default family takes the nearest of Roboto's
@@ -483,6 +609,20 @@ Things that were found the hard way. Read the section of the area you change bef
   (`dispatchKeyEvent`, the parents before the focused view): `NshView`, which holds the focus when no input does,
   sees every key meant for the views inside it. Keys with Control come as `dispatchKeyShortcutEvent` first, where a
   text field selects all, copies and pastes, so the app's shortcuts are matched there too.
+- **Android, arrow keys while no view of the app has the focus**: Android's directional search (`FocusFinder`) starts
+  from the focused view and takes only views past its edge in the key's direction. While no view of the app has the
+  focus, `NshView` or a dialog's container holds it, and a standalone app's `NshView` and a dialog's container fill
+  their window, so from them nothing qualifies and an arrow does nothing. A tap clears a focus that is not focusable
+  in touch mode (`enterTouchMode`: the root comes before its descendants, so it is not the ancestor that takes the
+  focus) and leaves the window without one. The first navigation key after it leaves touch mode in `ViewRootImpl`
+  (`checkForLeavingTouchModeAndConsume`), which consumes the key when it has to pick a focus itself
+  (`restoreDefaultFocus`, which gives it to the root). The root's touch-mode listener runs before that check and
+  takes the focus when nothing holds it (`NshView.keyboardFocus`, the `keyboardFocus` of `ModalHost`'s container;
+  without it a dialog's first arrow after a tap only focused the container), and a focused view group that comes
+  before its descendants keeps the focus there. The arrow therefore reaches `KeyDispatch`, which moves the focus to
+  the first stop on screen (`ArrowEntry`, #2361). An embedded `NshView` can have host views beside it and host scroll
+  views around it, which Android's handling of an unconsumed arrow reaches (`focusSearch` from `NshView`, a host
+  `ScrollView`'s `arrowScroll`): `KeyDispatch.elsewhere` asks the same and leaves such an arrow to the host.
 
 ## Linux, GTK
 
@@ -614,6 +754,14 @@ Things that were found the hard way. Read the section of the area you change bef
 
 ## macOS, AppKit
 
+- **`performWindowDragWithEvent:` moves the window only from the event AppKit is delivering**: given a press whose
+  drags a `nextEventMatchingMask:` tracking loop already took off the queue, the window stayed put (#2274); given a
+  drag that loop dequeued, it stayed put as well. Called from the view's `mouseDragged:` with that event, the window
+  server moves the window from then on, in step with the pointer and with edge tiling (real mouse events posted with
+  `cliclick` over a hidden title bar, macOS 26.6). Moving the window from a loop instead, one `setFrameOrigin:` per
+  event (#2295), trails the pointer, as the app sets every frame. `input::window_press` keeps the press and lets
+  AppKit deliver its drags, as GPUI's `start_window_move` does.
+
 - **A view's display link follows the window to another screen but keeps the frame rates it was asked for**: one
   resumed while the window was on a 60 Hz screen (range 60–60) and kept running by a looping animation or the
   performance monitor drew at 60 Hz after the window moved to a 120 Hz built-in screen (measured, macOS 26, a 120 Hz
@@ -649,9 +797,15 @@ Things that were found the hard way. Read the section of the area you change bef
 - **From macOS 26 a window with a toolbar has larger corners than one with only a title bar** (seen on 26.6), even an
   empty `NSToolbar` in `UnifiedCompact`; the radius is the system's and no API sets it. A hidden title bar of the app's
   height therefore centers the traffic lights itself instead of selecting a toolbar style (`chrome::TrafficLights`).
-  AppKit lays the buttons out again whenever the title bar does (each live-resize frame, a screen change, leaving full
-  screen), so they are placed again from their `NSViewFrameDidChangeNotification`s, which arrive inside that layout,
-  before anything is drawn.
+  AppKit lays the buttons out again whenever the title bar does (each live-resize frame, `setTitle:`, a screen change,
+  leaving full screen), calling `-[_NSThemeWidget setFrameOrigin:ignoreRentry:]` for Close, Miniaturize and Zoom in
+  order. That method's re-entrancy guard silently ignores `setFrameOrigin:` calls on the notifying button from inside
+  its own `NSViewFrameDidChangeNotification` (verified on macOS 27.0.1), so synchronous placement inside frame-change
+  notifications left the last button (`ZoomButton`) stuck at AppKit's default `y` on every live-resize frame (and after
+  `setTitle:`). `TrafficLights` therefore always coalesces `NSViewFrameDidChangeNotification`s (on the container, title
+  bar view and buttons) onto the main queue so placement runs after `_updateButtonPositions` exits `ignoreRentry:`, and
+  places synchronously on `NSWindowDidResizeNotification` (which fires after `_updateButtonPositions` returns and before
+  AppKit displays the resized frame) so live-resize frames stay aligned without flicker.
 
 - **`contentLayoutRect` lags the frame while a window resizes**: read in the resize (the root view's new size), it is
   still laid out for the old frame, so the frame's height minus its top is the bar plus the change in height (a
@@ -678,7 +832,7 @@ Things that were found the hard way. Read the section of the area you change bef
   moves the children into a container that clips, and keeps the shadow on its own layer.
 - `NSView`'s display link fires only while some of the view's window shows on a screen: not while the window is
   hidden (ordered out, or never shown), minimized, wholly covered or off every screen, or the screen is locked. A
-  surface's one link drives all of its windows, so a link made from the root of a hidden main window (a tray app's,
+  surface's one link drives all of its windows, so a link made from the root of the hidden host (a tray app
   `window.defaultVisible: false`) gave the app's other windows no frames at all: made from the hidden window's view
   it fired 0 times in a second, from a shown window's 126, and in a `Window.open` window a trackpad scroll froze
   under the fingers and jumped into place when the gesture ended (`settle`), and animations did not run. The link is
@@ -816,6 +970,31 @@ Things that were found the hard way. Read the section of the area you change bef
   are written early: registered components' animated props (`set_animated_number`, `set_animated_color`) still reach
   them after the batches (`native::component_animated`), so a component that draws in its view
   (`NativeComponent::draw`) draws such a frame without the values its batch set.
+- **The client and the non-client area are tracked for leaves apart** (`TrackMouseEvent`'s `TME_LEAVE` without and
+  with `TME_NONCLIENT`), and a view marked `windowDrag`, `windowControl` or `windowResize` is non-client area inside
+  the app's content (`HTCAPTION`, `HTCLOSE`, `HTLEFT`, ...): moving between one and an ordinary view posts the leave
+  of the area left, which arrives after the other area's move. Taken as leaving the window, it cleared the hover that
+  move had just set. A leave message therefore only looks where the pointer is now (`GetCursorPos`, `WindowFromPoint`,
+  the window's own answer to `WM_NCHITTEST`, and the client rectangle, since the system's title bar answers
+  `HTCAPTION` as a drag region does), and the views hear a move there or a leave; the decisions are
+  `chrome::Tracking::step`'s, over plain data. A leave message never arms tracking: `TrackMouseEvent` posts a leave at
+  once when the system does not have the pointer in the area yet (it has not taken the moves still queued, although
+  `GetCursorPos` has), and posted messages are retrieved before input, so leaves would follow one another ahead of
+  every input message. A leave that keeps the hover with neither area tracked (the pointer came back before the moves
+  were dispatched) starts a one-shot timer instead: `WM_TIMER` comes only once no input is queued, and it arms the
+  area the pointer is in or ends the hover. A non-client move arms its tracking again at another hit test code, which
+  may end it. A look that finds the pointer in the area the views are hovered in already tells them nothing (the move
+  there did), so a recheck whose tracking the system ends at once stays quiet. The system's move or size loop
+  (`WM_ENTERSIZEMOVE` to `WM_EXITSIZEMOVE`) ends whatever tracking is armed at once: a leave that reported a move
+  there and asked for a recheck, whose tracking the loop ended again, made a loop of NSH's own that told the views a
+  move with the button held at the recheck timer's rate, for a press they never heard. While the loop runs, and as a
+  precaution while a press on a `windowDrag` view holds the capture (`chrome::hold_press`; it counts only while the
+  primary button is down or input is queued, so a press whose release went to another window after a lost
+  foreground is let go), leaves and rechecks neither report nor arm tracking. The hold's end (`WM_EXITSIZEMOVE`, the
+  press released, cancelled or lost, or `WM_ACTIVATE` deactivating the window) asks for one recheck, which tells the
+  views where the pointer is even in the area they hovered (the hover may have moved to another view there), without
+  the buttons of the press they never heard, unless a move came first. A border's hit test code counts as the app's
+  content only where a view answers it (`windowResize`), not where the window's frame does.
 
 ## Web, browsers
 
@@ -896,4 +1075,5 @@ Things that were found the hard way. Read the section of the area you change bef
   emulators) intercepts taps on inputs — turn it off with `adb shell settings put secure stylus_handwriting_enabled 0`.
 
 - **Windows RichEdit**: never set `TXTBIT_ADVANCEDINPUT` on a windowless RichEdit host; msftedit aborts (0x40000015) on focus. Enable TSF with `EM_SETEDITSTYLE SES_USECTF` instead.
+- **Windows RichEdit draws by GDI's DPI**: `TxDrawD2D` turns its client pixels into the target's units with the window DC's DPI (`richedit::dpi`, the system's DPI in a per-monitor aware process), not with the target's own DPI. On a monitor of another scale than the system's the two differ, and the text was drawn scaled from the target's origin, out of the field (typed text invisible, caret and placeholder in place). `InputState::record` scales the recording by `richedit::target_scale`.
 - **Windows RichEdit invalidates while it draws**: `TxDrawD2D` and the client-rectangle updates around it call `TxInvalidateRect` inside the window's `WM_PAINT`; a paint asked for there never comes back as another `WM_PAINT`, which left the surface waiting forever (typed text not shown until something else repainted). The field ignores what RichEdit invalidates while it is drawn (`Editor::drawing`), and `Surface::paint` asks again, once the frame is done, for what was requested during it.

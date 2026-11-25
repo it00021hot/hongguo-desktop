@@ -1,6 +1,6 @@
 # Windows video adapter
 
-Ordinary video uses NSH 0.6.1 Video: MediaEngine schedules native decoding and presents
+Ordinary video uses NSH 0.7.0 Video: MediaEngine schedules native decoding and presents
 through NSH's D3D11 canvas. The application does not wrap D3D11VA/D3D12VA with FFmpeg.
 
 This crate presents frames only when native decoding is unavailable, ByteVC2 is selected,

@@ -77,9 +77,9 @@ final class Native {
     static final int OPEN_URL = 65;
     static final int CARET_MOVE = 66;
     static final int PASTE = 67;
-    static final int SCREEN_COLOR = 68;
-    static final int FILE_REQUEST = 69;
-    static final int SPEECH = 70;
+    static final int CLIPBOARD_WRITE = 68;
+    static final int SCREEN_COLOR = 69;
+    static final int FILE_REQUEST = 70;
     static final int DOWNLOAD = 71;
     static final int NOTIFICATION = 72;
     static final int URL_SCHEME = 73;
@@ -102,6 +102,11 @@ final class Native {
     static final int SHARE = 90;
     static final int DETENT_CHANGE = 91;
     static final int AUTH_SESSION = 92;
+    static final int FOCUS_IN = 93;
+    static final int FOCUS_OUT = 94;
+    static final int TEXT_DROP = 95;
+    static final int OPEN_APP_SETTINGS = 96;
+    static final int BACK_PROGRESS = 97;
 
     /**
      * Draws the SVG {@code bytes} for a view {@code maxPx} pixels on its longer side, with its shorter side that long
@@ -128,6 +133,9 @@ final class Native {
 
     /** No VM limits for the apps loaded next: they run on their own. */
     static native void setStandaloneLimits(long handle);
+
+    /** Whether scroll views make their content's native views only near their viewport (default: true). */
+    static native void setContentCulling(long handle, boolean enabled);
 
     /** The directory the storage of the apps loaded next is kept in (null: each app's own in the data directory). */
     static native void setStorage(long handle, String dir);
@@ -162,8 +170,11 @@ final class Native {
     /** Registers a font file; returns an error, or null. */
     static native String registerFont(long handle, byte[] data);
 
-    /** Whether the running app's web views may navigate to {@code url}. */
-    static native boolean allowsWebview(long handle, String url);
+    /**
+     * Whether a web view of the running app may navigate to {@code url}, with
+     * its {@code allowOrigin} {@code origin} (null: none).
+     */
+    static native boolean allowsWebview(long handle, String url, String origin);
 
     /**
      * Whether the running app's web pages may capture {@code kind}
@@ -224,6 +235,21 @@ final class Native {
 
     /** A native component's own size (dp). */
     static native void componentSize(long handle, int id, float width, float height);
+
+    /** Names of native components registered by the app's Rust crate, or null. */
+    static native String[] componentNames(long handle);
+
+    /** Notes that host code registered a Java component overriding {@code name}. */
+    static native void componentJavaRegistered(long handle, String name);
+
+    /** Creates the native view of a Rust crate component on the UI thread. */
+    static native android.view.View componentCreate(long handle, int id, android.content.Context context, String name);
+
+    /** Runs the next queued typed prop, slot, command, or reset step for a Rust component. */
+    static native void componentStep(long handle, long seq, int id);
+
+    /** Destroys a Rust component instance when its element or app stops. */
+    static native void componentDestroy(long handle, int id);
 
     /** The launch parameters (a JSON object; null: none) of the apps loaded next; false if it is not one. */
     static native boolean setHostParams(long handle, String json);
@@ -331,8 +357,19 @@ final class Native {
      */
     static native void eventMap(long handle, int id, int kind, String[] keys, Object[] values);
 
-    /** `onPaste`: the pasted text, the images' encoded bytes and local files' {@code file:} URLs. */
-    static native void paste(long handle, int id, String text, byte[][] images, String[] uris);
+    /**
+     * `onPaste`: the pasted text, the images' encoded bytes, local files' {@code file:} URLs and the names, types
+     * and sizes of the images too large to read (`tooLarge`).
+     */
+    static native void paste(long handle, int id, String text, byte[][] images, String[] uris, String[] largeNames,
+                             String[] largeTypes, long[] largeLengths);
+
+    /**
+     * A file drag for node {@code id}: {@link #FILE_DRAG_ENTER} with the files offered (none yet on Android, which
+     * opens a drag's data only at the drop) or {@link #FILE_DROP} with the dropped files' app-owned copies, as
+     * {@code file:} URLs; a drop's point ({@code x}, {@code y}) in the surface's points.
+     */
+    static native void fileDrop(long handle, int id, int kind, String[] uris, float x, float y);
 
     /**
      * {@link #CANVAS_IMAGE} on the root: the answer to `OffscreenCanvas` render {@code request}, the encoded image
@@ -428,8 +465,8 @@ final class Native {
 
     static native boolean hasPan(long handle, int id);
 
-    /** state: 0 began, 1 moved, 2 ended, 3 cancelled. */
-    static native float[] pan(long handle, int id, int state, float tx, float ty, float vx, float vy);
+    /** state: 0 began, 1 moved, 2 ended, 3 cancelled; (ox, oy): where the finger went down in the root (dp). */
+    static native float[] pan(long handle, int id, int state, float tx, float ty, float vx, float vy, float ox, float oy);
 
     /** A pinch (scale) or two-finger rotation (degrees); state as for pan. */
     static native float[] transformGesture(long handle, int id, boolean rotation, int state, float amount, float velocity);

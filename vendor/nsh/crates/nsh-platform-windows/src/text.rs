@@ -39,10 +39,10 @@ use nsh_core::{
     Points, ResolvedTextStyle, Size, TextAlign, TextEngine, TextLayout, TextLine, TextPosition,
     TextSpan, geometry::px,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use windows::{
     Win32::{
-        Foundation::DWRITE_E_NOCOLOR,
+        Foundation::{DWRITE_E_NOCOLOR, HANDLE, HWND},
         Graphics::{
             Direct2D::{
                 CLSID_D2D1Shadow,
@@ -60,30 +60,34 @@ use windows::{
                 DWRITE_FONT_FEATURE_TAG, DWRITE_FONT_METRICS, DWRITE_FONT_STRETCH_NORMAL,
                 DWRITE_FONT_STYLE, DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_WEIGHT, DWRITE_GLYPH_OFFSET, DWRITE_GLYPH_RUN,
-                DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_HIT_TEST_METRICS,
+                DWRITE_GLYPH_RUN_DESCRIPTION, DWRITE_GRID_FIT_MODE_DEFAULT,
+                DWRITE_HIT_TEST_METRICS, DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES,
                 DWRITE_INLINE_OBJECT_METRICS, DWRITE_LINE_METRICS,
                 DWRITE_LINE_SPACING_METHOD_UNIFORM, DWRITE_MATRIX, DWRITE_MEASURING_MODE,
                 DWRITE_MEASURING_MODE_NATURAL, DWRITE_OVERHANG_METRICS,
                 DWRITE_READING_DIRECTION_LEFT_TO_RIGHT, DWRITE_READING_DIRECTION_RIGHT_TO_LEFT,
+                DWRITE_RENDERING_MODE_ALIASED, DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC,
                 DWRITE_STRIKETHROUGH, DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER,
                 DWRITE_TEXT_ALIGNMENT_JUSTIFIED, DWRITE_TEXT_ALIGNMENT_LEADING,
                 DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_TEXT_METRICS, DWRITE_TEXT_RANGE,
                 DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
                 DWRITE_TRIMMING_GRANULARITY_NONE, DWRITE_UNDERLINE, DWRITE_UNICODE_RANGE,
                 DWRITE_WORD_WRAPPING_EMERGENCY_BREAK, DWRITE_WORD_WRAPPING_NO_WRAP,
-                IDWriteFactory2, IDWriteFactory5, IDWriteFontCollection, IDWriteFontCollection1,
-                IDWriteFontFace, IDWriteFontFace2, IDWriteFontFallback, IDWriteFontFile,
-                IDWriteInMemoryFontFileLoader, IDWriteInlineObject, IDWriteInlineObject_Impl,
-                IDWritePixelSnapping_Impl, IDWriteTextFormat, IDWriteTextFormat1,
-                IDWriteTextLayout, IDWriteTextLayout1, IDWriteTextRenderer,
+                IDWriteFactory2, IDWriteFactory5, IDWriteFont, IDWriteFontCollection,
+                IDWriteFontCollection1, IDWriteFontFace, IDWriteFontFace2, IDWriteFontFallback,
+                IDWriteFontFile, IDWriteInMemoryFontFileLoader, IDWriteInlineObject,
+                IDWriteInlineObject_Impl, IDWritePixelSnapping_Impl, IDWriteRenderingParams,
+                IDWriteRenderingParams1, IDWriteRenderingParams2, IDWriteTextFormat,
+                IDWriteTextFormat1, IDWriteTextLayout, IDWriteTextLayout1, IDWriteTextRenderer,
                 IDWriteTextRenderer_Impl, IDWriteTypography,
             },
+            Gdi::{AddFontMemResourceEx, HMONITOR, MONITOR_DEFAULTTONEAREST, MonitorFromWindow},
         },
     },
     core::{BOOL, HSTRING, IUnknown, Interface, PCWSTR, Ref, implement},
 };
 use windows_core::ComObjectInterface;
-use windows_numerics::Vector2;
+use windows_numerics::{Matrix3x2, Vector2};
 
 use crate::{
     gfx::Gfx,
@@ -139,16 +143,29 @@ struct Registry {
     files: Vec<(u64, IDWriteFontFile)>,
     /// A collection of all of them.
     collection: Option<IDWriteFontCollection1>,
+    /// Process-private GDI font handles for windowless RichEdit (`<Input>`),
+    /// kept alive for the process lifetime.
+    gdi_handles: Vec<HANDLE>,
+    /// Lowercased family names successfully loaded into GDI via
+    /// `AddFontMemResourceEx`.
+    gdi_families: Option<FxHashSet<String>>,
 }
 
 static REGISTRY: Mutex<Shared<Registry>> = Mutex::new(Shared(Registry {
     loader: None,
     files: Vec::new(),
     collection: None,
+    gdi_handles: Vec::new(),
+    gdi_families: None,
 }));
 
 /// Bumped when a font is registered: engines resolve families again.
 static FONT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The current generation of registered custom fonts.
+pub(crate) fn font_generation() -> u64 {
+    FONT_GENERATION.load(Ordering::Acquire)
+}
 
 fn hash(data: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -170,7 +187,8 @@ fn add_font(data: &[u8]) -> Result<(), String> {
     }
     // SAFETY: COM calls on live objects; without an owner object
     // DirectWrite copies the font data, which only has to live through the
-    // call.
+    // call. `AddFontMemResourceEx` likewise copies `data` into session memory
+    // and writes the installed count to our local `u32`.
     unsafe {
         if r.loader.is_none() {
             let loader = factory
@@ -205,9 +223,50 @@ fn add_font(data: &[u8]) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         r.files.push((key, file));
         r.collection = Some(collection);
+        // Also expose the decoded TrueType/OpenType bytes to GDI so windowless
+        // RichEdit (`<Input>`) can resolve process-private memory fonts. A GDI
+        // rejection never fails DirectWrite registration.
+        if let Ok(len) = u32::try_from(data.len()) {
+            let mut installed = 0u32;
+            let handle = AddFontMemResourceEx(
+                data.as_ptr().cast(),
+                len,
+                None,
+                (&raw mut installed).cast_const(),
+            );
+            if !handle.is_invalid() && installed > 0 {
+                r.gdi_handles.push(handle);
+                if let Ok(face) = ttf_parser::Face::parse(data, 0) {
+                    let set = r.gdi_families.get_or_insert_with(FxHashSet::default);
+                    for n in face.names() {
+                        if matches!(
+                            n.name_id,
+                            ttf_parser::name_id::FAMILY | ttf_parser::name_id::TYPOGRAPHIC_FAMILY
+                        ) && let Some(s) = n.to_string()
+                            && !s.is_empty()
+                        {
+                            set.insert(s.to_lowercase());
+                        }
+                    }
+                }
+            } else {
+                log::debug!("GDI AddFontMemResourceEx could not register custom font");
+            }
+        }
     }
     FONT_GENERATION.fetch_add(1, Ordering::Release);
     Ok(())
+}
+
+/// Whether `family` was successfully registered in GDI via
+/// `AddFontMemResourceEx`.
+fn has_gdi_family(family: &str) -> bool {
+    let registry = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+    registry
+        .0
+        .gdi_families
+        .as_ref()
+        .is_some_and(|set| set.contains(&family.to_lowercase()))
 }
 
 /// The registered fonts' collection.
@@ -312,14 +371,14 @@ impl Metrics {
     }
 }
 
-/// The metrics of the font of `collection` named `name` nearest to
-/// `weight` and `italic`, if the collection has the family.
-fn find_font(
+/// The font of `collection` named `name` nearest to `weight` and `italic`,
+/// if the collection has the family.
+fn find_matching_font(
     collection: &IDWriteFontCollection,
     name: &str,
     weight: u16,
     italic: bool,
-) -> Option<Metrics> {
+) -> Option<IDWriteFont> {
     let name = HSTRING::from(name);
     let (mut index, mut exists) = (0u32, BOOL(0));
     // SAFETY: COM calls on a live collection with local out values.
@@ -330,7 +389,7 @@ fn find_font(
         if !exists.as_bool() {
             return None;
         }
-        let font = collection
+        collection
             .GetFontFamily(index)
             .ok()?
             .GetFirstMatchingFont(
@@ -338,10 +397,186 @@ fn find_font(
                 DWRITE_FONT_STRETCH_NORMAL,
                 font_style(italic),
             )
-            .ok()?;
-        let mut m = DWRITE_FONT_METRICS::default();
-        font.GetMetrics(&mut m);
-        Some(Metrics::of(&m))
+            .ok()
+    }
+}
+
+/// The metrics of the font of `collection` named `name` nearest to
+/// `weight` and `italic`, if the collection has the family.
+fn find_font(
+    collection: &IDWriteFontCollection,
+    name: &str,
+    weight: u16,
+    italic: bool,
+) -> Option<Metrics> {
+    let font = find_matching_font(collection, name, weight, italic)?;
+    let mut m = DWRITE_FONT_METRICS::default();
+    // SAFETY: COM call on a live font with a local out value.
+    unsafe { font.GetMetrics(&mut m) };
+    Some(Metrics::of(&m))
+}
+
+/// The Win32/GDI family name (Name ID 1) of `font`, if present: GDI
+/// (`AddFontMemResourceEx`) indexes non-RIBBI weights under this name rather
+/// than the DirectWrite typographic family name (Name ID 16).
+fn win32_family_name(font: &IDWriteFont) -> Option<String> {
+    let mut strings = None;
+    let mut exists = BOOL(0);
+    // SAFETY: COM calls on live objects with local out values and sized buffers.
+    unsafe {
+        font.GetInformationalStrings(
+            DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES,
+            &mut strings,
+            &mut exists,
+        )
+        .ok()?;
+        if !exists.as_bool() {
+            return None;
+        }
+        let strings = strings?;
+        if strings.GetCount() == 0 {
+            return None;
+        }
+        let mut index = 0u32;
+        let mut found = BOOL(0);
+        if strings
+            .FindLocaleName(&HSTRING::from("en-us"), &mut index, &mut found)
+            .is_err()
+            || !found.as_bool()
+        {
+            index = 0;
+        }
+        let len = strings.GetStringLength(index).ok()? as usize;
+        if len == 0 {
+            return None;
+        }
+        let mut buf = vec![0u16; len + 1];
+        strings.GetString(index, &mut buf).ok()?;
+        Some(String::from_utf16_lossy(&buf[..len]))
+    }
+}
+
+/// A `fontFamily` list resolved for a text input (`<Input>`).
+pub(crate) struct ResolvedFamily {
+    /// The primary family name for DirectWrite `CreateTextFormat`.
+    pub(crate) name: HSTRING,
+    /// The face name for RichEdit `CHARFORMAT2W.szFaceName`.
+    pub(crate) gdi_name: String,
+    /// True when `gdi_name` is an app-registered memory font loaded via GDI
+    /// `AddFontMemResourceEx` (RichEdit must render in GDI mode because
+    /// `TXTBIT_D2DDWRITE` only sees DirectWrite's system font collection).
+    pub(crate) gdi_custom: bool,
+    /// The custom font collection when the primary family is app-registered.
+    pub(crate) collection: Option<IDWriteFontCollection>,
+    /// Any remaining installed/registered families in the stack as DirectWrite
+    /// fallback (`None`: the system's alone).
+    pub(crate) fallback: Option<IDWriteFontFallback>,
+}
+
+/// Builds a DirectWrite fallback chain over `families` followed by the
+/// system's fallback (`None` when `families` is empty).
+fn build_fallback(
+    factory: &IDWriteFactory2,
+    families: &[(HSTRING, bool)],
+    custom: Option<&IDWriteFontCollection>,
+) -> Option<IDWriteFontFallback> {
+    if families.is_empty() {
+        return None;
+    }
+    let everything = [DWRITE_UNICODE_RANGE {
+        first: 0,
+        last: 0x10_FFFF,
+    }];
+    // SAFETY: COM calls on live objects; the names outlive the calls.
+    unsafe {
+        let builder = factory.CreateFontFallbackBuilder().ok()?;
+        for (name, registered) in families {
+            let names = [name.as_ptr()];
+            let collection = if *registered { custom } else { None };
+            builder
+                .AddMapping(
+                    &everything,
+                    &names,
+                    collection,
+                    PCWSTR::null(),
+                    PCWSTR::null(),
+                    1.0,
+                )
+                .ok()?;
+        }
+        if let Ok(system) = factory.GetSystemFontFallback() {
+            let _ = builder.AddMappings(&system);
+        }
+        builder.CreateFontFallback().ok()
+    }
+}
+
+/// Resolves a `fontFamily` stack (with CSS generics, Apple-platform aliases,
+/// app-registered custom fonts, and system fonts) using the same rules as
+/// [`DWriteTextEngine`].
+pub(crate) fn resolve_family(family: Option<&str>, weight: u16, italic: bool) -> ResolvedFamily {
+    thread_local! {
+        static UI: Arc<str> = ui_family();
+    }
+    let ui = UI.with(Arc::clone);
+    let factory = crate::gfx::dwrite();
+    let custom = custom_collection();
+    let mut system = None;
+    // SAFETY: a COM call with a local out value.
+    let _ = unsafe { factory.GetSystemFontCollection(&mut system, false) };
+    let names = match family {
+        Some(name) => family_names(name, &ui),
+        None => vec![ui.to_string()],
+    };
+    let find = |name: &str| -> Option<(String, String, bool)> {
+        if let Some(c) = &custom
+            && let Some(font) = find_matching_font(c, name, weight, italic)
+        {
+            let gdi = win32_family_name(&font).unwrap_or_else(|| name.to_owned());
+            return Some((name.to_owned(), gdi, true));
+        }
+        find_matching_font(system.as_ref()?, name, weight, italic)?;
+        Some((name.to_owned(), name.to_owned(), false))
+    };
+    let (primary, mut gdi_name, is_custom) = names
+        .iter()
+        .find_map(|n| find(n))
+        .or_else(|| names.iter().find_map(|n| alias(n).and_then(find)))
+        .unwrap_or_else(|| (ui.to_string(), ui.to_string(), false));
+    let mut gdi_custom = is_custom && (has_gdi_family(&gdi_name) || has_gdi_family(&primary));
+    // If DirectWrite accepted the custom font but GDI rejected it, keep the
+    // custom font for DirectWrite (`CreateTextFormat`) while giving RichEdit
+    // the next installed system family in the stack (or the UI font).
+    if is_custom && !gdi_custom {
+        let find_system = |name: &str| -> Option<String> {
+            find_matching_font(system.as_ref()?, name, weight, italic)?;
+            Some(name.to_owned())
+        };
+        gdi_name = names
+            .iter()
+            .find_map(|n| find_system(n))
+            .or_else(|| names.iter().find_map(|n| alias(n).and_then(find_system)))
+            .unwrap_or_else(|| ui.to_string());
+        gdi_custom = false;
+    }
+    let primary_h = HSTRING::from(&primary);
+    let mut others: Vec<(HSTRING, bool)> = Vec::new();
+    for (found, _, registered) in names
+        .iter()
+        .filter_map(|n| find(n).or_else(|| alias(n).and_then(find)))
+    {
+        let h = HSTRING::from(&found);
+        if h != primary_h && !others.iter().any(|(n, _)| *n == h) {
+            others.push((h, registered));
+        }
+    }
+    let fallback = build_fallback(&factory, &others, custom.as_ref());
+    ResolvedFamily {
+        name: primary_h,
+        gdi_name,
+        gdi_custom,
+        collection: if is_custom { custom } else { None },
+        fallback,
     }
 }
 
@@ -1039,35 +1274,7 @@ impl DWriteTextEngine {
         families: &[(HSTRING, bool)],
         custom: Option<&IDWriteFontCollection>,
     ) -> Option<IDWriteFontFallback> {
-        if families.is_empty() {
-            return None;
-        }
-        let everything = [DWRITE_UNICODE_RANGE {
-            first: 0,
-            last: 0x10_FFFF,
-        }];
-        // SAFETY: COM calls on live objects; the names outlive the calls.
-        unsafe {
-            let builder = self.factory.CreateFontFallbackBuilder().ok()?;
-            for (name, registered) in families {
-                let names = [name.as_ptr()];
-                let collection = if *registered { custom } else { None };
-                builder
-                    .AddMapping(
-                        &everything,
-                        &names,
-                        collection,
-                        PCWSTR::null(),
-                        PCWSTR::null(),
-                        1.0,
-                    )
-                    .ok()?;
-            }
-            if let Ok(system) = self.factory.GetSystemFontFallback() {
-                let _ = builder.AddMappings(&system);
-            }
-            builder.CreateFontFallback().ok()
-        }
+        build_fallback(&self.factory, families, custom)
     }
 
     fn typography(&self, variant: nsh_core::FontVariant) -> Option<IDWriteTypography> {
@@ -2083,9 +2290,15 @@ pub(crate) struct DrawnText {
     /// The part of a selectable view's selection in this text (UTF-16,
     /// `start < end`), which [`crate::selectable_view`] sets.
     pub(crate) area_range: Cell<Option<(u32, u32)>>,
-    /// The text shadow's effect, made on first draw (and again on a new
-    /// device).
-    shadow: RefCell<Option<((u64, u32), ID2D1Effect)>>,
+    /// The text shadow's effect, cached for the recording's settings.
+    shadow: RefCell<Option<CachedShadow>>,
+}
+
+struct CachedShadow {
+    generation: (u64, u32),
+    scale: f32,
+    text_params: Option<IDWriteRenderingParams>,
+    effect: ID2D1Effect,
 }
 
 /// `Text`: a text view's content changed.
@@ -2101,9 +2314,12 @@ pub(crate) fn set(
     let area_range = old.as_ref().and_then(|o| o.area_range.get());
     let selection = match old.and_then(|o| o.selection.map(|s| (s, o.text))) {
         Some((s, old)) if text.is_selectable() => {
-            // Offsets into other text mean nothing.
-            if old.text != text.text {
-                s.range.set(None);
+            // Offsets into other text mean nothing: the selection goes,
+            // and with it the view's place as the one selected, or the
+            // keys of a selection (Escape, Ctrl+C) would stay taken for
+            // a selection that is no more, with nothing left to clear it.
+            if old.text != text.text && s.range.take().is_some() {
+                forget_selected(view);
             }
             Some(s)
         }
@@ -2127,6 +2343,140 @@ pub(crate) fn set(
         crate::input::style_changed(view);
     }
     view.changed();
+}
+
+/// Minimum display gamma for DirectWrite text rendering. Windows' uncalibrated
+/// default (`1.8`) renders lighter and thinner than Chromium/Skia and macOS;
+/// `2.0` matches Chrome's effective optical weight on both light and dark
+/// backgrounds while preserving any higher value set in ClearType Tuner.
+const MIN_TEXT_GAMMA: f32 = 2.0;
+
+/// Minimum enhanced contrast for DirectWrite text rendering (ClearType and
+/// grayscale). Windows' uncalibrated default (`0.5` ClearType) washes out stem
+/// weight; `1.0` matches Chrome without over-bolding light-mode text while
+/// preserving any higher value set in ClearType Tuner.
+const MIN_TEXT_CONTRAST: f32 = 1.0;
+
+thread_local! {
+    /// Cached DirectWrite rendering params per monitor handle (`HMONITOR` as
+    /// `isize`, or `0` for the default monitor). Kept thread-local so COM
+    /// references release on the UI thread exit rather than inside
+    /// `ExitProcess`, and cleared on `WM_SETTINGCHANGE`, `WM_DISPLAYCHANGE`,
+    /// and device loss.
+    static RENDERING_PARAMS: RefCell<FxHashMap<isize, IDWriteRenderingParams>> =
+        RefCell::new(FxHashMap::default());
+    /// Bumped whenever [`invalidate_rendering_params`] clears the cache so
+    /// command-list caches (such as canvas recordings) know to re-record.
+    static RENDERING_PARAMS_GENERATION: Cell<u64> = const { Cell::new(1) };
+}
+
+/// Drops the cached DirectWrite rendering params so the next frame picks up
+/// updated ClearType, font-smoothing, or monitor settings.
+pub(crate) fn invalidate_rendering_params() {
+    RENDERING_PARAMS.with_borrow_mut(FxHashMap::clear);
+    RENDERING_PARAMS_GENERATION.with(|g| g.set(g.get() + 1));
+}
+
+/// Generation bumped whenever [`invalidate_rendering_params`] runs.
+pub(crate) fn rendering_params_generation() -> u64 {
+    RENDERING_PARAMS_GENERATION.with(Cell::get)
+}
+
+/// Whether Windows font smoothing ("Smooth edges of screen fonts") is enabled.
+///
+/// `CreateRenderingParams` / `CreateMonitorRenderingParams` leave
+/// `GetRenderingMode()` as `DWRITE_RENDERING_MODE_DEFAULT` even when font
+/// smoothing is disabled, so overriding `DEFAULT` to `NATURAL_SYMMETRIC`
+/// checks `SPI_GETFONTSMOOTHING` explicitly to preserve aliased rendering.
+fn font_smoothing_enabled() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SPI_GETFONTSMOOTHING, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    };
+    let mut enabled = BOOL(1);
+    // SAFETY: a BOOL out value, as `SPI_GETFONTSMOOTHING` expects.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETFONTSMOOTHING,
+            0,
+            Some(&mut enabled as *mut BOOL as *mut _),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .is_ok();
+    !ok || enabled.as_bool()
+}
+
+/// DirectWrite rendering params for the monitor displaying `hwnd` (or the
+/// default params when `hwnd` is invalid).
+///
+/// Starts from the monitor's ClearType Tuner settings (preserving pixel
+/// geometry, ClearType level, grid-fit mode, and aliased mode when font
+/// smoothing is disabled), switches smoothed text to symmetric antialiasing
+/// (`DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC`) so curves and CJK strokes are
+/// antialiased on both axes at 1x and 1.5x DPI, and applies minimum gamma and
+/// contrast floors matching Chromium/Skia.
+pub(crate) fn rendering_params(hwnd: HWND) -> Option<IDWriteRenderingParams> {
+    let monitor = if hwnd.is_invalid() {
+        HMONITOR::default()
+    } else {
+        // SAFETY: `MonitorFromWindow` accepts any `HWND` and returns a valid
+        // monitor handle (or null when unavailable).
+        unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) }
+    };
+    let key = monitor.0 as isize;
+    if let Some(cached) = RENDERING_PARAMS.with_borrow(|m| m.get(&key).cloned()) {
+        return Some(cached);
+    }
+    let params = build_rendering_params(monitor)?;
+    RENDERING_PARAMS.with_borrow_mut(|m| {
+        m.insert(key, params.clone());
+    });
+    Some(params)
+}
+
+fn build_rendering_params(monitor: HMONITOR) -> Option<IDWriteRenderingParams> {
+    let factory = crate::gfx::dwrite();
+    // SAFETY: COM calls on the live free-threaded DirectWrite factory.
+    unsafe {
+        let base = if !monitor.is_invalid() {
+            factory
+                .CreateMonitorRenderingParams(monitor)
+                .or_else(|_| factory.CreateRenderingParams())
+        } else {
+            factory.CreateRenderingParams()
+        }
+        .ok()?;
+        let gamma = base.GetGamma().max(MIN_TEXT_GAMMA);
+        let enhanced_contrast = base.GetEnhancedContrast().max(MIN_TEXT_CONTRAST);
+        let grayscale_contrast = base
+            .cast::<IDWriteRenderingParams1>()
+            .map_or(enhanced_contrast, |p1| p1.GetGrayscaleEnhancedContrast())
+            .max(MIN_TEXT_CONTRAST);
+        let cleartype_level = base.GetClearTypeLevel();
+        let pixel_geometry = base.GetPixelGeometry();
+        let base_mode = base.GetRenderingMode();
+        let grid_fit_mode = base
+            .cast::<IDWriteRenderingParams2>()
+            .map_or(DWRITE_GRID_FIT_MODE_DEFAULT, |p2| p2.GetGridFitMode());
+        let rendering_mode =
+            if base_mode == DWRITE_RENDERING_MODE_ALIASED || !font_smoothing_enabled() {
+                DWRITE_RENDERING_MODE_ALIASED
+            } else {
+                DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC
+            };
+        let custom = factory
+            .CreateCustomRenderingParams(
+                gamma,
+                enhanced_contrast,
+                grayscale_contrast,
+                cleartype_level,
+                pixel_geometry,
+                rendering_mode,
+                grid_fit_mode,
+            )
+            .ok()?;
+        Some(custom.into())
+    }
 }
 
 /// Device resources text drawing shares (per device).
@@ -2209,11 +2559,34 @@ struct Painter<'a> {
     dc: &'a ID2D1DeviceContext,
     brush: &'a ID2D1SolidColorBrush,
     res: &'a Resources,
+    /// Context world transform, to snap glyph baselines and decorations to
+    /// device pixels under axis-aligned transforms.
+    transform: Matrix3x2,
+    /// Pixels per point.
+    scale: f32,
     /// One device pixel (points): decorations snap to whole pixels.
     px: f32,
 }
 
 impl Painter<'_> {
+    /// Snaps a local Y coordinate to the nearest whole device pixel when the
+    /// current world transform is axis-aligned (no rotation or shear).
+    ///
+    /// `DrawGlyphRun` does not snap baselines to pixels the way
+    /// `DrawTextLayout` does; under `NATURAL_SYMMETRIC` vertical
+    /// antialiasing, fractional baselines (from font metrics, flexbox
+    /// centering, or fractional DPI scales like 125% / 150%) blur horizontal
+    /// strokes and baselines.
+    fn snap_y(&self, y: f32) -> f32 {
+        let t = &self.transform;
+        if t.M12.abs() < 1e-5 && t.M21.abs() < 1e-5 && t.M22.abs() > 1e-5 {
+            let dev_y = (t.M22 * y + t.M32) * self.scale;
+            (dev_y.round() / self.scale - t.M32) / t.M22
+        } else {
+            y
+        }
+    }
+
     fn color(&self, c: Color) -> &ID2D1SolidColorBrush {
         // SAFETY: a COM call on a live brush.
         unsafe { self.brush.SetColor(&crate::render::color_f(c)) };
@@ -2279,7 +2652,7 @@ impl Painter<'_> {
                 .map_or(&default, |s| &s.style)
         };
         for run in &layout.runs {
-            let baseline = oy + run.baseline;
+            let baseline = self.snap_y(oy + run.baseline);
             let rtl = run.rtl();
             let n = run.glyphs.len();
             if let (Some(layers), None) = (&run.layers, over) {
@@ -2402,7 +2775,7 @@ impl Painter<'_> {
         }
         let line = |top: f32, thickness: f32| {
             let t = pixels(style.decoration_thickness.map_or(thickness, |t| t.0));
-            let top = (top / px).round() * px;
+            let top = self.snap_y(top);
             let mid = top + t / 2.0;
             let brush = self.color(color);
             let stroke = |style: &ID2D1StrokeStyle1| {
@@ -2524,11 +2897,14 @@ pub(crate) fn draw(cx: &mut DrawCx<'_>, state: &ViewState) {
     }
     let Some(res) = resources(cx.gfx) else { return };
     let brush = cx.solid(Color::BLACK).clone();
+    let scale = cx.scale.max(0.01);
     let painter = Painter {
         dc: cx.dc,
         brush: &brush,
         res: &res,
-        px: 1.0 / cx.scale.max(0.01),
+        transform: cx.transform.to_3x2(),
+        scale,
+        px: 1.0 / scale,
     };
     if let Some(shadow) = drawn.text.shadow
         && !shadow.color.is_transparent()
@@ -2554,8 +2930,8 @@ pub(crate) fn draw(cx: &mut DrawCx<'_>, state: &ViewState) {
     painter.paint(&drawn.text, layout, ox, oy, color);
 }
 
-/// Draws a blurred text shadow: the glyphs recorded into a command list
-/// once, through Direct2D's shadow effect.
+/// Draws a blurred text shadow from a cached glyph recording through
+/// Direct2D's shadow effect.
 fn draw_shadow(
     cx: &DrawCx<'_>,
     res: &Resources,
@@ -2564,13 +2940,20 @@ fn draw_shadow(
     shadow: nsh_core::TextShadow,
 ) {
     let generation = crate::output::paint_key();
+    let scale = cx.scale.max(0.01);
     let mut cache = drawn.shadow.borrow_mut();
-    if cache.as_ref().is_none_or(|(g, _)| *g != generation) {
+    if cache.as_ref().is_none_or(|shadow| {
+        shadow.generation != generation
+            || shadow.scale != scale
+            || shadow.text_params != cx.text_params
+    }) {
         let painter = Painter {
             dc: &res.recorder,
             brush: &res.brush,
             res,
-            px: 1.0 / cx.scale.max(0.01),
+            transform: Matrix3x2::identity(),
+            scale,
+            px: 1.0 / scale,
         };
         // SAFETY: COM calls on live objects; the recorder's BeginDraw is
         // closed by its EndDraw and its target unset.
@@ -2578,9 +2961,9 @@ fn draw_shadow(
             (|| -> windows::core::Result<ID2D1Effect> {
                 let list = res.recorder.CreateCommandList()?;
                 res.recorder.SetTarget(&list);
+                res.recorder.SetTextRenderingParams(cx.text_params.as_ref());
                 res.recorder.BeginDraw();
-                res.recorder
-                    .SetTransform(&windows_numerics::Matrix3x2::identity());
+                res.recorder.SetTransform(&Matrix3x2::identity());
                 painter.paint(
                     &drawn.text,
                     layout,
@@ -2615,17 +2998,24 @@ fn draw_shadow(
             })()
         };
         match made {
-            Ok(effect) => *cache = Some((generation, effect)),
+            Ok(effect) => {
+                *cache = Some(CachedShadow {
+                    generation,
+                    scale,
+                    text_params: cx.text_params.clone(),
+                    effect,
+                });
+            }
             Err(err) => {
                 log::debug!("text: no shadow: {err}");
                 return;
             }
         }
     }
-    let Some((_, effect)) = &*cache else { return };
+    let Some(cached) = &*cache else { return };
     // SAFETY: COM calls between BeginDraw and EndDraw.
     unsafe {
-        if let Ok(output) = effect.GetOutput() {
+        if let Ok(output) = cached.effect.GetOutput() {
             cx.dc.DrawImage(
                 &output,
                 Some(&Vector2 {
@@ -2976,8 +3366,8 @@ pub(crate) fn context_menu(surface: &Rc<crate::surface::Surface>, view: &NshView
     );
 }
 
-/// The selected text of `view`, without attachments' placeholders and
-/// hidden runs.
+/// The selected text of `view` as a copy gives it
+/// ([`nsh_core::AttributedText::copied_text`]).
 fn selected_text(view: &NshView) -> Option<String> {
     let (a, b) = view_selection(view)?.range.get()?;
     let state = view.state();
@@ -4005,6 +4395,45 @@ mod tests {
         assert!(rects[1].1 > rects[0].1);
     }
 
+    /// A selectable text whose content changes loses its selection, and is
+    /// no longer the text the selection's keys go to.
+    #[test]
+    fn new_content_ends_the_selection_and_its_keys() {
+        let engine = engine();
+        let selectable = |s: &str| {
+            let mut t = text(&[(s, plain(15.0))]);
+            t.selectable = Some(true);
+            Arc::new(t)
+        };
+        let view = NshView::new(7, nsh_core::ViewKind::Text);
+        let show = |t: &Arc<AttributedText>| {
+            let (size, layout) = layout_of(&engine, t, None);
+            set(
+                &view,
+                t,
+                &layout,
+                Bounds::new(nsh_core::Point::default(), size),
+            );
+        };
+        let selected = || SELECTED.with_borrow(|s| s.as_ref().map(|(_, v)| v.clone()));
+        let first = selectable("Hello selectable world");
+        show(&first);
+        select(1, &view, Some((1, 9)));
+        assert!(selected() == Some(view.clone()));
+        // The same content again (another style, say) keeps it.
+        show(&selectable("Hello selectable world"));
+        assert_eq!(view_selection(&view).unwrap().range.get(), Some((1, 9)));
+        assert!(selected() == Some(view.clone()));
+        show(&selectable("Other words"));
+        assert_eq!(view_selection(&view).unwrap().range.get(), None);
+        assert!(selected().is_none(), "no text holds the selection's keys");
+        // And a selection made again is cleared as any other.
+        select(1, &view, Some((0, 5)));
+        assert!(selected() == Some(view.clone()));
+        clear_selected();
+        assert!(selected().is_none());
+    }
+
     #[test]
     fn carets_and_highlights() {
         let engine = engine();
@@ -4107,5 +4536,209 @@ mod tests {
             TextPosition::default()
         );
         assert!(engine.caret_rect(&other, p).is_none());
+    }
+
+    #[test]
+    fn rendering_params_use_symmetric_antialiasing_and_floors() {
+        let factory = crate::gfx::dwrite();
+        // SAFETY: COM calls on the live DirectWrite factory.
+        let base = unsafe { factory.CreateRenderingParams() }.unwrap();
+        let params = rendering_params(HWND::default()).expect("rendering params");
+        // SAFETY: COM calls on live rendering params objects.
+        unsafe {
+            assert!(params.GetGamma() >= MIN_TEXT_GAMMA);
+            assert!(params.GetEnhancedContrast() >= MIN_TEXT_CONTRAST);
+            let p1: IDWriteRenderingParams1 = params.cast().unwrap();
+            assert!(p1.GetGrayscaleEnhancedContrast() >= MIN_TEXT_CONTRAST);
+            assert_eq!(params.GetPixelGeometry(), base.GetPixelGeometry());
+            assert_eq!(params.GetClearTypeLevel(), base.GetClearTypeLevel());
+            let expected_mode = if base.GetRenderingMode() == DWRITE_RENDERING_MODE_ALIASED
+                || !font_smoothing_enabled()
+            {
+                DWRITE_RENDERING_MODE_ALIASED
+            } else {
+                DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC
+            };
+            assert_eq!(params.GetRenderingMode(), expected_mode);
+        }
+        // Cached on repeat calls; rebuilt after invalidation.
+        let again = rendering_params(HWND::default()).unwrap();
+        assert_eq!(params.as_raw(), again.as_raw());
+        let gen_before = rendering_params_generation();
+        invalidate_rendering_params();
+        assert_ne!(rendering_params_generation(), gen_before);
+        let rebuilt = rendering_params(HWND::default()).unwrap();
+        assert_ne!(params.as_raw(), rebuilt.as_raw());
+    }
+
+    #[test]
+    fn baseline_snap_aligns_device_rows_across_fractional_offsets() {
+        let Ok(gfx) = crate::gfx::get() else {
+            return;
+        };
+        let Some(res) = resources(&gfx) else {
+            return;
+        };
+        // SAFETY: COM call on the live context.
+        let brush = unsafe {
+            gfx.dc
+                .CreateSolidColorBrush(&crate::render::color_f(Color::BLACK), None)
+        }
+        .unwrap();
+
+        // Axis-aligned transforms snap in device pixels (including fractional
+        // M32 and 1.5x DPI); rotated transforms leave Y untouched.
+        for (scale, m32, y) in [
+            (1.0f32, 0.35f32, 12.992f32),
+            (1.5, 0.2, 11.0),
+            (1.25, 10.4, 15.107),
+        ] {
+            let transform = Matrix3x2 {
+                M11: 1.0,
+                M12: 0.0,
+                M21: 0.0,
+                M22: 1.0,
+                M31: 0.0,
+                M32: m32,
+            };
+            let painter = Painter {
+                dc: &gfx.dc,
+                brush: &brush,
+                res: &res,
+                transform,
+                scale,
+                px: 1.0 / scale,
+            };
+            let snapped = painter.snap_y(y);
+            let dev_y = (snapped + m32) * scale;
+            assert!(
+                (dev_y - dev_y.round()).abs() < 1e-4,
+                "scale={scale} m32={m32} y={y}: dev_y={dev_y}"
+            );
+        }
+        let rotated = Painter {
+            dc: &gfx.dc,
+            brush: &brush,
+            res: &res,
+            transform: Matrix3x2 {
+                M11: 0.866,
+                M12: 0.5,
+                M21: -0.5,
+                M22: 0.866,
+                M31: 0.0,
+                M32: 0.3,
+            },
+            scale: 1.5,
+            px: 1.0 / 1.5,
+        };
+        assert_eq!(rotated.snap_y(12.345), 12.345);
+
+        // End-to-end draw at 1.0x and 1.5x: two fractional view Y offsets that
+        // round to the same device row produce identical pixels.
+        let engine = engine();
+        let t = Arc::new(text(&[("Hamburgefonstiv 0123456789", plain(14.0))]));
+        let (_, layout) = layout_of(&engine, &t, None);
+        let l = layout.downcast::<WinLayout>().unwrap();
+        let baseline = l.runs[0].baseline;
+        for scale in [1.0f32, 1.5] {
+            let w_px = (220.0 * scale).round() as u32;
+            let h_px = (40.0 * scale).round() as u32;
+            let render_at = |m32: f32| -> Vec<u8> {
+                let props = windows::Win32::Graphics::Direct2D::D2D1_BITMAP_PROPERTIES1 {
+                    pixelFormat: windows::Win32::Graphics::Direct2D::Common::D2D1_PIXEL_FORMAT {
+                        format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+                        alphaMode:
+                            windows::Win32::Graphics::Direct2D::Common::D2D1_ALPHA_MODE_IGNORE,
+                    },
+                    dpiX: 96.0 * scale,
+                    dpiY: 96.0 * scale,
+                    bitmapOptions: windows::Win32::Graphics::Direct2D::D2D1_BITMAP_OPTIONS_TARGET,
+                    colorContext: std::mem::ManuallyDrop::new(None),
+                };
+                // SAFETY: COM calls on the live context and bitmaps.
+                unsafe {
+                    let bmp = gfx
+                        .dc
+                        .CreateBitmap(
+                            windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U {
+                                width: w_px,
+                                height: h_px,
+                            },
+                            None,
+                            0,
+                            &props,
+                        )
+                        .unwrap();
+                    gfx.dc.SetTarget(&bmp);
+                    gfx.dc.SetDpi(96.0 * scale, 96.0 * scale);
+                    gfx.dc
+                        .SetTextRenderingParams(rendering_params(HWND::default()).as_ref());
+                    gfx.dc.BeginDraw();
+                    let transform = Matrix3x2 {
+                        M11: 1.0,
+                        M12: 0.0,
+                        M21: 0.0,
+                        M22: 1.0,
+                        M31: 8.0,
+                        M32: m32,
+                    };
+                    gfx.dc.SetTransform(&transform);
+                    gfx.dc.Clear(Some(&crate::render::color_f(Color::rgba(
+                        255, 255, 255, 255,
+                    ))));
+                    let painter = Painter {
+                        dc: &gfx.dc,
+                        brush: &brush,
+                        res: &res,
+                        transform,
+                        scale,
+                        px: 1.0 / scale,
+                    };
+                    painter.paint(&t, l, 0.0, 0.0, None);
+                    gfx.dc.EndDraw(None, None).unwrap();
+                    gfx.dc.SetTarget(None);
+                    let read = gfx
+                        .dc
+                        .CreateBitmap(
+                            windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U {
+                                width: w_px,
+                                height: h_px,
+                            },
+                            None,
+                            0,
+                            &windows::Win32::Graphics::Direct2D::D2D1_BITMAP_PROPERTIES1 {
+                                dpiX: 96.0,
+                                dpiY: 96.0,
+                                bitmapOptions: windows::Win32::Graphics::Direct2D::D2D1_BITMAP_OPTIONS_CPU_READ
+                                    | windows::Win32::Graphics::Direct2D::D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                                ..props
+                            },
+                        )
+                        .unwrap();
+                    read.CopyFromBitmap(None, &bmp, None).unwrap();
+                    let mapped = read
+                        .Map(windows::Win32::Graphics::Direct2D::D2D1_MAP_OPTIONS_READ)
+                        .unwrap();
+                    let mut pixels = Vec::with_capacity((w_px * h_px * 4) as usize);
+                    for row in 0..h_px {
+                        let start = mapped.bits.add((row * mapped.pitch) as usize);
+                        pixels.extend_from_slice(std::slice::from_raw_parts(
+                            start,
+                            (w_px * 4) as usize,
+                        ));
+                    }
+                    read.Unmap().unwrap();
+                    pixels
+                }
+            };
+            // Choose an exact integer device baseline and perturb by ±0.2 device
+            // pixels: both must snap to the same device row and yield identical pixels.
+            let exact_m32 = (20.0f32 / scale) - baseline;
+            let a = render_at(exact_m32);
+            let b = render_at(exact_m32 + 0.2 / scale);
+            let c = render_at(exact_m32 - 0.2 / scale);
+            assert_eq!(a, b, "scale={scale} +0.2px should snap identically");
+            assert_eq!(a, c, "scale={scale} -0.2px should snap identically");
+        }
     }
 }

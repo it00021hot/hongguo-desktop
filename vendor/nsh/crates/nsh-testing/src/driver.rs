@@ -15,21 +15,29 @@ use nsh_dev::protocol::{ClockChange, TestStep};
 use serde_json::Value;
 
 use crate::{
+    DragOptions,
     headless::{DialogAnswer, Headless},
-    module::LocaleSettingsOptions,
+    module::{LocaleSettingsOptions, NetworkStateOptions},
 };
 
 /// An app a test opened, driven by steps and read by queries.
 pub(crate) trait Driver: Send {
     /// Names the step the batches that come next belong to (`--trace`).
     fn step(&mut self, name: &str);
-    fn press(&mut self, selector: &str) -> Result<(), String>;
+    /// Presses `selector` at `at` in the view it names (its top left
+    /// corner), else where a tap lands.
+    fn press(&mut self, selector: &str, at: Option<Point<Points>>) -> Result<(), String>;
     fn long_press(&mut self, selector: &str) -> Result<(), String>;
     fn type_text(&mut self, selector: &str, text: &str) -> Result<(), String>;
     fn submit(&mut self, selector: &str) -> Result<(), String>;
     fn clear(&mut self, selector: &str) -> Result<(), String>;
     fn scroll(&mut self, selector: &str, distance: Points) -> Result<(), String>;
-    fn drag(&mut self, selector: &str, by: Point<Points>) -> Result<(), String>;
+    fn drag(
+        &mut self,
+        selector: &str,
+        by: Point<Points>,
+        options: DragOptions,
+    ) -> Result<(), String>;
     /// An input method composes `text` in the input `selector` names.
     fn compose(&mut self, selector: &str, text: &str) -> Result<(), String>;
     /// Drops local files (`file:` URLs) on what `selector` names.
@@ -38,9 +46,14 @@ pub(crate) trait Driver: Send {
         Err("`dropFiles` runs headless, on Linux and on macOS for now".into())
     }
     /// Drags without lifting, until [`Driver::drop_held`].
-    fn drag_and_hold(&mut self, selector: &str, by: Point<Points>) -> Result<(), String> {
-        let _ = (selector, by);
-        Err("`dragAndHold` runs headless and on Linux for now".into())
+    fn drag_and_hold(
+        &mut self,
+        selector: &str,
+        by: Point<Points>,
+        options: DragOptions,
+    ) -> Result<(), String> {
+        let _ = (selector, by, options);
+        Err("`dragAndHold` runs headless, on Linux and on iOS for now".into())
     }
     /// Lifts the finger `drag_and_hold` left down.
     fn drop_held(&mut self) -> Result<(), String> {
@@ -88,6 +101,19 @@ pub(crate) trait Driver: Send {
     /// The system wakes from sleep (`wakeCount()`).
     fn wake(&mut self) -> Result<(), String> {
         Err(headless_only("wake"))
+    }
+    /// The device's network changes as `state` names (`network()`).
+    fn set_network_state(&mut self, state: NetworkStateOptions) -> Result<(), String> {
+        let _ = state;
+        Err(headless_only("setNetworkState"))
+    }
+    /// The OS asks the app to show itself (`Application.on("reopen")`).
+    fn reopen(&mut self) -> Result<(), String> {
+        Err(headless_only("reopen"))
+    }
+    /// The user asks to quit (`Application.on("quitRequest")`).
+    fn quit_request(&mut self) -> Result<(), String> {
+        Err(headless_only("quitRequest"))
     }
     /// The user's locale settings that `settings` names, as the system
     /// reports them (`localeSettings()`).
@@ -140,19 +166,16 @@ pub(crate) trait Driver: Send {
     fn picks(&mut self) -> Result<Vec<nsh_core::picker::Pick>, String> {
         Err(headless_only("`picks()`"))
     }
-    /// What the app's speech sessions asked for, in order.
-    fn speech_requests(&mut self) -> Result<Vec<nsh_core::speech::SpeechRequest>, String> {
-        Err(headless_only("`speechRequests()`"))
-    }
-    /// The user says `text` to the session listening.
-    fn hear(&mut self, text: &str) -> Result<(), String> {
-        let _ = text;
-        Err(headless_only("speaking for the user"))
-    }
-    /// Ends the session listening, with `error` or as the user stops.
-    fn end_speech(&mut self, error: Option<nsh_core::speech::SpeechError>) -> Result<(), String> {
-        let _ = error;
-        Err(headless_only("ending a speech session"))
+    /// Calls `method` of the fake a native module gives headless runs
+    /// (`nsh_core::fake`), named `name`, with `args`; its answer.
+    fn call_fake(
+        &mut self,
+        name: &str,
+        method: &str,
+        args: &[nsh_core::JsonValue],
+    ) -> Result<nsh_core::JsonValue, String> {
+        let _ = (method, args);
+        Err(headless_only(&format!("the fake {name:?}")))
     }
     /// What the app asked of the speaker, in order.
     fn audio_calls(&mut self) -> Result<Vec<crate::headless::AudioCall>, String> {
@@ -169,6 +192,11 @@ pub(crate) trait Driver: Send {
     fn value(&mut self, selector: &str) -> Result<Option<String>, String>;
     fn span_style(&mut self, selector: &str) -> Result<ResolvedTextStyle, String>;
     fn view_style(&mut self, selector: &str) -> Result<Option<crate::screen::ViewStyle>, String>;
+    fn layout(&mut self, selector: &str) -> Result<Option<nsh_dev::protocol::ViewLayout>, String>;
+    fn accessibility(
+        &mut self,
+        selector: Option<&str>,
+    ) -> Result<Option<nsh_dev::protocol::AccessibilityNode>, String>;
     fn dialogs(&mut self) -> Result<Vec<Dialog>, String>;
     /// The open context menu's actions, `None` when none is open.
     fn menu(&mut self) -> Result<Option<Vec<crate::menu::Entry>>, String>;
@@ -191,6 +219,13 @@ pub(crate) trait Driver: Send {
     fn storage(&mut self) -> Result<std::collections::BTreeMap<String, String>, String> {
         Err(headless_only("reading the storage this way"))
     }
+    /// The ids of the app's open windows, in opening order.
+    fn window_ids(&mut self) -> Result<Vec<String>, String>;
+    /// Whether the app quit (`Application.quit()`, its Quit item, or the
+    /// core quitting on its last window's close).
+    fn quit(&mut self) -> Result<bool, String> {
+        Err(headless_only("reading whether the app quit"))
+    }
     /// The state of the app's window `id` as the platform reports it;
     /// `None` while it is not open.
     fn window_state(&mut self, id: &str) -> Result<Option<nsh_core::desktop::WindowState>, String>;
@@ -205,8 +240,8 @@ impl Driver for Headless {
     fn step(&mut self, name: &str) {
         Headless::step(self, name);
     }
-    fn press(&mut self, selector: &str) -> Result<(), String> {
-        Headless::press(self, selector)
+    fn press(&mut self, selector: &str, at: Option<Point<Points>>) -> Result<(), String> {
+        self.press_with(selector, at)
     }
     fn long_press(&mut self, selector: &str) -> Result<(), String> {
         Headless::long_press(self, selector)
@@ -223,14 +258,24 @@ impl Driver for Headless {
     fn scroll(&mut self, selector: &str, distance: Points) -> Result<(), String> {
         Headless::scroll(self, selector, distance)
     }
-    fn drag(&mut self, selector: &str, by: Point<Points>) -> Result<(), String> {
-        Headless::drag(self, selector, by)
+    fn drag(
+        &mut self,
+        selector: &str,
+        by: Point<Points>,
+        options: DragOptions,
+    ) -> Result<(), String> {
+        Headless::drag(self, selector, by, options)
     }
     fn hold_keys(&mut self, keys: &str, down: bool) -> Result<(), String> {
         Headless::hold_keys(self, keys, down)
     }
-    fn drag_and_hold(&mut self, selector: &str, by: Point<Points>) -> Result<(), String> {
-        Headless::drag_and_hold(self, selector, by)
+    fn drag_and_hold(
+        &mut self,
+        selector: &str,
+        by: Point<Points>,
+        options: DragOptions,
+    ) -> Result<(), String> {
+        Headless::drag_and_hold(self, selector, by, options)
     }
     fn drop_files(&mut self, selector: &str, uris: Vec<String>) -> Result<(), String> {
         Headless::drop_files(self, selector, uris)
@@ -297,6 +342,16 @@ impl Driver for Headless {
     fn wake(&mut self) -> Result<(), String> {
         self.set_environment("wake()", |e| e.wake_count = e.wake_count.wrapping_add(1))
     }
+    fn set_network_state(&mut self, state: NetworkStateOptions) -> Result<(), String> {
+        let what = format!("setNetworkState({})", state.label());
+        self.set_environment(&what, |e| state.apply(&mut e.network))
+    }
+    fn reopen(&mut self) -> Result<(), String> {
+        Headless::reopen(self)
+    }
+    fn quit_request(&mut self) -> Result<(), String> {
+        Headless::quit_request(self)
+    }
     fn set_locale_settings(&mut self, settings: LocaleSettingsOptions) -> Result<(), String> {
         let pins = settings.pins("setLocaleSettings")?;
         let what = format!("setLocaleSettings({})", settings.label());
@@ -343,15 +398,13 @@ impl Driver for Headless {
         self.catch_up();
         Ok(Headless::picks(self))
     }
-    fn speech_requests(&mut self) -> Result<Vec<nsh_core::speech::SpeechRequest>, String> {
-        self.catch_up();
-        Ok(Headless::speech_requests(self))
-    }
-    fn hear(&mut self, text: &str) -> Result<(), String> {
-        Headless::hear(self, text)
-    }
-    fn end_speech(&mut self, error: Option<nsh_core::speech::SpeechError>) -> Result<(), String> {
-        Headless::end_speech(self, error)
+    fn call_fake(
+        &mut self,
+        name: &str,
+        method: &str,
+        args: &[nsh_core::JsonValue],
+    ) -> Result<nsh_core::JsonValue, String> {
+        Headless::call_fake(self, name, method, args)
     }
     fn audio_calls(&mut self) -> Result<Vec<crate::headless::AudioCall>, String> {
         self.catch_up();
@@ -393,6 +446,23 @@ impl Driver for Headless {
         self.catch_up();
         self.screen().view_style(selector)
     }
+    fn layout(&mut self, selector: &str) -> Result<Option<nsh_dev::protocol::ViewLayout>, String> {
+        self.catch_up();
+        Ok(self
+            .screen()
+            .layout(selector)?
+            .map(crate::screen::protocol_layout))
+    }
+    fn accessibility(
+        &mut self,
+        selector: Option<&str>,
+    ) -> Result<Option<nsh_dev::protocol::AccessibilityNode>, String> {
+        self.catch_up();
+        Ok(self
+            .screen()
+            .accessibility(selector)?
+            .map(crate::screen::protocol_accessibility))
+    }
     fn dialogs(&mut self) -> Result<Vec<Dialog>, String> {
         self.catch_up();
         Ok(self.screen().dialogs().to_vec())
@@ -421,6 +491,12 @@ impl Driver for Headless {
             "a screenshot needs a real platform, which draws the app: run the test with `--target`"
                 .into(),
         )
+    }
+    fn window_ids(&mut self) -> Result<Vec<String>, String> {
+        Headless::window_ids(self)
+    }
+    fn quit(&mut self) -> Result<bool, String> {
+        Ok(Headless::quit(self))
     }
     fn window_state(&mut self, id: &str) -> Result<Option<nsh_core::desktop::WindowState>, String> {
         Headless::window_state(self, id)
@@ -520,6 +596,9 @@ impl Remote {
 fn step_name(step: &TestStep) -> Option<String> {
     Some(match step {
         TestStep::Press { selector } => format!("press({selector})"),
+        TestStep::PressAt { selector, x, y } => {
+            format!("press({selector}, {}, {})", Points(*x), Points(*y))
+        }
         TestStep::LongPress { selector } => format!("longPress({selector})"),
         TestStep::Type { selector, text } => format!("type({selector}, {text:?})"),
         TestStep::Submit { selector } => format!("submit({selector})"),
@@ -527,9 +606,33 @@ fn step_name(step: &TestStep) -> Option<String> {
         TestStep::Scroll { selector, distance } => {
             format!("scroll({selector}, {})", Points(*distance))
         }
-        TestStep::Drag { selector, x, y } => {
-            format!("drag({selector}, {}, {})", Points(*x), Points(*y))
+        TestStep::Drag {
+            selector,
+            x,
+            y,
+            hold_ms,
+        } => {
+            let hold = hold_ms
+                .map(|ms| format!(", hold={ms}ms"))
+                .unwrap_or_default();
+            format!("drag({selector}, {}, {}{hold})", Points(*x), Points(*y))
         }
+        TestStep::DragAndHold {
+            selector,
+            x,
+            y,
+            hold_ms,
+        } => {
+            let hold = hold_ms
+                .map(|ms| format!(", hold={ms}ms"))
+                .unwrap_or_default();
+            format!(
+                "dragAndHold({selector}, {}, {}{hold})",
+                Points(*x),
+                Points(*y)
+            )
+        }
+        TestStep::Drop => String::from("drop()"),
         TestStep::PressKey { keys } => format!("keyboard.press({keys})"),
         TestStep::Hover { selector } => format!("hover({selector})"),
         TestStep::RightClick { selector } => format!("rightClick({selector})"),
@@ -580,9 +683,16 @@ impl Driver for Remote {
     fn step(&mut self, name: &str) {
         *self.step.lock().unwrap_or_else(|e| e.into_inner()) = name.to_owned();
     }
-    fn press(&mut self, selector: &str) -> Result<(), String> {
-        self.action(TestStep::Press {
-            selector: selector.into(),
+    fn press(&mut self, selector: &str, at: Option<Point<Points>>) -> Result<(), String> {
+        self.action(match at {
+            Some(at) => TestStep::PressAt {
+                selector: selector.into(),
+                x: at.x.0,
+                y: at.y.0,
+            },
+            None => TestStep::Press {
+                selector: selector.into(),
+            },
         })
     }
     fn long_press(&mut self, selector: &str) -> Result<(), String> {
@@ -612,8 +722,14 @@ impl Driver for Remote {
             distance: distance.0,
         })
     }
-    fn drag(&mut self, selector: &str, by: Point<Points>) -> Result<(), String> {
+    fn drag(
+        &mut self,
+        selector: &str,
+        by: Point<Points>,
+        options: DragOptions,
+    ) -> Result<(), String> {
         self.action(TestStep::Drag {
+            hold_ms: options.hold_ms(),
             selector: selector.into(),
             x: by.x.0,
             y: by.y.0,
@@ -622,8 +738,14 @@ impl Driver for Remote {
     fn press_key(&mut self, keys: &str) -> Result<(), String> {
         self.action(TestStep::PressKey { keys: keys.into() })
     }
-    fn drag_and_hold(&mut self, selector: &str, by: Point<Points>) -> Result<(), String> {
+    fn drag_and_hold(
+        &mut self,
+        selector: &str,
+        by: Point<Points>,
+        options: DragOptions,
+    ) -> Result<(), String> {
         self.action(TestStep::DragAndHold {
+            hold_ms: options.hold_ms(),
             selector: selector.into(),
             x: by.x.0,
             y: by.y.0,
@@ -755,6 +877,11 @@ impl Driver for Remote {
     fn answer_dialog(&mut self, answer: DialogAnswer) -> Result<(), String> {
         let button = match answer {
             DialogAnswer::Press(text) => Some(text),
+            DialogAnswer::TypeAndPress { .. } => {
+                return Err("a native host answers a dialog with a button only: \
+                     type into its text field in a headless run"
+                    .into());
+            }
             DialogAnswer::Dismiss => None,
         };
         self.action(TestStep::AnswerDialog { button })
@@ -792,6 +919,19 @@ impl Driver for Remote {
             effective_opacity: s.effective_opacity,
         }))
     }
+    fn layout(&mut self, selector: &str) -> Result<Option<nsh_dev::protocol::ViewLayout>, String> {
+        self.query(TestStep::Layout {
+            selector: selector.into(),
+        })
+    }
+    fn accessibility(
+        &mut self,
+        selector: Option<&str>,
+    ) -> Result<Option<nsh_dev::protocol::AccessibilityNode>, String> {
+        self.query(TestStep::Accessibility {
+            selector: selector.map(Into::into),
+        })
+    }
     fn span_style(&mut self, selector: &str) -> Result<ResolvedTextStyle, String> {
         let span: nsh_dev::protocol::SpanStyle = self.query(TestStep::SpanStyle {
             selector: selector.into(),
@@ -800,6 +940,9 @@ impl Driver for Remote {
             color: nsh_core::Color(span.color),
             font_size: nsh_core::Points(span.font_size),
             font_weight: span.font_weight,
+            line_height: nsh_core::Points(span.line_height),
+            letter_spacing: nsh_core::Points(span.letter_spacing),
+            font_family: span.font_family.as_deref().map(nsh_core::FontFamily::new),
             italic: span.italic,
             decoration: nsh_core::TextDecoration {
                 underline: span.underline,
@@ -844,6 +987,10 @@ impl Driver for Remote {
         self.query(TestStep::Scene {
             query: nsh_dev::protocol::SceneQuery::Storage,
         })
+    }
+    fn window_ids(&mut self) -> Result<Vec<String>, String> {
+        let value = self.query(TestStep::WindowIds)?;
+        serde_json::from_value(value).map_err(|e| format!("the host sent broken window ids: {e}"))
     }
     fn window_state(&mut self, id: &str) -> Result<Option<nsh_core::desktop::WindowState>, String> {
         let value = self.take(TestStep::WindowState { id: id.into() })?;

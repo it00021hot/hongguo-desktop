@@ -8,16 +8,23 @@
 
 use std::time::Duration;
 
-use nsh_core::{ApproxTextEngine, MountItem, Size, geometry::px};
+use crossbeam_channel::Receiver;
+use nsh_core::{
+    ApproxTextEngine, Command, EventKind, EventPayload, MountBatch, MountItem, Size,
+    desktop::{DesktopCommand, WindowEvent, WindowRequest},
+    geometry::px,
+};
 use nsh_engine::{Bundle, Engine, EngineConfig, Environment, Idiom, Os};
 
 use crate::ChannelSink;
 
 const APP: &str = r#"import { mount, Text, View } from "nsh";
 import { platform } from "nsh";
+import { Window } from "nsh/desktop";
 
 mount(
   () => (
+    <Window id="main">
     <View
       ios={{ accessibilityLabel: "ios" }}
       android={{ accessibilityLabel: "android" }}
@@ -26,6 +33,7 @@ mount(
     >
       <Text>{`${platform.os} ${platform.idiom} ${platform.desktop} ${platform.catalyst} ${platform.select({ ios: "i", mobile: "m", desktop: "d" })} ${platform.select({ native: "n", default: "-" })}`}</Text>
     </View>
+    </Window>
   ),
 );
 "#;
@@ -77,7 +85,6 @@ fn first_frame_of(app: &str, tag: &str, os: Os, idiom: Idiom) -> Vec<MountItem> 
         clipboard: None,
         host: Default::default(),
         picker: None,
-        speech: None,
         audio: None,
         windows: None,
         login_item: None,
@@ -169,46 +176,81 @@ fn platform_props_and_select_follow_the_os() {
 }
 
 const WINDOW_APP: &str = r#"import { mount, Text } from "nsh";
-import { Window, displays, windowState } from "nsh/desktop";
+import { Window, currentWindow, displays, windowState } from "nsh/desktop";
 
-// A placement saved on a display that is gone, given back before the
-// first render: NSH fits it on the display there is.
-Window.get("main")!.setPlacement({
-  mode: "maximized",
-  bounds: { origin: { x: -3000, y: 0 }, size: { width: 800, height: 600 } },
-});
+function App() {
+  const win = currentWindow();
+  // A placement saved on a display that is gone, given back before the
+  // first report: NSH fits it on the display there is.
+  win.setPlacement({
+    mode: "maximized",
+    bounds: { origin: { x: -3000, y: 0 }, size: { width: 800, height: 600 } },
+  });
 
-// Read in the binding, which runs again when they change (the component's
-// body runs once).
-const shown = () => {
-  const state = windowState();
-  return state
-    ? `${state.placement.mode} ${state.bounds.origin.x} ${state.minimized} ${!state.visible} ${state.display?.id}`
-    : "none";
-};
-const listed = () =>
-  displays().length
-    ? displays()
-        .map((d) => {
-          const cutouts = d.cutouts.map((c) => `${c.origin.x}+${c.size.width}x${c.size.height}`);
-          return `${d.id} ${d.primary} ${d.visibleBounds.size.width} [${cutouts.join(";")}]`;
-        })
-        .join(",")
-    : "no displays";
+  // Read in the binding, which runs again when they change (the
+  // component's body runs once).
+  const shown = () => {
+    const state = windowState();
+    return state
+      ? `${state.placement.mode} ${state.bounds.origin.x} ${state.minimized} ${!state.visible} ${state.display?.id}`
+      : "none";
+  };
+  const listed = () =>
+    displays().length
+      ? displays()
+          .map((d) => {
+            const cutouts = d.cutouts.map((c) => `${c.origin.x}+${c.size.width}x${c.size.height}`);
+            return `${d.id} ${d.primary} ${d.visibleBounds.size.width} [${cutouts.join(";")}]`;
+          })
+          .join(",")
+      : "no displays";
 
-mount(() => <Text>{`${shown()} | ${listed()}`}</Text>);
+  return <Text>{`${shown()} | ${listed()}`}</Text>;
+}
+
+mount(() => <Window id="main"><App /></Window>);
 "#;
 
 #[test]
 fn js_reads_the_window_and_the_displays_and_restores_bounds() {
     use nsh_core::{
-        Command,
-        desktop::{
-            DesktopCommand, Display, DisplayId, WindowMode, WindowPlacement, WindowRequest,
-            WindowState,
-        },
+        desktop::{Display, DisplayId, WindowMode, WindowPlacement, WindowState},
         geometry::{Bounds, point, size},
     };
+    /// Batches until a text starts with `until`: what the app showed so far,
+    /// the placements it asked for, and the window root its `OpenWindow`
+    /// named.
+    fn drain(
+        rx: &Receiver<MountBatch>,
+        texts: &mut Vec<String>,
+        restored: &mut Vec<WindowPlacement>,
+        window: &mut Option<nsh_core::NodeId>,
+        until: &str,
+    ) -> String {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while let Ok(batch) = rx.recv_deadline(deadline) {
+            for item in batch.items {
+                match item {
+                    MountItem::Text { text, .. } => texts.push(text.text.to_string()),
+                    MountItem::Command {
+                        id,
+                        command: Command::Desktop(command),
+                    } => match *command {
+                        DesktopCommand::OpenWindow(_) => *window = Some(id),
+                        DesktopCommand::Request(WindowRequest::SetPlacement(p)) => {
+                            restored.push(p);
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+            if let Some(text) = texts.last().filter(|t| t.starts_with(until)) {
+                return text.clone();
+            }
+        }
+        panic!("no text {until:?} in {texts:?}");
+    }
     let dir = std::env::temp_dir().join(format!("nsh-window-state-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let entry = dir.join("App.tsx");
@@ -231,14 +273,11 @@ fn js_reads_the_window_and_the_displays_and_restores_bounds() {
     // A notch at the top's middle.
     display.cutouts = vec![rect(620.0, 200.0, 32.0)];
     let window = rect(100.0, 800.0, 600.0);
-    let mut state = WindowState::new(window, WindowPlacement::new(WindowMode::Normal, window));
-    state.display = Some(display.id);
     let (tx, rx) = crossbeam_channel::unbounded();
     let config = EngineConfig {
         environment: Environment {
             os: Os::MacOs,
             idiom: Idiom::Desktop,
-            window_state: Some(state),
             ..Environment::default()
         },
         ..EngineConfig::new(nsh_engine::App::Js(Bundle::source(bundle.code)))
@@ -252,41 +291,31 @@ fn js_reads_the_window_and_the_displays_and_restores_bounds() {
         },
     )
     .unwrap();
-    // The last text starting with `until`, and the bounds the app gave the
-    // window until then.
     let mut texts = Vec::new();
-    let mut read = |until: &str| -> (String, Vec<WindowPlacement>) {
-        let mut restored = Vec::new();
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while let Ok(batch) = rx.recv_deadline(deadline) {
-            for item in batch.items {
-                match item {
-                    MountItem::Text { text, .. } => texts.push(text.text.to_string()),
-                    MountItem::Command {
-                        command: Command::Desktop(command),
-                        ..
-                    } => {
-                        if let DesktopCommand::Request(WindowRequest::SetPlacement(p)) = *command {
-                            restored.push(p);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(text) = texts.last().filter(|t| t.starts_with(until)) {
-                return (text.clone(), restored);
-            }
-        }
-        panic!("no text {until:?} in {texts:?}");
+    let mut restored = Vec::new();
+    let mut root = None;
+    // The window opened; the platform has reported no state yet.
+    let text = drain(&rx, &mut texts, &mut restored, &mut root, "none |");
+    assert_eq!(text, "none | 00000000000000ab true 1440 [620+200x32]");
+    let window_root = root.expect("the window opens");
+    let report = |state: WindowState| {
+        engine.control().dispatch_event(
+            window_root,
+            EventKind::Window,
+            EventPayload::Window(Box::new(WindowEvent::State(Box::new(state)))),
+        );
     };
-    // The bounds are fitted on the display there is (centered, the mode
-    // kept), and the window and displays are there as the app first
-    // renders.
-    let (text, restored) = read("normal 100 false false 00000000000000ab");
+    // The window and the displays are there as the platform reports them.
+    let mut state = WindowState::new(window, WindowPlacement::new(WindowMode::Normal, window));
+    state.display = Some(display.id);
+    report(state);
+    let text = drain(&rx, &mut texts, &mut restored, &mut root, "normal 100");
     assert_eq!(
         text,
         "normal 100 false false 00000000000000ab | 00000000000000ab true 1440 [620+200x32]"
     );
+    // The placement the app gave back before the first report is fitted on
+    // the display there is (centered, the mode kept).
     assert_eq!(
         restored,
         vec![WindowPlacement::new(
@@ -298,21 +327,12 @@ fn js_reads_the_window_and_the_displays_and_restores_bounds() {
     let mut maximized =
         WindowState::new(window, WindowPlacement::new(WindowMode::Maximized, window));
     maximized.display = Some(display.id);
-    engine.control().set_environment(Environment {
-        os: Os::MacOs,
-        idiom: Idiom::Desktop,
-        window_state: Some(maximized),
-        ..Environment::default()
-    });
-    read("maximized 100");
-    // Off desktops: none.
-    engine.control().set_environment(Environment {
-        os: Os::MacOs,
-        idiom: Idiom::Desktop,
-        ..Environment::default()
-    });
+    report(maximized);
+    drain(&rx, &mut texts, &mut restored, &mut root, "maximized 100");
+    // No display: none listed.
     engine.control().set_displays(Vec::new());
-    read("none | no displays");
+    let text = drain(&rx, &mut texts, &mut restored, &mut root, "maximized 100");
+    assert!(text.ends_with(" | no displays"), "{text}");
 }
 
 const FPS_APP: &str = r#"import { fpsEnabled, mount, setFpsEnabled, Text } from "nsh";
@@ -509,6 +529,7 @@ function Inspector() {
 }
 
 mount(() => (
+  <Window id="main">
   <View>
     <Text>{`main ${closed()}`}</Text>
     <Text>{`ref ${win()?.id ?? "none"} ${win()?.main}`}</Text>
@@ -526,6 +547,7 @@ mount(() => (
       <Inspector />
     </Window>
   </View>
+  </Window>
 ));
 "#;
 
@@ -597,10 +619,11 @@ fn js_windows_open_with_their_kinds_defaults_and_report_back() {
     // yet and no state.
     read("inspector 0 0 unknown", &mut opened, &mut removed);
     read("ref inspector false", &mut opened, &mut removed);
-    let [(id, open)] = &opened[..] else {
-        panic!("one window opens: {opened:?}");
-    };
-    let id = *id;
+    let (id, open) = opened
+        .iter()
+        .find(|(_, open)| open.options.id == "inspector")
+        .map(|(id, open)| (*id, open))
+        .unwrap_or_else(|| panic!("the inspector opens: {opened:?}"));
     assert_eq!(open.options.id, "inspector");
     assert_eq!(open.options.kind, WindowKind::Panel);
     let a = &open.options.attributes;
@@ -648,6 +671,7 @@ const placed = signal("not placed");
 let anchor: ViewRef | undefined;
 
 mount(() => (
+  <Window id="main">
   <View>
     <View style={{ height: 500 }} />
     <Text>{placed()}</Text>
@@ -667,6 +691,7 @@ mount(() => (
       </View>
     </Window>
   </View>
+  </Window>
 ));
 "#;
 
@@ -739,6 +764,127 @@ fn js_popovers_in_a_window_are_placed_in_it() {
     );
 }
 
+const WINDOW_RESIZE_APP: &str = r#"import { mount, View } from "nsh";
+import { Window } from "nsh/desktop";
+
+mount(() => (
+  <Window id="main">
+    <View />
+    <Window id="tools" defaultSize={{ width: 300, height: 100 }}>
+      <View style={{ flexGrow: 1 }} />
+    </Window>
+  </Window>
+));
+"#;
+
+/// What the engine handed a [`RootResizeSink`].
+#[derive(Debug)]
+enum RootSent {
+    Batch(MountBatch),
+    RootResized(nsh_core::NodeId, Size<nsh_core::Points>),
+}
+
+/// Hands batches and root resize reports to the test, in order.
+struct RootResizeSink(crossbeam_channel::Sender<RootSent>);
+
+impl nsh_engine::MountSink for RootResizeSink {
+    fn submit(&self, batch: MountBatch) {
+        let _ = self.0.send(RootSent::Batch(batch));
+    }
+
+    fn root_resized(&self, id: nsh_core::NodeId, size: Size<nsh_core::Points>) {
+        let _ = self.0.send(RootSent::RootResized(id, size));
+    }
+}
+
+/// A window of the app's own the platform resizes is reported laid out at
+/// its new size after the batch with that layout: what the macOS platform
+/// waits for, to show the window's content at the size AppKit animates it
+/// to (full screen, zoom).
+#[test]
+fn a_window_resize_is_reported_after_its_layout() {
+    use nsh_core::{Command, EdgeInsets, NodeId, desktop::DesktopCommand};
+    let dir = std::env::temp_dir().join(format!("nsh-window-resize-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let entry = dir.join("App.tsx");
+    std::fs::write(&entry, WINDOW_RESIZE_APP).unwrap();
+    let bundle = nsh_bundler::bundle(&nsh_bundler::BundleOptions {
+        entry,
+        minify: false,
+        split: false,
+        ui_sets: vec![nsh_base::registry().into()],
+        ..Default::default()
+    })
+    .unwrap();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let config = EngineConfig {
+        environment: Environment {
+            os: Os::MacOs,
+            idiom: Idiom::Desktop,
+            ..Environment::default()
+        },
+        ..EngineConfig::new(nsh_engine::App::Js(Bundle::source(bundle.code)))
+    };
+    let engine =
+        Engine::start_with(config, || ApproxTextEngine, RootResizeSink(tx), |_| {}).unwrap();
+    let next = || rx.recv_timeout(Duration::from_secs(5)).expect("a message");
+    // The tools window (the one in the main window) and its view.
+    let mut window: Option<NodeId> = None;
+    let mut inserted: Vec<(NodeId, NodeId)> = Vec::new();
+    while let Ok(sent) = rx.recv_timeout(Duration::from_millis(500)) {
+        let RootSent::Batch(batch) = sent else {
+            continue;
+        };
+        for item in batch.items {
+            match item {
+                MountItem::Command {
+                    id,
+                    command: Command::Desktop(command),
+                } if matches!(&*command, DesktopCommand::OpenWindow(open) if open.options.id == "tools") =>
+                {
+                    window = Some(id);
+                }
+                MountItem::Insert { parent, child, .. } => inserted.push((parent, child)),
+                _ => {}
+            }
+        }
+    }
+    let window = window.expect("the tools window opens");
+    let content = inserted
+        .iter()
+        .find(|(p, _)| *p == window)
+        .map(|(_, c)| *c)
+        .expect("the tools window's view");
+
+    // The layout at the new size comes first, then the report.
+    let size = Size::new(px(640.0), px(480.0));
+    engine
+        .control()
+        .set_root_size(window, size, EdgeInsets::default());
+    let RootSent::Batch(batch) = next() else {
+        panic!("the layout at the new size first");
+    };
+    assert!(
+        batch.items.iter().any(|i| matches!(
+            i,
+            MountItem::Frame { id, frame, .. }
+                if *id == content && frame.size.width.0 == 640.0 && frame.size.height.0 == 480.0
+        )),
+        "the window's content takes its size: {:?}",
+        batch.items
+    );
+    assert!(
+        matches!(next(), RootSent::RootResized(id, s) if id == window && s == size),
+        "then the report"
+    );
+
+    // Reported even when nothing changes: the platform waits for it.
+    engine
+        .control()
+        .set_root_size(window, size, EdgeInsets::default());
+    assert!(matches!(next(), RootSent::RootResized(id, s) if id == window && s == size));
+}
+
 const WINDOW_LATE_DIALOG_APP: &str = r#"import { mount, signal, Text, View } from "nsh";
 import { Dialog } from "nsh/base";
 import { Window } from "nsh/desktop";
@@ -750,6 +896,7 @@ mount(() => {
   setTimeout(() => shown.set(true), 50);
   setTimeout(() => asked.set(true), 200);
   return (
+    <Window id="main">
     <View>
       <Window id="settings" open={shown()} onOpenChange={(e) => shown.set(e.open)}>
         <View>
@@ -762,6 +909,7 @@ mount(() => {
         </View>
       </Window>
     </View>
+    </Window>
   );
 });
 "#;
@@ -857,15 +1005,18 @@ fn js_dialogs_mounted_in_an_open_window_name_it_before_they_show() {
 }
 
 const MATERIAL_APP: &str = r##"import { mount, View } from "nsh";
+import { Window } from "nsh/desktop";
 
 mount(
   () => (
+    <Window id="main">
     <View
       macos={{ backdrop: { material: "sidebar", blending: "behindWindow", state: "inactive" } }}
       style={{ backdropFilter: "blur(20px)", glassEffect: "regular", glassTintColor: "#ff0000" }}
     >
       <View macos={{ backdrop: { material: "popover" } }} />
     </View>
+    </Window>
   ),
 );
 "##;
@@ -1131,4 +1282,153 @@ mount(() => <Text>{`${horizontalSizeClass()} ${verticalSizeClass()}`}</Text>);
     environment.vertical_size_class = None;
     engine.control().set_environment(environment);
     read("regular compact");
+}
+
+const RUST_IN_JS_WINDOWS_APP: &str = r#"import { mount, View } from "nsh";
+import { Window } from "nsh/desktop";
+import { WindowArea } from "test/ui";
+
+mount(() => (
+  <Window id="main">
+    <View>
+      <WindowArea />
+      <Window id="left" title="Left"><View><WindowArea /></View></Window>
+      <Window id="right" title="Right"><WindowArea /></Window>
+    </View>
+  </Window>
+));
+"#;
+
+const RUST_IN_TOP_LEVEL_JS_WINDOWS_APP: &str = r#"import { mount, View } from "nsh";
+import { Window } from "nsh/desktop";
+import { HidesTitleBar, WindowArea } from "test/ui";
+
+function Content() {
+  return <View><HidesTitleBar /><WindowArea /></View>;
+}
+
+mount(() => (
+  <>
+    <Window id="devices" title="Devices">{() => <Content />}</Window>
+  </>
+));
+"#;
+
+/// An app root of windows alone has no main window: a Rust component in one
+/// of them, under a JS component, reads and changes that window, and opens
+/// no other.
+#[test]
+fn rust_components_in_top_level_js_windows_open_no_main_window() {
+    use nsh_core::desktop::DesktopCommand;
+    let (_engine, rx) = crate::components::start_with(
+        RUST_IN_TOP_LEVEL_JS_WINDOWS_APP,
+        Environment {
+            os: Os::MacOs,
+            idiom: Idiom::Desktop,
+            ..Environment::default()
+        },
+        None,
+        None,
+    );
+    let mut opened = Vec::new();
+    let mut texts = Vec::new();
+    for b in crate::components::until(&rx, |b| crate::components::shows(b, "devices 0 0 0")) {
+        for item in b.items {
+            match item {
+                MountItem::Text { text, .. } => texts.push(text.text.to_string()),
+                MountItem::Command {
+                    command: Command::Desktop(command),
+                    ..
+                } => {
+                    if let DesktopCommand::OpenWindow(open) = *command {
+                        opened.push(open.options.id.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(texts.iter().any(|t| t == "hidden in devices"), "{texts:?}");
+    assert!(!texts.iter().any(|t| t.starts_with("main ")), "{texts:?}");
+    assert_eq!(opened, ["devices"]);
+}
+
+/// A Rust component in a window JS opened renders in that window:
+/// `current_window()` is it, with its own title bar area, not the main
+/// window's (#2937).
+#[test]
+fn rust_components_in_js_windows_read_their_window() {
+    use nsh_core::{
+        desktop::{DesktopCommand, WindowEvent},
+        geometry::Edges,
+    };
+    let (engine, rx) = crate::components::start_with(
+        RUST_IN_JS_WINDOWS_APP,
+        Environment {
+            os: Os::MacOs,
+            idiom: Idiom::Desktop,
+            ..Environment::default()
+        },
+        None,
+        None,
+    );
+    let mut opened = Vec::new();
+    let mut texts = Vec::new();
+    let mut take = |batches: Vec<nsh_core::MountBatch>| {
+        for b in batches {
+            for item in b.items {
+                match item {
+                    MountItem::Text { text, .. } => texts.push(text.text.to_string()),
+                    MountItem::Command {
+                        id,
+                        command: Command::Desktop(command),
+                    } => {
+                        if let DesktopCommand::OpenWindow(open) = *command {
+                            opened.push((id, open.options.id.clone()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    };
+    take(crate::components::until(&rx, |b| {
+        crate::components::shows(b, "right 0 0 0")
+    }));
+    assert!(texts.iter().any(|t| t == "left 0 0 0"), "{texts:?}");
+    let id_of = |wanted: &str| {
+        opened
+            .iter()
+            .find(|(_, id)| id == wanted)
+            .map(|(n, _)| *n)
+            .unwrap_or_else(|| panic!("{wanted} opens: {opened:?}"))
+    };
+    let (left, right) = (id_of("left"), id_of("right"));
+    let control = engine.control();
+    let report = |id, top: f32, l: f32, r: f32| {
+        control.dispatch_event(
+            id,
+            EventKind::Window,
+            EventPayload::Window(Box::new(WindowEvent::TitleBar(Edges {
+                top: px(top),
+                left: px(l),
+                right: px(r),
+                ..Default::default()
+            }))),
+        );
+    };
+    // Different controls per window: each component follows its own.
+    report(left, 28.0, 72.0, 0.0);
+    report(right, 32.0, 0.0, 138.0);
+    let mut seen = Vec::new();
+    for b in crate::components::until(&rx, |b| crate::components::shows(b, "right 32 0 138")) {
+        for item in b.items {
+            if let MountItem::Text { text, .. } = item {
+                seen.push(text.text.to_string());
+            }
+        }
+    }
+    assert!(seen.iter().any(|t| t == "left 28 72 0"), "{seen:?}");
+    assert!(seen.iter().any(|t| t == "right 32 0 138"), "{seen:?}");
+    assert!(!seen.iter().any(|t| t.starts_with("main ")), "{seen:?}");
 }

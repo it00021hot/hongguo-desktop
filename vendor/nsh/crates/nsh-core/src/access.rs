@@ -40,15 +40,19 @@
 //! pages' own subresources are the web content's business); its `input`
 //! lets a web view's ref give the page trusted input (`sendInput`), which
 //! carries user activation and is granted only when declared, also for
-//! apps without a declaration. `host` lists
+//! apps without a declaration; its `runtimeOrigin` lets a web view's
+//! `allowOrigin` prop add one origin, decided while the app runs, to the
+//! hosts that web view may show ([`WebOrigin`]), also granted only when
+//! declared. `host` lists
 //! the functions of the embedding app `nsh/host` may call: names (1 to 128
 //! of `[A-Za-z0-9_.:-]`, without `..`; the core refuses calls of any other
 //! name), or prefixes of them ending in `*` (`true`: all of them); the
 //! host's events need no grant, the host sends them. `application` lets
 //! the app act on the application as a whole (`nsh/desktop`'s main window,
 //! application menu, tray, global shortcuts, `Application.quit`, `restart`
-//! and `setLaunchAtLogin`; context menus, shown in the app's own view, and
-//! the windows `windows` grants need none); `homeDir` lets `os.homedir()` tell the
+//! and `setLaunchAtLogin`, and `nsh/mobile`'s `AppSettings.open`, the app's
+//! page in the system's settings; context menus, shown in the app's own
+//! view, and the windows `windows` grants need none); `homeDir` lets `os.homedir()` tell the
 //! user's home directory. An app without `"capabilities"` (a standalone
 //! app, its developer's own) retains unrestricted HTTP, web views, the
 //! status bar, the clipboard, the picker, the share sheet, speech
@@ -403,14 +407,13 @@ pub(crate) fn in_root(path: &Path, (expanded, canonical): &(PathBuf, PathBuf)) -
 }
 
 /// Whether apps have the native file system here that `capabilities.fs`
-/// grants (`fs/promises`, local media files): on the desktops (macOS,
-/// Windows, Linux), never on iOS, Android or the web.
+/// grants (`fs/promises`, local media files, shared files): on every
+/// native OS (the desktops, iOS, Android — the capability confines each
+/// call to the roots the app declares, whatever the sandbox around
+/// them), never on the web, whose `fs/promises` works on the host's
+/// private virtual file system and whose pages name no local file.
 pub fn native_files(os: crate::platform::Os) -> bool {
-    cfg!(any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "windows"
-    )) && os.is_desktop()
+    cfg!(not(target_arch = "wasm32")) && os != crate::platform::Os::Web
 }
 
 /// The `capabilities.fs.read` roots local media files are read under, as
@@ -432,7 +435,7 @@ pub struct MediaFiles {
 impl MediaFiles {
     /// `access`'s read roots, expanded against `data_dir` and `paths`.
     /// Where the platform has no file system for apps (`available`
-    /// false: iOS, Android, as for `fs/promises`), none.
+    /// false: the web, as for `fs/promises`), none.
     pub fn new(
         access: &Access,
         data_dir: Option<&Path>,
@@ -640,6 +643,10 @@ pub struct Capabilities {
     /// Web views may take trusted input (`sendInput`, `webview.input`):
     /// never without a declaration ([`Capabilities::all`] leaves it off).
     pub webview_input: bool,
+    /// A web view's `allowOrigin` adds one origin to the hosts it may show
+    /// (`webview.runtimeOrigin`): never without a declaration
+    /// ([`Capabilities::all`] leaves it off).
+    pub webview_runtime_origin: bool,
     /// What web views' pages may capture (`webview.media`): never without a
     /// declaration ([`Capabilities::all`] leaves it empty).
     pub webview_media: Vec<WebMedia>,
@@ -654,7 +661,7 @@ pub struct Capabilities {
     /// text, links and files it shares leave the app where the user sends
     /// them.
     pub share: bool,
-    /// The app may recognize the user's speech (`Speech` of `nsh`): the
+    /// The app may recognize the user's speech (`Speech` of `nsh-extra`): the
     /// microphone listens while a session runs, and the transcript reaches
     /// the app.
     pub speech: bool,
@@ -663,9 +670,10 @@ pub struct Capabilities {
     pub notifications: bool,
     /// The app may play sound (`Sound` and `AudioPlayer` of `nsh`).
     pub audio: bool,
-    /// The app may act on the application as a whole (`nsh/desktop`): the
-    /// main window, the application menu, the tray, global shortcuts,
-    /// quitting, restarting and launching at login.
+    /// The app may act on the application as a whole: the main window, the
+    /// application menu, the tray, global shortcuts, quitting, restarting
+    /// and launching at login (`nsh/desktop`), and the app's page in the
+    /// system's settings (`nsh/mobile`'s `AppSettings`).
     pub application: bool,
     /// `os.homedir()` may tell the user's home directory.
     pub home_dir: bool,
@@ -677,7 +685,8 @@ pub struct Capabilities {
     /// `None`: none.
     pub open_url: Option<OpenUrlGrant>,
     /// The windows the app may open and what they may do (`nsh/desktop`'s
-    /// `Window`); `None`: none besides its main one.
+    /// `Window`); `None`: no window of the app's own. The first window needs
+    /// the grant too: no window is privileged.
     pub windows: Option<WindowsGrant>,
 }
 
@@ -692,7 +701,7 @@ pub struct WindowsGrant {
     pub kinds: Vec<crate::desktop::WindowKind>,
     /// The levels its windows may float at; empty: every level.
     pub levels: Vec<crate::desktop::WindowLevel>,
-    /// How many windows it may have open at once besides the main one;
+    /// How many windows it may have open at once, its first window included;
     /// `None`: any number.
     pub max: Option<u32>,
     /// Overlays and click-through windows (`pointerEvents: "none"`).
@@ -810,7 +819,8 @@ const RELATIVE_ADVICE: &str = "a relative path names no file in a native app: na
 const ASSET_ADVICE: &str = "bundled files are named by a path inside the app's files";
 
 /// [`media_grant_advice`] for a local file.
-const LOCAL_FILE_ADVICE: &str = "a local file is read under capabilities.fs.read in nsh.json: add a root that holds it (desktop apps)";
+const LOCAL_FILE_ADVICE: &str =
+    "a local file is read under capabilities.fs.read in nsh.json: add a root that holds it";
 
 /// [`media_grant_advice`] for a protocol-relative source without a base.
 const NO_SCHEME_ADVICE: &str =
@@ -937,8 +947,12 @@ fn local_file(uri: &str) -> Option<Option<PathBuf>> {
     (drive || rooted).then(|| Some(PathBuf::from(uri)))
 }
 
-/// The path `file:` URL `uri` names. The web has no local files to name.
-fn file_url_path(uri: &str) -> Option<PathBuf> {
+/// The path `file:` URL `uri` names, decoded as a URL is (percent
+/// encoding included). What [`media_url`] checks is what the platforms'
+/// loaders read: they resolve `file:` sources with this, never by
+/// stripping the prefix. The web has no local files to name.
+#[doc(hidden)]
+pub fn file_url_path(uri: &str) -> Option<PathBuf> {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = uri;
@@ -1066,6 +1080,88 @@ fn read_url(url: &str) -> Result<UrlParts<'_>, Unread> {
         path: if path.is_empty() { "/" } else { path },
         port,
     })
+}
+
+/// One origin a web view may show besides the hosts `webview.hosts`
+/// grants: its `allowOrigin`, for an origin known only while the app runs
+/// (a server the user named, a computer on the local network). Exact:
+/// the same scheme (`http` or `https`), the same host (ASCII, compared in
+/// lower case, never a subdomain or a suffix) and the same port (the
+/// scheme's default when none is written).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WebOrigin {
+    scheme: String,
+    host: String,
+    port: u16,
+}
+
+impl WebOrigin {
+    /// Reads `origin`, `scheme://host[:port]` with `http` or `https` and
+    /// nothing else: no user info, no path but `/`, no query or fragment,
+    /// an ASCII host (IDNA hosts are written in punycode) and no wildcard.
+    pub fn parse(origin: &str) -> Result<Self, String> {
+        let refused = |why: &str| Err(format!("`{origin}` is not an origin: {why}"));
+        let Some((scheme, rest)) = origin.split_once("://") else {
+            return refused("it is not `http://host` or `https://host`");
+        };
+        let scheme = scheme.to_ascii_lowercase();
+        if !matches!(scheme.as_str(), "http" | "https") {
+            return refused("its scheme is not http or https");
+        }
+        let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        let (authority, after) = rest.split_at(end);
+        if !matches!(after, "" | "/") {
+            return refused("it has a path, a query or a fragment");
+        }
+        if authority.contains('@') {
+            return refused("it has user info");
+        }
+        if !authority.is_ascii() || authority.contains('*') {
+            return refused("its host is not an ASCII host name or address");
+        }
+        let Ok(parts) = read_url(origin) else {
+            return refused("its host or port cannot be read");
+        };
+        let port = parts.port.unwrap_or(default_port(&scheme));
+        Ok(Self {
+            scheme,
+            host: parts.host,
+            port,
+        })
+    }
+
+    /// Whether `url` is at this origin: its scheme, host and port (the
+    /// scheme's default when it writes none). A `blob:` URL is at the
+    /// origin it embeds; an opaque one (`blob:null/…`) is at none.
+    pub fn contains(&self, url: &str) -> bool {
+        let url = blob_origin(url).unwrap_or(url);
+        read_url(url).is_ok_and(|parts| {
+            parts.scheme == self.scheme
+                && parts.host == self.host
+                && parts.port.unwrap_or(default_port(&parts.scheme)) == self.port
+        })
+    }
+}
+
+/// `scheme://host`, with `:port` when it is not the scheme's default.
+impl std::fmt::Display for WebOrigin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}://{}", self.scheme, self.host)?;
+        if self.port != default_port(&self.scheme) {
+            write!(f, ":{}", self.port)?;
+        }
+        Ok(())
+    }
+}
+
+/// The port a URL of `scheme` uses when it writes none (0: none).
+fn default_port(scheme: &str) -> u16 {
+    match scheme {
+        "http" => 80,
+        "https" => 443,
+        _ => 0,
+    }
 }
 
 /// The origin a `blob:` URL embeds (`blob:<origin>/<id>`, as
@@ -1263,7 +1359,7 @@ impl Capabilities {
             if check(
                 webview,
                 "capabilities.webview",
-                &["hosts", "input", "media"],
+                &["hosts", "input", "media", "runtimeOrigin"],
                 "capabilities.webview",
             )? {
                 caps.webview = Some(match webview.get("hosts") {
@@ -1274,6 +1370,11 @@ impl Capabilities {
                     caps.webview_input = input
                         .as_bool()
                         .ok_or("capabilities.webview.input must be a boolean")?;
+                }
+                if let Some(runtime_origin) = webview.get("runtimeOrigin") {
+                    caps.webview_runtime_origin = runtime_origin
+                        .as_bool()
+                        .ok_or("capabilities.webview.runtimeOrigin must be a boolean")?;
                 }
                 if let Some(media) = webview.get("media") {
                     caps.webview_media = strings(media, "capabilities.webview.media")?
@@ -1567,6 +1668,9 @@ impl Capabilities {
             if self.webview_input {
                 w.insert("input".into(), true.into());
             }
+            if self.webview_runtime_origin {
+                w.insert("runtimeOrigin".into(), true.into());
+            }
             if !self.webview_media.is_empty() {
                 let media = self.webview_media.iter().map(|m| m.as_str().into());
                 w.insert("media".into(), Value::Array(media.collect()));
@@ -1672,8 +1776,11 @@ fn valid_command(command: &str) -> bool {
         && !command.contains(['\0', '*'])
         // `absolute`, not `Path::is_absolute`: in the browser that is false for
         // every path, so `/bin/sh` refused the whole manifest and the app never
-        // started there.
-        && (absolute(Path::new(command))
+        // started there. A rooted path counts on Windows too, where
+        // `is_absolute` wants a drive (`/bin/sh`): one manifest serves every
+        // platform.
+        && (Path::new(command).has_root()
+            || absolute(Path::new(command))
             // A bare name has no drive (`C:git` is relative to the host's
             // directory on drive C).
             || (!command.contains(['/', '\\', ':']) && command != "." && command != ".."))
@@ -2352,6 +2459,22 @@ impl Access {
         }
     }
 
+    /// Whether a web view may show (or navigate to) `url`, granted by
+    /// `webview.hosts` ([`Self::allows_webview`]) or, when the app may add
+    /// one at run time ([`Self::allows_runtime_origin`]), at `origin`, the
+    /// web view's own `allowOrigin`.
+    pub fn allows_webview_with(&self, url: &str, origin: Option<&WebOrigin>) -> bool {
+        self.allows_webview(url)
+            || origin.is_some_and(|o| self.allows_runtime_origin() && o.contains(url))
+    }
+
+    /// Whether a web view's `allowOrigin` may add an origin to the hosts
+    /// it may show (`webview.runtimeOrigin`): declared and granted, never
+    /// by default.
+    pub fn allows_runtime_origin(&self) -> bool {
+        self.each(|c| c.webview.is_some() && c.webview_runtime_origin)
+    }
+
     /// Whether a web view's ref may give its page trusted input
     /// (`sendInput`): declared and granted, never by default.
     pub fn allows_web_input(&self) -> bool {
@@ -2419,8 +2542,8 @@ impl Access {
     /// Leaves out of `attributes` what the app's capabilities do not grant
     /// a window (an ungranted level, click-through without `overlay`) and
     /// returns their
-    /// names, for a warning. The main window needs no `windows` grant for
-    /// the rest.
+    /// names, for a warning. Without a `windows` grant only the defaults
+    /// remain; no window is privileged.
     pub fn deny_window_attributes(
         &self,
         attributes: &mut crate::desktop::WindowAttributes,
@@ -2468,7 +2591,8 @@ impl Access {
         self.each(|c| c.picker)
     }
 
-    /// Whether the app may recognize the user's speech (`Speech` of `nsh`).
+    /// Whether the app may recognize the user's speech (`Speech` of
+    /// `nsh-extra`, which checks it).
     pub fn allows_speech(&self) -> bool {
         self.each(|c| c.speech)
     }
@@ -2486,7 +2610,8 @@ impl Access {
 
     /// Whether the app may act on the application as a whole: the main
     /// window, the application menu, the tray, global shortcuts, quitting,
-    /// restarting and launching at login (`nsh/desktop`).
+    /// restarting and launching at login (`nsh/desktop`), and the app's page
+    /// in the system's settings (`nsh/mobile`'s `AppSettings`).
     pub fn allows_application(&self) -> bool {
         self.each(|c| c.application)
     }
@@ -2523,6 +2648,19 @@ pub fn resolve_reference(base: &str, location: &str) -> String {
     match url::Url::parse(base).and_then(|base| base.join(location)) {
         Ok(url) => url.into(),
         Err(_) => location.to_owned(),
+    }
+}
+
+/// Whether URLs `a` and `b` have the same origin (scheme, host and port,
+/// a scheme's default port included), as WHATWG's parser reads them. A URL
+/// it cannot read, or one with an opaque origin, shares none.
+pub fn is_same_origin(a: &str, b: &str) -> bool {
+    match (url::Url::parse(a), url::Url::parse(b)) {
+        (Ok(a), Ok(b)) => {
+            let origin = a.origin();
+            origin.is_tuple() && origin == b.origin()
+        }
+        _ => false,
     }
 }
 
@@ -2588,8 +2726,6 @@ mod tests {
             ]
         );
     }
-    use std::cell::Cell;
-
     use super::*;
 
     fn caps(json: &str) -> Capabilities {
@@ -3169,6 +3305,98 @@ mod tests {
             granted: Some(caps(r#"{ "host": ["bridge.*"] }"#)),
         };
         assert!(narrowed.allows_host("bridge.call") && !narrowed.allows_host("getUserInfo"));
+    }
+
+    #[test]
+    fn a_runtime_origin_is_exact() {
+        let o = |s: &str| WebOrigin::parse(s).unwrap();
+        let lan = o("http://192.168.1.5:9876");
+        for url in [
+            "http://192.168.1.5:9876/session-page/T/index.html",
+            "http://192.168.1.5:9876",
+            "HTTP://192.168.1.5:9876/x",
+            "blob:http://192.168.1.5:9876/6f3c2f0e",
+        ] {
+            assert!(lan.contains(url), "{url}");
+        }
+        for url in [
+            "http://192.168.1.5:9877/",
+            "https://192.168.1.5:9876/",
+            "http://a.192.168.1.5:9876/",
+            "http://192.168.1.5:9876@evil.com/",
+            "http://192.168.1.5:9876.evil.com/",
+            "blob:null/6f3c2f0e",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "http://192.168.1.5\\@evil.com:9876/",
+        ] {
+            assert!(!lan.contains(url), "{url}");
+        }
+        let named = o("https://Name.Example.net:443");
+        assert_eq!(named.to_string(), "https://name.example.net");
+        assert!(named.contains("https://name.example.net/x"));
+        assert!(named.contains("https://NAME.example.net:443/x"));
+        for url in [
+            "https://evil.name.example.net/",
+            "https://name.example.net.evil.com/",
+            "http://name.example.net/",
+        ] {
+            assert!(!named.contains(url), "{url}");
+        }
+        assert_eq!(o("http://h:80/").to_string(), "http://h");
+        assert_eq!(o("http://[::1]:8080").to_string(), "http://[::1]:8080");
+        for bad in [
+            "http://h/path",
+            "http://h?q",
+            "http://h#f",
+            "http://u@h",
+            "*",
+            "http://*",
+            "ftp://h",
+            "h:80",
+            "http://",
+            "http://h:99999",
+            "http://bücher.example",
+        ] {
+            assert!(WebOrigin::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_runtime_origin_needs_an_explicit_grant() {
+        let access = |json: &str| Access {
+            declared: caps(json),
+            granted: None,
+        };
+        let lan = WebOrigin::parse("http://192.168.1.5:9876").unwrap();
+        let page = "http://192.168.1.5:9876/index.html";
+        let declared = r#"{ "webview": { "hosts": ["127.0.0.1"], "runtimeOrigin": true } }"#;
+        assert!(access(declared).allows_runtime_origin());
+        assert!(access(declared).allows_webview_with(page, Some(&lan)));
+        assert!(!access(declared).allows_webview_with(page, None));
+        assert!(access(declared).allows_webview_with("http://127.0.0.1:1/", Some(&lan)));
+        // Not declared: the origin adds nothing, also for an app with every
+        // host's grant (which has the page through `hosts`).
+        let hosts = r#"{ "webview": { "hosts": ["127.0.0.1"] } }"#;
+        assert!(!access(hosts).allows_runtime_origin());
+        assert!(!access(hosts).allows_webview_with(page, Some(&lan)));
+        assert!(!Access::all().allows_runtime_origin());
+        assert!(Access::all().allows_webview_with(page, None));
+        assert!(
+            Capabilities::from_json(&serde_json::json!({ "webview": { "runtimeOrigin": 1 } }))
+                .is_err()
+        );
+        // It round-trips, and the embedding app may withhold it.
+        assert_eq!(
+            Capabilities::from_json(&caps(declared).to_json()),
+            Ok(caps(declared))
+        );
+        let narrowed = Access {
+            declared: caps(declared),
+            granted: Some(caps(r#"{ "webview": { "hosts": ["*"] } }"#)),
+        };
+        assert!(!narrowed.allows_runtime_origin());
     }
 
     #[test]
@@ -3885,7 +4113,7 @@ mod tests {
             granted: None,
         };
         let files = MediaFiles::new(&access, None, &TrustedPaths::default(), true);
-        let resolves = || RESOLVES.with(Cell::get);
+        let resolves = || RESOLVES.with(std::cell::Cell::get);
         let before = resolves();
         for outside in [
             root.join("elsewhere/x.png"),
@@ -4262,6 +4490,55 @@ mod tests {
             assert_eq!(again(&path(&data.join("link/b.png"))), None);
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `capabilities.fs` roots gate the file system every native OS has —
+    /// the desktops', iOS's, Android's; the web has none to gate.
+    #[test]
+    fn every_native_os_has_the_files_the_capability_gates() {
+        use crate::platform::Os;
+        for os in [Os::MacOs, Os::Windows, Os::Linux, Os::Ios, Os::Android] {
+            assert!(native_files(os), "{os:?}");
+        }
+        assert!(!native_files(Os::Web));
+    }
+
+    /// A `file:` URL's path is the URL's decoded path: `%20` is a space,
+    /// `file://localhost/` names no host that refuses.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn file_urls_name_their_decoded_path() {
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                file_url_path("file:///tmp/a%20b.png"),
+                Some(PathBuf::from("/tmp/a b.png"))
+            );
+            assert_eq!(
+                file_url_path("file://localhost/tmp/a.png"),
+                Some(PathBuf::from("/tmp/a.png"))
+            );
+            assert_eq!(file_url_path("file://host/tmp/a.png"), None);
+        }
+        #[cfg(windows)]
+        {
+            // A `file:` URL there names a drive: a path without one is no
+            // Windows path (this is what the URL standard says, and what
+            // the loaders resolve), and `localhost` is still no host to
+            // refuse.
+            assert_eq!(
+                file_url_path("file:///C:/a%20b.png"),
+                Some(PathBuf::from("C:\\a b.png"))
+            );
+            assert_eq!(
+                file_url_path("file://localhost/C:/a.png"),
+                Some(PathBuf::from("C:\\a.png"))
+            );
+            assert_eq!(file_url_path("file:///tmp/a.png"), None);
+            assert_eq!(file_url_path("file://localhost/tmp/a.png"), None);
+        }
+        assert_eq!(file_url_path("not a url"), None);
+        assert_eq!(file_url_path("https://a/b"), None);
     }
 
     /// A refused source's advice names the host it resolves to, as the

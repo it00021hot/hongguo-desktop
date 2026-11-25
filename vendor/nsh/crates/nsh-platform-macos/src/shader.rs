@@ -15,7 +15,7 @@
 //! says it is ready ([`Drive::Compiling`]). The shader views with a frame
 //! to render or collect
 //! ([`ShaderView::wants_frame`]: their uniforms or size changed, or they
-//! read `nsh.time`) render at their window's backing scale, on one frame
+//! read `nsh.time`) render at the scale they are shown at, on one frame
 //! callback of the surface's display link while their frames change with
 //! time or anything else wants frames; a view that only changed (a uniform
 //! the app set) renders once the batch is applied, and its frame shows
@@ -596,7 +596,7 @@ fn ui_changed_in(surface: &Rc<Surface>, view: &NshView, backdrops_only: bool) {
     if !backdrops_only {
         for mark in surface.shaders.overlays.borrow().iter() {
             if let Some(mark) = mark.upgrade()
-                && view.ns().isDescendantOf(&mark.host)
+                && view.is_within(&mark.host)
             {
                 mark.dirty.set(true);
             }
@@ -620,7 +620,7 @@ fn ui_changed_in(surface: &Rc<Surface>, view: &NshView, backdrops_only: bool) {
         // surface, for a screen's) again.
         let inside = !backdrops_only
             && shader.reads_children()
-            && (is_screen(shader.role) || view.ns().isDescendantOf(v.ns()));
+            && (is_screen(shader.role) || view.is_within(v.ns()));
         // A backdrop already due needs no look; one that is not is due
         // when the view draws under the reader where it reads (what draws
         // over it, it holds, or draws elsewhere is not in its picture).
@@ -666,7 +666,7 @@ pub(crate) fn start_transition(
         (shader.role, shader.view.overflow())
     };
     let host = host(surface, view, role);
-    let scale = host.ns().window().map_or(2.0, |w| w.backingScaleFactor());
+    let scale = crate::view::backing_scale_of(host.ns());
     let size = host.state().frame.size;
     // From what shows: the running transition's frame (copied on the
     // GPU), or the children.
@@ -1343,10 +1343,10 @@ fn take_pictures(surface: &Surface, view: &NshView, renderer: &Renderer, now: In
         return;
     }
     let host = host(surface, view, role);
-    let Some(window) = host.ns().window() else {
+    if host.ns().window().is_none() {
         return;
-    };
-    let scale = window.backingScaleFactor();
+    }
+    let scale = crate::view::backing_scale_of(host.ns());
     let size = host.state().frame.size;
     // The canvases leave the state while they draw (rendering lays out
     // and draws views, which may look at it).
@@ -1735,7 +1735,7 @@ fn show_frame(
         .as_ref()
         .map_or(ShaderRole::Fill, |s| s.role);
     let host = host(surface, view, role);
-    let scale = host.ns().window().map_or(2.0, |w| w.backingScaleFactor()) as f32;
+    let scale = crate::view::backing_scale_of(host.ns()) as f32;
     let size = host.state().frame.size;
     let mut state = view.state_mut();
     let Some(shader) = state.shader.as_mut() else {
@@ -1911,7 +1911,7 @@ impl NavOverlay {
     ) -> Option<NavOverlay> {
         surface.shaders.renderer()?;
         let layer = host.ns().layer()?;
-        let scale = host.ns().window().map_or(2.0, |w| w.backingScaleFactor());
+        let scale = crate::view::backing_scale_of(host.ns());
         let size = host.state().frame.size;
         let picture = picture_size(size, 0.0, scale)?;
         let mut view = surface_view();

@@ -32,6 +32,21 @@ final class StackBox extends FrameLayout implements Node {
     final int id;
     final Decor decor = new Decor();
 
+    // `clipPath`: what it draws shows, and touches reach it and its
+    // children, only inside it (`Decor.drawClipped`, `Decor.clipsOut`).
+    @Override
+    public void draw(android.graphics.Canvas canvas) {
+        decor.drawClipped(canvas, this, () -> super.draw(canvas));
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(android.view.MotionEvent e) {
+        if (e.getActionMasked() == android.view.MotionEvent.ACTION_DOWN && decor.clipsOut(this, e.getX(), e.getY())) {
+            return false;
+        }
+        return super.dispatchTouchEvent(e);
+    }
+
     /** An outer box shadow draws outside the bounds, and compositing the
      * view at alpha < 1 into the bounds-clipped offscreen buffer would cut
      * it; such a view reports no overlapping rendering, so the alpha
@@ -125,15 +140,21 @@ final class StackBox extends FrameLayout implements Node {
         if (transition != null) transition.cancel();
         if (oldTop == newTop || oldTop == null || newTop == null) {
             settle(leaving);
+            syncBottomBar(false);
             return;
         }
-        if (shaderAnimate(pushing ? oldTop : newTop, pushing ? newTop : oldTop, pushing, leaving)) return;
+        if (shaderAnimate(pushing ? oldTop : newTop, pushing ? newTop : oldTop, pushing, leaving)) {
+            syncBottomBar(true);
+            return;
+        }
         int animation = pushing ? newTop.animation : oldTop.animation;
         if (animation == 2) {
             settle(leaving);
+            syncBottomBar(false);
             return;
         }
         animate(pushing ? oldTop : newTop, pushing ? newTop : oldTop, pushing, animation == 1, 0, leaving);
+        syncBottomBar(true);
     }
 
     /**
@@ -283,30 +304,67 @@ final class StackBox extends FrameLayout implements Node {
         }
     }
 
+    /** Whether any shown screen in this stack hides the bottom tab bar. */
+    boolean hidesBottomBar() {
+        for (ScreenBox s : shown) {
+            if (s.hidesBottomBar) return true;
+        }
+        return false;
+    }
+
+    /** Updates nearby {@link TabBarComponent}s when this stack is currently visible. */
+    void syncBottomBar(boolean animated) {
+        if (!isVisibleStack() || !isAttachedToWindow()) return;
+        List<TabBarComponent> bars = new ArrayList<>();
+        ViewParent ancestor = getParent();
+        for (int step = 0; step < 6 && ancestor instanceof View; step++) {
+            View view = (View) ancestor;
+            collectTabBars(view, 4, bars);
+            if (!bars.isEmpty() || view instanceof NshView) break;
+            ancestor = view.getParent();
+        }
+        if (bars.isEmpty()) return;
+        boolean hidden = hidesBottomBar();
+        for (TabBarComponent bar : bars) bar.setNavigationHidden(hidden, animated);
+    }
+
+    private static void collectTabBars(View view, int depth, List<TabBarComponent> out) {
+        if (depth == 0 || view.getVisibility() != VISIBLE || !(view instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child.getVisibility() != VISIBLE) continue;
+            if (child instanceof ComponentBox && ((ComponentBox) child).component instanceof TabBarComponent) {
+                out.add((TabBarComponent) ((ComponentBox) child).component);
+            } else {
+                collectTabBars(child, depth - 1, out);
+            }
+        }
+    }
+
     // --- Back -----------------------------------------------------------------
 
     /** Whether the back button pops a screen of this stack. */
     boolean canPop() {
         ScreenBox top = top();
-        return shown.size() > 1 && top != null && !top.preventBack && showsForBack();
+        return shown.size() > 1 && top != null && !top.preventBack && isVisibleStack();
     }
 
     /** Whether the top screen keeps the user (`popOnBack` false): back only tells JS. */
     boolean preventsBack() {
         ScreenBox top = top();
-        return top != null && top.preventBack && showsForBack();
+        return top != null && top.preventBack && isVisibleStack();
     }
 
     /**
-     * Whether going back may act on this stack: shown, and it and every
-     * view of the app around it laid out with a size
-     * (`nsh_core::navigation::shown_in_layout`: `display: none`, a tab not
-     * selected, is laid out at no size, which `isShown` does not see). The
-     * frames are the core's (`Box.Frame`), set when a batch lands: a screen
-     * just added has not been measured yet, and the views the platform
-     * places between (screens, a scroll view's content) have none.
+     * Whether this stack is currently shown with non-empty frames across its
+     * ancestor chain (`display: none`, a tab not selected, lays out at no
+     * size, which `isShown` does not see). The frames are the core's
+     * (`Box.Frame`), set when a batch lands: a screen just added has not been
+     * measured yet, and the views the platform places between (screens, a
+     * scroll view's content) have none.
      */
-    private boolean showsForBack() {
+    boolean isVisibleStack() {
         if (!isShown()) return false;
         for (ViewParent p = this; p instanceof View && !(p instanceof NshView); p = p.getParent()) {
             if (((View) p).getLayoutParams() instanceof Box.Frame) {
@@ -330,7 +388,7 @@ final class StackBox extends FrameLayout implements Node {
      */
     void back() {
         ScreenBox top = top();
-        if (top == null || !showsForBack()) return;
+        if (top == null || !isVisibleStack()) return;
         if (mounter.wants(top.id, Native.BACK_REQUEST)) mounter.event(top.id, Native.BACK_REQUEST);
         if (!top.preventBack) pop();
     }
@@ -391,11 +449,13 @@ final class StackBox extends FrameLayout implements Node {
         List<ScreenBox> leaving = new ArrayList<>();
         leaving.add(upper);
         if (progress == 0 && shaderAnimate(lower, upper, false, leaving)) {
-            // Through its shader.
+            syncBottomBar(true);
         } else if (upper.animation == 2) {
             settle(leaving);
+            syncBottomBar(false);
         } else {
             animate(lower, upper, false, upper.animation == 1, progress, leaving);
+            syncBottomBar(true);
         }
         mounter.event(upper.id, Native.DISMISS);
     }
@@ -409,10 +469,33 @@ final class StackBox extends FrameLayout implements Node {
         final Box root;
         final Toolbar toolbar;
         int animation;
+        boolean hidesBottomBar;
         boolean gestureEnabled = true;
         /** `popOnBack` false: the back buttons only send `onBackPress`. */
         boolean preventBack;
         private final BackArrow arrow;
+        /**
+         * The title when the page has a `headerLeft` and a plain `title`: the
+         * toolbar lays its own title out before the views it holds, so the
+         * leading item would land after the title. This one is a view styled
+         * as the toolbar's title, in {@link #leadRow} after the leading item.
+         */
+        private final android.widget.TextView leadTitle;
+        /**
+         * The leading item and {@link #leadTitle}, side by side, as one view of
+         * the toolbar: the row mirrors itself in RTL and measures the item
+         * before the title, which the toolbar's own views do not (it measures
+         * them in order but lays them out reversed in RTL).
+         */
+        private final HeaderRow leadRow;
+        /** The toolbar's start content inset from its theme, kept for a page without a leading item. */
+        private final int themeInsetStart;
+        /**
+         * The title when the page centers it (`headerTitleAlign` "center"): the
+         * toolbar's own title always starts at the leading edge, while a view it
+         * holds with a centered gravity sits midway, between the items on either side.
+         */
+        private final android.widget.TextView centerTitle;
         private final Mounter mounter;
         /** The toolbar's gap above the bar (the status bar's height, in px), kept for a safe-area change. */
         private int barTop;
@@ -432,7 +515,63 @@ final class StackBox extends FrameLayout implements Node {
                 if (getParent() instanceof StackBox) ((StackBox) getParent()).back();
             });
             addView(toolbar, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0));
+            leadTitle = new android.widget.TextView(context);
+            leadTitle.setSingleLine(true);
+            leadTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            leadRow = new HeaderRow(context);
+            leadRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            themeInsetStart = toolbar.getContentInsetStart();
+            centerTitle = new android.widget.TextView(context);
+            centerTitle.setSingleLine(true);
+            centerTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            titleStyle();
             colors();
+        }
+
+        /** The configuration {@link #titleStyle} read its style in. */
+        private android.content.res.Configuration styledIn;
+
+        /**
+         * Styles the titles as the toolbar's own title, from the same theme (a
+         * host's toolbarStyle, the device's font). A text appearance is
+         * resolved when it is set, and its size depends on the configuration:
+         * smaller in landscape, larger with a larger font scale. The activity
+         * keeps its views through those changes, so the titles are styled
+         * again when the configuration they were styled in no longer holds.
+         */
+        private void titleStyle() {
+            styledIn = new android.content.res.Configuration(getResources().getConfiguration());
+            android.content.res.TypedArray style = getContext().obtainStyledAttributes(null,
+                    new int[] {android.R.attr.titleTextAppearance}, android.R.attr.toolbarStyle, 0);
+            int appearance = style.getResourceId(0, android.R.style.TextAppearance_Material_Widget_Toolbar_Title);
+            style.recycle();
+            // The toolbar's own title (a page with a plain title and no leading item).
+            toolbar.setTitleTextAppearance(getContext(), appearance);
+            leadTitle.setTextAppearance(appearance);
+            centerTitle.setTextAppearance(appearance);
+            // The gap to the leading item is the title's own padding: a margin on a
+            // toolbar's view left no gap on an API 35 emulator.
+            leadTitle.setPaddingRelative(Math.round(16 * mounter.density), 0, 0, 0);
+        }
+
+        /** Styles the titles again if the configuration changed since (a text appearance resets their colors). */
+        private void restyle() {
+            if (styledIn.diff(getResources().getConfiguration()) == 0) return;
+            titleStyle();
+            colors();
+        }
+
+        @Override
+        protected void onConfigurationChanged(android.content.res.Configuration config) {
+            super.onConfigurationChanged(config);
+            restyle();
+        }
+
+        /** A screen out of the window misses configuration changes: one coming back catches up. */
+        @Override
+        protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            restyle();
         }
 
         /**
@@ -453,6 +592,8 @@ final class StackBox extends FrameLayout implements Node {
             setBackgroundColor(themeColor(theme, android.R.attr.colorBackground, 0xffffffff));
             int primary = themeColor(theme, android.R.attr.textColorPrimary, 0xff1f2328);
             toolbar.setTitleTextColor(titleColor != 0 ? titleColor : primary);
+            leadTitle.setTextColor(titleColor != 0 ? titleColor : primary);
+            centerTitle.setTextColor(titleColor != 0 ? titleColor : primary);
             if (transparent) toolbar.setBackgroundColor(0);
             else toolbar.setBackgroundColor(background != 0 ? background : themeColor(theme, android.R.attr.colorBackground, 0xffffffff));
             arrow.setColor(tint != 0 ? tint : primary);
@@ -504,14 +645,18 @@ final class StackBox extends FrameLayout implements Node {
         /** Applies `encode.rs` `screen_config`. */
         void configure(Mounter m, String title, boolean shown, boolean transparent, int tint, int background,
                        int titleColor, boolean backVisible, boolean gesture, boolean preventBack, int animation,
-                       int left, int right, int titleView, float headerHeight, boolean canGoBack,
-                       String backTitle) {
+                       int left, int right, int titleView, float headerHeight, boolean centered,
+                       boolean hidesBottomBar, boolean canGoBack, String backTitle) {
             this.animation = animation;
+            this.hidesBottomBar = hidesBottomBar;
             this.gestureEnabled = gesture;
             this.preventBack = preventBack;
             float d = m.density;
             toolbar.setVisibility(shown ? VISIBLE : GONE);
-            toolbar.setTitle(titleView >= 0 ? null : title);
+            boolean titled = titleView < 0 && title != null && !title.isEmpty();
+            boolean centerTitled = centered && titled;
+            boolean leadTitled = !centered && titled && left >= 0 && m.views.get(left) != null;
+            toolbar.setTitle(titleView >= 0 || leadTitled || centerTitled ? null : title);
             int height = Math.round(headerHeight * d);
             int bar = Math.round(56 * d);
             barTop = Math.max(0, height - bar);
@@ -524,16 +669,53 @@ final class StackBox extends FrameLayout implements Node {
             this.titleColor = titleColor;
             this.transparent = transparent;
             colors();
-            toolbar.setNavigationIcon(backVisible && canGoBack ? arrow : null);
-            toolbar.setNavigationContentDescription(backVisible && canGoBack ? upDescription(backTitle) : null);
+            boolean up = backVisible && canGoBack;
+            toolbar.setNavigationIcon(up ? arrow : null);
+            toolbar.setNavigationContentDescription(up ? upDescription(backTitle) : null);
+            // A leading item stands where the navigation icon would: the toolbar's
+            // navigation button starts at the edge and centers its icon in it, so
+            // the item starts LEADING_INSET from the edge instead of after the
+            // theme's content inset (16dp), which is the gap kept for a title.
+            boolean leads = !up && left >= 0 && m.views.get(left) != null;
+            toolbar.setContentInsetsRelative(leads ? Math.round(LEADING_INSET * d) : themeInsetStart,
+                    toolbar.getContentInsetEnd());
             // Header items: the core sized them; the toolbar places them. A `header`
             // slot (the whole bar where NSH draws it) is never placed: the toolbar is the bar.
             for (int i = toolbar.getChildCount() - 1; i >= 0; i--) {
-                if (toolbar.getChildAt(i) instanceof Box) toolbar.removeViewAt(i);
+                View child = toolbar.getChildAt(i);
+                if (child instanceof Box || child == leadRow || child == centerTitle) toolbar.removeViewAt(i);
             }
-            add(m, left, android.view.Gravity.START);
-            add(m, titleView, android.view.Gravity.START);
-            add(m, right, android.view.Gravity.END);
+            leadRow.removeAllViews();
+            if (leadTitled) {
+                // The toolbar measures the views it holds in order: the trailing item
+                // first, so a long title is cut short rather than pushing it off.
+                add(m, right, android.view.Gravity.END);
+                View item = m.views.get(left);
+                if (item.getParent() instanceof ViewGroup) ((ViewGroup) item.getParent()).removeView(item);
+                int[] size = m.headerSizes.get(left);
+                leadRow.addView(item, new android.widget.LinearLayout.LayoutParams(
+                        Math.max(1, size != null ? size[0] : 1), Math.max(1, size != null ? size[1] : 1)));
+                leadTitle.setText(title);
+                leadRow.addView(leadTitle, new android.widget.LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                toolbar.addView(leadRow, new Toolbar.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL));
+            } else {
+                add(m, left, android.view.Gravity.START);
+                if (!centered) add(m, titleView, android.view.Gravity.START);
+                add(m, right, android.view.Gravity.END);
+                // Centered, the title comes last: the toolbar measures the views it holds
+                // in order, so a long plain title gets what the items on either side leave
+                // and is cut short between them. A `headerTitle` view keeps the size the
+                // core laid it out at.
+                if (centered) add(m, titleView, android.view.Gravity.CENTER_HORIZONTAL);
+                if (centerTitled) {
+                    centerTitle.setText(title);
+                    toolbar.addView(centerTitle, new Toolbar.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            android.view.Gravity.CENTER_HORIZONTAL | android.view.Gravity.CENTER_VERTICAL));
+                }
+            }
         }
 
         /**
@@ -559,6 +741,19 @@ final class StackBox extends FrameLayout implements Node {
             // An end margin: in RTL the Toolbar lays END items out from the left edge.
             if (gravity == android.view.Gravity.END) p.setMarginEnd(Math.round(12 * m.density));
             toolbar.addView(item, p);
+        }
+
+        /**
+         * Where a page's leading header item starts (dp): Material's top app
+         * bar puts its 48dp navigation target 4dp from the edge.
+         */
+        private static final float LEADING_INSET = 4;
+
+        /** The row holding a page's leading header item and its title (see {@link #leadRow}). */
+        static final class HeaderRow extends android.widget.LinearLayout {
+            HeaderRow(Context context) {
+                super(context);
+            }
         }
 
         private static int themeColor(Context context, int attr, int fallback) {

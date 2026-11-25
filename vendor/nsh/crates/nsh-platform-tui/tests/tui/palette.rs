@@ -106,7 +106,7 @@ fn saturated_colors_take_their_hues_accent_and_low_contrast_ones_are_dim() {
         Color::Red,
         Color::Yellow,
         Color::Cyan,
-        Color::Blue,
+        crate::ACCENT,
         Color::Magenta,
     ];
     for (y, accent) in accents.into_iter().enumerate() {
@@ -427,13 +427,13 @@ fn selection_is_a_select_band_and_bold_and_focus_the_accent_on_surfaces() {
         terminal
             .draw(|frame| view.render(frame, frame.area()))
             .unwrap();
-        if terminal.backend().buffer()[(0, 1)].bg == Color::Blue {
+        if terminal.backend().buffer()[(0, 1)].bg == crate::ACCENT {
             break;
         }
         assert!(rx.recv_deadline(deadline).is_ok(), "focus did not show");
     }
     let buffer = terminal.backend().buffer();
-    assert_eq!(buffer[(9, 1)].bg, Color::Blue, "the band spans the row");
+    assert_eq!(buffer[(9, 1)].bg, crate::ACCENT, "the band spans the row");
     assert!(!buffer[(0, 1)].modifier.contains(Modifier::BOLD));
     assert!(!buffer[(0, 1)].modifier.contains(Modifier::REVERSED));
     assert_eq!(
@@ -441,6 +441,134 @@ fn selection_is_a_select_band_and_bold_and_focus_the_accent_on_surfaces() {
         select,
         "the selection keeps its gray band"
     );
+}
+
+/// A sidebar's row for the shown page, a column of padding before its
+/// label, as the gallery's.
+#[component]
+fn CurrentPage() -> impl IntoElement {
+    view()
+        .flex_1()
+        .child(
+            view()
+                .w(px(96.0))
+                .h(px(16.0))
+                .px(px(8.0))
+                .on_press(|_: &()| {})
+                .accessibility_state(nsh_core::AccessibilityState {
+                    selected: true,
+                    current: Some(nsh_core::AccessibilityCurrent::Page),
+                    ..Default::default()
+                })
+                .child(text("page")),
+        )
+        .child(text("ready"))
+}
+
+/// A list's chosen row with a free leading column is Bubbles' selection:
+/// an accent rail there and its label in the accent, bold, no band.
+#[test]
+fn a_current_row_is_an_accent_rail_and_label_not_a_band() {
+    let (mut view, rx) = surfaces();
+    let mut terminal = Terminal::new(TestBackend::new(14, 4)).unwrap();
+    view.load(App::Rust(Root::new::<CurrentPage>(|| ())))
+        .unwrap();
+    draw_until(&mut view, &mut terminal, &rx, "ready");
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(0, 0)].symbol(), "\u{258c}", "the rail");
+    assert_eq!(buffer[(0, 0)].fg, crate::ACCENT);
+    assert_eq!(buffer[(1, 0)].symbol(), "p");
+    assert_eq!(buffer[(1, 0)].fg, crate::ACCENT, "the label in the accent");
+    assert!(buffer[(1, 0)].modifier.contains(Modifier::BOLD));
+    assert_ne!(buffer[(1, 0)].bg, Color::Rgb(56, 56, 56), "no select band");
+    assert_ne!(buffer[(1, 0)].bg, crate::ACCENT, "no accent band");
+}
+
+/// A framed card holding a segmented control (a row of tabs, one chosen),
+/// as the gallery's Keyboard card.
+#[component]
+fn FramedSegmented() -> impl IntoElement {
+    let tab = |label: &'static str, selected: bool| {
+        view()
+            .w(px(48.0))
+            .h(px(16.0))
+            .on_press(|_: &()| {})
+            .role(nsh_core::AccessibilityRole::Tab)
+            .accessibility_state(nsh_core::AccessibilityState {
+                selected,
+                ..Default::default()
+            })
+            .child(text(label))
+    };
+    view()
+        .flex_1()
+        .child(
+            view()
+                .w(px(160.0))
+                .border_1()
+                .border_color(nsh_core::color::rgb(0x3f3f46))
+                .py(px(16.0))
+                .child(
+                    view()
+                        .flex_row()
+                        .child(tab("none", false))
+                        .child(tab("drag", true)),
+                ),
+        )
+        .child(text("ready"))
+}
+
+/// A card around a segmented control is no list pane: the chosen tab is
+/// not a row the keys move through, so when a tab has the focus the card
+/// keeps its line as it rests (no accent, no bold), the tab showing it.
+#[test]
+fn a_card_holding_a_focused_segmented_control_keeps_its_line() {
+    let (mut view, rx) = surfaces();
+    let mut terminal = Terminal::new(TestBackend::new(24, 8)).unwrap();
+    view.load(App::Rust(Root::new::<FramedSegmented>(|| ())))
+        .unwrap();
+    draw_until(&mut view, &mut terminal, &rx, "ready");
+    let frame = |buffer: &Buffer| {
+        (0..buffer.area.height)
+            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+            .filter(|&at| {
+                buffer[at]
+                    .symbol()
+                    .chars()
+                    .next()
+                    .is_some_and(|c| ('\u{2500}'..='\u{257f}').contains(&c))
+            })
+            .map(|at| (at, buffer[at].fg, buffer[at].modifier))
+            .collect::<Vec<_>>()
+    };
+    let rest = frame(terminal.backend().buffer());
+    assert!(!rest.is_empty(), "the card draws its line");
+    view.handle(nsh_platform_tui::Input::Key {
+        key: "Tab".into(),
+        modifiers: Default::default(),
+        release: false,
+    });
+    // Draw until the app goes quiet: the focus moved and shows.
+    loop {
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .unwrap();
+        if rx
+            .recv_timeout(std::time::Duration::from_millis(300))
+            .is_err()
+        {
+            break;
+        }
+    }
+    let buffer = terminal.backend().buffer();
+    assert!(
+        (0..buffer.area.height)
+            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+            .any(|at| matches!(buffer[at].symbol(), "n" | "d") && buffer[at].bg == crate::ACCENT),
+        "a tab shows the focus"
+    );
+    let focused = frame(terminal.backend().buffer());
+    assert_eq!(focused, rest, "the card's line as it rests");
 }
 
 /// A framed card holding a button, as a menu bar's or a form's.
@@ -504,14 +632,18 @@ fn a_card_holding_the_focused_button_keeps_its_line_out_of_the_accent() {
         let go = (0..buffer.area.height)
             .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
             .find(|&at| buffer[at].symbol() == "g");
-        if go.is_some_and(|at| buffer[at].bg == Color::Blue) {
+        if go.is_some_and(|at| buffer[at].bg == crate::ACCENT) {
             break;
         }
         assert!(rx.recv_deadline(deadline).is_ok(), "focus did not show");
     }
     let focused = frame(terminal.backend().buffer());
     for ((at, fg, _), (_, rest_fg, _)) in focused.iter().zip(&rest) {
-        assert_ne!(*fg, Color::Blue, "the card's line at {at:?} in the accent");
+        assert_ne!(
+            *fg,
+            crate::ACCENT,
+            "the card's line at {at:?} in the accent"
+        );
         assert_eq!(fg, rest_fg, "the card's line at {at:?} changed");
     }
     assert_eq!(focused, rest, "the card's line as it rests");
@@ -581,6 +713,43 @@ fn a_chosen_control_its_hue_already_tells_apart_takes_no_select_band() {
         Color::Rgb(56, 56, 56),
         "a chosen label of no hue keeps its select band"
     );
+}
+
+/// A select's trigger (a combobox holding no field, no fill of its own)
+/// over a field.
+#[component]
+fn SelectTrigger() -> impl IntoElement {
+    view()
+        .flex_1()
+        .child(
+            view()
+                .w(px(120.0))
+                .h(px(16.0))
+                .role(AccessibilityRole::Combobox)
+                .on_press(|_: &()| {})
+                .child(text("Newest")),
+        )
+        .child(nsh_base::input().w(px(80.0)).h(px(16.0)))
+        .child(text("ready"))
+}
+
+#[test]
+fn a_select_trigger_is_a_field_band() {
+    let (mut view, rx) = surfaces();
+    let mut terminal = Terminal::new(TestBackend::new(24, 4)).unwrap();
+    view.load(App::Rust(Root::new::<SelectTrigger>(|| ())))
+        .unwrap();
+    draw_until(&mut view, &mut terminal, &rx, "ready");
+    let buffer = terminal.backend().buffer();
+    let field = buffer[(0, 1)].bg;
+    assert_ne!(field, Color::Reset, "the field is a band");
+    for x in 0..15 {
+        assert_eq!(
+            buffer[(x, 0)].bg,
+            field,
+            "the trigger is the same band: {x}"
+        );
+    }
 }
 
 /// An input group: the app's field box, a prefix, the field and a
@@ -840,7 +1009,7 @@ fn the_pane_holding_the_focus_shows_its_line_and_selection_in_the_accent() {
             .unwrap();
         let buffer = terminal.backend().buffer();
         let (x, y) = find(buffer, "selA");
-        if buffer[(x, y)].bg == Color::Blue {
+        if buffer[(x, y)].bg == crate::ACCENT {
             break;
         }
         assert!(
@@ -861,7 +1030,7 @@ fn the_pane_holding_the_focus_shows_its_line_and_selection_in_the_accent() {
     let top = rows.iter().position(|r| r.contains('┌')).unwrap() as u16;
     assert_eq!(
         buffer[(0, top)].fg,
-        Color::Blue,
+        crate::ACCENT,
         "the focused pane's line: {rows:#?}"
     );
     let second = rows[usize::from(top)].rfind('┌').unwrap();
@@ -965,6 +1134,11 @@ fn a_swatch_is_its_own_color_with_text_in_black_or_white() {
         buffer[(0, 0)].bg,
         Color::Rgb(255, 0, 0),
         "without surfaces a swatch is still its own color"
+    );
+    assert_eq!(
+        buffer[(4, 0)].bg,
+        Color::Rgb(39, 39, 42),
+        "a gray one too, not the standard colors' gray (a color area's pale Cells)"
     );
 }
 
@@ -1157,7 +1331,7 @@ fn a_command_s_highlighted_item_in_the_focused_pane_is_a_full_row_accent_band() 
         let (x, y) = at(buffer, "Alpha");
         assert_ne!(
             buffer[(x, y)].bg,
-            Color::Blue,
+            crate::ACCENT,
             "no band before the focus comes"
         );
     }
@@ -1173,7 +1347,7 @@ fn a_command_s_highlighted_item_in_the_focused_pane_is_a_full_row_accent_band() 
             .unwrap();
         let buffer = terminal.backend().buffer();
         let (x, y) = at(buffer, "Alpha");
-        if buffer[(x, y)].bg == Color::Blue {
+        if buffer[(x, y)].bg == crate::ACCENT {
             break;
         }
         assert!(
@@ -1192,16 +1366,16 @@ fn a_command_s_highlighted_item_in_the_focused_pane_is_a_full_row_accent_band() 
     let line = rows[usize::from(y)][..line].chars().count() as u16;
     assert_eq!(
         buffer[(line - 1, y)].bg,
-        Color::Blue,
+        crate::ACCENT,
         "to the frame: {rows:#?}"
     );
     assert_ne!(
         buffer[(line, y)].bg,
-        Color::Blue,
+        crate::ACCENT,
         "not on the frame: {rows:#?}"
     );
     let (bx, by) = at(buffer, "Beta");
-    assert_ne!(buffer[(bx, by)].bg, Color::Blue, "one band: {rows:#?}");
+    assert_ne!(buffer[(bx, by)].bg, crate::ACCENT, "one band: {rows:#?}");
 }
 
 /// An avatar's presence dot: a round 10pt box of a green fill pinned to
@@ -1471,7 +1645,7 @@ fn a_codes_next_cell_shows_focus_with_its_frame_in_the_accent() {
     ] {
         assert_eq!(
             buffer[cell].fg,
-            Color::Blue,
+            crate::ACCENT,
             "the next cell's line in the accent\n{dump}"
         );
     }
@@ -1484,7 +1658,7 @@ fn a_codes_next_cell_shows_focus_with_its_frame_in_the_accent() {
     for dx in 1..4 {
         assert_ne!(
             buffer[(x + dx, y + 1)].bg,
-            Color::Blue,
+            crate::ACCENT,
             "nothing filled in the accent\n{dump}"
         );
     }
@@ -1627,7 +1801,7 @@ fn an_accent_band_spans_its_whole_row_over_a_child_s_fill() {
             .map(|x| buffer[(x, y)].symbol())
             .collect();
         let x = row[..row.find("Inbox").unwrap()].chars().count() as u16;
-        if buffer[(x, y)].bg == Color::Blue {
+        if buffer[(x, y)].bg == crate::ACCENT {
             break;
         }
         assert!(
@@ -1645,7 +1819,7 @@ fn an_accent_band_spans_its_whole_row_over_a_child_s_fill() {
     for x in left + 1..right {
         assert_eq!(
             buffer[(x, y)].bg,
-            Color::Blue,
+            crate::ACCENT,
             "column {x} of the row on the band: {row:?}"
         );
     }
@@ -1791,7 +1965,7 @@ fn a_selected_button_on_the_accent_band_reads_in_the_band_s_contrast() {
             .draw(|frame| view.render(frame, frame.area()))
             .unwrap();
         let buffer = terminal.backend().buffer();
-        if buffer[at(buffer)].bg == Color::Blue {
+        if buffer[at(buffer)].bg == crate::ACCENT {
             break;
         }
         assert!(rx.recv_deadline(deadline).is_ok(), "the button's band");
@@ -1799,10 +1973,10 @@ fn a_selected_button_on_the_accent_band_reads_in_the_band_s_contrast() {
     let buffer = terminal.backend().buffer();
     let (x, y) = at(buffer);
     for x in x..x + 7 {
-        assert_eq!(buffer[(x, y)].bg, Color::Blue);
+        assert_eq!(buffer[(x, y)].bg, crate::ACCENT);
         assert_ne!(
             buffer[(x, y)].fg,
-            Color::Blue,
+            crate::ACCENT,
             "column {x}: the label reads on its band"
         );
     }
@@ -1978,7 +2152,7 @@ fn a_selected_swatch_in_the_focused_pane_keeps_its_color() {
         (x + 6, y)
     };
     let color = terminal.backend().buffer()[chosen(terminal.backend().buffer())].bg;
-    assert_ne!(color, Color::Blue, "its own color, not the accent");
+    assert_ne!(color, crate::ACCENT, "its own color, not the accent");
     {
         // Unfocused, the chosen swatch shows a check in its middle, in a
         // color that reads on it; the other has none.
@@ -2055,7 +2229,7 @@ fn a_toggle_that_is_on_is_bold_on_a_gray_band_and_the_focus_is_the_accent() {
     let at = |buffer: &Buffer, word: &str| buffer[cell_of(buffer, word)].clone();
     let gray = at(terminal.backend().buffer(), "Bold").bg;
     tab_until(&mut view, &mut terminal, &rx, "Bold's focus", |buffer| {
-        at(buffer, "Bold").bg == Color::Blue
+        at(buffer, "Bold").bg == crate::ACCENT
     });
     let bold = at(terminal.backend().buffer(), "Bold");
     assert!(bold.modifier.contains(Modifier::BOLD), "on, and focused");
@@ -2063,11 +2237,11 @@ fn a_toggle_that_is_on_is_bold_on_a_gray_band_and_the_focus_is_the_accent() {
     // bold in the focused pane, never the accent; the focused one, off,
     // takes the accent without bold.
     tab_until(&mut view, &mut terminal, &rx, "Italic's focus", |buffer| {
-        at(buffer, "Italic").bg == Color::Blue
+        at(buffer, "Italic").bg == crate::ACCENT
     });
     let buffer = terminal.backend().buffer();
     let bold = at(buffer, "Bold");
-    assert_ne!(bold.bg, Color::Blue, "on is not the accent");
+    assert_ne!(bold.bg, crate::ACCENT, "on is not the accent");
     assert_eq!(bold.bg, gray, "on keeps its gray band");
     assert!(bold.modifier.contains(Modifier::BOLD));
     assert!(!at(buffer, "Italic").modifier.contains(Modifier::BOLD));
@@ -2112,18 +2286,18 @@ fn a_color_area_s_picked_cell_stands_on_the_accent_while_it_has_the_focus() {
     view.load(App::Rust(Root::new::<AreaMark>(|| ()))).unwrap();
     draw_until(&mut view, &mut terminal, &rx, "ready");
     let mark = |buffer: &Buffer| buffer[cell_of(buffer, "◆")].clone();
-    assert_ne!(mark(terminal.backend().buffer()).bg, Color::Blue);
+    assert_ne!(mark(terminal.backend().buffer()).bg, crate::ACCENT);
     tab_until(
         &mut view,
         &mut terminal,
         &rx,
         "the picked Cell's focus",
-        |buffer| mark(buffer).bg == Color::Blue,
+        |buffer| mark(buffer).bg == crate::ACCENT,
     );
     let cell = mark(terminal.backend().buffer());
     assert!(cell.modifier.contains(Modifier::BOLD));
     assert!(!cell.modifier.contains(Modifier::REVERSED));
-    assert_ne!(cell.fg, Color::Blue, "the mark reads on the accent");
+    assert_ne!(cell.fg, crate::ACCENT, "the mark reads on the accent");
 }
 
 /// A palette row of pale tints (Tailwind's `red-100` and `sky-100`, leaf
@@ -2241,17 +2415,73 @@ fn a_selected_container_shows_focus_with_its_label_underlined() {
     );
     let buffer = terminal.backend().buffer();
     assert_eq!(buffer[cell_of(buffer, "One")].bg, at_rest, "its band stays");
-    // The other takes a band of its own: no underline.
+    // The other takes the accent rail down its leading column, no band
+    // and no underline.
+    let rail = |buffer: &Buffer| {
+        let (x, _) = cell_of(buffer, "Two");
+        (0..buffer.area.height).any(|y| buffer[(x, y)].symbol() == "▎")
+    };
     tab_until(
         &mut view,
         &mut terminal,
         &rx,
         "the other one's focus",
-        |buffer| {
-            !underlined(buffer, "One") && buffer[cell_of(buffer, "Two")].bg != buffer[(19, 0)].bg
-        },
+        |buffer| !underlined(buffer, "One") && rail(buffer),
     );
-    assert!(!underlined(terminal.backend().buffer(), "Two"));
+    let buffer = terminal.backend().buffer();
+    assert!(!underlined(buffer, "Two"));
+    assert_eq!(
+        buffer[cell_of(buffer, "Two")].bg,
+        buffer[(19, 0)].bg,
+        "no band of its own"
+    );
+}
+
+/// A pane the keys move within (a sidebar's list): focusable, three rows
+/// of text, no presses of its own.
+#[component]
+fn FocusPane() -> impl IntoElement {
+    view()
+        .flex_1()
+        .bg(nsh_core::color::rgb(0x222222))
+        .child(
+            view()
+                .focusable(true)
+                .p(px(8.0))
+                .child(text("Alpha"))
+                .child(text("Beta"))
+                .child(text("Gamma")),
+        )
+        .child(text("ready"))
+}
+
+#[test]
+fn a_focused_pane_shows_no_band_or_rail() {
+    let (mut view, rx) = surfaces();
+    let mut terminal = Terminal::new(TestBackend::new(20, 8)).unwrap();
+    view.load(App::Rust(Root::new::<FocusPane>(|| ()))).unwrap();
+    draw_until(&mut view, &mut terminal, &rx, "ready");
+    let before = terminal.backend().buffer().clone();
+    view.handle(nsh_platform_tui::Input::Key {
+        key: "Tab".into(),
+        modifiers: Default::default(),
+        release: false,
+    });
+    for _ in 0..5 {
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .unwrap();
+        let _ = rx.recv_timeout(std::time::Duration::from_millis(50));
+    }
+    let buffer = terminal.backend().buffer();
+    // What is focused in it shows the focus; the pane itself is as it was.
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            assert_ne!(buffer[(x, y)].symbol(), "▎", "no rail at {x},{y}");
+        }
+    }
+    let alpha = cell_of(buffer, "Alpha");
+    assert_eq!(buffer[alpha].bg, before[alpha].bg, "no band");
 }
 
 /// A panel of its own color over the whole screen with an open popup of `kind`

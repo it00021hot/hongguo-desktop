@@ -13,7 +13,7 @@
 
 use taffy::Position;
 
-use super::{Core, Key, Kind, NO_KEY, rounded, scroll_extent, span};
+use super::{Core, Key, Kind, NO_KEY, Origin, rounded, scroll_extent};
 use crate::{geometry::Bounds, mount::MountItem, ops::EventKind, text::TextEngine};
 
 /// How far around its viewport a scroll view mounts its content, in
@@ -154,7 +154,7 @@ impl<M: TextEngine> Core<M> {
     /// The frame of culled `key` and its subtree's, as
     /// [`Core::emit_frames_in`] gives made views theirs, with no mount
     /// items: what `onLayout`, `measure()` and [`Core::sync_culled`] read.
-    pub(super) fn cull_frames_in(&mut self, key: Key, hidden: bool, origin: taffy::Point<f32>) {
+    pub(super) fn cull_frames_in(&mut self, key: Key, hidden: bool, origin: Origin) {
         let node = &mut self.nodes[key as usize];
         node.culled = true;
         let Some(layout) = node.layout else { return };
@@ -170,18 +170,19 @@ impl<M: TextEngine> Core<M> {
                     .parent(layout)
                     .is_some_and(|p| self.layout.style(p).position.is_positioned()));
         let containing = if escaping {
-            self.layout_origin(layout)
+            self.containing_origin(layout)
         } else {
             origin
         };
+        let ratio = self.frame_ratio();
         let frame = if hidden {
             Bounds::default()
         } else {
-            let ratio = self.frame_ratio();
             let l = rounded(&unrounded, containing, ratio);
+            let offset = origin.to(containing, ratio);
             let mut frame = crate::geometry::rect(
-                l.location.x + span(origin.x, containing.x, ratio.width),
-                l.location.y + span(origin.y, containing.y, ratio.height),
+                l.location.x + offset.x,
+                l.location.y + offset.y,
                 l.size.width,
                 l.size.height,
             );
@@ -191,7 +192,7 @@ impl<M: TextEngine> Core<M> {
             if node.kind == Kind::Scroll
                 && let Some(scroll) = node.scroll.as_mut()
             {
-                scroll.culled_content = Some(scroll_extent(&l));
+                scroll.culled_content = Some(scroll_extent(&l, scroll.horizontal));
             }
             if let Some(parent) = self.nodes.get(self.nodes[key as usize].parent as usize)
                 && parent.rtl
@@ -222,10 +223,14 @@ impl<M: TextEngine> Core<M> {
         if !node.kind.is_container() || node.kind == Kind::List {
             return;
         }
-        let inner = taffy::Point {
-            x: containing.x + unrounded.location.x,
-            y: containing.y + unrounded.location.y,
-        };
+        let inner = Origin::of(
+            taffy::Point {
+                x: containing.at.x + unrounded.location.x,
+                y: containing.at.y + unrounded.location.y,
+            },
+            unrounded.size,
+            ratio,
+        );
         let children = std::mem::take(&mut self.nodes[key as usize].children);
         for &child in &children {
             let c = &self.nodes[child as usize];
@@ -258,7 +263,9 @@ impl<M: TextEngine> Core<M> {
             return;
         }
         self.culls_content = enabled;
-        if !enabled && !self.culling.is_empty() {
+        // Off: what is culled is made. On again: what went far away while
+        // it was off is given up (the scroll views stay in `culling`).
+        if !self.culling.is_empty() {
             self.cull_dirty = true;
         }
     }
@@ -325,7 +332,6 @@ impl<M: TextEngine> Core<M> {
         );
         let holders = self.view_holders();
         let mut made = false;
-        let mut left = false;
         let mut stack = std::mem::take(&mut self.cull_scratch);
         stack.clear();
         stack.push((scope, 0.0f32, 0.0f32, 0.0f32, 0.0f32));
@@ -359,7 +365,6 @@ impl<M: TextEngine> Core<M> {
                     let away = cw > 0.0 && ch > 0.0 && !meets(far);
                     if away && self.culls_content && self.reclaimable(child, &holders) {
                         self.reclaim(child);
-                        left = true;
                         continue;
                     }
                     let c = &self.nodes[child as usize];
@@ -381,12 +386,10 @@ impl<M: TextEngine> Core<M> {
                     || near
                     || self.never_culled(child);
                 if !shows {
-                    left = true;
                     continue;
                 }
                 if self.nodes[child as usize].placeholder {
                     self.ask_row(child);
-                    left = true;
                     continue;
                 }
                 // In the overscan, not in sight: within the turn's budget
@@ -400,7 +403,6 @@ impl<M: TextEngine> Core<M> {
                     && !self.never_culled(child)
                     && !self.pace_overscan()
                 {
-                    left = true;
                     continue;
                 }
                 self.make_culled(parent, child);
@@ -411,7 +413,10 @@ impl<M: TextEngine> Core<M> {
             }
         }
         self.cull_scratch = stack;
-        (made, left || self.culls_content)
+        // Still to be looked at as it scrolls, though all its content is
+        // made: what is far away is given up (with culling off too, so that
+        // turned on again it gives up what went far away meanwhile).
+        (made, true)
     }
 
     /// Makes culled `child`'s native view in made `parent`'s, at its place
@@ -447,6 +452,46 @@ impl<M: TextEngine> Core<M> {
             self.make_culled(parent, node);
         }
         self.nodes[key as usize].created
+    }
+
+    /// Makes any culled descendants of made `root` that no longer sit under
+    /// an outer scroll view's culling scope (for example, a view promoted to
+    /// `position: fixed`, which becomes a layout root that the outer scroll
+    /// view's `sync_culled_in` skips). Stops at nested scroll views, lists,
+    /// overlays, and layout roots, which manage their own subtrees.
+    pub(super) fn uncull_subtree(&mut self, root: Key) {
+        let node = &self.nodes[root as usize];
+        if !node.created
+            || !node.kind.is_container()
+            || node.kind == Kind::Scroll
+            || node.list.is_some()
+        {
+            return;
+        }
+        let mut stack = vec![root];
+        while let Some(parent) = stack.pop() {
+            let mut i = 0;
+            while let Some(&child) = self.nodes[parent as usize].children.get(i) {
+                i += 1;
+                let c = &self.nodes[child as usize];
+                if c.layout.is_none() || c.is_layout_root() || c.is_overlay() {
+                    continue;
+                }
+                if c.created {
+                    if c.kind.is_container() && c.kind != Kind::Scroll && c.list.is_none() {
+                        stack.push(child);
+                    }
+                    continue;
+                }
+                if c.culled {
+                    if c.placeholder {
+                        self.ask_row(child);
+                    } else {
+                        self.make_culled(parent, child);
+                    }
+                }
+            }
+        }
     }
 
     /// Text block `key` gets its view: what it was laid out with while

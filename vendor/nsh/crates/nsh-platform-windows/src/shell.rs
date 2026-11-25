@@ -437,14 +437,8 @@ pub(crate) struct Shell {
     /// (`HT*`, 0 for none), the one pressed.
     pub(crate) hover: Cell<u32>,
     pub(crate) pressed: Cell<u32>,
-    /// The mouse is tracked for `WM_NCMOUSELEAVE`.
-    pub(crate) nc_tracking: Cell<bool>,
     /// The window is inactive (its caption buttons dim).
     pub(crate) inactive: Cell<bool>,
-    /// The mouse is over a view of the app's title bar that is not the
-    /// client area (`windowControl`, `windowDrag`): the views hear it move
-    /// there.
-    pub(crate) view_hover: Cell<bool>,
     /// Inside the system's move or resize loop.
     pub(crate) sizing: Cell<bool>,
     /// Alt+F4 was pressed, for the `WM_CLOSE` it makes.
@@ -475,9 +469,7 @@ impl Shell {
             disabled_owner: Cell::new(None),
             hover: Cell::new(0),
             pressed: Cell::new(0),
-            nc_tracking: Cell::new(false),
             inactive: Cell::new(false),
-            view_hover: Cell::new(false),
             sizing: Cell::new(false),
             close_key: Cell::new(false),
             close_command: Cell::new(None),
@@ -665,6 +657,16 @@ fn restyle(hwnd: HWND, shell: &Shell, attrs: &Attrs) {
         if (style, ex) == current {
             return;
         }
+        // A window not shown yet keeps the content size it was made or
+        // sized for: its frame grows or shrinks around it. One the user
+        // sees keeps its frame where it is instead.
+        let mut client = RECT::default();
+        let keep = (!IsWindowVisible(hwnd).as_bool()
+            && !IsZoomed(hwnd).as_bool()
+            && !IsIconic(hwnd).as_bool()
+            && GetClientRect(hwnd, &mut client).is_ok())
+        .then(|| (client.right - client.left, client.bottom - client.top))
+        .filter(|&(w, h)| w > 0 && h > 0);
         SetWindowLongPtrW(hwnd, GWL_STYLE, style as isize);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex as isize);
         if ex & WS_EX_LAYERED.0 != 0 && current.1 & WS_EX_LAYERED.0 == 0 {
@@ -679,6 +681,9 @@ fn restyle(hwnd: HWND, shell: &Shell, attrs: &Attrs) {
             0,
             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
+        if let Some(content) = keep {
+            crate::window::fit_content(hwnd, content);
+        }
     }
 }
 

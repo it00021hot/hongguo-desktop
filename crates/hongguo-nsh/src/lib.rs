@@ -25,6 +25,7 @@ pub use metadata::metadata;
 
 use i18n::tr;
 use nsh_base::theme;
+use nsh_core::element::desktop::window as app_window;
 use nsh_core::prelude::*;
 
 #[native_module("hongguo/native")]
@@ -54,8 +55,6 @@ fn native_components(components: &nsh_platform_ios::Components) {
 #[component]
 /// The Rust application root shared by the desktop and mobile hosts.
 pub fn App() -> impl IntoElement {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    window_modes::show_main_window();
     i18n::install();
     update::check_on_startup();
     view_memory::provide();
@@ -64,98 +63,106 @@ pub fn App() -> impl IntoElement {
         nsh_base::tokens_of(Some(include_str!("../theme.json"))).expect("validated NSH theme"),
     );
     let session = resource(|| Some(()), |_, _| bridge::request(bootstrap::open()));
-    view()
-        .flex_1()
-        .pt_safe_area()
-        .px_safe_area()
-        .bg(move || {
-            if shell::PlayerOverlay::fullscreen() {
-                theme().color("video-surface").expect("video surface token")
-            } else {
-                theme().background
-            }
-        })
-        .text_color(move || theme().foreground)
-        .child(when(
-            move || session.loading(),
-            move || ui::status(move || tr("common.loading")),
-        ))
-        .child(when(
-            move || session.error().is_some(),
-            move || {
-                features::error_state(
-                    move || {
-                        session
-                            .error()
-                            .map_or_else(SharedString::default, |error| error.text())
-                    },
-                    move || session.refetch(),
-                )
-            },
-        ))
-        .child(when(
-            move || session.with(|session| session.is_some()),
-            move || {
-                notifications::install();
-                let handle = events::SessionHandle::new(session.get().expect("loaded session"));
-                boss_key::install(handle.with(|session| session.state.settings().boss_key));
-                let window_modes = window_modes::install(computed(move || {
-                    handle.identity();
-                    is_desktop()
-                        && handle.with(|session| session.state.settings().pause_on_minimize)
-                }));
-                let file_access = file_access::install();
-                let appearance = handle.with(|session| session.state.settings().theme);
-                set_color_scheme(match appearance.as_str() {
-                    "light" => nsh_core::platform::Appearance::Light,
-                    "dark" => nsh_core::platform::Appearance::Dark,
-                    _ => nsh_core::platform::Appearance::System,
-                });
-                let nav = navigation::Navigation::new();
-                view_memory::provide_models();
-                features::browse::GlobalSearch::provide();
-                shortcuts::Shortcuts::provide();
-                crate::shell::provide_account_label(
-                    computed(move || {
-                        handle.identity();
-                        handle.with(|session| {
+    app_window().id("main").content(move || {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            window_modes::show_main_window();
+            let window = nsh_core::element::desktop::current_window();
+            nsh_core::element::desktop::on_reopen(move || window.focus());
+        }
+        view()
+            .flex_1()
+            .pt_safe_area()
+            .px_safe_area()
+            .bg(move || {
+                if shell::PlayerOverlay::fullscreen() {
+                    theme().color("video-surface").expect("video surface token")
+                } else {
+                    theme().background
+                }
+            })
+            .text_color(move || theme().foreground)
+            .child(when(
+                move || session.loading(),
+                move || ui::status(move || tr("common.loading")),
+            ))
+            .child(when(
+                move || session.error().is_some(),
+                move || {
+                    features::error_state(
+                        move || {
                             session
-                                .state
-                                .settings()
-                                .account
-                                .map(|account| account.user_name.trim().to_owned())
-                                .filter(|name| !name.is_empty())
-                                .map_or_else(|| tr("nav.accountFallback"), SharedString::from)
-                        })
-                    }),
-                    computed(move || {
-                        handle.identity();
-                        handle.with(|session| session.state.settings().account.is_some())
-                    }),
-                );
-                let theme_pending = signal(false);
-                let account_dialogs = features::account_dialogs(handle);
-                crate::shell::shell_with_theme(
-                    nav,
-                    features::browse::search_toolbar(handle, nav),
-                    crate::shell::stack().child(each(
-                        nav.routes(),
-                        |route: &navigation::Route| format!("{:?}", route.section_root()),
-                        move |route, index| {
-                            features::render(route.get_untracked(), handle, nav)
-                                .on_dismiss(move || nav.dismiss(index.get_untracked()))
+                                .error()
+                                .map_or_else(SharedString::default, |error| error.text())
                         },
-                    )),
-                    theme_pending,
-                    move || {
-                        theme_pending.get();
-                        handle.with(|session| session.state.settings().theme)
-                    },
-                    move |appearance| appearance::save(handle, appearance, theme_pending),
-                )
-                .child(account_dialogs)
-                .child(window_modes)
-                .child(file_access)
-            },
-        ))
+                        move || session.refetch(),
+                    )
+                },
+            ))
+            .child(when(
+                move || session.with(|session| session.is_some()),
+                move || {
+                    notifications::install();
+                    let handle = events::SessionHandle::new(session.get().expect("loaded session"));
+                    boss_key::install(handle.with(|session| session.state.settings().boss_key));
+                    let window_modes = window_modes::install(computed(move || {
+                        handle.identity();
+                        is_desktop()
+                            && handle.with(|session| session.state.settings().pause_on_minimize)
+                    }));
+                    let file_access = file_access::install();
+                    let appearance = handle.with(|session| session.state.settings().theme);
+                    set_color_scheme(match appearance.as_str() {
+                        "light" => nsh_core::platform::Appearance::Light,
+                        "dark" => nsh_core::platform::Appearance::Dark,
+                        _ => nsh_core::platform::Appearance::System,
+                    });
+                    let nav = navigation::Navigation::new();
+                    view_memory::provide_models();
+                    features::browse::GlobalSearch::provide();
+                    shortcuts::Shortcuts::provide();
+                    crate::shell::provide_account_label(
+                        computed(move || {
+                            handle.identity();
+                            handle.with(|session| {
+                                session
+                                    .state
+                                    .settings()
+                                    .account
+                                    .map(|account| account.user_name.trim().to_owned())
+                                    .filter(|name| !name.is_empty())
+                                    .map_or_else(|| tr("nav.accountFallback"), SharedString::from)
+                            })
+                        }),
+                        computed(move || {
+                            handle.identity();
+                            handle.with(|session| session.state.settings().account.is_some())
+                        }),
+                    );
+                    let theme_pending = signal(false);
+                    let account_dialogs = features::account_dialogs(handle);
+                    crate::shell::shell_with_theme(
+                        nav,
+                        features::browse::search_toolbar(handle, nav),
+                        crate::shell::stack().child(each(
+                            nav.routes(),
+                            |route: &navigation::Route| format!("{:?}", route.section_root()),
+                            move |route, index| {
+                                features::render(route.get_untracked(), handle, nav)
+                                    .on_dismiss(move || nav.dismiss(index.get_untracked()))
+                            },
+                        )),
+                        theme_pending,
+                        move || {
+                            theme_pending.get();
+                            handle.with(|session| session.state.settings().theme)
+                        },
+                        move |appearance| appearance::save(handle, appearance, theme_pending),
+                    )
+                    .child(account_dialogs)
+                    .child(window_modes)
+                    .child(file_access)
+                },
+            ))
+    })
 }

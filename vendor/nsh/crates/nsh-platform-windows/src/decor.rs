@@ -36,19 +36,22 @@ use std::{cell::RefCell, hash::Hasher};
 use nsh_core::{BorderStyle, Borders, Bounds, Color, Outline, Points};
 use rustc_hash::FxHasher;
 use windows::{
-    Win32::Graphics::Direct2D::{
-        Common::{
-            D2D_SIZE_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COMPOSITE_MODE,
-            D2D1_COMPOSITE_MODE_DESTINATION_IN, D2D1_COMPOSITE_MODE_DESTINATION_OUT,
-            D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
-            D2D1_FILL_MODE_ALTERNATE, D2D1_PIXEL_FORMAT,
+    Win32::Graphics::{
+        Direct2D::{
+            Common::{
+                D2D_SIZE_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COMPOSITE_MODE,
+                D2D1_COMPOSITE_MODE_DESTINATION_IN, D2D1_COMPOSITE_MODE_DESTINATION_OUT,
+                D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
+                D2D1_FILL_MODE_ALTERNATE, D2D1_PIXEL_FORMAT,
+            },
+            D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL, D2D1_BITMAP_OPTIONS_TARGET,
+            D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_ROUND,
+            D2D1_DASH_STYLE_CUSTOM, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_LINE_JOIN_MITER,
+            D2D1_LINE_JOIN_ROUND, D2D1_ROUNDED_RECT, D2D1_STROKE_STYLE_PROPERTIES,
+            D2D1_SWEEP_DIRECTION_CLOCKWISE, ID2D1Brush, ID2D1CommandList, ID2D1DeviceContext,
+            ID2D1Factory, ID2D1Geometry, ID2D1GeometrySink, ID2D1Image, ID2D1StrokeStyle,
         },
-        D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
-        D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_CUSTOM,
-        D2D1_INTERPOLATION_MODE_LINEAR, D2D1_LINE_JOIN_MITER, D2D1_LINE_JOIN_ROUND,
-        D2D1_ROUNDED_RECT, D2D1_STROKE_STYLE_PROPERTIES, D2D1_SWEEP_DIRECTION_CLOCKWISE,
-        ID2D1Brush, ID2D1CommandList, ID2D1DeviceContext, ID2D1Factory, ID2D1Geometry,
-        ID2D1GeometrySink, ID2D1Image, ID2D1StrokeStyle,
+        Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
     },
     core::Interface,
 };
@@ -239,7 +242,7 @@ pub(crate) fn draw_backdrop(cx: &mut DrawCx<'_>, state: &ViewState) {
             return;
         }
     };
-    cx.push_clip_rounded(rect(0.0, 0.0, w, h), state.radii());
+    cx.push_clip_rounded_shapes(rect(0.0, 0.0, w, h), state.radii());
     // SAFETY: COM calls on the live context; the image is in window
     // coordinates, offset to where it was copied from.
     unsafe {
@@ -297,7 +300,7 @@ pub(crate) fn draw_background(cx: &mut DrawCx<'_>, state: &ViewState) {
         // once, the edge is covered once.
         let clip_geometry = (fills > 1).then(|| shape.geometry(cx)).flatten();
         if let Some(g) = &clip_geometry {
-            cx.push_clip_geometry(g);
+            cx.push_clip_shapes(g, rect_f(0.0, 0.0, w, h));
             // What the fills draw is inside this clip: the corners are
             // covered by it, so they draw square and the outline is let go.
             shape.radii = [0.0; 4];
@@ -312,7 +315,7 @@ pub(crate) fn draw_background(cx: &mut DrawCx<'_>, state: &ViewState) {
                 Some(Paint::Bitmap(baked)) => {
                     let clip = shape.geometry(cx);
                     if let Some(g) = &clip {
-                        cx.push_clip_geometry(g);
+                        cx.push_clip_shapes(g, rect_f(0.0, 0.0, w, h));
                     }
                     draw_baked(cx, &baked);
                     if clip.is_some() {
@@ -689,7 +692,7 @@ fn bake(
                     0,
                     &D2D1_BITMAP_PROPERTIES1 {
                         pixelFormat: D2D1_PIXEL_FORMAT {
-                            format: crate::output::format(),
+                            format: DXGI_FORMAT_B8G8R8A8_UNORM,
                             alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
                         },
                         dpiX: 96.0 * scale,
@@ -844,7 +847,7 @@ fn draw_borders(cx: &mut DrawCx<'_>, b: &Borders, w: f32, h: f32, radii: [f32; 4
             let Some(clip) = polygon(cx.gfx, quad) else {
                 continue;
             };
-            cx.push_clip_geometry(&clip);
+            cx.push_clip_shapes(&clip, rect_f(0.0, 0.0, w, h));
             // SAFETY: as above.
             unsafe { cx.dc.FillGeometry(&ring, cx.solid(c), None) };
             cx.pop();
@@ -879,7 +882,7 @@ fn draw_borders(cx: &mut DrawCx<'_>, b: &Borders, w: f32, h: f32, radii: [f32; 4
         let (Some(clip), Some(g)) = (polygon(cx.gfx, quad), line(bw)) else {
             continue;
         };
-        cx.push_clip_geometry(&clip);
+        cx.push_clip_shapes(&clip, rect_f(0.0, 0.0, w, h));
         // SAFETY: as above.
         unsafe { cx.dc.DrawGeometry(&g, cx.solid(c), bw, &style) };
         cx.pop();

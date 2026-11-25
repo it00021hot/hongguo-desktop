@@ -16,6 +16,21 @@ import android.view.accessibility.AccessibilityNodeInfo;
 final class TextBox extends android.view.ViewGroup implements Node {
     final Decor decor = new Decor();
 
+    // `clipPath`: what it draws shows, and touches reach it and its
+    // children, only inside it (`Decor.drawClipped`, `Decor.clipsOut`).
+    @Override
+    public void draw(android.graphics.Canvas canvas) {
+        decor.drawClipped(canvas, this, () -> super.draw(canvas));
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(android.view.MotionEvent e) {
+        if (e.getActionMasked() == android.view.MotionEvent.ACTION_DOWN && decor.clipsOut(this, e.getX(), e.getY())) {
+            return false;
+        }
+        return super.dispatchTouchEvent(e);
+    }
+
     /** An outer box shadow draws outside the bounds, and compositing the
      * view at alpha < 1 into the bounds-clipped offscreen buffer would cut
      * it; such a view reports no overlapping rendering, so the alpha
@@ -180,8 +195,9 @@ final class TextBox extends android.view.ViewGroup implements Node {
                 downX = e.getX();
                 downY = e.getY();
                 extending = false;
-                // A tap on the text ends its selection (a long press makes a new one).
-                clearSelection();
+                // A long press makes a new selection; a tap ends this one
+                // (`Mounter.touchUp`), a scroll keeps it.
+                removeCallbacks(longPress);
                 postDelayed(longPress, android.view.ViewConfiguration.getLongPressTimeout());
                 break;
             case android.view.MotionEvent.ACTION_MOVE: {
@@ -284,6 +300,8 @@ final class TextBox extends android.view.ViewGroup implements Node {
             // One selection per surface.
             if (mounter.selectedArea != null) mounter.selectedArea.clear();
             mounter.selectedText = this;
+            mounter.keepSelection();
+            mounter.updateBack();
         }
         placeHandles();
         if (toolbar) showToolbar();
@@ -300,7 +318,10 @@ final class TextBox extends android.view.ViewGroup implements Node {
         startHandle.dismiss();
         endHandle.dismiss();
         getViewTreeObserver().removeOnPreDrawListener(follow);
-        if (mounter.selectedText == this) mounter.selectedText = null;
+        if (mounter.selectedText == this) {
+            mounter.selectedText = null;
+            mounter.updateBack();
+        }
         android.view.ActionMode m = mode;
         mode = null;
         if (m != null) m.finish();
@@ -322,9 +343,19 @@ final class TextBox extends android.view.ViewGroup implements Node {
         super.onDetachedFromWindow();
     }
 
-    /** The selected text, without the placeholders of attachments and hidden runs. */
+    /** The selected text as a copy gives it ({@link #copied}). */
     private String selectedText() {
-        return TextLayouts.shown(layout.getText(), selStart, selEnd);
+        return copied(selStart, selEnd);
+    }
+
+    /**
+     * The UTF-16 range {@code start..end} as a copy gives it, as
+     * {@code AttributedText::copied_text} in nsh-core: attachments as their
+     * copy texts (none without one), hidden runs left out.
+     */
+    String copied(int start, int end) {
+        if (layout == null) return "";
+        return TextLayouts.copied(layout.getText(), start, end, copyAt, copyTexts);
     }
 
     private void showToolbar() {
@@ -378,7 +409,7 @@ final class TextBox extends android.view.ViewGroup implements Node {
                             .setType("text/plain")
                             .putExtra(android.content.Intent.EXTRA_TEXT, selectedText());
                     android.content.Intent chooser = android.content.Intent.createChooser(send, null);
-                    if (!(getContext() instanceof android.app.Activity)) {
+                    if (SystemUi.activity(getContext()) == null) {
                         chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
                     }
                     try {
@@ -471,6 +502,15 @@ final class TextBox extends android.view.ViewGroup implements Node {
         if (info.getClassName() == null || info.getClassName().equals(View.class.getName())) {
             info.setClassName("android.widget.TextView");
         }
+    }
+
+    /** What attachments copy as: their offsets (ascending) and texts. */
+    private int[] copyAt = TextLayouts.NO_COPIES;
+    private String[] copyTexts = TextLayouts.NO_COPY_TEXTS;
+
+    void setCopyTexts(int[] at, String[] texts) {
+        copyAt = at;
+        copyTexts = texts;
     }
 
     /** Pressable spans: (start, end, node) triples in UTF-16 offsets, and their events. */

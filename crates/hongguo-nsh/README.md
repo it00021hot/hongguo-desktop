@@ -1,6 +1,6 @@
 # 番果 NSH 壳 / guava NSH shell
 
-基于 NSH 0.6.1 的纯 Rust 客户端，通过共享 service 消费业务能力，不直接依赖 API 客户端。
+基于 NSH 0.7.0 的纯 Rust 客户端，通过共享 service 消费业务能力，不直接依赖 API 客户端。
 功能入口与呈现归 `src/features/`，共享控件归 `src/ui/`，窗口与导航装配归 `src/shell/`。
 结构与边界见 [项目结构](../../docs/project-structure.md)。
 首轮目标为 Windows、macOS、Android、iOS；Linux 与 Web 留待后续迭代。
@@ -11,7 +11,7 @@
 Windows 普通 HEVC 走 MediaEngine；ByteVC2、缺 HEVC 解码器或输出精度不足时启用内部帧适配。
 在仓库根执行 `nsh run crates/hongguo-nsh`，通过原生宿主接入自动校验 `vendor/native-codecs/` 的 SDK，日常开发无需 CMake/libclang。
 
-A pure Rust shell using NSH 0.6.1 and the existing business core. Initial targets
+A pure Rust shell using NSH 0.7.0 and the existing business core. Initial targets
 are Windows, macOS, Android and iOS. Feature presentation, shared controls and shell composition have separate owners; API requests are service-owned. Linux and Web are deferred. Development and
 platform validation are ongoing; see docs/nsh-feature-parity.md for the progress record.
 

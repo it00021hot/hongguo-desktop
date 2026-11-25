@@ -1,6 +1,6 @@
 # 项目结构 / Project structure
 
-当前主线使用 NSH 0.6.1 与纯 Rust 业务内核。旧 Tauri、GPUI 和 WebView 专用代码仅保留在备份分支。
+当前主线使用 NSH 0.7.0 与纯 Rust 业务内核。旧 Tauri、GPUI 和 WebView 专用代码仅保留在备份分支。
 
 ## 分层
 

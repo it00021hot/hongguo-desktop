@@ -270,13 +270,26 @@ fn web_view_at(window: &NSWindow, event: &NSEvent) -> Option<Retained<NSView>> {
 }
 
 /// Which of the surface's windows a call acts in.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Which {
     Main,
     /// A window by its root node (the main one's is the root).
     Target(NodeId),
     /// The window that has the keyboard.
     Key,
+}
+
+/// The window the app shows that a call about the app's window acts in
+/// (a screenshot, a resize), with the agent targeting `target`: that
+/// window, else the key one (the frontmost of the app's own). In window
+/// model v2 the surface's own window is a host that never shows, and the
+/// app's `<Window>`s are windows of their own.
+fn shown(target: NodeId) -> Which {
+    if target == ROOT_ID {
+        Which::Key
+    } else {
+        Which::Target(target)
+    }
 }
 
 /// `rect` of view `ns` in its window's content, from its top left; `None`
@@ -310,7 +323,18 @@ fn in_window(ns: &NSView, rect: NSRect) -> Option<Bounds<Points>> {
 /// its middle.
 fn mapped(view: &crate::view::NshView, rect: NSRect) -> Option<Bounds<Points>> {
     crate::scroll::commit_ancestors(view);
-    let plain = in_window(view.ns(), rect)?;
+    // A leaf (#2066) is in no window: measure it in its parent's container.
+    let plain = match view.parent_view().filter(|_| view.is_leaf_layer()) {
+        Some(parent) => {
+            let o = view.ns().frame().origin;
+            let at = NSRect::new(
+                NSPoint::new(o.x + rect.origin.x, o.y + rect.origin.y),
+                rect.size,
+            );
+            in_window(&parent.container(), at)?
+        }
+        None => in_window(view.ns(), rect)?,
+    };
     let (x0, y0) = (rect.origin.x as f32, rect.origin.y as f32);
     let (w, h) = (rect.size.width as f32, rect.size.height as f32);
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
@@ -424,7 +448,13 @@ impl Native for MacNative {
         gesture(0, 0, 4);
     }
 
-    fn drag(&self, from: Point<Points>, to: Point<Points>) {
+    fn drag(
+        &self,
+        from: Point<Points>,
+        to: Point<Points>,
+        options: nsh_testing::DragOptions,
+    ) -> Result<(), String> {
+        nsh_testing::agent::refuse_custom_drag("drag", options)?;
         self.activate();
         let (x, y) = (f64::from(from.x.0), f64::from(from.y.0));
         let clicks = self
@@ -447,6 +477,7 @@ impl Native for MacNative {
         }
         let (x, y) = (f64::from(last.x.0), f64::from(last.y.0));
         self.on_target(move |_, window| mouse(window, NSEventType::LeftMouseUp, x, y, clicks));
+        Ok(())
     }
 
     fn type_text(&self, text: &str) {
@@ -525,9 +556,12 @@ impl Native for MacNative {
                 let root = (target != ROOT_ID)
                     .then(|| crate::window::root_view(surface, target))
                     .flatten();
+                // The window stays the input's, as after a real move: what
+                // the hover changes (the controls it shows) is picked again
+                // where the pointer is (`input::content_moved`), not in the
+                // main window, where the hovered views would hear a leave.
                 crate::input::enter(surface, root);
                 crate::input::event(surface, &event);
-                crate::input::enter(surface, None);
             }
         })
         .ok_or_else(|| "the window is gone".to_owned())
@@ -540,9 +574,13 @@ impl Native for MacNative {
             let root = (target != ROOT_ID)
                 .then(|| crate::window::root_view(surface, target))
                 .flatten();
-            crate::input::enter(surface, root);
+            // The agent's drop does not move the pointer (`input.last`): the
+            // window it was in stays the input's, so what the drop changes
+            // is picked again where the pointer is (a hover in this window
+            // included), not in the main window.
+            let pointer = crate::input::enter(surface, root);
             let dropped = crate::file_drop::drop_uris(surface, x, y, uris);
-            crate::input::enter(surface, None);
+            crate::input::enter(surface, pointer);
             dropped
         });
         match dropped {
@@ -605,7 +643,9 @@ impl Native for MacNative {
         // Escape, as a user goes back: in a focused field it only leaves
         // it, so then once more.
         self.on_key(|surface, window| {
-            if crate::text_input::editing(surface) {
+            // The field of the window the keys go to: the input's window is
+            // where the pointer last was (a hover elsewhere included).
+            if crate::text_input::editing_in(&crate::input::root_in(surface, window)) {
                 synth::key(surface, window, "Escape");
             }
             synth::key(surface, window, "Escape");
@@ -624,17 +664,25 @@ impl Native for MacNative {
             .unwrap_or(false)
     }
 
+    fn opening(&self) -> bool {
+        self.on_main(|surface, _| crate::window::opening(surface))
+            .unwrap_or(false)
+    }
+
     fn screenshot(&self) -> Result<Vec<u8>, String> {
         // The window server shows a commit a frame or two after it is
         // made: let it show the last one before taking its picture.
         self.on_main(|_, _| objc2_quartz_core::CATransaction::flush());
         std::thread::sleep(PRESENT);
-        self.on_main(|_, window| synth::shot(window))
+        self.on_window(shown(self.target()), |_, window| synth::shot(window))
             .unwrap_or_else(|| Err("the window is gone".into()))
     }
 
     fn resize(&self, width: Points, height: Points) -> Result<(), String> {
-        self.on_main(|_, window| {
+        // `setViewport` resizes the window the app shows, not the hidden
+        // host: the targeted window, else the key one (the frontmost of the
+        // app's own windows).
+        self.on_window(shown(self.target()), |_, window| {
             let content = NSSize::new(f64::from(width.0), f64::from(height.0));
             let old = window.frame();
             let size = window
@@ -710,5 +758,18 @@ impl Native for MacNative {
 
     fn quit(&self) {
         self.on_main(|_, window| window.close());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_screenshot_is_of_the_window_the_app_shows() {
+        // The surface's own window is a host that never shows: without a
+        // target, the window with the keyboard (the frontmost shown one).
+        assert_eq!(shown(ROOT_ID), Which::Key);
+        assert_eq!(shown(7), Which::Target(7));
     }
 }

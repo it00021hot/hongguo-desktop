@@ -1,11 +1,21 @@
 //! CoreText text engine: typesets on the engine thread, draws on the main
 //! thread from finished `CTLine`s, so every text is laid out once.
 
-use std::{cell::RefCell, ffi::c_void, ops::Range, ptr::NonNull};
+use std::{
+    cell::RefCell,
+    ffi::c_void,
+    ops::Range,
+    ptr::NonNull,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use nsh_core::{
     Affinity, AttributedText, Bounds, Color, EllipsizeMode, FamilyName, FontFamily, Point, Points,
     ResolvedTextStyle, Size, TextAlign, TextEngine, TextLayout, TextPosition,
+};
+use nsh_platform_apple::core_text::{
+    background_key, decoration_key, ellipsis_key, flush_factor, italic, italic_face,
+    run_visual_span, slant_fallbacks, strikethrough_key, stroke_decoration, underline_key,
 };
 use objc2::rc::Retained;
 use objc2_app_kit::{
@@ -19,70 +29,21 @@ use objc2_core_foundation::{
 };
 use objc2_core_graphics::{CGColor, CGContext, CGPath};
 use objc2_core_text::{
-    CTFont, CTFontDescriptor, CTFontManagerRegisterFontsForURL, CTFontManagerScope,
-    CTFontSymbolicTraits, CTFrame, CTFramesetter, CTLine, CTLineBoundsOptions,
-    CTLineTruncationType, CTParagraphStyle, CTParagraphStyleSetting, CTParagraphStyleSpecifier,
-    CTRun, CTRunDelegate, CTRunDelegateCallbacks, CTRunStatus, CTTextAlignment, CTTypesetter,
-    CTWritingDirection, kCTFontAttributeName, kCTFontCascadeListAttribute,
-    kCTFontFamilyNameAttribute, kCTFontFeatureSettingsAttribute, kCTFontOpenTypeFeatureTag,
-    kCTFontOpenTypeFeatureValue, kCTFontTraitsAttribute, kCTFontWeightTrait,
-    kCTForegroundColorFromContextAttributeName, kCTKernAttributeName,
-    kCTParagraphStyleAttributeName, kCTRunDelegateAttributeName, kCTRunDelegateCurrentVersion,
-    kCTUnderlineStyleAttributeName,
+    CTFont, CTFontDescriptor, CTFontManagerRegisterFontsForURL, CTFontManagerScope, CTFrame,
+    CTFramesetter, CTLine, CTLineBoundsOptions, CTLineTruncationType, CTParagraphStyle,
+    CTParagraphStyleSetting, CTParagraphStyleSpecifier, CTRun, CTRunDelegate,
+    CTRunDelegateCallbacks, CTRunStatus, CTTextAlignment, CTTypesetter, CTWritingDirection,
+    kCTFontAttributeName, kCTFontCascadeListAttribute, kCTFontFamilyNameAttribute,
+    kCTFontFeatureSettingsAttribute, kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue,
+    kCTFontTraitsAttribute, kCTFontWeightTrait, kCTForegroundColorFromContextAttributeName,
+    kCTKernAttributeName, kCTParagraphStyleAttributeName, kCTRunDelegateAttributeName,
+    kCTRunDelegateCurrentVersion, kCTUnderlineStyleAttributeName,
 };
 use rustc_hash::FxHashMap;
 
 mod raster;
 
 pub(crate) use raster::{Rasters, prerender};
-
-/// Attribute marking struck through characters: [`draw`] draws the line, in
-/// the drawn text's decoration color.
-pub(crate) fn strikethrough_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshStrikethroughColor")))
-        .0
-}
-
-/// Attribute marking underlined characters whose line CoreText cannot draw
-/// (styled, thick or offset): [`draw`] draws it, in the drawn text's
-/// decoration color.
-pub(crate) fn underline_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshUnderlineColor")))
-        .0
-}
-
-/// Attribute carrying how drawn decoration lines look: a `CFArray` of
-/// [style, thickness (0: the font's), offset (NaN: the font's)].
-pub(crate) fn decoration_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshDecorationStyle")))
-        .0
-}
-
-/// Attribute marking the characters of a span background (the node that
-/// set it, a `CFNumber`): CoreText splits runs where it changes, so
-/// [`draw`] fills each background behind its own runs.
-fn background_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshBackground")))
-        .0
-}
-
-/// Attribute marking the ellipsis token of a truncated line (a `CFNumber`):
-/// its run claims the characters it cut, which are not on screen to select.
-fn ellipsis_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshEllipsis")))
-        .0
-}
-
-struct CFStringKey(CFRetained<CFString>);
-// SAFETY: CFStrings are immutable and thread-safe.
-unsafe impl Send for CFStringKey {}
-// SAFETY: as above.
-unsafe impl Sync for CFStringKey {}
 
 /// Identifies a font: size bits, weight, family, italic, OpenType features.
 type FontKey = (u32, u16, Option<FontFamily>, bool, u8);
@@ -122,21 +83,34 @@ impl FontCache {
     }
 }
 
+/// Fonts registered in the process so far ([`fonts_registered`]).
+static FONTS_REGISTERED: AtomicU32 = AtomicU32::new(0);
+
+/// Changes whenever the app registers a font: a family may resolve to
+/// another font from then on, so fonts and lines made from family names
+/// before (the canvas's, which draws on another thread than the engine
+/// that registers) are made again.
+pub(crate) fn fonts_registered() -> u32 {
+    FONTS_REGISTERED.load(Ordering::Relaxed)
+}
+
 pub(crate) fn make_font(style: &ResolvedTextStyle) -> CFRetained<CTFont> {
     let size = style.font_size.0 as CGFloat;
     let (font, fallbacks) = style
         .font_family
         .and_then(|family| listed_fonts(&family.name(), size, style.font_weight))
         .unwrap_or_else(|| (system_font(size, style.font_weight), Vec::new()));
-    let font = if style.italic {
-        let italic = CTFontSymbolicTraits::TraitItalic;
-        // SAFETY: a valid font; size 0 keeps the size, null matrix keeps it.
-        unsafe { font.copy_with_symbolic_traits(0.0, std::ptr::null(), italic, italic) }
-            // No italic face (CJK fonts): keep the upright one, CoreText
-            // synthesizes no oblique (browsers do).
-            .unwrap_or(font)
+    let (font, fallbacks) = if style.italic {
+        // The listed families' italic faces. A family without one leans
+        // ([`italic`]); as a fallback it stays upright here, where CoreText
+        // would ignore the lean, and `slant_fallbacks` leans its runs.
+        let fallbacks = fallbacks
+            .into_iter()
+            .map(|f| italic_face(&f).unwrap_or(f))
+            .collect();
+        (italic(&font), fallbacks)
     } else {
-        font
+        (font, fallbacks)
     };
     with_cascade(with_features(font, style.font_variant), &fallbacks)
 }
@@ -357,6 +331,11 @@ pub struct Prepared {
     max_lines: u32,
     ellipsize: EllipsizeMode,
     align: TextAlign,
+    /// The block is laid out right to left (`AttributedText::rtl`).
+    rtl: bool,
+    /// `writingDirection` (`AttributedText::writing_direction`): right to
+    /// left, left to right, or from the content (`None`).
+    writing_direction: Option<bool>,
     /// Attachments: placeholder offset (UTF-16) and how far its top is
     /// above the baseline (`TextAttachment::ascent`).
     attachments: Vec<(CFIndex, CGFloat)>,
@@ -390,6 +369,8 @@ pub(crate) struct CoreTextLayout {
     max_lines: u32,
     ellipsize: EllipsizeMode,
     align: TextAlign,
+    rtl: bool,
+    writing_direction: Option<bool>,
     placeholders: Vec<(CFIndex, CGFloat)>,
     size: Size<Points>,
 }
@@ -407,6 +388,8 @@ impl std::ops::Deref for CoreTextLayout {
                 max_lines: self.max_lines,
                 ellipsize: self.ellipsize,
                 align: self.align,
+                rtl: self.rtl,
+                writing_direction: self.writing_direction,
                 attachments: self.placeholders.clone(),
             };
             lay_out(&prepared, self.size)
@@ -476,33 +459,42 @@ impl CoreTextEngine {
         let (up, down) = alignments.extent(a, font);
         let (up, down) = (up.0 as CGFloat, down.0 as CGFloat);
         // A fixed `lineHeight`: CoreText centers a line's own extent in
-        // it, so a placeholder reaching past the font on one side only
-        // would move its line's baseline (lines unevenly spaced). Its
-        // delegate reserves the font's half-leading box instead (the CSS
-        // strut), and where the attachment reaches past that box, as much
-        // again on the other side: the line grows only when it must,
-        // evenly, its text where other lines' is.
+        // it, so a placeholder smaller than the half-leading box (the CSS
+        // strut) would move its line's baseline. Keep at least the strut
+        // on both sides; a `middle` attachment taller than the strut grows
+        // both sides evenly to stay centered on its text, while other
+        // alignments grow only the side they reach past.
         let line_height = line_height(text);
         if line_height <= 0.0 {
             return (top, up, down);
         }
         let half = (line_height - (ascent + descent + leading)) / 2.0;
         let (strut_up, strut_down) = (ascent + half, descent + half);
-        let grow = (up - strut_up).max(down - strut_down).max(0.0);
-        (top, strut_up + grow, strut_down + grow)
+        if align == nsh_core::VerticalAlign::Middle {
+            let grow = (up - strut_up).max(down - strut_down).max(0.0);
+            (top, strut_up + grow, strut_down + grow)
+        } else {
+            (top, up.max(strut_up), down.max(strut_down))
+        }
     }
 
-    /// The height a line holding the tallest attachment needs: its extent
-    /// around the baseline joined with its placeholder font's. A fixed
-    /// `lineHeight` caps text lines, not these: the view's line grows to
-    /// hold it (as a replaced inline box in CSS) instead of painting over
-    /// its neighbours.
+    /// Upper bound on the height of a line holding attachments when a fixed
+    /// `lineHeight` is set (`0` when every attachment fits in `lineHeight`,
+    /// keeping `MaximumLineHeight` at `lineHeight`). When an attachment
+    /// grows past `lineHeight`, combine the widest extent above and below
+    /// the baseline across attachments and spans so mixed alignments or
+    /// larger text spans on that line are not clamped by `CTParagraphStyle`.
     fn tallest_attachment_line(
         &self,
         text: &AttributedText,
         alignments: &nsh_core::AttachmentAlignments,
     ) -> CGFloat {
-        text.attachments.iter().fold(0.0, |tallest: CGFloat, a| {
+        let line_height = line_height(text);
+        if line_height <= 0.0 || text.attachments.is_empty() {
+            return 0.0;
+        }
+        let (mut fit_up, mut fit_down, mut fit_lead) = (0.0_f64, 0.0_f64, 0.0_f64);
+        for a in &text.attachments {
             let (_, up, down) = self.attachment_metrics(text, a, alignments);
             let style = text
                 .span_at(a.index)
@@ -510,8 +502,32 @@ impl CoreTextEngine {
             let f = self.fonts.get(&style);
             // SAFETY: a valid font.
             let (ascent, descent, leading) = unsafe { (f.ascent(), f.descent(), f.leading()) };
-            tallest.max(up.max(ascent) + down.max(descent) + leading)
-        })
+            fit_up = fit_up.max(up).max(ascent);
+            fit_down = fit_down.max(down).max(descent);
+            fit_lead = fit_lead.max(leading);
+        }
+        let (mut all_up, mut all_down, mut all_lead) = (fit_up, fit_down, fit_lead);
+        for span in &text.spans {
+            if span.start >= span.end {
+                continue;
+            }
+            let f = self.fonts.get(&span.style);
+            // SAFETY: a valid font.
+            let (ascent, descent, leading) = unsafe { (f.ascent(), f.descent(), f.leading()) };
+            if ascent + descent + leading <= line_height + 1e-4 {
+                fit_up = fit_up.max(ascent);
+                fit_down = fit_down.max(descent);
+                fit_lead = fit_lead.max(leading);
+            }
+            all_up = all_up.max(ascent);
+            all_down = all_down.max(descent);
+            all_lead = all_lead.max(leading);
+        }
+        if fit_up + fit_down + fit_lead <= line_height + 1e-4 {
+            0.0
+        } else {
+            all_up + all_down + all_lead
+        }
     }
 
     fn attributed_string(
@@ -648,6 +664,15 @@ impl CoreTextEngine {
             }
         }
         CFMutableAttributedString::end_editing(s);
+        // Italic text CoreText takes from fallback fonts without an italic
+        // face (CJK in the system font) leans like the rest.
+        for span in text.spans.iter().filter(|span| span.style.italic) {
+            let range = CFRange {
+                location: span.start as CFIndex,
+                length: (span.end - span.start) as CFIndex,
+            };
+            slant_fallbacks(&string, range, &self.fonts.get(&span.style));
+        }
         string
     }
 }
@@ -935,12 +960,139 @@ impl Prepared {
         }
     }
 
-    fn flush_factor(&self) -> CGFloat {
-        match self.align {
-            TextAlign::Center => 0.5,
-            TextAlign::Right => 1.0,
-            TextAlign::Auto | TextAlign::Left | TextAlign::Justify => 0.0,
+    /// The paragraph holding `at` (UTF-16; [`paragraph_around`]) and
+    /// whether it runs right to left as CoreText typesets it: its
+    /// `writingDirection`, else its content's ([`natural_rtl`]). Reads
+    /// only that paragraph's characters.
+    fn paragraph(&self, at: CFIndex) -> (Range<CFIndex>, bool) {
+        let attributed: &CFAttributedString = &self.string;
+        let Some(string) = attributed.string() else {
+            return (at..at, self.writing_direction.unwrap_or(false));
+        };
+        // SAFETY: `paragraph_around` and the paragraph it finds read
+        // indices below `self.length`, the string's length.
+        let unit = |i: CFIndex| unsafe { string.character_at_index(i) };
+        let paragraph = paragraph_around(unit, self.length, at);
+        let rtl = self
+            .writing_direction
+            .unwrap_or_else(|| natural_rtl(paragraph.clone().map(unit)));
+        (paragraph, rtl)
+    }
+}
+
+/// Whether a UTF-16 unit ends a paragraph (bidi class B: `\n`, `\r`,
+/// U+2029, ...; all in the BMP, so one unit each).
+fn ends_paragraph(unit: u16) -> bool {
+    char::from_u32(unit.into())
+        .is_some_and(|c| unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::B)
+}
+
+/// The paragraph of a text `len` UTF-16 units long, read a unit at a time
+/// by `unit`, that holds `at`: from after the paragraph separator before
+/// it to the next separator (not included) or the text's end.
+fn paragraph_around(unit: impl Fn(CFIndex) -> u16, len: CFIndex, at: CFIndex) -> Range<CFIndex> {
+    let at = at.clamp(0, len);
+    let mut start = at;
+    while start > 0 && !ends_paragraph(unit(start - 1)) {
+        start -= 1;
+    }
+    let mut end = at;
+    while end < len && !ends_paragraph(unit(end)) {
+        end += 1;
+    }
+    start..end
+}
+
+/// Whether a paragraph (its UTF-16 `units`) runs right to left by its
+/// content, as CoreText resolves a natural writing direction: as its first
+/// strong character outside isolates (UAX #9 rules P2 and P3), left to
+/// right when it has none (P3; the Linux backend takes the block's
+/// direction there instead).
+fn natural_rtl(units: impl IntoIterator<Item = u16>) -> bool {
+    use unicode_bidi::BidiClass::{AL, B, FSI, L, LRI, PDI, R, RLI};
+    let mut isolates = 0u32;
+    for c in char::decode_utf16(units) {
+        // An unpaired surrogate is no strong character.
+        let Ok(c) = c else { continue };
+        match unicode_bidi::bidi_class(c) {
+            LRI | RLI | FSI => isolates += 1,
+            PDI => isolates = isolates.saturating_sub(1),
+            L if isolates == 0 => return false,
+            R | AL if isolates == 0 => return true,
+            B => break,
+            _ => {}
         }
+    }
+    false
+}
+
+/// Where the characters `paragraph` of `line` start, from the line's
+/// origin: the right edge of their runs for a right-to-left paragraph,
+/// the left edge otherwise; `None` when none of them is in the line. A
+/// clipped line holds the rest of the text, the paragraphs after its own
+/// too, and reordering them need not put its own at either end of the
+/// line.
+fn paragraph_start_x(line: &CTLine, paragraph: Range<CFIndex>, rtl: bool) -> Option<CGFloat> {
+    let mut edges: Option<(CGFloat, CGFloat)> = None;
+    // SAFETY: the line's own run array (of CTRuns).
+    let runs = unsafe { line.glyph_runs() };
+    for i in 0..runs.count() {
+        // SAFETY: an index within the array.
+        let run = unsafe { &*runs.value_at_index(i).cast::<CTRun>() };
+        // SAFETY: a valid run.
+        let (range, glyphs) = unsafe { (run.string_range(), run.glyph_count()) };
+        if glyphs <= 0
+            || range.location >= paragraph.end
+            || range.location + range.length <= paragraph.start
+        {
+            continue;
+        }
+        let mut origin = CGPoint::new(0.0, 0.0);
+        // SAFETY: one position (the run has a glyph) into a one-point
+        // buffer, and the whole run's width.
+        let width = unsafe {
+            run.positions(
+                CFRange {
+                    location: 0,
+                    length: 1,
+                },
+                NonNull::from(&mut origin),
+            );
+            run.typographic_bounds(
+                WHOLE,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        let (left, right) = (origin.x, origin.x + width);
+        edges = Some(edges.map_or((left, right), |(l, r)| (l.min(left), r.max(right))));
+    }
+    edges.map(|(left, right)| if rtl { right } else { left })
+}
+
+/// The x of a cut last line (ellipsized or clipped) `line_width` wide in a
+/// box `width` wide, `flushed` where its alignment puts it when it fits
+/// (CoreText's pen offset for its [`flush_factor`]). A line wider than the
+/// box starts at its paragraph's start edge and overflows the end,
+/// whatever the alignment (CSS Text: an overflowing line is start
+/// aligned), so the beginning of the text stays in view: `start`, where
+/// the paragraph starts in the line ([`paragraph_start_x`]; the line's own
+/// start edge when `None`), goes to the box's right edge for a
+/// right-to-left paragraph and to its left edge otherwise.
+fn cut_line_x(
+    flushed: CGFloat,
+    line_width: CGFloat,
+    start: Option<CGFloat>,
+    width: CGFloat,
+    paragraph_rtl: bool,
+) -> CGFloat {
+    if line_width <= width {
+        flushed.max(0.0)
+    } else if paragraph_rtl {
+        width - start.unwrap_or(line_width)
+    } else {
+        -start.unwrap_or(0.0)
     }
 }
 
@@ -968,6 +1120,8 @@ impl TextEngine for CoreTextEngine {
             max_lines: text.max_lines,
             ellipsize: text.ellipsize,
             align: text.align,
+            rtl: text.rtl,
+            writing_direction: text.writing_direction,
             attachments: text
                 .attachments
                 .iter()
@@ -1037,6 +1191,8 @@ impl TextEngine for CoreTextEngine {
             max_lines: prepared.max_lines,
             ellipsize: prepared.ellipsize,
             align: prepared.align,
+            rtl: prepared.rtl,
+            writing_direction: prepared.writing_direction,
             placeholders: prepared.attachments.clone(),
             size,
         };
@@ -1123,6 +1279,7 @@ impl TextEngine for CoreTextEngine {
         };
         // Fonts resolve differently now (a family may have been missing).
         self.fonts.clear();
+        FONTS_REGISTERED.fetch_add(1, Ordering::Relaxed);
         if ok {
             return Ok(());
         }
@@ -1266,11 +1423,21 @@ fn lay_out(prepared: &Prepared, size: Size<Points>) -> LaidLines {
         if range.location + range.length < prepared.length
             && let Some(truncated) = prepared.truncate(range.location, width)
         {
-            // SAFETY: a valid line.
-            let x = unsafe { truncated.pen_offset_for_flush(prepared.flush_factor(), width) };
-            // A clipped line wider than the box starts at its start edge
-            // and overflows the end (CSS), centered or not.
-            last.origin.x = x.max(0.0);
+            let (paragraph, rtl) = prepared.paragraph(range.location);
+            let flush = flush_factor(prepared.align, prepared.rtl, rtl);
+            // SAFETY: a valid line and null out-params.
+            let (flushed, line_width) = unsafe {
+                (
+                    truncated.pen_offset_for_flush(flush, width),
+                    truncated.typographic_bounds(
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    ),
+                )
+            };
+            let start = paragraph_start_x(&truncated, paragraph, rtl);
+            last.origin.x = cut_line_x(flushed, line_width, start, width, rtl);
             last.line = truncated;
             last.hit_end = prepared.length;
             last.break_len = 0;
@@ -1338,6 +1505,7 @@ pub(crate) struct DrawnText {
 /// A text view got new text or a new layout, and the picture of it the
 /// engine thread painted, if it did ([`prerender`]).
 pub(crate) fn set(
+    surface: &crate::surface::Surface,
     view: &crate::view::NshView,
     text: &std::sync::Arc<AttributedText>,
     layout: &TextLayout,
@@ -1379,7 +1547,7 @@ pub(crate) fn set(
     });
     if was != text.is_selectable() {
         // The I-beam.
-        crate::input::style_changed(view);
+        crate::input::cursor_changed(surface);
     }
     // The mounter draws it, when it shows.
     view.restyle();
@@ -2658,7 +2826,7 @@ pub(crate) fn selected_range(view: &crate::view::NshView) -> Option<std::ops::Ra
     Some(start..end)
 }
 
-/// The selected text, without attachments' placeholders and hidden runs.
+/// The selected text as a copy gives it ([`nsh_core::AttributedText::copied_text`]).
 fn selected_text(view: &crate::view::NshView) -> Option<String> {
     let state = view.state();
     let drawn = state.text.as_ref()?;
@@ -2854,6 +3022,9 @@ fn draw_glyphs(cx: &CGContext, line: &LaidLine, stretches: &mut Stretches<'_>) {
     let mut advances = Vec::new();
     pieces.clear();
     let mut fill = None;
+    // The identity text matrix the text is drawn in, which each run's
+    // replaces while it draws.
+    let matrix = CGContext::text_matrix(c);
     // SAFETY: the line's own run array (of CTRuns), drawn by glyph ranges
     // within each run; buffers as long as those ranges.
     unsafe {
@@ -2899,12 +3070,17 @@ fn draw_glyphs(cx: &CGContext, line: &LaidLine, stretches: &mut Stretches<'_>) {
                     fill = Some(style.color);
                     CGContext::set_fill_color_with_color(c, Some(&cg_color(style.color)));
                 }
-                // Glyph positions are relative to the line's origin.
+                // `CTRunDraw` draws in the context's text matrix, not its
+                // font's: the run's own, which holds a leaning font's shear
+                // (`core_text::oblique`). Glyph positions are relative to
+                // the line's origin.
+                CGContext::set_text_matrix(c, run.text_matrix());
                 CGContext::set_text_position(c, line.origin.x, line.origin.y);
                 run.draw(cx, range);
             });
         }
     }
+    CGContext::set_text_matrix(c, matrix);
     if !pieces.is_empty() {
         draw_underlines(cx, line, &pieces);
     }
@@ -2998,24 +3174,10 @@ fn draw_decorations(cx: &CGContext, line: &LaidLine, stretches: &mut Stretches<'
                 if span.hidden {
                     return;
                 }
-                positions.clear();
-                positions.resize(range.length as usize, CGPoint::new(0.0, 0.0));
-                run.positions(
-                    range,
-                    NonNull::new(positions.as_mut_ptr()).expect("a buffer"),
-                );
-                // Its leftmost glyph, whichever way the run goes.
-                let left = positions
-                    .iter()
-                    .map(|p| p.x)
-                    .fold(CGFloat::MAX, CGFloat::min);
+                let Some((left, width)) = run_visual_span(run, range, &mut positions) else {
+                    return;
+                };
                 let x = line.origin.x + left;
-                let width = run.typographic_bounds(
-                    range,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                );
                 let color = cg_color(span.decoration_color.unwrap_or(span.color));
                 if strike {
                     let y = line.origin.y + font.x_height() / 2.0;
@@ -3041,62 +3203,6 @@ fn draw_decorations(cx: &CGContext, line: &LaidLine, stretches: &mut Stretches<'
             });
         }
     }
-}
-
-/// One decoration line centered on `y` (y-up), `style` as encoded by the
-/// text engine: solid, double, dotted, dashed, wavy.
-fn stroke_decoration(
-    cx: &CGContext,
-    color: &CGColor,
-    style: i32,
-    x: CGFloat,
-    y: CGFloat,
-    width: CGFloat,
-    thickness: CGFloat,
-) {
-    let c = Some(cx);
-    CGContext::save_g_state(c);
-    CGContext::set_stroke_color_with_color(c, Some(color));
-    CGContext::set_line_width(c, thickness);
-    let line = |y: CGFloat| {
-        CGContext::move_to_point(c, x, y);
-        CGContext::add_line_to_point(c, x + width, y);
-    };
-    match style {
-        1 => {
-            // Two lines a thickness apart.
-            line(y + thickness);
-            line(y - thickness);
-        }
-        2 => {
-            let pattern = [0.0, thickness * 2.0];
-            // SAFETY: a two-element pattern.
-            unsafe { CGContext::set_line_dash(c, 0.0, pattern.as_ptr(), 2) };
-            CGContext::set_line_cap(c, objc2_core_graphics::CGLineCap::Round);
-            line(y);
-        }
-        3 => {
-            let pattern = [thickness * 3.0, thickness * 2.0];
-            // SAFETY: a two-element pattern.
-            unsafe { CGContext::set_line_dash(c, 0.0, pattern.as_ptr(), 2) };
-            line(y);
-        }
-        4 => {
-            // A sine wave, one period per four thicknesses.
-            let amplitude = thickness * 1.5;
-            let period = (thickness * 4.0).max(4.0);
-            let steps = ((width / period) * 8.0).ceil().max(2.0) as usize;
-            CGContext::move_to_point(c, x, y);
-            for i in 1..=steps {
-                let t = width * i as CGFloat / steps as CGFloat;
-                let phase = t / period * std::f64::consts::TAU;
-                CGContext::add_line_to_point(c, x + t, y + amplitude * phase.sin());
-            }
-        }
-        _ => line(y),
-    }
-    CGContext::stroke_path(c);
-    CGContext::restore_g_state(c);
 }
 
 #[cfg(test)]
@@ -3213,6 +3319,139 @@ mod tests {
             (summed - rendered).abs() < 0.5,
             "summed={summed:.2}, rendered={rendered:.2}"
         );
+    }
+
+    /// Italic text without an italic face leans by CSS's oblique angle, as
+    /// browsers and Android draw it: in a family that has none, and in the
+    /// fonts the system font's italic face falls back to (CJK). Upright
+    /// text and text in an italic face keep their fonts' own shapes.
+    #[test]
+    fn italic_text_without_an_italic_face_leans() {
+        use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType};
+        use objc2_core_text::{CTFont, CTFontSymbolicTraits, CTRun};
+        let style = |italic: bool, family: Option<&str>| ResolvedTextStyle {
+            font_size: Points(16.0),
+            italic,
+            font_family: family.map(nsh_core::FontFamily::new),
+            ..ResolvedTextStyle::default()
+        };
+        let mut text = AttributedText::default();
+        text.push("正体 ", style(false, None));
+        text.push("Italic 斜体", style(true, None));
+        text.push(" 苹方", style(true, Some("PingFang SC")));
+        let engine = CoreTextEngine::default();
+        let prepared = engine.prepare(&text);
+        let layout = engine.layout(&prepared, engine.measure(&prepared, None));
+        let layout = layout
+            .downcast::<super::CoreTextLayout>()
+            .expect("a CoreText layout");
+        // The font each character (UTF-16 unit) is typeset in.
+        let mut fonts: Vec<Option<CFRetained<CTFont>>> =
+            vec![None; text.text.encode_utf16().count()];
+        for line in &layout.lines {
+            // SAFETY: the line's own run array (of CTRuns) and attribute
+            // dictionaries, whose font values are CTFonts.
+            unsafe {
+                let runs = line.line.glyph_runs();
+                for i in 0..runs.count() {
+                    let run = &*runs.value_at_index(i).cast::<CTRun>();
+                    let attributes = run.attributes();
+                    let attributes: &CFDictionary<CFString, CFType> = attributes.cast_unchecked();
+                    let font = attributes
+                        .get(super::kCTFontAttributeName)
+                        .and_then(|f| f.downcast::<CTFont>().ok());
+                    let range = run.string_range();
+                    for at in range.location..range.location + range.length {
+                        fonts[at as usize] = font.clone();
+                    }
+                }
+            }
+        }
+        // The shear and the italic trait of the font of character `c`.
+        let shape = |c: char| {
+            let at: usize = text
+                .text
+                .chars()
+                .take_while(|&x| x != c)
+                .map(char::len_utf16)
+                .sum();
+            let font = fonts[at].as_ref().expect("typeset");
+            // SAFETY: a valid font.
+            unsafe {
+                (
+                    font.matrix().c,
+                    font.symbolic_traits()
+                        .contains(CTFontSymbolicTraits::TraitItalic),
+                )
+            }
+        };
+        let lean = 14_f64.to_radians().tan();
+        assert_eq!(shape('正'), (0.0, false), "upright CJK");
+        assert_eq!(shape('I'), (0.0, true), "the system font's italic face");
+        let (c, _) = shape('斜');
+        assert!(
+            (c - lean).abs() < 1e-9,
+            "CJK the italic face falls back to: {c}"
+        );
+        let (c, _) = shape('苹');
+        assert!(
+            (c - lean).abs() < 1e-9,
+            "a family without an italic face: {c}"
+        );
+    }
+
+    /// An italic family list takes each family's italic face. A fallback
+    /// family without one stays upright in the cascade list, where CoreText
+    /// would ignore a lean, and its runs lean when typeset.
+    #[test]
+    fn an_italic_family_list_takes_each_familys_italic_face() {
+        use objc2_core_foundation::{CFArray, CFIndex};
+        use objc2_core_text::{CTFont, CTFontDescriptor, CTFontSymbolicTraits};
+        let italic = |family: &str| ResolvedTextStyle {
+            font_size: Points(14.0),
+            italic: true,
+            font_family: Some(nsh_core::FontFamily::new(family)),
+            ..ResolvedTextStyle::default()
+        };
+        // The family and whether it is an italic face, of the first font
+        // and of each one in its cascade list.
+        let faces = |family: &str| {
+            let font = super::make_font(&italic(family));
+            let face = |font: &CTFont| {
+                // SAFETY: a valid font.
+                unsafe {
+                    (
+                        font.family_name().to_string(),
+                        font.symbolic_traits()
+                            .contains(CTFontSymbolicTraits::TraitItalic),
+                    )
+                }
+            };
+            // SAFETY: a valid font; its cascade list holds font descriptors.
+            unsafe {
+                let list = font
+                    .font_descriptor()
+                    .attribute(super::kCTFontCascadeListAttribute)
+                    .and_then(|list| list.downcast::<CFArray>().ok())
+                    .expect("a cascade list");
+                let cascade: Vec<_> = (0..list.len() as CFIndex)
+                    .map(|i| {
+                        let descriptor = &*list.value_at_index(i).cast::<CTFontDescriptor>();
+                        face(&CTFont::with_font_descriptor(
+                            descriptor,
+                            14.0,
+                            std::ptr::null(),
+                        ))
+                    })
+                    .collect();
+                (face(&font), cascade)
+            }
+        };
+        let (first, cascade) = faces("Menlo, Helvetica");
+        assert_eq!(first, ("Menlo".to_owned(), true));
+        assert_eq!(cascade, [("Helvetica".to_owned(), true)]);
+        let (_, cascade) = faces("Menlo, PingFang SC");
+        assert_eq!(cascade, [("PingFang SC".to_owned(), false)]);
     }
 
     /// Showing words of a long paragraph or recoloring them draws again
@@ -3432,6 +3671,101 @@ mod tests {
         assert!(green_right < blue_left, "{green_right} {blue_left}");
     }
 
+    /// Text in a leaning font draws leaning: each run draws in its own text
+    /// matrix, which holds the font's shear.
+    #[test]
+    fn leaning_text_draws_leaning() {
+        use objc2_core_foundation::{CGAffineTransform, CGFloat};
+        use objc2_core_graphics::{
+            CGBitmapContextCreate, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData,
+            CGColorSpace, CGContext, CGImageAlphaInfo, CGImageByteOrderInfo, kCGColorSpaceSRGB,
+        };
+        // How far right of its bottom half the ink's top half lies, in
+        // pixels, for "斜体中文" drawn in `style`.
+        let lean = |style: ResolvedTextStyle| {
+            let mut text = AttributedText::default();
+            text.push("斜体中文", style);
+            let engine = CoreTextEngine::default();
+            let prepared = engine.prepare(&text);
+            let size = engine.measure(&prepared, None);
+            let layout = engine.layout(&prepared, size);
+            let layout = layout
+                .downcast::<super::CoreTextLayout>()
+                .expect("CoreText");
+            let (w, h) = (
+                size.width.0.ceil() as usize + 20,
+                size.height.0.ceil() as usize + 4,
+            );
+            // SAFETY: a constant of CoreGraphics; CoreGraphics allocates
+            // the pixels (null data) and frees them with the context.
+            let cx = unsafe {
+                let space = CGColorSpace::with_name(Some(kCGColorSpaceSRGB)).expect("sRGB");
+                CGBitmapContextCreate(
+                    std::ptr::null_mut(),
+                    w,
+                    h,
+                    8,
+                    w * 4,
+                    Some(&space),
+                    CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order32Big.0,
+                )
+            }
+            .expect("a bitmap context");
+            // The bitmap is y up, as CoreText draws.
+            CGContext::set_text_matrix(
+                Some(&cx),
+                CGAffineTransform {
+                    a: 1.0,
+                    b: 0.0,
+                    c: 0.0,
+                    d: 1.0,
+                    tx: 0.0,
+                    ty: 0.0,
+                },
+            );
+            CGContext::translate_ctm(Some(&cx), 10.0, 2.0 as CGFloat);
+            let mut stretches = super::Stretches::new(&text);
+            for line in &layout.lines {
+                super::draw_glyphs(&cx, line, &mut stretches);
+            }
+            let stride = CGBitmapContextGetBytesPerRow(Some(&cx));
+            // SAFETY: the context's `stride * h` bytes, which it keeps.
+            let pixels = unsafe {
+                std::slice::from_raw_parts(
+                    CGBitmapContextGetData(Some(&cx)).cast::<u8>(),
+                    stride * h,
+                )
+            };
+            let ink: Vec<(usize, usize)> = (0..h)
+                .flat_map(|y| (0..w).map(move |x| (x, y)))
+                .filter(|&(x, y)| pixels[y * stride + x * 4 + 3] > 128)
+                .collect();
+            let top = ink.iter().map(|p| p.1).min().unwrap_or(0);
+            let bottom = ink.iter().map(|p| p.1).max().unwrap_or(0);
+            let middle = (top + bottom) / 2;
+            let mean = |half: &dyn Fn(usize) -> bool| {
+                let xs: Vec<f64> = ink
+                    .iter()
+                    .filter(|p| half(p.1))
+                    .map(|p| p.0 as f64)
+                    .collect();
+                xs.iter().sum::<f64>() / xs.len().max(1) as f64
+            };
+            // Row 0 is the bitmap's top.
+            mean(&|y| y < middle) - mean(&|y| y > middle)
+        };
+        let style = |italic: bool| ResolvedTextStyle {
+            font_size: Points(32.0),
+            italic,
+            ..ResolvedTextStyle::default()
+        };
+        let (upright, italic) = (lean(style(false)), lean(style(true)));
+        assert!(
+            italic - upright > 2.0,
+            "upright {upright:.2}, italic {italic:.2}"
+        );
+    }
+
     /// The baseline of the first line, the attachment's top and the line's
     /// extent above and below the baseline.
     fn place(align: VerticalAlign) -> (f32, f32, f32, f32) {
@@ -3602,6 +3936,126 @@ mod tests {
             assert!(top + chip <= lines[2].y.0 + 0.5, "{chip}");
         }
     }
+    /// Non-`middle` attachments taller than a fixed `lineHeight` grow only
+    /// the side of the baseline they reach past, mixed attachments or larger
+    /// spans on the same line keep room for both, and fitting attachments do
+    /// not relax `MaximumLineHeight` on wrapped text lines.
+    #[test]
+    fn non_middle_attachments_grow_only_the_side_they_reach_past() {
+        let engine = CoreTextEngine::default();
+        let style = ResolvedTextStyle {
+            font_size: Points(15.0),
+            line_height: Points(26.0),
+            ..ResolvedTextStyle::default()
+        };
+        let f = engine.fonts.get(&style);
+        // SAFETY: a valid font.
+        let (ascent, descent, leading) = unsafe { (f.ascent(), f.descent(), f.leading()) };
+        let strut_down = (descent + (26.0 - (ascent + descent + leading)) / 2.0) as f32;
+
+        let mut block = AttributedText::default();
+        let mut block_align = nsh_core::AttachmentAlignments::default();
+        block_align.push(
+            &mut block,
+            Size::new(Points(320.0), Points(450.0)),
+            VerticalAlign::Baseline,
+            style,
+        );
+        let prep = engine.prepare_aligned(&block, &block_align);
+        let sz = engine.measure(&prep, Some(Points(320.0)));
+        let lay = engine.layout(&prep, sz);
+        let top = engine.attachments(&lay)[0].expect("shown").y.0;
+        assert!(top.abs() < 1.0 && (sz.height.0 - (450.0 + strut_down)).abs() < 1.0);
+
+        let three_lines = |align| {
+            let mut t = AttributedText::default();
+            t.push("Ax\nAx ", style);
+            let mut a = nsh_core::AttachmentAlignments::default();
+            a.push(&mut t, Size::new(Points(40.0), Points(80.0)), align, style);
+            t.push(" x\nAx", style);
+            let prep = engine.prepare_aligned(&t, &a);
+            let lay = engine.layout(&prep, engine.measure(&prep, None));
+            let lines = engine.lines(&lay);
+            let top = engine.attachments(&lay)[0].expect("shown").y.0;
+            assert!(
+                top >= lines[0].y.0 + lines[0].height.0 - 0.5 && top + 80.0 <= lines[2].y.0 + 0.5
+            );
+            lines
+                .iter()
+                .map(|l| l.y.0 + l.ascender.0)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            (three_lines(VerticalAlign::TextTop)[1]
+                - three_lines(VerticalAlign::TextTop)[0]
+                - 26.0)
+                .abs()
+                < 1.5
+        );
+        let bot = three_lines(VerticalAlign::TextBottom);
+        assert!((bot[2] - bot[1] - 26.0).abs() < 1.5);
+
+        for (lh, img_h) in [(26.0, 100.0), (58.0, 35.0)] {
+            let row = ResolvedTextStyle {
+                line_height: Points(lh),
+                ..style
+            };
+            let mut mixed = AttributedText::default();
+            mixed.push("Ax\n", row);
+            let mut mixed_align = nsh_core::AttachmentAlignments::default();
+            mixed_align.push(
+                &mut mixed,
+                Size::new(Points(40.0), Points(img_h)),
+                VerticalAlign::Baseline,
+                row,
+            );
+            mixed.push(" ", row);
+            mixed_align.push(
+                &mut mixed,
+                Size::new(Points(40.0), Points(img_h)),
+                VerticalAlign::TextTop,
+                row,
+            );
+            mixed.push(
+                " Big",
+                ResolvedTextStyle {
+                    font_size: Points(48.0),
+                    ..row
+                },
+            );
+            mixed.push("\nHx", row);
+            let prep = engine.prepare_aligned(&mixed, &mixed_align);
+            let lay = engine.layout(&prep, engine.measure(&prep, None));
+            let lines = engine.lines(&lay);
+            let pts = engine.attachments(&lay);
+            assert!(pts[0].expect("a0").y.0 >= lines[0].y.0 + lines[0].height.0 - 1.0);
+            assert!(pts[1].expect("a1").y.0 + img_h <= lines[2].y.0 + 1.0);
+        }
+
+        let wrapped_h = |with_fitting: bool| {
+            let mut t = AttributedText::default();
+            t.push("Ax ", style);
+            let mut a = nsh_core::AttachmentAlignments::default();
+            if with_fitting {
+                a.push(
+                    &mut t,
+                    Size::new(Points(12.0), Points(12.0)),
+                    VerticalAlign::Baseline,
+                    style,
+                );
+            }
+            t.push(
+                " Big words wrap onto pure text lines",
+                ResolvedTextStyle {
+                    font_size: Points(36.0),
+                    ..style
+                },
+            );
+            let prep = engine.prepare_aligned(&t, &a);
+            engine.measure(&prep, Some(Points(100.0))).height.0
+        };
+        assert!((wrapped_h(true) - wrapped_h(false)).abs() < 0.5);
+    }
 
     /// A text drawn while its content layer is still at an earlier, smaller
     /// frame (such as at the start of a `LayoutAnimation` that grows its
@@ -3609,7 +4063,7 @@ mod tests {
     /// covers its whole content box.
     #[test]
     fn drawing_in_a_shorter_or_narrower_layer_marks_the_text_cut() {
-        use std::{cell::Cell, sync::Arc};
+        use std::cell::Cell;
 
         use nsh_core::{Bounds, Point, ViewKind};
         use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
@@ -3987,6 +4441,121 @@ mod hit_regressions {
             "the token has no source character: {rects:?}"
         );
     }
+
+    #[test]
+    fn truncated_rtl_last_line_stays_right_aligned() {
+        let engine = CoreTextEngine::default();
+        let arabic = "مرحبا بالعالم هذا نص عربي طويل جدا للاختبار المتعدد الأسطر";
+        let width = Points(140.0);
+        let visual_edges = |layout: &TextLayout| {
+            let laid = layout.downcast::<CoreTextLayout>().expect("CoreTextLayout");
+            laid.lines
+                .iter()
+                .map(|l| {
+                    // SAFETY: valid CTLine.
+                    let w = unsafe {
+                        l.line.typographic_bounds(
+                            std::ptr::null_mut(),
+                            std::ptr::null_mut(),
+                            std::ptr::null_mut(),
+                        )
+                    };
+                    // SAFETY: valid CTLine.
+                    let trailing = unsafe { l.line.trailing_whitespace_width() };
+                    (l.origin.x, l.origin.x + w - trailing)
+                })
+                .collect::<Vec<_>>()
+        };
+        for (align, rtl, writing_direction) in [
+            (TextAlign::Auto, false, None),
+            (TextAlign::Auto, true, Some(false)),
+            (TextAlign::Justify, false, None),
+            (TextAlign::Left, true, Some(true)),
+        ] {
+            let mut text = AttributedText {
+                align,
+                rtl,
+                writing_direction,
+                max_lines: 2,
+                ellipsize: EllipsizeMode::Tail,
+                ..Default::default()
+            };
+            text.push(arabic, ResolvedTextStyle::default());
+            let prepared = engine.prepare(&text);
+            let measured = engine.measure(&prepared, Some(width));
+            let layout = engine.layout(&prepared, Size::new(width, measured.height));
+            let edges = visual_edges(&layout);
+            assert_eq!(
+                edges.len(),
+                2,
+                "{align:?} rtl={rtl} dir={writing_direction:?}"
+            );
+            match align {
+                TextAlign::Left => {
+                    assert!(
+                        edges[0].0.abs() < 0.01 && edges[1].0.abs() < 0.01,
+                        "explicit Left stays left-aligned: {edges:?}"
+                    );
+                }
+                _ => {
+                    assert!(
+                        edges[1].0 > 0.1,
+                        "truncated RTL last line must not snap to x = 0: {edges:?}"
+                    );
+                    assert!(
+                        (edges[0].1 - width.0 as CGFloat).abs() < 0.01
+                            && (edges[1].1 - width.0 as CGFloat).abs() < 0.01,
+                        "RTL lines must flush to the right edge ({width:?}): {edges:?}"
+                    );
+                }
+            }
+        }
+
+        // Clipped Arabic line wider than the box starts at the right edge and
+        // overflows left instead of clamping to `x = 0`.
+        let mut clipped = AttributedText {
+            align: TextAlign::Auto,
+            max_lines: 1,
+            ellipsize: EllipsizeMode::Clip,
+            ..Default::default()
+        };
+        clipped.push(arabic, ResolvedTextStyle::default());
+        let prepared = engine.prepare(&clipped);
+        let narrow = Points(60.0);
+        let clip_layout = engine.layout(&prepared, Size::new(narrow, Points(30.0)));
+        let clip_edges = visual_edges(&clip_layout);
+        assert_eq!(clip_edges.len(), 1);
+        assert!(clip_edges[0].0 < 0.0, "{clip_edges:?}");
+        assert!(
+            (clip_edges[0].1 - narrow.0 as CGFloat).abs() < 0.01,
+            "{clip_edges:?}"
+        );
+
+        // Two paragraphs under `Auto`: LTR first paragraph left, truncated RTL second paragraph right.
+        let mut mixed = AttributedText {
+            align: TextAlign::Auto,
+            max_lines: 2,
+            ellipsize: EllipsizeMode::Tail,
+            ..Default::default()
+        };
+        mixed.push(
+            "Hi\nمرحبا بالعالم هذا نص عربي طويل",
+            ResolvedTextStyle::default(),
+        );
+        let prepared = engine.prepare(&mixed);
+        let box_w = Points(160.0);
+        let layout = engine.layout(&prepared, Size::new(box_w, Points(120.0)));
+        let edges = visual_edges(&layout);
+        assert_eq!(edges.len(), 2, "{edges:?}");
+        assert!(
+            edges[0].0.abs() < 0.01,
+            "LTR paragraph stays left: {edges:?}"
+        );
+        assert!(
+            edges[1].0 > 0.1 && (edges[1].1 - box_w.0 as CGFloat).abs() < 0.01,
+            "truncated RTL second paragraph stays right: {edges:?}"
+        );
+    }
     /// The core shares measurements between the widths from a text's widest
     /// line to the one measured (`breaks_lines_greedily`): each of them
     /// must measure the same.
@@ -4055,5 +4624,345 @@ mod first_baseline {
         );
         let (large, _) = baseline(24.0);
         assert!(large > small * 1.5, "{small} {large}");
+    }
+}
+
+#[cfg(test)]
+mod cut_lines {
+    use super::*;
+
+    fn units(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+
+    fn paragraph_of(text: &str, at: CFIndex) -> Range<CFIndex> {
+        let units = units(text);
+        paragraph_around(|i| units[i as usize], units.len() as CFIndex, at)
+    }
+
+    #[test]
+    fn a_paragraph_runs_as_its_first_strong_character() {
+        let cases = [
+            ("Programme of the evening", false),
+            ("برنامج المساء", true),
+            ("תוכנית בדיקה", true),
+            // Digits and punctuation are not strong: the letters after
+            // them decide.
+            ("5 برنامج المساء", true),
+            ("(4) תוכנית", true),
+            ("12 Programme", false),
+            // Nothing strong: left to right (UAX #9 P3).
+            ("123 456", false),
+            ("", false),
+            // An isolate's content does not count (P2).
+            ("\u{2067}אבג\u{2069} abc", false),
+            ("\u{2066}abc\u{2069} אבג", true),
+            // Only its own paragraph counts.
+            ("123\nאבג", false),
+        ];
+        for (text, rtl) in cases {
+            assert_eq!(natural_rtl(units(text)), rtl, "{text:?}");
+        }
+        // An unpaired surrogate is skipped.
+        assert!(natural_rtl([0xd800, 0x05d0]));
+    }
+
+    #[test]
+    fn a_paragraph_reaches_from_separator_to_separator() {
+        let cases = [
+            ("abc\nאבג", 0, 0..3),
+            ("abc\nאבג", 2, 0..3),
+            ("abc\nאבג", 4, 4..7),
+            ("אבג\r\nabc", 5, 5..8),
+            ("abc\u{2029}אבג", 4, 4..7),
+            // Offsets are UTF-16: an emoji takes two units.
+            ("😀\nאבג", 3, 3..6),
+            // A line in the middle of a paragraph.
+            ("abc אבג", 4, 0..7),
+            // An empty paragraph between two breaks.
+            ("abc\n\nאבג", 4, 4..4),
+            ("", 0, 0..0),
+            ("abc", 9, 0..3),
+        ];
+        for (text, at, paragraph) in cases {
+            assert_eq!(paragraph_of(text, at), paragraph, "{text:?} at {at}");
+        }
+        // The direction of the paragraph holding a line's start.
+        for (text, at, rtl) in [
+            ("abc\nאבג", 0, false),
+            ("abc\nאבג", 4, true),
+            ("אבג\r\nabc", 5, false),
+            ("abc אבג", 4, false),
+        ] {
+            let units = units(text);
+            let paragraph = paragraph_of(text, at);
+            let units = units[paragraph.start as usize..paragraph.end as usize].iter();
+            assert_eq!(natural_rtl(units.copied()), rtl, "{text:?} at {at}");
+        }
+    }
+
+    #[test]
+    fn a_line_that_fits_goes_where_the_paragraph_aligns_its_lines() {
+        use TextAlign::*;
+        // (align, layout right to left, paragraph right to left, factor)
+        let cases = [
+            (Left, false, false, 0.0),
+            (Left, true, true, 0.0),
+            (Right, false, false, 1.0),
+            (Right, true, true, 1.0),
+            (Center, false, false, 0.5),
+            (Center, true, true, 0.5),
+            // Natural alignment: the paragraph's start side.
+            (Auto, false, false, 0.0),
+            (Auto, false, true, 1.0),
+            // `auto` in a right-to-left block: the right, whatever the
+            // content (`paragraph_key`).
+            (Auto, true, false, 1.0),
+            (Auto, true, true, 1.0),
+            // A justified paragraph's last line: natural.
+            (Justify, false, false, 0.0),
+            (Justify, true, false, 0.0),
+            (Justify, false, true, 1.0),
+        ];
+        for (align, layout_rtl, paragraph_rtl, factor) in cases {
+            assert_eq!(
+                flush_factor(align, layout_rtl, paragraph_rtl),
+                factor,
+                "{align:?} layout_rtl {layout_rtl} paragraph_rtl {paragraph_rtl}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_line_wider_than_its_box_starts_at_its_paragraphs_start() {
+        // A 300-point line in a 120-point box, whatever its alignment put
+        // it at (`flushed`).
+        for flushed in [0.0, -40.0, 100.0] {
+            // The paragraph starts at the line's own start edge.
+            assert_eq!(cut_line_x(flushed, 300.0, Some(0.0), 120.0, false), 0.0);
+            assert_eq!(cut_line_x(flushed, 300.0, None, 120.0, false), 0.0);
+            assert_eq!(cut_line_x(flushed, 300.0, Some(300.0), 120.0, true), -180.0);
+            assert_eq!(cut_line_x(flushed, 300.0, None, 120.0, true), -180.0);
+            // Within the line (reordered after a paragraph of the other
+            // direction): that start goes to the box's start edge.
+            assert_eq!(
+                cut_line_x(flushed, 300.0, Some(250.0), 120.0, false),
+                -250.0
+            );
+            assert_eq!(cut_line_x(flushed, 300.0, Some(60.0), 120.0, true), 60.0);
+        }
+        // A line that fits stays where its alignment put it, never left of
+        // the box.
+        for rtl in [false, true] {
+            for start in [None, Some(0.0), Some(100.0)] {
+                assert_eq!(cut_line_x(20.0, 100.0, start, 120.0, rtl), 20.0);
+                assert_eq!(cut_line_x(-0.25, 120.0, start, 120.0, rtl), 0.0);
+            }
+        }
+    }
+
+    /// `text` with `s` in one style, laid out in a box `width` wide.
+    fn lay(mut text: AttributedText, s: &str, width: f32) -> (CoreTextEngine, TextLayout) {
+        text.push(
+            s,
+            ResolvedTextStyle {
+                font_size: Points(26.0),
+                ..Default::default()
+            },
+        );
+        let engine = CoreTextEngine::default();
+        let prepared = engine.prepare(&text);
+        let laid = engine.layout(&prepared, Size::new(Points(width), Points(80.0)));
+        (engine, laid)
+    }
+
+    /// The x of the caret before character `offset`.
+    fn caret(engine: &CoreTextEngine, layout: &TextLayout, offset: u32) -> f32 {
+        engine
+            .caret_rect(layout, TextPosition::new(offset, Affinity::Downstream))
+            .expect("a caret")
+            .origin
+            .x
+            .0
+    }
+
+    #[test]
+    fn coretext_lines_keep_the_start_of_their_paragraph() {
+        let width = 120.0;
+        // (text, its natural direction is right to left)
+        let texts = [
+            ("Programme of the evening, live", false),
+            ("برنامج المساء التجريبي الطويل", true),
+            ("5 برنامج المساء التجريبي الطويل", true),
+            ("תוכנית בדיקה ארוכה מאוד 4", true),
+        ];
+        let aligns = [
+            TextAlign::Auto,
+            TextAlign::Left,
+            TextAlign::Center,
+            TextAlign::Right,
+            TextAlign::Justify,
+        ];
+        let modes = [
+            EllipsizeMode::Clip,
+            EllipsizeMode::Tail,
+            EllipsizeMode::Head,
+            EllipsizeMode::Middle,
+        ];
+        for (s, natural) in texts {
+            for direction in [None, Some(false), Some(true)] {
+                for layout_rtl in [false, true] {
+                    for mode in modes {
+                        for align in aligns {
+                            let text = AttributedText {
+                                max_lines: 1,
+                                ellipsize: mode,
+                                align,
+                                writing_direction: direction,
+                                rtl: layout_rtl,
+                                ..Default::default()
+                            };
+                            let (engine, laid) = lay(text, s, width);
+                            let lines = engine.lines(&laid);
+                            let what = format!(
+                                "{s} {direction:?} layout_rtl {layout_rtl} {mode:?} {align:?}"
+                            );
+                            assert_eq!(lines.len(), 1, "{what}");
+                            let line = &lines[0];
+                            let (left, right) = (line.x.0, line.x.0 + line.width.0);
+                            let what = format!("{what}: {left}..{right}");
+                            let rtl = direction.unwrap_or(natural);
+                            // 0 flush left, 0.5 centered, 1 flush right.
+                            let side = |rtl: bool| if rtl { 1.0 } else { 0.0 };
+                            let expected = match (mode, align) {
+                                (EllipsizeMode::Clip, _) => {
+                                    assert!(line.width.0 > width, "{what}: wider than its box");
+                                    side(rtl)
+                                }
+                                (_, TextAlign::Left) => 0.0,
+                                (_, TextAlign::Center) => 0.5,
+                                (_, TextAlign::Right) => 1.0,
+                                (_, TextAlign::Auto) if layout_rtl => 1.0,
+                                (_, TextAlign::Auto | TextAlign::Justify) => side(rtl),
+                            };
+                            if mode != EllipsizeMode::Clip {
+                                assert!(line.width.0 <= width + 0.5, "{what}: fits its box");
+                            }
+                            // Negative for a line wider than its box
+                            // flush right: it overflows the left.
+                            let at = (width - line.width.0) * expected;
+                            assert!((left - at).abs() < 0.5, "{what}: expected at {at}");
+                            // CoreText's own caret: the text's start is in
+                            // view when the paragraph runs as its content.
+                            if mode == EllipsizeMode::Clip && direction.is_none_or(|d| d == natural)
+                            {
+                                let start = caret(&engine, &laid, 0);
+                                assert!(
+                                    (-0.5..=width + 0.5).contains(&start),
+                                    "{what}: its start at {start} is out of view"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_ellipsized_line_starts_where_coretext_started_the_line_above() {
+        // CoreText typesets the first line, aligned by `paragraph_key`; the
+        // cut second line starts at the same edge.
+        let width = 120.0;
+        for s in [
+            "برنامج المساء التجريبي الطويل للعائلة كلها مع الأخبار والطقس",
+            "תוכנית בדיקה ארוכה מאוד עם הרבה מילים נוספות לבדיקה",
+        ] {
+            for align in [TextAlign::Auto, TextAlign::Right, TextAlign::Justify] {
+                let text = AttributedText {
+                    max_lines: 2,
+                    ellipsize: EllipsizeMode::Tail,
+                    align,
+                    ..Default::default()
+                };
+                let (engine, laid) = lay(text, s, width);
+                let lines = engine.lines(&laid);
+                assert_eq!(lines.len(), 2, "{s} {align:?}");
+                assert!(
+                    (lines[1].end as usize) < s.encode_utf16().count(),
+                    "{s} {align:?}: the second line is cut"
+                );
+                let first = caret(&engine, &laid, lines[0].start);
+                let second = caret(&engine, &laid, lines[1].start);
+                assert!(
+                    (first - second).abs() < 0.5,
+                    "{s} {align:?}: lines start at {first} and {second}"
+                );
+                assert!((first - width).abs() < 1.0, "{s} {align:?}: at {first}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_paragraph_of_a_clipped_text_starts_at_its_start_edge() {
+        let width = 160.0;
+        // (text, its paragraphs run right to left)
+        for (s, rtl) in [
+            ("Tonight\nبرنامج المساء التجريبي الطويل", [false, true]),
+            ("برنامج\nProgramme of the evening, live", [true, false]),
+        ] {
+            let text = AttributedText {
+                max_lines: 2,
+                ellipsize: EllipsizeMode::Clip,
+                ..Default::default()
+            };
+            let (engine, laid) = lay(text, s, width);
+            let lines = engine.lines(&laid);
+            assert_eq!(lines.len(), 2, "{s}");
+            assert!(lines[1].width.0 > width, "{s}: the second line overflows");
+            for (line, rtl) in lines.iter().zip(rtl) {
+                let start = caret(&engine, &laid, line.start);
+                let edge = if rtl { width } else { 0.0 };
+                assert!(
+                    (start - edge).abs() < 1.0,
+                    "{s}: the line from {} starts at {start}",
+                    line.start
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_clipped_line_of_two_paragraphs_keeps_the_first_in_view() {
+        // The clipped line holds every paragraph left; reordering need not
+        // put the first at the line's start edge.
+        let width = 120.0;
+        for (s, rtl) in [
+            ("אבג\nabc def ghi jkl mno", true),
+            ("abc\nאבג דהו זחט יכל מנס", false),
+        ] {
+            let text = AttributedText {
+                max_lines: 1,
+                ellipsize: EllipsizeMode::Clip,
+                ..Default::default()
+            };
+            let (engine, laid) = lay(text, s, width);
+            let lines = engine.lines(&laid);
+            assert_eq!(lines.len(), 1, "{s}");
+            assert!(lines[0].width.0 > width, "{s}: wider than its box");
+            let start = caret(&engine, &laid, 0);
+            let edge = if rtl { width } else { 0.0 };
+            assert!((start - edge).abs() < 0.5, "{s}: starts at {start}");
+            let mut rects = Vec::new();
+            engine.range_rects(&laid, 0..3, &mut rects);
+            assert!(!rects.is_empty(), "{s}");
+            for r in &rects {
+                let (left, right) = (r.origin.x.0, r.origin.x.0 + r.size.width.0);
+                assert!(
+                    left >= -0.5 && right <= width + 0.5,
+                    "{s}: its first word at {left}..{right}"
+                );
+            }
+        }
     }
 }

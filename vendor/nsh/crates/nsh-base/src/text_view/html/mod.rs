@@ -715,6 +715,17 @@ impl<'p> Reader<'p> {
                 content: self.inline_vec(node, depth),
                 color: mark_color(node),
             },
+            "span" | "font" => match text_color(node) {
+                Some(color) => Inline::TextStyle {
+                    content: self.inline_vec(node, depth),
+                    color: Some(color),
+                },
+                // Without a color it is only its content.
+                None => {
+                    self.inline_children(node, out, depth);
+                    return;
+                }
+            },
             "sup" => Inline::Superscript {
                 content: self.inline_vec(node, depth),
             },
@@ -820,7 +831,8 @@ impl<'p> Reader<'p> {
             .take_while(|i| matches!(i, Inline::Break))
             .count();
         inlines.drain(..leading);
-        apply_patterns(&self.parser.extensions, inlines)
+        let inlines = apply_patterns(&self.parser.extensions, inlines);
+        super::common::without_links_and_images(&self.parser.options, inlines)
     }
 
     // --- Extensions -------------------------------------------------------
@@ -904,6 +916,9 @@ fn collapse(inlines: Vec<Inline>, ws: &mut Whitespace) -> Vec<Inline> {
             }),
             Inline::Highlight { content, color } => wrap(&mut out, content, ws, |content| {
                 Inline::Highlight { content, color }
+            }),
+            Inline::TextStyle { content, color } => wrap(&mut out, content, ws, |content| {
+                Inline::TextStyle { content, color }
             }),
             Inline::Superscript { content } => wrap(&mut out, content, ws, |content| {
                 Inline::Superscript { content }
@@ -1214,6 +1229,25 @@ fn mark_color(node: &Handle) -> Option<String> {
         .as_deref()
         .and_then(named)
         .or_else(|| style(node, "background-color").as_deref().and_then(css))
+}
+
+/// The color the text of `<span>` or `<font>` `node` asks for, as a CSS
+/// color: its style's `color`, else a `<font>`'s `color` attribute, as a
+/// browser ranks them. A color that would hide the text (fully
+/// transparent) is not read: the text keeps the color it shows in.
+fn text_color(node: &Handle) -> Option<String> {
+    let css = |value: &str| {
+        let value = value.trim();
+        let color = value.parse::<nsh_core::color::Hsla>().ok()?;
+        (color.a > 0.0).then(|| value.to_owned())
+    };
+    style(node, "color").as_deref().and_then(css).or_else(|| {
+        (element_name(node) == Some("font"))
+            .then(|| attr(node, "color"))
+            .flatten()
+            .as_deref()
+            .and_then(css)
+    })
 }
 
 /// The alignment a cell asks for (`align`, or `text-align` in its style).

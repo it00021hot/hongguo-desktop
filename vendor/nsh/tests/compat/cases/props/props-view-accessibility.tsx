@@ -3,13 +3,14 @@
 // iOS (the scripts' default platform): `accessible`, `accessibilityHint`,
 // `accessibilityDescription`,
 // `accessibilityState` (with `hasPopup`, a popup's trigger), `accessibilityValue`, `accessibilityElementsHidden`,
-// `accessibilityActions`, `importantForAccessibility`, which decides
+// `accessibilityLiveRegion`, `accessibilityActions`, `importantForAccessibility`, which decides
 // `accessible` and hides the descendants for `"no-hide-descendants"`, and
 // the `"listbox"` and `"option"` roles of a select's popup, the chosen
 // option `selected`, and the structural roles of `nsh/base`'s accordions,
 // toolbars, paginations, trees and checkable menu items (`"group"`,
 // `"region"`, `"navigation"`, `"tree"`, `"treeitem"`, `"menuitemcheckbox"`,
-// `"menuitemradio"`) and of dialogs (`"dialog"`, `"alertdialog"`), and
+// `"menuitemradio"`), of a text box (`"textbox"`), dialogs
+// (`"dialog"`, `"alertdialog"`) and a tab's content (`"tabpanel"`), and
 // `accessibilityDescribedBy`: a field whose error line's text is its
 // description while the line is there, its own description after. Its
 // script checks each.
@@ -59,6 +60,7 @@ function App() {
         style={{ height: 20 }}
       />
       <View testID="hidden" accessibilityElementsHidden={true} style={{ height: 20 }} />
+      <View testID="live" accessibilityLiveRegion="polite" style={{ height: 20 }} />
       <View
         testID="important-no"
         importantForAccessibility="no-hide-descendants"
@@ -93,6 +95,8 @@ function App() {
       <View testID="role-menuitemradio" role="menuitemradio" style={{ height: 4 }} />
       <View testID="role-dialog" role="dialog" style={{ height: 4 }} />
       <View testID="role-alertdialog" role="alertdialog" style={{ height: 4 }} />
+      <View testID="role-textbox" role="textbox" accessibilityLabel="Message" style={{ height: 4 }} />
+      <View testID="role-tabpanel" role="tabpanel" style={{ height: 4 }} />
       <View testID="plain" style={{ height: 20 }} />
     </View>
   );

@@ -21,9 +21,9 @@
 use std::cell::Cell;
 
 use nsh_core::{
-    BlendMode, BorderStyle, BoxShadow, Color, CornerRadii, Filter, GlassEffect, Gradient,
-    GradientKind, GradientSize, MacOsBackdrop, MacOsBackdropBlending, MacOsBackdropMaterial,
-    MacOsBackdropState, ViewStyle,
+    BlendMode, BorderStyle, BoxShadow, ClipInset, Color, CornerRadii, Filter, GlassEffect,
+    Gradient, GradientKind, GradientSize, MacOsBackdrop, MacOsBackdropBlending,
+    MacOsBackdropMaterial, MacOsBackdropState, ViewStyle,
     geometry::{Points, px},
 };
 use objc2::{
@@ -115,6 +115,8 @@ pub(crate) struct Visual {
     backdrop: Option<Backdrop>,
     /// `maskImage`'s layer, held so it is not rebuilt every frame.
     mask_image: Option<Retained<CAGradientLayer>>,
+    /// `clipPath`'s shape layer.
+    clip: Option<Retained<CAShapeLayer>>,
 }
 
 /// What draws a view's backdrop.
@@ -145,6 +147,10 @@ struct Backdrop {
     tint: Option<Color>,
     /// The material, blending and state `view` was given (material only).
     material: MacOsBackdrop,
+    /// The frame and corners `view` (and its layer) were last shaped to:
+    /// writing the same frame or corner radius again is not free, since
+    /// `NSGlassEffectView` lays its SwiftUI content out again for each.
+    shape: Option<(CGRect, CornerRadii)>,
 }
 
 define_class!(
@@ -513,6 +519,37 @@ pub(crate) fn drop_shadow(style: &ViewStyle) -> Option<(f32, f32, f32, Color)> {
         .max_by(|a, b| a.2.total_cmp(&b.2))
 }
 
+/// `clip`'s outline in a box of `size`, as a path
+/// ([`ClipInset::outline`]).
+fn clip_outline(clip: &ClipInset, size: CGSize) -> CFRetained<CGMutablePath> {
+    use nsh_core::{Point, shape::Segment};
+    let path = CGMutablePath::new();
+    let cg = |p: Point<Points>| (p.x.0 as CGFloat, p.y.0 as CGFloat);
+    let (p, m) = (Some(&*path), std::ptr::null());
+    let size = nsh_core::geometry::size(px(size.width as f32), px(size.height as f32));
+    clip.outline(size, &mut |s| {
+        // SAFETY: a valid mutable path and a null transform.
+        unsafe {
+            match s {
+                Segment::Move(to) => {
+                    let (x, y) = cg(to);
+                    CGMutablePath::move_to_point(p, m, x, y)
+                }
+                Segment::Line(to) => {
+                    let (x, y) = cg(to);
+                    CGMutablePath::add_line_to_point(p, m, x, y)
+                }
+                Segment::Cubic([c1, c2, to]) => {
+                    let ((a, b), (c, d), (x, y)) = (cg(c1), cg(c2), cg(to));
+                    CGMutablePath::add_curve_to_point(p, m, a, b, c, d, x, y)
+                }
+                Segment::Close => CGMutablePath::close_subpath(p),
+            }
+        }
+    });
+    path
+}
+
 impl Visual {
     /// It holds no layer, as a new one.
     pub(crate) fn is_empty(&self) -> bool {
@@ -524,6 +561,7 @@ impl Visual {
             veil,
             backdrop,
             mask_image,
+            clip,
         } = self;
         shadows.is_none()
             && insets.is_none()
@@ -532,10 +570,12 @@ impl Visual {
             && veil.is_none()
             && backdrop.is_none()
             && mask_image.is_none()
+            && clip.is_none()
     }
 
     /// Shapes the effect layers of `view` (in its own `layer`) after
-    /// `style`; `filled`: an opaque fill layer covers the box.
+    /// `style`; `filled`: an opaque fill layer covers the box; `corner`: the
+    /// decoration's corner mask when it is on `layer` (see [`Self::set_masks`]).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply(
         &mut self,
@@ -546,6 +586,7 @@ impl Visual {
         radii: CornerRadii,
         text: bool,
         filled: bool,
+        corner: Option<&CALayer>,
     ) {
         let effects = style.effects.as_deref();
         let shadows = effects.map_or(&[][..], |e| &e.box_shadows[..]);
@@ -600,33 +641,111 @@ impl Visual {
         });
         let masked = effects.is_some_and(|e| !e.mask_images.is_empty());
         self.set_backdrop(view, style, blur, masked, local, radii);
-        // Last: the mask covers everything above, the backdrop's view included.
-        self.set_mask_image(
+        // Last: the masks cover everything above, the backdrop's view
+        // included.
+        self.set_masks(
             layer,
             effects.map_or(&[][..], |e| &e.mask_images[..]),
+            style.clip_path(),
             local,
+            corner,
         );
     }
 
-    /// `mask-image`: a gradient whose alpha decides how much of the view is
-    /// drawn. Set on the view's own layer, so it masks the content, the
-    /// background, the shadows and the backdrop's view alike.
+    /// `clip-path` and `mask-image`, on the view's own layer, so they cover
+    /// the content, the background, the shadows, the backdrop's view and the
+    /// children alike. The clip path's shape masks the layer, and the
+    /// gradient masks that shape (a mask's own mask applies to it); either
+    /// alone masks the layer.
     ///
-    /// CSS composites several mask layers; this draws the topmost one, which
-    /// is what a fade along one edge needs (as on iOS).
-    fn set_mask_image(&mut self, layer: &CALayer, masks: &[Gradient], local: CGRect) {
-        let Some(mask) = masks.first() else {
-            if self.mask_image.take().is_some() {
-                // SAFETY: clearing the mask.
-                unsafe { layer.setMask(None) };
+    /// `mask-image`: a gradient whose alpha decides how much of the view is
+    /// drawn. CSS composites several mask layers; this draws the topmost one,
+    /// which is what a fade along one edge needs (as on iOS).
+    ///
+    /// `corner` is the decoration's mask for corners of different radii when
+    /// it is on `layer` itself (no container clips the children). A layer has
+    /// one mask, so the clip path or gradient masks that shape instead
+    /// (a mask's own mask applies to it): the layer keeps its corners and
+    /// the effect masks on top.
+    fn set_masks(
+        &mut self,
+        layer: &CALayer,
+        masks: &[Gradient],
+        clip: Option<&ClipInset>,
+        local: CGRect,
+        corner: Option<&CALayer>,
+    ) {
+        // Only a mask of ours is taken off: the decoration may have masked
+        // the layer to its corners in the same pass.
+        let ours = layer.mask().is_some_and(|m| {
+            let m: &CALayer = &m;
+            self.clip.as_deref().is_some_and(|c| std::ptr::eq(m, &**c))
+                || self
+                    .mask_image
+                    .as_deref()
+                    .is_some_and(|g| std::ptr::eq(m, &**g))
+        });
+        let gradient = match masks.first() {
+            Some(mask) => {
+                let g = self.mask_image.get_or_insert_with(CAGradientLayer::new);
+                g.setFrame(local);
+                shape_gradient(g, mask, local.size);
+                Some(g.clone())
+            }
+            None => self.mask_image.take().and(None),
+        };
+        let shape = match clip {
+            Some(clip) => {
+                let s = self.clip.get_or_insert_with(CAShapeLayer::new);
+                s.setFrame(local);
+                s.setPath(Some(&clip_outline(clip, local.size)));
+                Some(s.clone())
+            }
+            None => self.clip.take().and(None),
+        };
+        let top: Option<&CALayer> = match (&shape, &gradient) {
+            (Some(shape), _) => Some(shape),
+            (None, Some(gradient)) => Some(gradient),
+            (None, None) => None,
+        };
+        let inner = gradient
+            .as_deref()
+            .map(|g| &**g)
+            .filter(|_| shape.is_some());
+        if let Some(corner) = corner {
+            // A gradient is the mask of one layer at a time: when the
+            // corner shape holds it (or a clip shape that goes), it leaves
+            // before it becomes the clip shape's. Only what changed is
+            // touched; the decoration set the corner shape on the layer in
+            // this pass.
+            if !is_mask(corner, top) {
+                // SAFETY: clearing the decoration's corner shape's mask.
+                unsafe { corner.setMask(None) };
+            }
+            if let Some(shape) = &shape
+                && !is_mask(shape, inner)
+            {
+                // SAFETY: the shape owns the gradient as its mask, which
+                // has no superlayer of its own.
+                unsafe { shape.setMask(inner) };
+            }
+            if !is_mask(corner, top) {
+                // SAFETY: the corner shape owns `top`, which is ours and
+                // has no superlayer.
+                unsafe { corner.setMask(top) };
             }
             return;
-        };
-        let g = self.mask_image.get_or_insert_with(CAGradientLayer::new);
-        g.setFrame(local);
-        shape_gradient(g, mask, local.size);
-        // SAFETY: the layer owns the mask, which has no superlayer of its own.
-        unsafe { layer.setMask(Some(g)) };
+        }
+        if let Some(shape) = &shape {
+            // SAFETY: the shape owns the gradient as its mask, which has no
+            // superlayer of its own.
+            unsafe { shape.setMask(inner) };
+        }
+        if top.is_some() || ours {
+            // SAFETY: the layer owns the mask, which has no superlayer of
+            // its own (or none).
+            unsafe { layer.setMask(top) };
+        }
     }
 
     fn set_shadows(
@@ -922,7 +1041,11 @@ impl Visual {
             self.backdrop = Some(backdrop);
         }
         let b = self.backdrop.as_mut().expect("just inserted");
-        b.view.setFrame(local);
+        let shape = (local, radii);
+        let reshape = b.shape != Some(shape);
+        if b.shape.is_none_or(|(frame, _)| frame != local) {
+            b.view.setFrame(local);
+        }
         match kind {
             BackdropKind::Plain => {
                 if let Some(blur) = b.view.downcast_ref::<PlainBlur>() {
@@ -951,16 +1074,22 @@ impl Visual {
                         b.tint = style.glass_tint_color;
                     }
                     // The glass draws its own rounded shape.
-                    let r = crate::decor::shared(&radii).unwrap_or(0.0) as CGFloat;
-                    // SAFETY: NSGlassEffectView's `setCornerRadius:`, a
-                    // CGFloat, on the main thread.
-                    let _: () = unsafe { msg_send![&**glass, setCornerRadius: r] };
+                    if b.shape.is_none_or(|(_, old)| old != radii) {
+                        let r = crate::decor::shared(&radii).unwrap_or(0.0) as CGFloat;
+                        // SAFETY: NSGlassEffectView's `setCornerRadius:`, a
+                        // CGFloat, on the main thread.
+                        let _: () = unsafe { msg_send![&**glass, setCornerRadius: r] };
+                    }
                 }
             }
+        }
+        if !reshape {
+            return;
         }
         let Some(layer) = b.view.layer() else {
             return;
         };
+        b.shape = Some(shape);
         // Below the background's fill layer and every effect.
         layer.setZPosition(BACKDROP_Z);
         match crate::decor::shared(&radii) {
@@ -1003,6 +1132,7 @@ fn new_backdrop(
                 glass_style: GlassEffect::None,
                 tint: None,
                 material,
+                shape: None,
             }
         }
         BackdropKind::Plain => {
@@ -1018,6 +1148,7 @@ fn new_backdrop(
                 glass_style: GlassEffect::None,
                 tint: None,
                 material,
+                shape: None,
             }
         }
         BackdropKind::Glass => {
@@ -1035,6 +1166,7 @@ fn new_backdrop(
                 glass_style: style.glass_effect,
                 tint: None,
                 material: MacOsBackdrop::default(),
+                shape: None,
             }
         }
     };
@@ -1150,6 +1282,15 @@ fn grown(radii: CornerRadii, d: Points) -> CornerRadii {
 /// non-zero rule of shadow paths).
 fn add_reversed(path: &CFRetained<CGMutablePath>, rect: CGRect, radii: CornerRadii) {
     crate::decor::add_rounded(path, rect, radii, true);
+}
+
+/// Whether `layer`'s mask is `want` (or both are none).
+fn is_mask(layer: &CALayer, want: Option<&CALayer>) -> bool {
+    match (layer.mask(), want) {
+        (None, None) => true,
+        (Some(m), Some(w)) => std::ptr::eq(&*m, w),
+        _ => false,
+    }
 }
 
 /// Configures `g` to draw `gradient` over a `size` box.
@@ -1292,11 +1433,8 @@ mod tests {
     fn blur_style(radius: f32) -> ViewStyle {
         ViewStyle {
             effects: Some(Arc::new(nsh_core::Effects {
-                box_shadows: Vec::new(),
-                background_images: Vec::new(),
-                filters: Vec::new(),
                 backdrop_filters: vec![Filter::Blur(px(radius))],
-                mask_images: Vec::new(),
+                ..nsh_core::Effects::default()
             })),
             ..ViewStyle::default()
         }

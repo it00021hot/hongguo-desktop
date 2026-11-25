@@ -24,15 +24,15 @@ use super::{
     reactive::with_data,
     signal_with,
     task::{
-        self, Action, Answer, ClipboardImage, ClipboardItem, DialogAnswer, Executor, FileAnswer,
-        ImageSize,
+        self, Action, Answer, ClipboardImage, ClipboardItem, ClipboardWrite, DialogAnswer,
+        Executor, FileAnswer, ImageSize,
     },
 };
 use crate::{
     Command, Dialog, EdgeInsets, LayoutAnimation, NodeId, Points, Size,
     canvas::CanvasFont,
     color::Hsla,
-    platform::{Appearance, Idiom, Lifecycle, Locale, LocaleSettings, Os},
+    platform::{Appearance, Idiom, Lifecycle, Locale, LocaleSettings, Network, Os},
     time::Instant,
 };
 
@@ -53,6 +53,15 @@ pub(crate) struct Ambient {
     storage: Option<crate::storage::Store>,
     /// The app's own data directory ([`data_dir`]).
     data_dir: Option<std::path::PathBuf>,
+    /// The app as it was built ([`app_info`]).
+    app_info: Option<crate::platform::AppInfo>,
+    /// What the app may do ([`access`]).
+    access: Option<Arc<crate::access::Access>>,
+    /// Which engine this is ([`engine_id`]).
+    pub(super) engine_id: Option<EngineId>,
+    /// What `nsh/updater` checks with for Rust code
+    /// ([`crate::runtime::prompt_for_update`]).
+    updater: Option<std::sync::Arc<dyn crate::runtime::UpdaterHost>>,
     /// The displays (desktops), as the platform reports them.
     displays: Option<Signal<Arc<[crate::desktop::Display]>>>,
     /// Whether the performance monitor measures, as the platform reports
@@ -97,6 +106,7 @@ struct EnvSignals {
     locale_settings: Memo<LocaleSettings>,
     lifecycle: Memo<Lifecycle>,
     wake_count: Memo<u32>,
+    network: Memo<Network>,
     screen_color: Memo<bool>,
     shaders: Memo<bool>,
 }
@@ -142,6 +152,7 @@ impl EnvSignals {
                 locale_settings: part!(locale_settings),
                 lifecycle: part!(lifecycle),
                 wake_count: part!(wake_count),
+                network: part!(network),
                 screen_color: part!(screen_color),
                 shaders: part!(shaders),
             }
@@ -174,6 +185,27 @@ impl super::Runtime {
     pub(crate) fn set_data_dir(&self, dir: Option<std::path::PathBuf>) {
         let _entered = self.enter();
         with_data(|d| d.ambient.data_dir = dir);
+    }
+
+    /// The app as it was built ([`app_info`]).
+    pub(crate) fn set_app_info(&self, info: Option<crate::platform::AppInfo>) {
+        let _entered = self.enter();
+        with_data(|d| d.ambient.app_info = info);
+    }
+
+    /// What the app may do ([`access`]).
+    pub(crate) fn set_access(&self, access: Arc<crate::access::Access>) {
+        let _entered = self.enter();
+        with_data(|d| d.ambient.access = Some(access));
+    }
+
+    /// What Rust code checks for updates with ([`updater_host`]).
+    pub(crate) fn set_updater(
+        &self,
+        updater: Option<std::sync::Arc<dyn crate::runtime::UpdaterHost>>,
+    ) {
+        let _entered = self.enter();
+        with_data(|d| d.ambient.updater = updater);
     }
 
     /// How text is measured (the core's text engine).
@@ -287,7 +319,7 @@ pub(super) fn executor() -> Rc<Executor> {
     with_data(|d| d.ambient.executor.clone()).expect("the core sets the executor")
 }
 
-fn act(action: Action) {
+pub(crate) fn act(action: Action) {
     executor().act(action);
 }
 
@@ -449,6 +481,24 @@ pub fn lifecycle() -> Lifecycle {
 /// to the background, which [`lifecycle`] reports.
 pub fn wake_count() -> u32 {
     env(|e| e.wake_count)
+}
+
+/// How the device reaches the network now (TS: `network()`): the kind of
+/// link its default route takes
+/// ([`NetworkKind::None`](crate::platform::NetworkKind::None) offline),
+/// whether that link costs the user or the user asked to save data on it,
+/// and on iOS whether the user lets the app use cellular data. Reading it
+/// subscribes, so an effect that reads it runs again when the route
+/// changes: a request that failed offline can wait for
+/// [`Network::online`] and try again at once, and one refused while
+/// [`CellularData::Restricted`](crate::platform::CellularData::Restricted)
+/// points the user to the system's settings instead of retrying. iOS and
+/// macOS follow the system's path monitor, Android its default network,
+/// the web `navigator.onLine` and `navigator.connection`; elsewhere it
+/// stays [`NetworkKind::Unknown`](crate::platform::NetworkKind::Unknown),
+/// which counts as online.
+pub fn network() -> Network {
+    env(|e| e.network)
 }
 
 /// The operating system (TS: `platform.os`); it does not change.
@@ -676,6 +726,73 @@ pub fn data_dir() -> Option<std::path::PathBuf> {
     with_data(|d| d.ambient.data_dir.clone())
 }
 
+/// The app as it was built (TS: `appInfo()`): its id, name, version and
+/// build number, and whether it is a development build
+/// ([`crate::platform::AppInfo`]). `None` in a TSX app, whose JS
+/// `appInfo()` reports it, and where the runner gave none.
+///
+/// ```ignore
+/// if let Some(version) = app_info().and_then(|info| info.version) {
+///     log::info!("version {version}");
+/// }
+/// ```
+pub fn app_info() -> Option<crate::platform::AppInfo> {
+    with_data(|d| d.ambient.app_info.clone())
+}
+
+/// What the app the calling code runs in may do: its capabilities (its
+/// `nsh.json` declaration and what the embedding app grants), as the
+/// engine checks them. A native module that guards a capability of its own
+/// checks it here for Rust callers, as its JS face does with the calling
+/// VM's [`System::access`](super::System) (`nsh-extra`'s `Speech` checks
+/// `speech`). `None` when the calling code does not run on an engine's
+/// thread (a thread of the module's own or of a library, a platform
+/// callback, a test without an engine): no app's grant applies there,
+/// though the code may well act for one. Rust code is trusted, so such a
+/// caller is not limited here; a module that must tie it to an app reads
+/// the access on the engine's thread first and carries it along.
+///
+/// ```ignore
+/// if access().is_some_and(|access| !access.allows_speech()) {
+///     return Err(not_allowed());
+/// }
+/// ```
+pub fn access() -> Option<Arc<crate::access::Access>> {
+    super::reactive::try_with_data(|d| d.ambient.access.clone()).flatten()
+}
+
+/// An engine of the process ([`engine_id`]): opaque, and never the same
+/// for two engines of one process, even after one goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EngineId(std::num::NonZeroU64);
+
+impl EngineId {
+    /// One no engine had before.
+    pub(crate) fn next() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(std::num::NonZeroU64::new(id).expect("engine ids do not run out"))
+    }
+}
+
+/// The engine the calling code runs in: what a native module whose state
+/// is the process's (one microphone, one device) tells its engines'
+/// requests apart with. `None` outside an engine's Rust code (a thread of
+/// the module's own, a test without an engine).
+///
+/// ```ignore
+/// let displaced_by_another_app = running.owner != engine_id();
+/// ```
+pub fn engine_id() -> Option<EngineId> {
+    super::reactive::try_with_data(|d| d.ambient.engine_id).flatten()
+}
+
+/// What Rust code checks for updates with: the engine's, `None` where the
+/// app does not update.
+pub(crate) fn updater_host() -> Option<std::sync::Arc<dyn crate::runtime::UpdaterHost>> {
+    with_data(|d| d.ambient.updater.clone())
+}
+
 /// The file the app's log lines are written to (TS: `process.logFile`): a
 /// packaged desktop app's rolling log, `logs/app.log` in the app's data
 /// directory, for a diagnostics report or an "Open logs folder" command
@@ -704,17 +821,27 @@ pub fn open_url(url: impl Into<String>) -> Answer<bool> {
     answer
 }
 
-/// Puts `text` on the system clipboard (TS: `Clipboard.writeText`).
-pub fn set_clipboard(text: impl Into<String>) {
-    act(super::services::set_clipboard(text.into()));
+/// Puts `text` on the system clipboard (TS: `Clipboard.writeText`). The
+/// answer says whether the system clipboard took it
+/// ([`ClipboardWrite`]); drop it when that does not matter, the write
+/// happens either way.
+pub fn set_clipboard(text: impl Into<String>) -> Answer<ClipboardWrite> {
+    let (answer, action) = super::services::set_clipboard(text.into());
+    act(action);
+    answer
 }
 
 /// Puts `item` on the system clipboard (TS: `Clipboard.write`): its
 /// text, and its HTML as the platform's HTML type, which apps that read
 /// formatting paste. Where the platform has no HTML on the clipboard (a
 /// terminal) the text only.
-pub fn set_clipboard_item(item: ClipboardItem) {
-    act(super::services::set_clipboard_item(item));
+///
+/// The answer says whether the system clipboard took it
+/// ([`ClipboardWrite`]); drop it when that does not matter.
+pub fn set_clipboard_item(item: ClipboardItem) -> Answer<ClipboardWrite> {
+    let (answer, action) = super::services::set_clipboard_item(item);
+    act(action);
+    answer
 }
 
 /// The text on the system clipboard, `""` when it holds none (TS:
@@ -822,15 +949,17 @@ pub fn share(
 /// Opens a web sign-in session for `request` ([`crate::auth_session`]):
 /// the provider's sign-in page, which redirects to a URL of the request's
 /// callback scheme when the user is done. iOS shows it in an
-/// `ASWebAuthenticationSession`, Android in a Custom Tab, other platforms
-/// in the system browser. To await in a task: the
+/// `ASWebAuthenticationSession`, Android in a Custom Tab, the macOS,
+/// Windows and Linux backends in the system browser. To await in a task: the
 /// [`AuthSessionOutcome`](crate::auth_session::AuthSessionOutcome) is the
 /// callback URL, or a cancellation (the user closed the page or came back
 /// without signing in, or a later session replaced it). Outside iOS the
 /// callback comes back as a link of a scheme the app claims (`nsh.json`
 /// `schemes`), which the session takes instead of
-/// [`next_url_scheme_open`]; where neither brings it back, the session
-/// fails with the [`AuthSessionError`](crate::auth_session::AuthSessionError)
+/// [`next_url_scheme_open`]; where nothing brings it back (an unclaimed
+/// scheme, or a platform that hears no links of the app's schemes: the
+/// web, the GPUI and terminal backends), the session fails at once with the
+/// [`AuthSessionError`](crate::auth_session::AuthSessionError)
 /// `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`. It fails with `ERR_ACCESS_DENIED`
 /// where the app's `openUrl` capability does not grant the page's URL, and
 /// with no code for a request
@@ -985,15 +1114,6 @@ pub fn pick_files(
     answer
 }
 
-/// Whether speech can be recognized here (TS: `Speech.available()`): the
-/// platform recognizes speech (macOS, iOS), or the embedding app gave the
-/// core its own recognizer. To await in a task.
-pub fn speech_available() -> Answer<bool> {
-    let (answer, slot) = Answer::new();
-    act(Action::Speech(super::SpeechAction::Available(slot)));
-    answer
-}
-
 /// Whether the app may show notifications (TS: `Notifications.permission`),
 /// without asking the user. To await in a task.
 pub fn notification_permission() -> Answer<crate::notifications::NotificationPermission> {
@@ -1084,8 +1204,8 @@ pub fn next_open_files() -> Answer<Vec<std::path::PathBuf>> {
 /// ...)`): with `nsh.json` `"singleInstance": true`, a second launch on
 /// Windows or Linux hands the running instance its arguments and working
 /// directory and exits; those that came before anything listened first
-/// ([`crate::single_instance`]). The main window is already brought
-/// forward. Never on macOS (Launch Services activates the running app
+/// ([`crate::single_instance`]). The app has already heard `reopen`;
+/// nothing is brought forward implicitly. Never on macOS (Launch Services activates the running app
 /// instead), iOS, Android or the web. To await in a task.
 pub fn next_second_instance() -> Answer<crate::single_instance::SecondInstance> {
     let (answer, slot) = Answer::new();
@@ -1203,119 +1323,97 @@ pub fn web_view_available() -> Answer<bool> {
     answer
 }
 
-/// Starts recognizing what the user says (dictation; TS: `Speech.start`),
-/// as `request` asks: the session's events come from
-/// [`SpeechRecognition::next`], in a task. One session runs at a time:
-/// starting another ends this one (its [`SpeechEvent::End`](crate::speech::SpeechEvent::End),
-/// without an error). The core refuses it (an end with
-/// [`SpeechError::NotAllowed`](crate::speech::SpeechError::NotAllowed))
-/// when the app's capabilities do not grant `speech`, and ends it with
-/// [`SpeechError::Unavailable`](crate::speech::SpeechError::Unavailable)
-/// where nothing recognizes speech ([`speech_available`]).
-pub fn recognize_speech(request: crate::speech::SpeechRequest) -> SpeechRecognition {
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let (sink, events) = crate::speech::channel();
-    let executor = executor();
-    executor.act(Action::Speech(super::SpeechAction::Start {
-        id,
-        request,
-        sink,
-    }));
-    SpeechRecognition {
-        id,
-        events,
-        executor: Rc::downgrade(&executor),
-        ended: false,
-    }
-}
-
-/// A running speech recognition session ([`recognize_speech`]). Dropping
-/// it before its end aborts it.
-#[must_use = "a dropped recognition is aborted"]
-pub struct SpeechRecognition {
-    id: u32,
-    events: crate::speech::SpeechEvents,
-    executor: std::rc::Weak<Executor>,
-    ended: bool,
-}
-
-impl std::fmt::Debug for SpeechRecognition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SpeechRecognition")
-            .field("id", &self.id)
-            .field("ended", &self.ended)
-            .finish_non_exhaustive()
-    }
-}
-
-impl SpeechRecognition {
-    /// The session's next event; `None` after its end.
-    pub async fn next(&mut self) -> Option<crate::speech::SpeechEvent> {
-        std::future::poll_fn(|cx| self.poll_next(cx)).await
-    }
-
-    /// Polls for the session's next event ([`Self::next`]).
-    pub fn poll_next(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<crate::speech::SpeechEvent>> {
-        let poll = self.events.poll_next(cx);
-        if let std::task::Poll::Ready(None | Some(crate::speech::SpeechEvent::End { .. })) = poll {
-            self.ended = true;
-        }
-        poll
-    }
-
-    /// Stops listening: the recognizer finishes what it heard (a last,
-    /// final result), then the session ends.
-    pub fn stop(&self) {
-        if !self.ended {
-            self.act(super::SpeechAction::Stop(self.id));
-        }
-    }
-
-    /// Ends the session at once, without an error; what was not reported
-    /// is dropped.
-    pub fn abort(&self) {
-        if !self.ended {
-            self.act(super::SpeechAction::Abort(self.id));
-        }
-    }
-
-    fn act(&self, action: super::SpeechAction) {
-        if let Some(executor) = self.executor.upgrade() {
-            executor.act(Action::Speech(action));
-        }
-    }
-}
-
-impl Drop for SpeechRecognition {
-    fn drop(&mut self) {
-        self.abort();
-    }
-}
-
-/// The value function `name` of the embedding app returns for `args`
-/// (TS: `host.call`), to await in a task.
-pub(crate) fn host_call(
-    name: String,
+/// Calls function `name` of the app's host with `args` (TS: `host.call`),
+/// to await in a task: what it returns, or why the call failed. The host
+/// is the embedding app (the native app around the view, whose handlers
+/// answer: `HostChannel::handle` in Rust, `handle` in Swift and Java), or
+/// on the web the page that runs the app (`createPlayer`'s `host`, the
+/// module nsh.json's `web.host` names). A call waits
+/// [`DEFAULT_CALL_TIMEOUT`](crate::host_channel::DEFAULT_CALL_TIMEOUT)
+/// ([`host_call_with`] says otherwise), on the app's clock. `name` must
+/// be granted by `capabilities.host` in nsh.json ([`HostError::Denied`]);
+/// where nothing embeds the app it fails with [`HostError::Unavailable`].
+///
+/// [`HostError::Denied`]: crate::host_channel::HostError::Denied
+/// [`HostError::Unavailable`]: crate::host_channel::HostError::Unavailable
+pub async fn host_call(
+    name: impl Into<String>,
     args: crate::JsonValue,
-) -> Answer<Result<crate::JsonValue, super::JsError>> {
-    let (answer, action) = super::services::host_call(name, args);
+) -> Result<crate::JsonValue, crate::host_channel::HostError> {
+    host_call_with(name, args, crate::host_channel::HostCallOptions::default()).await
+}
+
+/// [`host_call`] as `options` say (TS: `host.call(name, args, options)`).
+pub async fn host_call_with(
+    name: impl Into<String>,
+    args: crate::JsonValue,
+    options: crate::host_channel::HostCallOptions,
+) -> Result<crate::JsonValue, crate::host_channel::HostError> {
+    use crate::host_channel::HostError;
+    let name = name.into();
+    // One so long the clock never gets there waits as `ZERO` does.
+    let timeout = options.timeout;
+    let deadline = (!timeout.is_zero())
+        .then(|| crate::time::now().checked_add(timeout))
+        .flatten();
+    let (answer, action) = super::services::host_call(name.clone(), args);
     act(action);
-    answer
+    let Some(at) = deadline else {
+        return answer.await;
+    };
+    // On the app's clock, as its timers: a manual clock moves it.
+    let answered = {
+        let mut answer = std::pin::pin!(answer);
+        let mut delay = std::pin::pin!(timer_until(at));
+        std::future::poll_fn(|cx| {
+            if let std::task::Poll::Ready(result) = answer.as_mut().poll(cx) {
+                return std::task::Poll::Ready(Some(result));
+            }
+            if delay.as_mut().poll(cx).is_ready() {
+                return std::task::Poll::Ready(None);
+            }
+            std::task::Poll::Pending
+        })
+        .await
+    };
+    answered.unwrap_or_else(|| {
+        // The answer went with the block: the core drops its slot now,
+        // and a late reply finds none (`Core::answer_host`).
+        act(Action::ForgetHostCalls);
+        Err(HostError::TimedOut { name, timeout })
+    })
 }
 
-/// Hands `args` to function `name` of the embedding app, with no answer
-/// (TS: `host.post`).
-pub(crate) fn host_post(name: String, args: crate::JsonValue) {
-    act(Action::HostPost { name, args });
+/// Hands `args` to function `name` of the app's host, with no answer (TS:
+/// `host.post`): its handler of `name` gets it, as [`host_call`]'s calls.
+/// Where nothing embeds the app, or the host has no handler of `name`, the
+/// post goes nowhere; a name `capabilities.host` does not grant, or no
+/// valid one, is refused and logged.
+pub fn host_post(name: impl Into<String>, args: crate::JsonValue) {
+    act(Action::HostPost {
+        name: name.into(),
+        args,
+    });
 }
 
-/// Forgets the host calls whose answers were dropped (they timed out).
-pub(crate) fn forget_host_calls() {
-    act(Action::ForgetHostCalls);
+/// Runs `listener` with the data of every event `event` the app's host
+/// sends while the current owner lives (TS: `host.on`): the embedding
+/// app's (`HostChannel::send` in Rust, `send` in Swift and Java) and on
+/// the web the page's (`player.hostEvent`). An event that comes while no
+/// listener of its name is there is kept (at most
+/// [`MAX_QUEUED_EVENTS`](crate::host_channel::MAX_QUEUED_EVENTS), the
+/// oldest going first) until one is added, which hears it after the
+/// render that added it: a listener added once the app loaded something
+/// still hears what the host sent at its start. An event a listener heard
+/// is not replayed to the ones added later. Events need no capability.
+pub fn on_host_event(event: impl Into<String>, listener: impl Fn(&crate::JsonValue) + 'static) {
+    let owner = Owner::current();
+    let listener: super::host_events::HostListener =
+        Rc::new(move |data: &crate::JsonValue| owner.run(|| listener(data)));
+    let listeners = &executor().host_events;
+    let id = listeners.borrow_mut().add(event.into(), listener);
+    let subscription = super::host_events::HostSubscription::new(listeners, id);
+    cleanup(move || drop(subscription));
 }
 
 /// The size in pixels of the image at `src` (TS: `Image.getSize`).
@@ -1350,6 +1448,13 @@ pub fn fetch(request: impl Into<crate::platform::HttpRequest>) -> super::Fetch {
 /// Asks for the app to show in `locale` ([`crate::i18n::set_locale`]).
 pub(crate) fn act_locale(locale: Option<crate::platform::Locale>) {
     act(Action::Locale(locale));
+}
+
+/// Tells the core that translations changed in place
+/// ([`crate::i18n::add_translations`]), so menus can re-localize if the
+/// selected language changed.
+pub(crate) fn act_translations_changed(before: crate::i18n::Translations) {
+    act_if_running(Action::TranslationsChanged(before));
 }
 
 /// Shows the surface in `appearance` whatever the system's (TS:
@@ -1621,6 +1726,24 @@ pub fn after_answer(f: impl FnOnce() + 'static) {
     });
 }
 
+/// Runs `f`, with no owner, once the components of the commit being made
+/// (the one in progress, else the next) have rendered, before its batch
+/// goes out: after every view the update made or took down, so `f` sees the
+/// whole update. What it asks for (an announcement) and what it changes
+/// go out in the same batch. A task or a timer runs a commit later, too
+/// late for what has to go with the views it is about.
+///
+/// The core's part of `nsh_base::Toast`'s announcement, which tells a
+/// toast the app moved (took down and made again in one update) from a
+/// new one.
+#[doc(hidden)]
+pub fn after_render(f: impl FnOnce() + 'static) {
+    executor().after_render(task::AfterAnswer {
+        owner: Owner::detached(),
+        f: Box::new(f),
+    });
+}
+
 /// Runs blocking `f` on the runtime's blocking threads (in a task: await
 /// its result; `tokio::task::spawn_blocking`), starting at once, whether
 /// called from a task, a render, an effect or a handler. Not in
@@ -1689,6 +1812,8 @@ pub fn component_ref<C: super::Component>() -> super::ComponentRef<C> {
 /// options).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct KeyOptions {
+    /// Where it fires ([`KeyScope`]).
+    pub scope: KeyScope,
     /// While a text input (or a web view) has the keyboard focus: by
     /// default unless the input uses the keystroke itself.
     pub when: crate::keymap::When,
@@ -1707,6 +1832,24 @@ pub struct KeyOptions {
     /// give way to the control the focus is on (default)
     /// ([`crate::keymap::KeyBinding::for_focus`]).
     pub for_focus: bool,
+    /// Comes before the views' bindings of the keystroke, so it takes a key
+    /// a focused component binds itself (a query editor's mod+enter over
+    /// the editor's own) while it is kept (default: the views' come first)
+    /// ([`crate::keymap::KeyBinding::over_focused`]).
+    pub over_focused: bool,
+}
+
+/// Where a keyboard shortcut fires ([`on_key_with`]; TS: `keymap.bind`'s
+/// `scope`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum KeyScope {
+    /// The window the shortcut is made in: the window around the component,
+    /// or the window the core finds its component in. A shortcut made in the
+    /// app root (outside every window) is app-wide.
+    #[default]
+    Window,
+    /// Every window: the app's own shortcuts, made in the app root.
+    App,
 }
 
 /// Whether shortcuts follow Apple's conventions here (`mod` is Command):
@@ -1730,15 +1873,23 @@ pub fn try_apple_keys() -> Option<bool> {
 /// lives (TS: `keymap.bind`): `"mod+k"` (`mod` is Command on Apple
 /// platforms, Control elsewhere), `"shift+mod+l"`, `"escape"`, ... (the
 /// keystrokes of `nsh/keymap`). The handler gets the keystroke as written.
-/// It belongs to the window bound in ([`super::desktop::current_window`];
-/// in a component JS places in a window, that window) and fires only for
-/// keys pressed there; a key it does not take goes on as usual. Desktop
-/// platforms fire them; elsewhere they are kept but no key does.
+/// By default it belongs to the window bound in ([`super::desktop::current_window`];
+/// in a component JS places in a window, that window), or to every window
+/// when bound in the app root; [`KeyOptions::scope`] makes the choice
+/// explicit. It fires only for keys pressed there, and a key it does not
+/// take goes on as usual. Desktop platforms fire them; elsewhere they are
+/// kept but no key does.
 ///
 /// # Panics
 ///
 /// On a keystroke that is not one, or one the platform keeps (Command+Q
 /// on Apple platforms, Alt+F4 elsewhere, ...), as TS's `bind` throws.
+///
+/// The panic is not fatal to the app: like any panic in a component, it
+/// ends the component that made the call (its error boundary hears it, or
+/// it is logged) and the engine goes on. To take keystrokes from user
+/// settings, check them first with
+/// [`Shortcut::parse`](crate::desktop::Shortcut::parse).
 #[track_caller]
 pub fn on_key(keystroke: &str, handler: impl Fn(&str) + 'static) {
     on_key_with(keystroke, KeyOptions::default(), handler);
@@ -1761,18 +1912,27 @@ pub fn on_key_with(keystroke: &str, options: KeyOptions, handler: impl Fn(&str) 
     let handler: super::keys::KeyHandler = Rc::new(move |k: &str| owner.run(|| handler(k)));
     // It belongs to the window whose tree binds it (`current_window`); with
     // no window around it in Rust (a component JS placed in a `Window`),
-    // the core finds the window its owner's component shows in.
-    let window = super::use_context::<super::desktop::WindowRef>().and_then(|w| w.dialog_root());
+    // the core finds the window its owner's component shows in. An app-wide
+    // binding (`KeyScope::App`) belongs to every window.
+    let (window, app) = match options.scope {
+        KeyScope::App => (None, true),
+        KeyScope::Window => (
+            super::use_context::<super::desktop::WindowRef>().and_then(|w| w.dialog_root()),
+            false,
+        ),
+    };
     let keys = executor().keys.clone();
     let id = keys.borrow_mut().add(
         |id| {
             crate::keymap::KeyBinding::new(id, parsed, options.when, options.repeat)
                 .passing_through(options.pass_through)
                 .focus_keys(options.for_focus)
+                .over_focused(options.over_focused)
         },
         keystroke.into(),
         handler,
         window,
+        app,
         owner,
     );
     let weak = Rc::downgrade(&keys);
@@ -1937,6 +2097,12 @@ fn add_watch(target: Rc<dyn Fn() -> Option<NodeId>>, handler: super::watch::Scro
 /// # Panics
 ///
 /// On a keystroke that is not one.
+///
+/// The panic is not fatal to the app: like any panic in a component, it
+/// ends the component that made the call (its error boundary hears it, or
+/// it is logged) and the engine goes on. To take keystrokes from user
+/// settings, check them first with
+/// [`Shortcut::parse`](crate::desktop::Shortcut::parse).
 #[track_caller]
 pub fn key_label(keystroke: &str) -> String {
     let parsed = crate::keymap::Keystroke::parse_with(keystroke, apple_keys())
@@ -1970,7 +2136,25 @@ pub fn on_back_press(f: impl Fn() -> bool + 'static) {
     let listener: super::back::BackListener = Rc::new(move || owner.run(&f));
     let back = &executor().back;
     let id = back.borrow_mut().add(listener);
-    let subscription = super::back::BackSubscription::new(back, id);
+    let subscription = super::back::Subscription::new(back, id);
+    cleanup(move || drop(subscription));
+}
+
+/// Follows the system's back gesture while the current owner lives (TS:
+/// `BackHandler.on("progress", f)`): `f` hears each step of a gesture no
+/// modal takes, from its start to its end (the back press follows, as
+/// [`on_back_press`]'s listeners hear it) or its cancel, as AndroidX's
+/// `OnBackPressedCallback` does. While one listens, the stacks leave the
+/// gesture to the app: none previews its pop, so a view the app moves with
+/// the finger (a drawer closing, a sheet going down) is the only one that
+/// does. Android 14 and later (predictive back) report it; elsewhere it
+/// never comes.
+pub fn on_back_progress(f: impl Fn(&crate::BackProgressEvent) + 'static) {
+    let owner = Owner::current();
+    let listener: super::back::BackProgressListener = Rc::new(move |e| owner.run(|| f(e)));
+    let progress = &executor().back_progress;
+    let id = progress.borrow_mut().add(listener);
+    let subscription = super::back::Subscription::new(progress, id);
     cleanup(move || drop(subscription));
 }
 

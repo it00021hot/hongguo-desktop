@@ -35,6 +35,8 @@ prop id:submit submitBehavior submit
 noprop id:plain submitBehavior
 prop id:focused autoFocus true
 prop id:plain autoFocus false
+prop id:select-all selectTextOnFocus true
+prop id:plain selectTextOnFocus false
 prop id:focused caret false
 prop id:plain caret true
 # `defaultValue`: the initial text.
@@ -58,6 +60,7 @@ covers [props] ios.textContentType
 covers [props] maxLength
 covers [props] submitBehavior
 covers [props] autoFocus
+covers [props] selectTextOnFocus
 covers [props] caret
 covers [props] defaultValue
 covers [props] value
@@ -128,6 +131,9 @@ prop scroll:text:"Sticky 0" stickyHeaderIndices start=0 end=80, start=120 end=In
 # Items not measured yet count 100 points each: 30 items are 3000 tall.
 scroll scroll:text:"Estimated 0" 0 10
 expect Content: 3000
+# Cells align at their natural cross-axis size, from either style form.
+origin id:align-center 40 704
+origin id:align-end 0 794
 covers [props] numColumns
 covers [props] inverted
 covers [props] stickyHeaderIndices
@@ -199,6 +205,8 @@ prop id:page javaScriptEnabled false
 prop id:page userAgent CompatAgent/1
 prop id:page scrollable false
 prop id:page incognito true
+prop id:page zoomable true
+prop id:page allowOrigin https://pages.example.com
 prop id:page ios.allowsBackForwardNavigationGestures true
 # A page of HTML with its base URL when the app switches to it.
 tap id:html
@@ -212,6 +220,8 @@ covers [props] javaScriptEnabled
 covers [props] userAgent
 covers [props] scrollable
 covers [props] incognito
+covers [props] zoomable
+covers [props] allowOrigin
 covers [props] ios.allowsBackForwardNavigationGestures
 # props-scroll-behavior
 tap id:case-props-scroll-behavior
@@ -224,6 +234,7 @@ prop id:paged snapToAlignment center
 prop id:paged decelerationRate 0.99
 prop id:paged bounces false
 prop id:paged contentInset top=8 bottom=16
+prop id:paged scrollbarInset top=4 bottom=40
 prop id:paged contentOffset y=40
 prop id:paged keyboardShouldPersistTaps handled
 prop id:paged disableIntervalMomentum true
@@ -242,6 +253,7 @@ prop id:sideways decelerationRate 0.5
 prop id:sideways scrollbar true
 prop id:sideways bounces true
 prop id:sideways contentInset {}
+prop id:sideways scrollbarInset {}
 noprop id:sideways contentOffset
 # The third reports a scroll at most every 3 seconds: the second scroll
 # shows only once that has passed.
@@ -253,6 +265,11 @@ absent Scrolled: 200
 expect Scrolled: 100
 expect Scrolled: 200
 prop id:throttled contentOffset y=200
+# Its mouse wheel glides, 40 points a line; the others keep the platform's.
+prop id:throttled smoothWheel true
+prop id:throttled wheelLineHeight 40
+prop id:paged smoothWheel false
+prop id:paged wheelLineHeight 0
 covers [props] pagingEnabled
 covers [props] snapToInterval
 covers [props] snapToOffsets
@@ -260,10 +277,13 @@ covers [props] snapToAlignment
 covers [props] decelerationRate
 covers [props] bounces
 covers [props] contentInset
+covers [props] scrollbarInset
 covers [props] contentOffset
 covers [props] keyboardShouldPersistTaps
 covers [props] disableIntervalMomentum
 covers [props] scrollbar
+covers [props] smoothWheel
+covers [props] wheelLineHeight
 covers [props] keyboardDismissMode
 covers [props] horizontal
 covers [props] scrollable
@@ -283,6 +303,14 @@ prop scroll:text:"Row 0" refreshIndicator height=60
 noprop id:none refreshIndicator
 covers [props] pullValue
 covers [props] refreshIndicator
+# props-scroll-edge-element
+tap id:case-props-scroll-edge-element
+# A bar floating over a list's bottom edge names the list
+# (`ios.scrollEdgeElement`). The step checks the page shows. nsh-compat does
+# not report the scroll view a view's props name yet, so
+# `ios.scrollEdgeElement` is not claimed here; the core tests cover the id the
+# platform gets, and when it gets it.
+expect New chat
 # props-scroll-zoom
 tap id:case-props-scroll-zoom
 expect Zoom
@@ -305,6 +333,9 @@ covers [props] zoomable
 covers [props] centerContent
 covers [props] zoomScale
 covers [props] scrollValue
+# props-text-copy
+tap id:case-props-text-copy
+expect Copy text
 # props-text-lines
 tap id:case-props-text-lines
 style id:two numberOfLines 2
@@ -352,6 +383,10 @@ prop id:value accessibilityValue min=0 max=10 now=4 text=four
 noprop id:plain accessibilityValue
 prop id:hidden accessibilityElementsHidden true
 prop id:plain accessibilityElementsHidden false
+# How changes of the view are announced, on every platform now (Android's
+# bag took it before).
+prop id:live accessibilityLiveRegion polite
+prop id:plain accessibilityLiveRegion none
 # "no-hide-descendants": not an element, and its subtree hidden.
 prop id:important-no accessible false
 prop id:important-no accessibilityElementsHidden true
@@ -376,12 +411,15 @@ prop id:role-menuitemcheckbox role menuitemcheckbox
 prop id:role-menuitemradio role menuitemradio
 prop id:role-dialog role dialog
 prop id:role-alertdialog role alertdialog
+prop id:role-textbox role textbox
+prop id:role-tabpanel role tabpanel
 covers [props] accessible
 covers [props] accessibilityHint
 covers [props] accessibilityDescription
 covers [props] accessibilityState
 covers [props] accessibilityValue
 covers [props] accessibilityElementsHidden
+covers [props] accessibilityLiveRegion
 covers [props] importantForAccessibility
 covers [props] accessibilityActions
 # props-view-styling
@@ -432,6 +470,8 @@ prop id:long delayLongPress 800
 listens id:long onLongPress
 noprop id:plain delayLongPress
 prop id:pan panActivation activeOffsetX=20 failOffsetY=10
+prop id:pan-way panActivation activeOffsetX=16 direction=right
+prop id:pan-edge panActivation edge=left
 noprop id:plain panActivation
 prop id:unfocusable focusable false
 prop id:stop focusable true

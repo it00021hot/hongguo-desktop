@@ -624,6 +624,53 @@ impl LocaleSettingsOptions {
     }
 }
 
+/// How the device reaches the network, as a test gives it
+/// (`app.setNetworkState`; `network()`): the ones it names change, the
+/// others stay.
+#[derive(Debug, Default, Clone, PartialEq, JsObject)]
+#[non_exhaustive]
+pub struct NetworkStateOptions {
+    /// The kind of link the default route takes, `"none"` offline.
+    pub kind: Option<nsh_core::platform::NetworkKind>,
+    /// The link costs the user.
+    pub expensive: Option<bool>,
+    /// The user asked to use less data on this link.
+    pub constrained: Option<bool>,
+    /// Whether the user lets the app use cellular data.
+    pub cellular_data: Option<nsh_core::platform::CellularData>,
+}
+
+impl NetworkStateOptions {
+    /// `network` with the ones these name.
+    pub(crate) fn apply(&self, network: &mut nsh_core::platform::Network) {
+        if let Some(kind) = self.kind {
+            network.kind = kind;
+        }
+        if let Some(expensive) = self.expensive {
+            network.expensive = expensive;
+        }
+        if let Some(constrained) = self.constrained {
+            network.constrained = constrained;
+        }
+        if let Some(cellular_data) = self.cellular_data {
+            network.cellular_data = cellular_data;
+        }
+    }
+
+    /// The ones these name, as a test writes them (`{ kind: "none" }`).
+    pub(crate) fn label(&self) -> String {
+        let named = [
+            self.kind.map(|k| format!("kind: {:?}", k.name())),
+            self.expensive.map(|e| format!("expensive: {e}")),
+            self.constrained.map(|c| format!("constrained: {c}")),
+            self.cellular_data
+                .map(|c| format!("cellularData: {:?}", c.name())),
+        ];
+        let named: Vec<String> = named.into_iter().flatten().collect();
+        format!("{{ {} }}", named.join(", "))
+    }
+}
+
 /// The embedding app a test plays (`open`'s `host`; `nsh/host`).
 #[derive(Debug, Default, JsObject)]
 #[non_exhaustive]
@@ -1044,25 +1091,6 @@ impl From<&nsh_core::share::ShareSheet> for SharedContent {
     }
 }
 
-/// A speech recognition session the app started (`Speech.start`), as a
-/// test reads it.
-#[derive(Debug, Clone, PartialEq, JsObject)]
-pub struct SpeechRequest {
-    /// The language asked for (`"en-US"`); `null`: the user's.
-    pub lang: Option<String>,
-    /// Whether results come while the user speaks.
-    pub interim: bool,
-}
-
-impl From<&nsh_core::speech::SpeechRequest> for SpeechRequest {
-    fn from(request: &nsh_core::speech::SpeechRequest) -> Self {
-        SpeechRequest {
-            lang: request.lang.clone(),
-            interim: request.interim,
-        }
-    }
-}
-
 /// What the app asked of the speaker (`Sound`, `AudioPlayer`), as a test
 /// reads it.
 #[derive(Debug, Clone, PartialEq, JsObject)]
@@ -1184,6 +1212,15 @@ fn mime_of(name: &str) -> &'static str {
     }
 }
 
+/// Where a press lands ([`App::press`]), in points from the view's top left
+/// corner.
+#[derive(Debug, Default, Clone, Copy, PartialEq, JsObject)]
+#[non_exhaustive]
+pub struct PressOptions {
+    /// The point in the view the press lands on; its middle when omitted.
+    pub position: Option<Point<Points>>,
+}
+
 /// How far a drag moves the finger ([`App::drag`]), in points.
 #[derive(Debug, Default, Clone, Copy, PartialEq, JsObject)]
 pub struct DragBy {
@@ -1193,6 +1230,26 @@ pub struct DragBy {
     /// Downwards (negative: upwards).
     #[prop(default)]
     pub y: Points,
+}
+
+/// Timing for a finger or mouse drag: [`crate::DragOptions`] as a test
+/// writes it, in milliseconds.
+#[derive(Debug, Default, Clone, Copy, PartialEq, JsObject)]
+#[non_exhaustive]
+pub struct DragOptions {
+    /// Total milliseconds to rest before moving; defaults to 100. A hold
+    /// past `delayLongPress` delivers the long press before movement.
+    #[prop(skip_none)]
+    pub hold: Option<f64>,
+}
+
+impl DragOptions {
+    /// The options `options` asks for; a hold that is no duration is a
+    /// `RangeError`.
+    fn resolve(options: Option<Self>) -> Result<crate::DragOptions, JsError> {
+        crate::DragOptions::from_ms(options.and_then(|options| options.hold))
+            .map_err(JsError::Range)
+    }
 }
 
 /// An action of the context menu the app shows (`app.menu()`).
@@ -1221,6 +1278,17 @@ pub struct SpanStyle {
     pub font_size: f64,
     /// Its font weight (400 regular, 700 bold).
     pub font_weight: f64,
+    /// Its line height, in points (a multiple or ems of the font size
+    /// resolved against it); absent for the font's natural line height.
+    #[prop(skip_none)]
+    pub line_height: Option<f64>,
+    /// The extra space between its characters, in points (ems resolved).
+    pub letter_spacing: f64,
+    /// The `fontFamily` it has, as the app wrote it (a list stays a list);
+    /// absent for the system font. It is the family asked for, not the
+    /// face a platform falls back to for characters it lacks.
+    #[prop(skip_none)]
+    pub font_family: Option<String>,
     /// Whether it is italic.
     pub italic: bool,
     /// Whether it is underlined.
@@ -1243,6 +1311,10 @@ impl From<nsh_core::ResolvedTextStyle> for SpanStyle {
             background_color: style.background.map(|b| css(b.color)),
             font_size: f64::from(style.font_size.0),
             font_weight: f64::from(style.font_weight),
+            line_height: (style.line_height > nsh_core::Points::ZERO)
+                .then_some(f64::from(style.line_height.0)),
+            letter_spacing: f64::from(style.letter_spacing.0),
+            font_family: style.font_family.map(|f| f.name().to_string()),
             italic: style.italic,
             underline: style.decoration.underline,
             line_through: style.decoration.line_through,
@@ -1272,6 +1344,100 @@ impl From<crate::screen::ViewStyle> for ViewStyle {
             background_color: style.background_color.map(|c| format!("#{c:08x}")),
             opacity: f64::from(style.opacity),
             effective_opacity: f64::from(style.effective_opacity),
+        }
+    }
+}
+
+/// Where layout placed a view (`app.layout`), in the root's points.
+#[derive(Debug, Clone, PartialEq, JsObject)]
+#[non_exhaustive]
+pub struct ViewLayout {
+    /// Its left edge.
+    pub x: f64,
+    /// Its top edge.
+    pub y: f64,
+    /// Its width.
+    pub width: f64,
+    /// Its height.
+    pub height: f64,
+    /// It or a view around it is hidden (`visibility: hidden`).
+    pub hidden: bool,
+    /// A view around it that clips (`overflow: hidden`, a scroll view)
+    /// cuts part or all of it.
+    pub clipped: bool,
+}
+
+impl From<nsh_dev::protocol::ViewLayout> for ViewLayout {
+    fn from(l: nsh_dev::protocol::ViewLayout) -> Self {
+        ViewLayout {
+            x: f64::from(l.x),
+            y: f64::from(l.y),
+            width: f64::from(l.width),
+            height: f64::from(l.height),
+            hidden: l.hidden,
+            clipped: l.clipped,
+        }
+    }
+}
+
+/// A node of the accessibility tree (`app.accessibility`).
+#[derive(Debug, Clone, PartialEq, JsObject)]
+#[non_exhaustive]
+pub struct AccessibilityNode {
+    /// Its `role`, absent without one.
+    #[prop(skip_none)]
+    pub role: Option<String>,
+    /// Its `accessibilityLabel`.
+    #[prop(skip_none)]
+    pub label: Option<String>,
+    /// Its accessible name, the one `role:<role>[<name>]` matches: its
+    /// `accessibilityLabel`, else the texts inside it.
+    pub name: String,
+    /// It takes no presses.
+    pub disabled: bool,
+    /// It is selected.
+    pub selected: bool,
+    /// Its checked state: `"true"`, `"false"` or `"mixed"`.
+    #[prop(skip_none)]
+    pub checked: Option<String>,
+    /// Whether it is expanded, for an expandable view.
+    #[prop(skip_none)]
+    pub expanded: Option<bool>,
+    /// A toggle button's toggle state (`accessibilityState.pressed`):
+    /// `"true"`, `"false"` or `"mixed"`; absent when it is unset.
+    #[prop(skip_none)]
+    pub pressed: Option<String>,
+    /// Its `accessibilityState.busy`: it is loading.
+    pub busy: bool,
+    /// Its `accessibilityValue.text`.
+    #[prop(skip_none)]
+    pub value: Option<String>,
+    /// Its `accessibilityLevel`.
+    #[prop(skip_none)]
+    pub level: Option<u32>,
+    /// Its `accessibilityDescription`.
+    #[prop(skip_none)]
+    pub description: Option<String>,
+    /// The views inside it with a role or a label, in tree order.
+    pub children: Vec<AccessibilityNode>,
+}
+
+impl From<nsh_dev::protocol::AccessibilityNode> for AccessibilityNode {
+    fn from(n: nsh_dev::protocol::AccessibilityNode) -> Self {
+        AccessibilityNode {
+            role: n.role,
+            label: n.label,
+            name: n.name,
+            disabled: n.disabled,
+            selected: n.selected,
+            checked: n.checked,
+            expanded: n.expanded,
+            pressed: n.pressed,
+            busy: n.busy,
+            value: n.value,
+            level: n.level,
+            description: n.description,
+            children: n.children.into_iter().map(Self::from).collect(),
         }
     }
 }
@@ -1990,11 +2156,19 @@ const CLOSED: &str = "the app is closed: the test that opened it ended";
 #[class]
 impl App {
     /// Presses what `selector` names (or the nearest view around it that
-    /// hears presses, as a tap on a button's text does). On iOS, a header
-    /// button of `ios.headerRightItems` is pressed too, by `id:<key>` or
-    /// its label: it presses it, or opens its menu.
-    pub async fn press(this: Instance<Self>, selector: String) -> Result<(), JsError> {
-        step(&this, move |app| app.press(&selector)).await
+    /// hears presses, as a tap on a button's text does), at
+    /// `options.position` in it when given: points from its top left
+    /// corner, so a press can land on a part another view does not cover
+    /// (a sheet's backdrop around its panel). On iOS, a header button of
+    /// `ios.headerRightItems` is pressed too, by `id:<key>` or its label:
+    /// it presses it, or opens its menu.
+    pub async fn press(
+        this: Instance<Self>,
+        selector: String,
+        options: Option<PressOptions>,
+    ) -> Result<(), JsError> {
+        let at = options.and_then(|options| options.position);
+        step(&this, move |app| app.press(&selector, at)).await
     }
 
     /// Types `text` at the end of the input `selector` names (or the first
@@ -2029,25 +2203,35 @@ impl App {
     }
 
     /// Drags what `selector` names: a finger lands on its middle, rests for
-    /// 100 ms, moves by `by` points, 10 per display frame, and lifts. A pan moves with it
-    /// (`onPanStart`, `onPanEnd`), the views listening to touches hear them,
-    /// a scroll view scrolls (pulled past its top, it refreshes), and the
-    /// press under the finger is cancelled.
-    pub async fn drag(this: Instance<Self>, selector: String, by: DragBy) -> Result<(), JsError> {
+    /// `options.hold` milliseconds (100 by default), moves by `by` points,
+    /// 10 per display frame, and lifts. On a desktop or the web it is the
+    /// mouse, its button down. A pan moves with it (`onPanStart`, `onPanEnd`),
+    /// the views listening to touches hear them (`pointerType` `"touch"`,
+    /// or `"mouse"`), a scroll view scrolls with a finger (pulled past its
+    /// top, it refreshes) but not with the mouse, and the press is cancelled.
+    pub async fn drag(
+        this: Instance<Self>,
+        selector: String,
+        by: DragBy,
+        options: Option<DragOptions>,
+    ) -> Result<(), JsError> {
         let by = nsh_core::geometry::point(by.x, by.y);
-        step(&this, move |app| app.drag(&selector, by)).await
+        let options = DragOptions::resolve(options)?;
+        step(&this, move |app| app.drag(&selector, by, options)).await
     }
 
     /// Drags as `drag` does but keeps the finger down, so the test can look
     /// at the screen mid-drag (a drag preview, a drop line); `drop()` lifts
-    /// it. Headless only for now.
+    /// it. Headless, Linux and iOS; other native agents reject this step.
     pub async fn drag_and_hold(
         this: Instance<Self>,
         selector: String,
         by: DragBy,
+        options: Option<DragOptions>,
     ) -> Result<(), JsError> {
         let by = nsh_core::geometry::point(by.x, by.y);
-        step(&this, move |app| app.drag_and_hold(&selector, by)).await
+        let options = DragOptions::resolve(options)?;
+        step(&this, move |app| app.drag_and_hold(&selector, by, options)).await
     }
 
     /// Drops local files (`file:` URLs, as a file manager drags them) on
@@ -2106,14 +2290,15 @@ impl App {
 
     /// Chooses the open context menu's action labelled `label` (a
     /// submenu's: `"Share > Mail"`), as a click on it: the app hears
-    /// `onMenu`, then the menu closes. On iOS it is a menu the system
-    /// shows (a `MenuButton`'s, a `ContextMenu`'s, a header button's),
-    /// chosen from as a tap does.
+    /// `onMenu`, then the menu closes. On iOS and Android it is a menu the
+    /// system shows (a `MenuButton`'s, a `ContextMenu`'s; on iOS a header
+    /// button's too), chosen from as a tap does.
     pub async fn choose_menu_item(this: Instance<Self>, label: String) -> Result<(), JsError> {
         step(&this, move |app| app.choose_menu_item(&label)).await
     }
 
-    /// Closes the open context menu with nothing chosen, as Escape does.
+    /// Closes the open context menu with nothing chosen, as Escape does (on
+    /// iOS a tap outside the system's menu, on Android the back button).
     pub async fn close_menu(this: Instance<Self>) -> Result<(), JsError> {
         step(&this, move |app| app.close_menu()).await
     }
@@ -2279,6 +2464,30 @@ impl App {
         self.with(|app| app.view_style(&selector).map(|s| s.map(ViewStyle::from)))
     }
 
+    /// Where layout placed the view `selector` names, in the root's
+    /// points: `x`, `y`, `width`, `height`, whether it is `hidden`, and
+    /// whether a view around it that clips cuts it (`clipped`); `null`
+    /// when none is on screen.
+    pub fn layout(&self, selector: String) -> Result<Option<ViewLayout>, JsError> {
+        self.with(|app| app.layout(&selector).map(|l| l.map(ViewLayout::from)))
+    }
+
+    /// The accessibility tree as assistive technologies read it: the
+    /// views on screen with a role or a label, each with `role`, `label`,
+    /// `disabled`, `selected`, `checked`, `expanded`, `pressed`, `level`,
+    /// `description` and the nodes inside it (`children`). With a
+    /// selector, from the view it names (`null` when none is on screen);
+    /// without, from a root that has no role.
+    pub fn accessibility(
+        &self,
+        selector: Option<String>,
+    ) -> Result<Option<AccessibilityNode>, JsError> {
+        self.with(|app| {
+            app.accessibility(selector.as_deref())
+                .map(|n| n.map(AccessibilityNode::from))
+        })
+    }
+
     /// What the app's storage holds now.
     pub fn storage(&self) -> Result<Entries, String> {
         if let Some(storage) = &self.storage {
@@ -2331,43 +2540,31 @@ impl App {
         self.with(|app| Ok(app.picks()?.iter().map(PickRequest::from).collect()))
     }
 
-    /// The speech recognition sessions the app started (`Speech.start`),
-    /// in order. Headless apps recognize speech: a session listens at once
-    /// (its `start`), and `hear` speaks for the user. Headless runs only.
-    pub fn speech_requests(&self) -> Result<Vec<SpeechRequest>, JsError> {
-        self.with(|app| {
-            Ok(app
-                .speech_requests()?
-                .iter()
-                .map(SpeechRequest::from)
-                .collect())
+    /// Calls `method` of the fake named `name` with `args`: the stand-in a
+    /// native module the app turns on gives headless runs in place of a
+    /// device (`"nsh-extra/speech"`: the recognizer the test speaks into;
+    /// its methods are documented with the module).
+    /// Resolves with its answer once the app is quiet. Rejects when no
+    /// module of the app gives that fake, or the fake refuses the call.
+    /// Headless runs only.
+    pub async fn fake(
+        this: Instance<Self>,
+        name: String,
+        method: String,
+        args: Option<Vec<JsonValue>>,
+    ) -> Result<JsonValue, JsError> {
+        let answer = Arc::new(Mutex::new(JsonValue::Null));
+        let out = answer.clone();
+        let args = args.unwrap_or_default();
+        step(&this, move |app| {
+            *out.lock().unwrap_or_else(|e| e.into_inner()) =
+                app.call_fake(&name, &method, &args)?;
+            Ok(())
         })
-    }
-
-    /// The user says `text`, the whole transcript so far, to the speech
-    /// session listening: the app gets it as a `result` that is not final.
-    /// Then waits until the app is quiet. Rejects when no session listens.
-    /// Headless runs only.
-    pub async fn hear(this: Instance<Self>, text: String) -> Result<(), JsError> {
-        step(&this, move |app| app.hear(&text)).await
-    }
-
-    /// Ends the speech session listening: with `error` (`"no-speech"`,
-    /// `"not-allowed"`, `"audio-capture"`, `"network"`,
-    /// `"language-not-supported"`, `"unavailable"`, `"failed"`), or without
-    /// one as when the user stops talking: the transcript as the final
-    /// `result`, then `end` (`no-speech` when nothing was heard). Then
-    /// waits until the app is quiet. Rejects when no session listens.
-    /// Headless runs only.
-    pub async fn end_speech(this: Instance<Self>, error: Option<String>) -> Result<(), JsError> {
-        let error = match error {
-            None => None,
-            Some(name) => Some(
-                nsh_core::speech::SpeechError::from_name(&name)
-                    .ok_or_else(|| JsError::Type(format!("no speech error {name:?}")))?,
-            ),
-        };
-        step(&this, move |app| app.end_speech(error)).await
+        .await?;
+        Ok(std::mem::take(
+            &mut *answer.lock().unwrap_or_else(|e| e.into_inner()),
+        ))
     }
 
     /// What the app asked of the speaker (`Sound`, `AudioPlayer`), in
@@ -2417,6 +2614,42 @@ impl App {
             steps: self.steps.clone(),
             id,
         }
+    }
+
+    /// The OS asks the app to show itself (`Application.on("reopen")`);
+    /// headless runs only. Resolves once the app is quiet.
+    pub async fn reopen(this: Instance<Self>) -> Result<(), JsError> {
+        let steps = this.with(|app| app.steps.clone());
+        steps.run(move |app| app.reopen()).await
+    }
+
+    /// The user asks to quit as the Quit item or the platform's quit key
+    /// does (`Application.on("quitRequest")`); headless runs only. Resolves
+    /// once the app is quiet.
+    pub async fn quit_request(this: Instance<Self>) -> Result<(), JsError> {
+        step(&this, |app| app.quit_request()).await
+    }
+
+    /// The ids of the app's open windows, in opening order
+    /// (`app.windowIds()`).
+    pub fn window_ids(this: Instance<Self>) -> Result<Vec<String>, JsError> {
+        let steps = this.with(|app| app.steps.clone());
+        let mut app = steps.app.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(app) = app.as_deref_mut() else {
+            return Err(JsError::Error(CLOSED.to_owned()));
+        };
+        app.window_ids().map_err(step_error)
+    }
+
+    /// Whether the app quit: `Application.quit()`, its Quit item, or the
+    /// core quitting on the app's last window's close (`app.quit()`).
+    pub fn quit(this: Instance<Self>) -> Result<bool, JsError> {
+        let steps = this.with(|app| app.steps.clone());
+        let mut app = steps.app.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(app) = app.as_deref_mut() else {
+            return Err(JsError::Error(CLOSED.to_owned()));
+        };
+        app.quit().map_err(step_error)
     }
 
     /// The app's keyboard, whose keys the test presses.
@@ -2560,6 +2793,20 @@ impl App {
     /// Headless only.
     pub async fn wake(this: Instance<Self>) -> Result<(), JsError> {
         step(&this, |app| app.wake()).await
+    }
+
+    /// Moves the device to the network `state` names
+    /// (`{ kind: "none" }` offline, `{ kind: "cellular", expensive: true }`,
+    /// `{ cellularData: "restricted" }`), as the system reports when the
+    /// route or the user's settings change; `network()` follows, with what
+    /// it does not name as it was. A headless app starts with the kind
+    /// `"unknown"`, which counts as online. It moves no request: routes
+    /// (`open`'s `network`) still answer. Headless only.
+    pub async fn set_network_state(
+        this: Instance<Self>,
+        state: NetworkStateOptions,
+    ) -> Result<(), JsError> {
+        step(&this, move |app| app.set_network_state(state)).await
     }
 
     /// Gives the user the locale settings `settings` names

@@ -45,6 +45,8 @@
 //!   follows the embedding app's, which is the application;
 //! - the wake count (`wakeCount()`): one more on every
 //!   `NSWorkspaceDidWakeNotification`, for every surface;
+//! - the network (`network()`): the system's path monitor
+//!   (`nsh_platform_apple::network`), live;
 //! - the pixel ratio: the window's backing scale factor;
 //! - the window's bounds, mode and display ([`crate::window_state`]), and
 //!   the displays, sent again when they change;
@@ -100,7 +102,7 @@ use objc2_app_kit::{
     NSDocumentTypeDocumentAttribute, NSEvent, NSEventModifierFlags, NSEventType,
     NSExcludedElementsDocumentAttribute, NSHTMLTextDocumentType, NSModalPanelRunLoopMode,
     NSModalResponse, NSModalResponseAbort, NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeRTF,
-    NSPasteboardTypeRTFD, NSPasteboardTypeString, NSScreen, NSWorkspace,
+    NSPasteboardTypeRTFD, NSPasteboardTypeString, NSScreen, NSTextField, NSWorkspace,
     NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification, NSWorkspaceDidWakeNotification,
 };
 use objc2_foundation::{
@@ -250,6 +252,14 @@ fn install(mtm: MainThreadMarker) {
                 ),
             NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
                 Some(NSCurrentLocaleDidChangeNotification),
+                None,
+                Some(&queue),
+                &block,
+            ),
+            // The route to the network changed (`network()`): posted by
+            // the shared path monitor on the main thread.
+            NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+                Some(&nsh_platform_apple::network::changed_name()),
                 None,
                 Some(&queue),
                 &block,
@@ -409,7 +419,8 @@ fn update(surface: &Surface) {
     env.reduce_motion = workspace.accessibilityDisplayShouldReduceMotion();
     env.screen_reader = workspace.isVoiceOverEnabled();
     env.rtl = preferred_language_rtl();
-    env.pixel_ratio = pixel_ratio(surface);
+    env.pixel_ratio =
+        crate::window::primary(surface).map_or_else(|| pixel_ratio(surface), |(_, scale)| scale);
     env.os = Os::MacOs;
     env.os_version = os_version();
     env.idiom = Idiom::Desktop;
@@ -417,6 +428,7 @@ fn update(surface: &Surface) {
     env.keyboard_height = px(0.0);
     env.lifecycle = lifecycle(surface.mtm, surface.testing());
     env.window_state = crate::window_state::read(surface);
+    env.network = nsh_platform_apple::network::network(surface.mtm);
     surface.set_environment(env);
 }
 
@@ -630,6 +642,15 @@ fn os_version() -> (u16, u16) {
     })
 }
 
+/// Reports a clipboard write's result (`clipboard_write_result`).
+fn clipboard_written(surface: &Rc<Surface>, written: bool) {
+    surface.event(
+        ROOT_ID,
+        EventKind::ClipboardWrite,
+        EventPayload::Map(vec![("written", PayloadValue::Bool(written))]),
+    );
+}
+
 /// A command not addressed to a kind of view.
 pub(crate) fn command(surface: &Rc<Surface>, id: NodeId, command: &Command) {
     match command {
@@ -660,18 +681,20 @@ pub(crate) fn command(surface: &Rc<Surface>, id: NodeId, command: &Command) {
             let pasteboard = NSPasteboard::generalPasteboard();
             pasteboard.clearContents();
             // SAFETY: an immutable AppKit constant.
-            pasteboard
+            let written = pasteboard
                 .setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString });
+            clipboard_written(surface, written);
         }
         Command::SetClipboardItem(item) => {
             let pasteboard = NSPasteboard::generalPasteboard();
             pasteboard.clearContents();
             // SAFETY: immutable AppKit constants.
             let (string, kind_html) = unsafe { (NSPasteboardTypeString, NSPasteboardTypeHTML) };
-            pasteboard.setString_forType(&NSString::from_str(&item.text), string);
+            let mut written = pasteboard.setString_forType(&NSString::from_str(&item.text), string);
             if let Some(html) = &item.html {
-                pasteboard.setString_forType(&NSString::from_str(html), kind_html);
+                written &= pasteboard.setString_forType(&NSString::from_str(html), kind_html);
             }
+            clipboard_written(surface, written);
         }
         Command::ReadClipboard { id, has_only } => read_clipboard(surface, *id, *has_only),
         Command::SetClipboardImage(uri) => set_clipboard_image(uri),
@@ -700,7 +723,6 @@ pub(crate) fn command(surface: &Rc<Surface>, id: NodeId, command: &Command) {
             *scale,
             *format,
         ),
-        Command::Speech(command) => surface.control(|c| crate::speech::command(c, command)),
         Command::Audio(command) => surface.control(|c| {
             let base = surface.asset_base.borrow().clone();
             crate::audio::command(&surface.audio, c, command, base.as_ref())
@@ -789,6 +811,7 @@ fn end_dialogs(surface: &Surface, only: Option<u32>) {
             if !ours || d.answer.answered.replace(true) {
                 return true;
             }
+            d.answer.stop_following();
             ended.push((d.alert.clone(), d.shows));
             d.shows == Shows::Alone
         });
@@ -856,6 +879,11 @@ struct DialogAnswer {
     id: u32,
     surface: Weak<Surface>,
     answered: Cell<bool>,
+    /// The alert's text field (`Dialog::input`, its accessory view), whose
+    /// text goes with the answer.
+    field: Option<Retained<NSTextField>>,
+    /// Follow the field ([`add_text_field`]) until the alert closes.
+    observers: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
 
 impl DialogAnswer {
@@ -863,18 +891,111 @@ impl DialogAnswer {
         if self.answered.replace(true) {
             return;
         }
+        self.stop_following();
         let Some(surface) = self.surface.upgrade() else {
             return;
         };
-        surface.event(
-            ROOT_ID,
-            EventKind::Dialog,
-            EventPayload::Map(vec![
-                ("id", PayloadValue::Number(self.id as f64)),
-                ("index", PayloadValue::Number(index as f64)),
-            ]),
-        );
+        let mut payload = vec![
+            ("id", PayloadValue::Number(self.id as f64)),
+            ("index", PayloadValue::Number(index as f64)),
+        ];
+        if let Some(field) = &self.field {
+            payload.push(("value", PayloadValue::Str(field.stringValue().to_string())));
+        }
+        surface.event(ROOT_ID, EventKind::Dialog, EventPayload::Map(payload));
     }
+
+    /// Stops following the field, once the alert closed.
+    fn stop_following(&self) {
+        let center = NSNotificationCenter::defaultCenter();
+        for observer in self.observers.take() {
+            // SAFETY: an observer `addObserverForName…` returned.
+            unsafe { center.removeObserver(observer.as_ref()) };
+        }
+    }
+}
+
+/// The text field of `dialog`'s input, made to be `alert`'s accessory view
+/// (an alert's only), focused as it shows.
+fn text_field(alert: &NSAlert, dialog: &Dialog) -> Option<Retained<NSTextField>> {
+    let input = dialog.input.as_ref().filter(|_| !dialog.sheet)?;
+    let mtm = MainThreadMarker::from(alert);
+    let field = NSTextField::textFieldWithString(&NSString::from_str(&input.text), mtm);
+    if let Some(placeholder) = &input.placeholder {
+        field.setPlaceholderString(Some(&NSString::from_str(placeholder)));
+    }
+    // NSAlert's text column is this wide.
+    field.setFrame(objc2_foundation::NSRect::new(
+        NSPoint::new(0.0, 0.0),
+        objc2_foundation::NSSize::new(230.0, 24.0),
+    ));
+    alert.setAccessoryView(Some(&field));
+    alert.window().setInitialFirstResponder(Some(&field));
+    Some(field)
+}
+
+/// Follows `answer`'s text field in `alert`: AppKit selects a field's
+/// text as it takes the focus, so without `select_all` the caret goes
+/// after it once the alert shows; while a required field is empty only
+/// the cancel buttons are enabled (`order` as in [`Shown::order`]).
+fn follow_text_field(alert: &NSAlert, dialog: &Dialog, order: &[usize], answer: &DialogAnswer) {
+    let (Some(field), Some(input)) = (&answer.field, &dialog.input) else {
+        return;
+    };
+    let center = NSNotificationCenter::defaultCenter();
+    let mut observers = answer.observers.borrow_mut();
+    if !input.select_all {
+        let weak = objc2::rc::Weak::from_retained(field);
+        let block = RcBlock::new(move |_: NonNull<NSNotification>| {
+            if let Some(field) = weak.load()
+                && let Some(editor) = field.currentEditor()
+            {
+                let end = field.stringValue().length();
+                editor.setSelectedRange(NSRange::new(end, 0));
+            }
+        });
+        // SAFETY: the block runs on the main queue it is delivered on, and
+        // `stop_following` removes the observer.
+        observers.push(unsafe {
+            center.addObserverForName_object_queue_usingBlock(
+                Some(objc2_app_kit::NSWindowDidBecomeKeyNotification),
+                Some(&alert.window()),
+                Some(&NSOperationQueue::mainQueue()),
+                &block,
+            )
+        });
+    }
+    if !input.required {
+        return;
+    }
+    let enable = {
+        let alert = objc2::rc::Weak::new(alert);
+        let buttons = dialog.buttons.clone();
+        let order = order.to_vec();
+        let input = input.clone();
+        move |text: &str| {
+            let Some(alert) = alert.load() else { return };
+            for (button, &index) in alert.buttons().iter().zip(&order) {
+                button.setEnabled(input.enables(&buttons[index], text));
+            }
+        }
+    };
+    enable(&input.text);
+    let weak = objc2::rc::Weak::from_retained(field);
+    let block = RcBlock::new(move |_: NonNull<NSNotification>| {
+        if let Some(field) = weak.load() {
+            enable(&field.stringValue().to_string());
+        }
+    });
+    // SAFETY: as above.
+    observers.push(unsafe {
+        center.addObserverForName_object_queue_usingBlock(
+            Some(objc2_app_kit::NSControlTextDidChangeNotification),
+            Some(field),
+            Some(&NSOperationQueue::mainQueue()),
+            &block,
+        )
+    });
 }
 
 /// Shows `dialog` as an `NSAlert`, its buttons in the dialog's order (see
@@ -888,12 +1009,14 @@ impl DialogAnswer {
 /// -1 when it closes without one.
 fn show_dialog(surface: &Rc<Surface>, dialog: &Dialog) {
     let mtm = surface.mtm;
+    let alert = NSAlert::new(mtm);
     let answer = Rc::new(DialogAnswer {
         id: dialog.id,
         surface: Rc::downgrade(surface),
         answered: Cell::new(false),
+        field: text_field(&alert, dialog),
+        observers: RefCell::new(Vec::new()),
     });
-    let alert = NSAlert::new(mtm);
     alert.setAlertStyle(NSAlertStyle::Informational);
     match (&dialog.title, &dialog.message) {
         (Some(title), message) => {
@@ -944,6 +1067,7 @@ fn show_dialog(surface: &Rc<Surface>, dialog: &Dialog) {
             button.setHasDestructiveAction(true);
         }
     }
+    follow_text_field(&alert, dialog, &order, &answer);
     // The alert takes the surface's appearance, which the app may force.
     alert
         .window()
@@ -1256,30 +1380,63 @@ pub(crate) fn pasted(pasteboard: &NSPasteboard) -> nsh_core::PasteEvent {
             .unwrap_or_default(),
     );
     paste.html = pasted_html(pasteboard).unwrap_or_default();
-    let file_url = NSString::from_str("public.file-url");
     for item in pasteboard
         .pasteboardItems()
         .map(|i| i.to_vec())
         .unwrap_or_default()
     {
-        if let Some(uri) = item.stringForType(&file_url) {
-            paste.uris.extend(crate::file_drop::local_file_uri(&uri));
-            continue;
-        }
-        let image = IMAGE_TYPES.iter().find_map(|(mime, kind)| {
-            item.dataForType(&NSString::from_str(kind))
-                .map(|data| (*mime, data.to_vec()))
-        });
-        let Some((mime, bytes)) = image else {
-            continue;
-        };
-        let bytes = match mime {
-            "image/tiff" | "image/bmp" => to_png(&bytes).unwrap_or(bytes),
-            _ => bytes,
-        };
-        paste.files.push(nsh_core::PastedFile::image(bytes));
+        paste_item(&item, &mut paste);
     }
     paste
+}
+
+fn paste_item(item: &objc2_app_kit::NSPasteboardItem, paste: &mut nsh_core::PasteEvent) {
+    let uri = item
+        .stringForType(ns_string!("public.file-url"))
+        .and_then(|uri| crate::file_drop::local_file_uri(&uri));
+    if let Some(uri) = &uri {
+        let types = item.types();
+        // Finder can supply a file icon alongside the URL. Only probe
+        // the file when this item offers a possible image fallback.
+        if types.containsObject(ns_string!("com.apple.finder.node"))
+            || types.containsObject(ns_string!("com.apple.finder.noderef"))
+            || !IMAGE_TYPES
+                .iter()
+                .any(|(_, kind)| types.containsObject(&NSString::from_str(kind)))
+            || nsh_core::access::file_url_path(uri).is_none_or(|path| prefer_file_url(&path))
+        {
+            paste.uris.push(uri.clone());
+            return;
+        }
+    }
+    let image = IMAGE_TYPES.iter().find_map(|(mime, kind)| {
+        item.dataForType(&NSString::from_str(kind))
+            .filter(|data| data.length() > 0)
+            .map(|data| (*mime, data.to_vec()))
+    });
+    let Some((mime, bytes)) = image else {
+        paste.uris.extend(uri);
+        return;
+    };
+    let bytes = match mime {
+        "image/tiff" | "image/bmp" => to_png(&bytes).unwrap_or(bytes),
+        _ => bytes,
+    };
+    paste.files.push(nsh_core::PastedFile::image(bytes));
+}
+
+/// Keep directories and special files as URLs. Opening a regular file
+/// checks the current process's read access without reading its contents.
+fn prefer_file_url(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::OpenOptionsExt;
+    if path.metadata().is_ok_and(|metadata| !metadata.is_file()) {
+        return true;
+    }
+    std::fs::File::options()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path)
+        .is_ok()
 }
 
 /// The pasteboard's formatted content as HTML: `public.html` as browsers,
@@ -1489,7 +1646,7 @@ mod tests {
         NSData, NSDictionary, NSPropertyListFormat, NSPropertyListSerialization, NSString,
     };
 
-    use super::{Shows, answered_index, next_alone, pasted_html};
+    use super::{Shows, answered_index, next_alone, paste_item, pasted_html};
 
     #[test]
     fn alerts_on_their_own_show_one_at_a_time_oldest_first() {
@@ -1536,6 +1693,69 @@ mod tests {
         board.clearContents();
         board.setData_forType(Some(&NSData::with_bytes(bytes)), &NSString::from_str(kind));
         board
+    }
+
+    #[test]
+    fn paste_prefers_files_with_an_inline_image_fallback() {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        use objc2_app_kit::NSPasteboardItem;
+        use objc2_foundation::NSURL;
+
+        let (_, bytes) = nsh_core::image::decode_data_uri("data:;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==").unwrap();
+        let readable = "file:///etc/hosts";
+        let denied = std::env::temp_dir().join(format!("nsh-paste-{}.png", std::process::id()));
+        std::fs::File::options()
+            .write(true)
+            .create_new(true)
+            .mode(0o000)
+            .open(&denied)
+            .unwrap();
+        let denied_url = NSURL::fileURLWithPath(&NSString::from_str(denied.to_str().unwrap()))
+            .absoluteString()
+            .unwrap()
+            .to_string();
+        let can_read = std::fs::File::open(&denied).is_ok();
+        let missing = "file:///dev/null/nsh-inaccessible.png";
+        for (uri, finder, image, expect_image) in [
+            (Some(denied_url.as_str()), false, true, !can_read),
+            (Some(missing), false, true, true),
+            (Some(readable), false, true, false),
+            (Some(missing), true, true, false),
+            (Some(missing), false, false, false),
+            (None, false, true, true),
+        ] {
+            let item = NSPasteboardItem::new();
+            if let Some(uri) = uri {
+                item.setString_forType(
+                    &NSString::from_str(uri),
+                    &NSString::from_str("public.file-url"),
+                );
+            }
+            if finder {
+                item.setData_forType(
+                    &NSData::with_bytes(&[]),
+                    &NSString::from_str("com.apple.finder.node"),
+                );
+            }
+            if image {
+                item.setData_forType(
+                    &NSData::with_bytes(&bytes),
+                    &NSString::from_str(if finder { "public.tiff" } else { "public.png" }),
+                );
+            }
+            let mut event = nsh_core::PasteEvent::new("");
+            paste_item(&item, &mut event);
+            if expect_image {
+                assert!(event.uris.is_empty());
+                assert_eq!(event.files.len(), 1);
+                assert_eq!(event.files[0].data, bytes);
+            } else {
+                assert_eq!(event.uris, [uri.unwrap()]);
+                assert!(event.files.is_empty());
+            }
+        }
+        std::fs::remove_file(denied).unwrap();
     }
 
     #[test]

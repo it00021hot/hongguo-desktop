@@ -39,8 +39,8 @@ use std::rc::Rc;
 
 use gpui::{
     App, Bounds, ContentMask, Corners, Edges, Element, ElementId, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InspectorElementId, LayoutId, PaintQuad, Pixels, Point,
-    Window, point, px, size,
+    HitboxBehavior, Hsla, InspectorElementId, LayoutId, PaintQuad, Pixels, Point, Window, point,
+    px, size,
 };
 use nsh_core::{Color, Points};
 
@@ -462,8 +462,10 @@ impl<'a> DrawCx<'a> {
             return;
         }
         let c = self.color(color);
-        let mut builder = gpui::PathBuilder::fill()
-            .with_style(gpui::PathStyle::Fill(gpui::FillOptions::even_odd()));
+        let mut builder =
+            gpui::PathBuilder::fill().with_style(gpui::PathStyle::Fill(gpui::FillOptions {
+                fill_rule: gpui::FillRule::EvenOdd,
+            }));
         let mut any = false;
         for contour in contours {
             if contour.len() < 3 {
@@ -638,13 +640,22 @@ pub(crate) fn draw_view(cx: &mut DrawCx<'_>, view: &NshView, parent: Mat4, local
         return;
     }
     let matrix = crate::decor::color_matrix(&state);
+    // `clipPath`: everything below is drawn inside it, the view's border
+    // and children included.
+    let clip_path = state.style.clip_path().map(|c| c.resolve(state.frame.size));
     drop(state);
     cx.set_transform(world);
     cx.push_opacity(opacity);
     if let Some(m) = matrix {
         cx.push_color_matrix(m);
     }
+    if let Some((rect, radii)) = clip_path {
+        cx.push_clip_rounded(rect, radii.to_array().map(|r| r.0));
+    }
     draw_content(cx, view, world);
+    if clip_path.is_some() {
+        cx.pop();
+    }
     if matrix.is_some() {
         cx.pop();
     }

@@ -152,8 +152,6 @@ pub struct AppOptions {
     /// `desktop={{ windowDrag: true }}`. Top-level windows only; set when
     /// the window is made.
     pub transparent: bool,
-    /// Native composition precision. All windows on this UI thread share this mode.
-    pub output_color_mode: crate::OutputColorMode,
     /// Keeps the window out of the taskbar from the start (Electron's and
     /// Tauri's `skipTaskbar`); the app changes it with
     /// `Window.setSkipTaskbar`.
@@ -241,7 +239,6 @@ impl Default for AppOptions {
             icon: None,
             size: (1200, 800),
             transparent: false,
-            output_color_mode: crate::OutputColorMode::Sdr,
             skip_taskbar: false,
             components: Default::default(),
             appearance: Appearance::System,
@@ -314,7 +311,6 @@ impl AppView {
         options: AppOptions,
         composed: bool,
     ) -> windows::core::Result<Rc<AppView>> {
-        crate::output::configure(options.output_color_mode)?;
         let surface = Surface::new(initial_environment());
         surface.appearance.set(options.appearance);
         if options.notifications {
@@ -480,7 +476,6 @@ impl AppView {
             clipboard: None,
             host: options.host.clone(),
             picker: None,
-            speech: None,
             audio: None,
             windows: None,
             login_item: self.login_item(&options),
@@ -562,11 +557,6 @@ impl AppView {
         self.surface.stop();
     }
 
-    /// Color capabilities of the display currently showing this window.
-    pub fn output_color_info(&self) -> windows::core::Result<crate::OutputColorInfo> {
-        crate::output::info(self.hwnd)
-    }
-
     pub(crate) fn surface(&self) -> &Rc<Surface> {
         &self.surface
     }
@@ -578,6 +568,8 @@ fn initial_environment() -> Environment {
         color_scheme: ColorScheme::Light,
         os: Os::Windows,
         idiom: Idiom::Desktop,
+        // `SetClipboardData` says whether it took the write.
+        clipboard_write_result: true,
         canvas_render: true,
         file_requests: true,
         notifications: true,
@@ -770,14 +762,9 @@ fn run_on_this_thread(source: AppSource, options: AppOptions) -> std::process::E
     crate::linking::attach(view.surface());
     install_shortcuts(&view);
     view.place_main_window(&launch, kept);
-    // nsh.json `window.defaultVisible: false`: the window is made and the
-    // app runs in it, unseen, until it shows it (a tray app).
-    if !held {
-        if launch.visible_at_launch() {
-            view.show();
-        } else {
-            log::info!("the main window starts hidden (nsh.json window.defaultVisible: false)");
-        }
+    // The host never shows: the app opens the windows it declares.
+    if !held && launch.visible_at_launch() {
+        view.show();
     }
     let code = crate::window::run_loop();
     view.stop();

@@ -8,10 +8,11 @@ use nsh_core::{
 };
 
 pub(super) fn install(exit_requested: Signal<bool>) {
+    let window = desktop::current_window();
     effect(move || {
-        let window = desktop::main_window();
         let show = window.clone();
         let exit = window.clone();
+        let click = window.clone();
         desktop::set_tray(Some(
             desktop::tray()
                 .icon(ImageSrc::svg_markup(include_str!(concat!(
@@ -28,7 +29,7 @@ pub(super) fn install(exit_requested: Signal<bool>) {
                         exit_requested.set(true);
                     }),
                 ])
-                .on_click(move |_| window.focus()),
+                .on_click(move |_| click.focus()),
         ));
     });
 }

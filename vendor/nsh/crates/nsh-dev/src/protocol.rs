@@ -29,6 +29,10 @@ pub const WS_PATH: &str = "/ws";
 /// Default dev-server port.
 pub const DEFAULT_PORT: u16 = 8790;
 
+/// The largest message either end takes, in one frame or many. Pasted
+/// files and screenshots travel inside a single JSON message.
+pub(crate) const MAX_MESSAGE_SIZE: usize = 64 << 20;
+
 /// A build a host runs ([`ClientMessage::Hello`]).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunningBuild {
@@ -348,6 +352,10 @@ pub enum ServerMessage {
         /// JSON): `nsh_engine::Bundle::with_main_window` reads them.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         window: Option<String>,
+        /// The app's lifecycle (`nsh.json` `"application"`, JSON):
+        /// `nsh_engine::Bundle::with_application` reads it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        application: Option<String>,
         /// The VM limits to run the app with, as an embedding app would
         /// set them (`nsh run --limits`, in `nsh_core::js::HostLimits`'
         /// syntax: `memory=128MB,call=500ms`; empty: the embedding
@@ -365,7 +373,11 @@ pub struct TestFile {
     pub name: String,
     /// Its MIME type.
     pub mime: String,
-    /// Its bytes.
+    /// Its bytes, base64 on the wire.
+    #[serde(
+        serialize_with = "base64_bytes::serialize",
+        deserialize_with = "base64_bytes::deserialize_or_numbers"
+    )]
     pub data: Vec<u8>,
 }
 
@@ -393,6 +405,15 @@ pub struct SpanStyle {
     pub font_size: f32,
     /// Its font weight (400 regular, 700 bold).
     pub font_weight: u16,
+    /// Its line height, in points; zero for the font's natural line height.
+    #[serde(default)]
+    pub line_height: f32,
+    /// The extra space between its characters, in points.
+    #[serde(default)]
+    pub letter_spacing: f32,
+    /// Its `fontFamily` as the app wrote it; `None` for the system font.
+    #[serde(default)]
+    pub font_family: Option<String>,
     /// Whether it is italic.
     pub italic: bool,
     /// Whether it is underlined.
@@ -423,6 +444,62 @@ impl Default for ViewStyle {
     }
 }
 
+/// Where layout placed a view, as [`TestStep::Layout`] answers it, in the
+/// root's points.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct ViewLayout {
+    /// Its left edge.
+    pub x: f32,
+    /// Its top edge.
+    pub y: f32,
+    /// Its width.
+    pub width: f32,
+    /// Its height.
+    pub height: f32,
+    /// It or a view around it is hidden.
+    pub hidden: bool,
+    /// A view around it that clips cuts part or all of it.
+    pub clipped: bool,
+}
+
+/// A node of the accessibility tree, as [`TestStep::Accessibility`]
+/// answers it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct AccessibilityNode {
+    /// Its role's JS name, `None` without one.
+    pub role: Option<String>,
+    /// Its `accessibilityLabel`.
+    pub label: Option<String>,
+    /// Its accessible name: its label, else the texts inside it.
+    #[serde(default)]
+    pub name: String,
+    /// It takes no presses.
+    pub disabled: bool,
+    /// It is selected.
+    pub selected: bool,
+    /// `"true"`, `"false"` or `"mixed"`.
+    pub checked: Option<String>,
+    /// Whether it is expanded.
+    pub expanded: Option<bool>,
+    /// A toggle button's toggle state (`accessibilityState.pressed`):
+    /// `"true"`, `"false"` or `"mixed"`; absent when it is unset.
+    pub pressed: Option<String>,
+    /// Its `accessibilityState.busy`.
+    #[serde(default)]
+    pub busy: bool,
+    /// Its `accessibilityValue.text`.
+    #[serde(default)]
+    pub value: Option<String>,
+    /// Its `accessibilityLevel`.
+    pub level: Option<u32>,
+    /// Its `accessibilityDescription`.
+    pub description: Option<String>,
+    /// The nodes inside it, in tree order.
+    pub children: Vec<AccessibilityNode>,
+}
+
 /// A step of a test on a host's app, named as `nsh/test` names them: views
 /// are found by selectors (`id:save`, `text:Add`, `role:button[Save]`), and
 /// actions are native input at the view the selector names.
@@ -438,6 +515,18 @@ pub enum TestStep {
     Press {
         /// The view.
         selector: String,
+    },
+    /// Presses the view at a point in it (`app.press`'s `position`), in
+    /// points from its top left corner.
+    PressAt {
+        /// The view.
+        selector: String,
+        /// Points right of its left edge.
+        #[serde(deserialize_with = "float::f32")]
+        x: f32,
+        /// Points below its top edge.
+        #[serde(deserialize_with = "float::f32")]
+        y: f32,
     },
     /// Holds a press on the view for its long press delay (`app.longPress`).
     LongPress {
@@ -481,6 +570,13 @@ pub enum TestStep {
         /// Points downwards.
         #[serde(deserialize_with = "float::f32")]
         y: f32,
+        /// Total milliseconds to rest before moving (100 when omitted).
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "float::option_f64"
+        )]
+        hold_ms: Option<f64>,
     },
     /// Moves the mouse over the view (`app.hover`).
     Hover {
@@ -552,9 +648,18 @@ pub enum TestStep {
         /// What to drag.
         selector: String,
         /// Rightwards.
+        #[serde(deserialize_with = "float::f32")]
         x: f32,
         /// Downwards.
+        #[serde(deserialize_with = "float::f32")]
         y: f32,
+        /// Total milliseconds to rest before moving (100 when omitted).
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "float::option_f64"
+        )]
+        hold_ms: Option<f64>,
     },
     /// Lets go of the pointer `DragAndHold` left down (`app.drop`).
     Drop,
@@ -650,6 +755,19 @@ pub enum TestStep {
         /// The selector.
         selector: String,
     },
+    /// Where layout placed the view `selector` names (`app.layout`): a
+    /// [`ViewLayout`], or null when none matches.
+    Layout {
+        /// The selector.
+        selector: String,
+    },
+    /// The accessibility tree (`app.accessibility`): an
+    /// [`AccessibilityNode`] for the view `selector` names, or the root
+    /// without one; null when none matches.
+    Accessibility {
+        /// The selector.
+        selector: Option<String>,
+    },
     /// The dialogs the app showed, in order (`app.dialogs`): a list of
     /// `nsh_core::Dialog`s.
     Dialogs,
@@ -681,6 +799,9 @@ pub enum TestStep {
     },
     /// Closes the app: the host exits.
     Quit,
+    /// The ids of the app's open windows, in opening order
+    /// (`app.windowIds()`): an array of strings. Desktops.
+    WindowIds,
     /// The state of the app's window `id` as the platform reports it
     /// (`app.window(id).state()`): a `WindowState` object, `null` while it
     /// is not open. Desktops.
@@ -868,6 +989,9 @@ pub struct WireRequest {
     /// Follow redirects.
     #[serde(default)]
     pub follow_redirects: bool,
+    /// The Fetch cache mode (`"no-store"`, ...; empty: `"default"`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cache: String,
 }
 
 /// What a test answers to an app's request ([`ServerMessage::Fetch`]).
@@ -928,6 +1052,41 @@ mod base64_bytes {
         base64::engine::general_purpose::STANDARD
             .decode(text)
             .map_err(serde::de::Error::custom)
+    }
+
+    /// Base64 text, or the array of numbers servers sent before files
+    /// travelled as base64.
+    pub(super) fn deserialize_or_numbers<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<u8>, D::Error> {
+        struct Bytes;
+
+        impl<'de> serde::de::Visitor<'de> for Bytes {
+            type Value = Vec<u8>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("base64 text or an array of bytes")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<Vec<u8>, E> {
+                base64::engine::general_purpose::STANDARD
+                    .decode(text)
+                    .map_err(E::custom)
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Vec<u8>, A::Error> {
+                let mut bytes = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+                while let Some(byte) = seq.next_element()? {
+                    bytes.push(byte);
+                }
+                Ok(bytes)
+            }
+        }
+
+        d.deserialize_any(Bytes)
     }
 }
 
@@ -1100,6 +1259,7 @@ mod tests {
             capabilities: None,
             app_id: None,
             window: None,
+            application: None,
             limits: None,
         };
         // No declaration: the field is left out (older hosts read the same).
@@ -1135,6 +1295,25 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn pasted_files_travel_as_base64() {
+        let file = TestFile::new("a.png", "image/png", vec![0, 1, 254, 255]);
+        let text = serde_json::to_string(&file).unwrap();
+        assert_eq!(
+            text,
+            r#"{"name":"a.png","mime":"image/png","data":"AAH+/w=="}"#
+        );
+        assert_eq!(serde_json::from_str::<TestFile>(&text).unwrap(), file);
+        // An older server sends the bytes as an array of numbers.
+        assert_eq!(
+            serde_json::from_str::<TestFile>(
+                r#"{"name":"a.png","mime":"image/png","data":[0,1,254,255]}"#
+            )
+            .unwrap(),
+            file
+        );
+    }
+
     /// The messages with float fields, each with fractions.
     fn messages_with_floats() -> Vec<ServerMessage> {
         let step = |step| ServerMessage::Step { id: 7, step };
@@ -1153,9 +1332,16 @@ mod tests {
                 distance: -120.5,
             }),
             step(TestStep::Drag {
+                hold_ms: Some(600.5),
                 selector: "id:knob".into(),
                 x: 12.25,
                 y: -0.1,
+            }),
+            step(TestStep::DragAndHold {
+                selector: "id:row".into(),
+                x: 1.25,
+                y: -0.5,
+                hold_ms: Some(500.25),
             }),
             step(TestStep::SetViewport {
                 width: 390.5,
@@ -1228,3 +1414,7 @@ mod tests {
         assert!(serde_json::from_str::<ServerMessage>(odd).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "tests/protocol_drag.rs"]
+mod drag_tests;

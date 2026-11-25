@@ -33,8 +33,9 @@ pub(crate) struct RunArgs {
     /// (`--section settings`, any case).
     #[arg(long)]
     section: Option<String>,
-    /// Where to run: `macos` (the AppKit host), `catalyst`, `ios` (a
-    /// simulator), `android`, `linux`, `windows` or `gpui` (the GPUI host);
+    /// Where to run: `macos` (the AppKit host), `linux`, `windows`, `ios` (a
+    /// simulator), `android`, `gpui` (the GPUI host) or `catalyst` (only for
+    /// Catalyst-specific work);
     /// default: the machine's own backend (`macos` on macOS, `linux` on
     /// Linux, `windows` on Windows), else `android`.
     #[arg(long)]
@@ -129,10 +130,13 @@ fn is_source(path: &Path) -> bool {
     }) && !path.to_string_lossy().ends_with('~')
 }
 
+/// The CLI, rebuilt after each change. Not `--locked`: a change may be the
+/// developer's own edit of a manifest, which the lock follows as in any
+/// `cargo build`; the release builds are `cargo xtask dist`'s.
 fn build_cli(root: &Path) -> anyhow::Result<()> {
     term::cargo(
-        Command::new("cargo")
-            .args(["build", "-p", "nsh-cli"])
+        crate::cargo::unlocked("build")
+            .args(["-p", "nsh-cli"])
             .current_dir(root),
         "nsh",
     )

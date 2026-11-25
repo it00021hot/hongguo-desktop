@@ -20,16 +20,18 @@
 //! taking them all. An idle surface applies a batch as soon as it lands.
 //!
 //! The one exception to "the main thread never waits for JS": when the
-//! window resizes the root ([`Surface::resized`]), the main thread waits
-//! for the engine's layout at the new size, at most [`RESIZE_WAIT`], and
-//! applies it before AppKit draws the window at that size. Without it the
-//! content shows a frame late during a live resize, and not at all during
-//! AppKit's animated resizes (zoom, full screen): those run the run loop
-//! in a private mode (`_NSMoveTimerRunLoopMode`) where the main queue
-//! does not drain, so the window grew around stale content and showed its
-//! background in the new area until the animation ended. An engine that
-//! misses the deadline (JS busy) is not waited for again until it catches
-//! up, so a slow app resizes as before, a frame or more behind.
+//! window resizes the root ([`Surface::resized`]) or a window of the
+//! app's own resizes its root ([`crate::window::resized`]), the main
+//! thread waits for the engine's layout at the new size, at most
+//! [`RESIZE_WAIT`], and applies it before AppKit draws the window at that
+//! size. Without it the content shows a frame late during a live resize,
+//! and not at all during AppKit's animated resizes (zoom, full screen):
+//! those run the run loop in a private mode (`_NSMoveTimerRunLoopMode`)
+//! where the main queue does not drain, so the window grew around stale
+//! content and showed its background in the new area until the animation
+//! ended. An engine that misses the deadline (JS busy) is not waited for
+//! again until it catches up, so a slow app resizes as before, a frame or
+//! more behind.
 
 use std::{
     cell::{Cell, RefCell},
@@ -68,8 +70,10 @@ enum Message {
     Error(String),
     Frame,
     HotUpdateFailed,
-    /// The engine laid the app out at this size ([`MountSink::resized`]).
-    Resized(Size<Points>),
+    /// The engine laid root `id` out at this size: the app's root
+    /// ([`ROOT_ID`], [`MountSink::resized`]) or a window of the app's own
+    /// ([`MountSink::root_resized`]).
+    Resized(NodeId, Size<Points>),
     /// The app imports chunk `id` (`import()` of a split bundle), which its
     /// bundle does not hold ([`MountSink::load_chunk`]).
     LoadChunk(String),
@@ -165,7 +169,11 @@ impl MountSink for Sink {
     }
 
     fn resized(&self, size: Size<Points>) {
-        self.send(Message::Resized(size));
+        self.send(Message::Resized(ROOT_ID, size));
+    }
+
+    fn root_resized(&self, id: NodeId, size: Size<Points>) {
+        self.send(Message::Resized(id, size));
     }
 
     fn load_chunk(&self, id: &str) -> bool {
@@ -467,6 +475,7 @@ impl Surface {
         });
         root.set_surface(Rc::downgrade(&surface));
         crate::keyboard::install(&surface);
+        crate::input::install(&surface);
         surface
     }
 
@@ -559,6 +568,7 @@ impl Surface {
         self.mounter.borrow_mut().clear();
         self.native.clear();
         crate::system::clear(self);
+        crate::panels::close(self);
         *self.anim.borrow_mut() = UiAnimation::default();
         self.nav.borrow_mut().reset();
         crate::window::close_all(self);
@@ -567,6 +577,8 @@ impl Surface {
         crate::keyboard::reset(self);
         crate::tray::release(self.key);
         crate::global_shortcut::release(self.key);
+        // The menu bar's ids are the stopped engine's.
+        self.chrome.remove_menu(self.mtm);
         self.js_frame.set(false);
         self.queued.borrow_mut().clear();
         self.resize_late.set(false);
@@ -628,6 +640,37 @@ impl Surface {
         }
     }
 
+    /// Tells the engine the window size and scale the app sees
+    /// (`windowSize()`, `pixelRatio()`, the size classes): its primary
+    /// window's ([`crate::window::primary`]), as the user resizes or moves
+    /// it, else this surface's (an embedded view, or a host whose app shows
+    /// no window). The desktop host's own window never shows: reporting it
+    /// would lay the app out for a window nobody sees.
+    pub(crate) fn window_environment(&self) {
+        let (size, scale) = crate::window::primary(self).unwrap_or_else(|| {
+            let root = self.root.ns();
+            let scale = root
+                .window()
+                .map_or(self.environment.get().pixel_ratio, |w| {
+                    w.backingScaleFactor() as f32
+                });
+            (self.root.state().frame.size, scale)
+        });
+        let mut env = self.environment.get();
+        if env.window == size && env.pixel_ratio == scale {
+            return;
+        }
+        if env.pixel_ratio != scale {
+            self.set_raster_scale(f64::from(scale));
+        }
+        env.window = size;
+        env.pixel_ratio = scale;
+        // Only the size and scale: the appearance stays as it was applied,
+        // which a live resize would otherwise apply again on every step.
+        self.environment.set(env);
+        self.control(|c| c.set_environment(env));
+    }
+
     /// The root view got a new size (the window's content area): the
     /// layout at that size is applied before this returns, unless the
     /// engine takes longer than [`RESIZE_WAIT`] (see the module doc).
@@ -640,23 +683,24 @@ impl Surface {
             s.frame.size.width.0 = width;
             s.frame.size.height.0 = height;
         }
-        let mut env = self.environment.get();
-        env.window = nsh_core::Size::new(nsh_core::Points(width), nsh_core::Points(height));
-        self.environment.set(env);
-        self.control(|c| {
-            c.resize(Size::new(Points(width), Points(height)));
-            c.set_environment(env);
-        });
+        self.control(|c| c.resize(Size::new(Points(width), Points(height))));
+        self.window_environment();
         crate::navigation::surface_resized(self, width, height);
         // Full screen and the window's size change the title bar's area.
         crate::chrome::update_area(self);
-        self.await_layout(Size::new(Points(width), Points(height)));
+        self.await_layout(ROOT_ID, Size::new(Points(width), Points(height)));
     }
 
-    /// Waits for the engine's layout at `size` and applies what it sent
-    /// meanwhile ([`Surface::resized`]).
-    fn await_layout(self: &Rc<Self>, size: Size<Points>) {
-        if self.resize_late.get() || self.mounter.try_borrow_mut().is_err() {
+    /// Waits for the engine's layout of root `id` at `size` and applies
+    /// what it sent meanwhile: the app's root ([`Surface::resized`]) or a
+    /// window of the app's own ([`crate::window::resized`]). Not while
+    /// batches are being applied or the windows are borrowed: a resize
+    /// from there would apply batches inside them.
+    pub(crate) fn await_layout(self: &Rc<Self>, id: NodeId, size: Size<Points>) {
+        if self.resize_late.get()
+            || self.mounter.try_borrow_mut().is_err()
+            || self.windows.try_borrow_mut().is_err()
+        {
             return;
         }
         let Some(rx) = self.rx.borrow().clone() else {
@@ -681,7 +725,7 @@ impl Surface {
                         self.resize_late.set(true);
                         break;
                     };
-                    let done = matches!(message, Message::Resized(s) if s == size);
+                    let done = matches!(message, Message::Resized(i, s) if i == id && s == size);
                     applied |= self.handle(message, monitor.as_deref());
                     if done {
                         break;
@@ -796,7 +840,7 @@ impl Surface {
                     f();
                 }
             }
-            Message::Resized(_) => self.resize_late.set(false),
+            Message::Resized(..) => self.resize_late.set(false),
             Message::Run(task) => task.run(),
             Message::LoadChunk(id) => {
                 // The chunk's file name is its id: `is_chunk_name`
@@ -1248,7 +1292,7 @@ impl Surface {
             if surface.last_tick.get() < at {
                 let now = objc2_quartz_core::CACurrentMediaTime();
                 let period = now - surface.last_tick.get();
-                surface.frame(now, period);
+                surface.frame(now, period, false);
             }
             surface.keep_deadline();
         });
@@ -1275,7 +1319,7 @@ impl Surface {
             return;
         }
         let now = link.timestamp();
-        self.frame(now, link.targetTimestamp() - link.timestamp());
+        self.frame(now, link.targetTimestamp() - link.timestamp(), true);
         // The frame may have made the link again, from another window.
         let current = self.link.borrow();
         let Some(current) = current.as_ref() else {
@@ -1290,15 +1334,15 @@ impl Surface {
     }
 
     /// One display frame at `now`, `period` seconds after the previous one
-    /// (the display link's, or one a deadline ran without a frame).
-    fn frame(self: &Rc<Self>, now: f64, period: f64) {
+    /// (the display link's, `drawn`, or one a deadline ran without a frame).
+    fn frame(self: &Rc<Self>, now: f64, period: f64, drawn: bool) {
         self.last_tick.set(objc2_quartz_core::CACurrentMediaTime());
         let Some(monitor) = self.perf.borrow().clone() else {
-            return quiet(|| self.tick(now));
+            return quiet(|| self.tick(now, drawn));
         };
         let start = Instant::now();
         let dirty = self.wants_frames();
-        quiet(|| self.tick(now));
+        quiet(|| self.tick(now, drawn));
         let cost = start.elapsed();
         monitor.record_work(cost, dirty);
         crate::fps::ticked(cost);
@@ -1308,10 +1352,16 @@ impl Surface {
         );
     }
 
-    fn tick(self: &Rc<Self>, now: f64) {
+    /// `drawn`: a display link frame; a deadline's keeps the real time
+    /// ([`nsh_core::animation::Animator::tick_frame`]).
+    fn tick(self: &Rc<Self>, now: f64, drawn: bool) {
         let applied = self.apply_queued(FRAME_BATCHES);
         if self.anim.borrow().animating() {
-            self.anim.borrow_mut().tick(now);
+            if drawn {
+                self.anim.borrow_mut().tick_frame(now);
+            } else {
+                self.anim.borrow_mut().tick(now);
+            }
             self.write_animations();
         }
         let callbacks = std::mem::take(&mut *self.frame_callbacks.borrow_mut());
@@ -1413,11 +1463,12 @@ impl Drop for Surface {
         }
         crate::tray::release(key);
         crate::global_shortcut::release(key);
-        // A surface dropped without stopping takes its alerts with it: a
-        // sheet left on an embedding app's window, or an alert shown on
-        // its own (an app-modal loop), would wait for an answer no one
-        // hears.
+        // A surface dropped without stopping takes its alerts and panels
+        // with it: a sheet left on an embedding app's window, or an alert
+        // shown on its own (an app-modal loop), would wait for an answer no
+        // one hears.
         crate::system::clear(self);
+        crate::panels::close(self);
         let _ = SURFACES.try_with(|s| s.borrow_mut().remove(&key));
     }
 }

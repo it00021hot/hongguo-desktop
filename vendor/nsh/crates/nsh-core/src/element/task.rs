@@ -70,11 +70,17 @@ pub(crate) enum Action {
         to: NodeId,
         from: Option<NodeId>,
     },
+    /// A popup that gives the keyboard focus back to node `to` opens: the
+    /// core notes the focus and the input it opens with
+    /// ([`super::ElementRef::focus_back_origin`]).
+    FocusOrigin {
+        to: NodeId,
+    },
     /// A dialog; its answer resolves the slot.
-    Dialog(Dialog, Rc<RefCell<Output<i32>>>),
+    Dialog(Dialog, Rc<RefCell<Output<DialogReply>>>),
     /// Close the dialog whose answer resolves the slot, answering it as
     /// dismissed ([`DialogCloser::close`]).
-    CloseDialog(Rc<RefCell<Output<i32>>>),
+    CloseDialog(Rc<RefCell<Output<DialogReply>>>),
     /// The result of a module function JS waits for.
     Return(u32, super::JsResult),
     /// The pixel size of the image at the URI (its bytes stay loaded); the
@@ -110,7 +116,7 @@ pub(crate) enum Action {
     HostCall {
         name: String,
         args: crate::JsonValue,
-        answer: AnswerSlot<Result<crate::JsonValue, super::JsError>>,
+        answer: AnswerSlot<Result<crate::JsonValue, crate::host_channel::HostError>>,
     },
     /// Hands data to function `name` of the embedding app, with no answer
     /// (`nsh/host`'s `post`).
@@ -125,6 +131,18 @@ pub(crate) enum Action {
     /// [`crate::open_url::check_url`]); whether it opened resolves the
     /// slot.
     OpenUrl(String, AnswerSlot<bool>),
+    /// Opens the app's own page in the system's settings
+    /// ([`crate::mobile::open_app_settings`]); whether it opened, or why it
+    /// could not, resolves the slot.
+    OpenAppSettings(AnswerSlot<Result<bool, crate::mobile::AppSettingsError>>),
+    /// Whether the platform opens the app's page in the system's settings
+    /// resolves the slot.
+    AppSettingsAvailable(AnswerSlot<bool>),
+    /// Puts something on the system clipboard
+    /// ([`crate::Command::SetClipboard`] or
+    /// [`crate::Command::SetClipboardItem`]); the platform's result
+    /// resolves the slot.
+    WriteClipboard(crate::Command, AnswerSlot<ClipboardWrite>),
     /// Lets the user pick a color on the screen; the color (none when
     /// cancelled or not supported) resolves the slot.
     PickScreenColor(AnswerSlot<Option<crate::Hsla>>),
@@ -155,8 +173,6 @@ pub(crate) enum Action {
         Box<crate::canvas::render::RenderRequest>,
         AnswerSlot<Result<Vec<u8>, super::JsError>>,
     ),
-    /// A speech recognition session's request ([`crate::speech`]).
-    Speech(SpeechAction),
     /// A notification's request ([`crate::notifications`]).
     Notification(NotificationAction),
     /// Reads whether the app launches at login (`None`) or turns it on
@@ -239,6 +255,11 @@ pub(crate) enum Action {
     Tokens(super::Tokens),
     /// Sets the app's translations ([`crate::i18n`]).
     Translations(crate::i18n::Translations),
+    /// Merges translations into the app's dictionary ([`crate::i18n`]).
+    AddTranslations(std::collections::HashMap<String, std::collections::HashMap<String, String>>),
+    /// The surface's translations changed in place from the given previous
+    /// dictionary: re-localize menus if the selected language changed.
+    TranslationsChanged(crate::i18n::Translations),
     /// Shows the app in a language whatever the user's (`None`: the
     /// user's again).
     Locale(Option<crate::platform::Locale>),
@@ -278,24 +299,6 @@ pub(crate) enum Action {
     /// the node, with the layout of the last commit; `None`: the pointer
     /// left.
     HoverAt(NodeId, Option<crate::MouseEvent>),
-}
-
-/// What a speech recognition session asks of the core
-/// ([`Action::Speech`]).
-pub(crate) enum SpeechAction {
-    /// Starts session `id`, reporting to `sink`; the session running is
-    /// aborted first.
-    Start {
-        id: u32,
-        request: crate::speech::SpeechRequest,
-        sink: crate::speech::SpeechSink,
-    },
-    /// Stops session `id`: it finishes what it heard, then ends.
-    Stop(u32),
-    /// Ends session `id` at once, without an error.
-    Abort(u32),
-    /// Whether speech can be recognized; the answer resolves the slot.
-    Available(AnswerSlot<bool>),
 }
 
 /// What a sound or a player asks of the core ([`Action::Audio`]).
@@ -411,6 +414,23 @@ pub struct ClipboardItem {
     pub html: Option<String>,
 }
 
+/// What became of a clipboard write (`set_clipboard`,
+/// `set_clipboard_item`; TS: what `Clipboard.writeText` and
+/// `Clipboard.write` resolve to). The clipboard is never read back to
+/// find out: a platform that cannot tell answers [`Self::Requested`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, crate::element::PropEnum)]
+pub enum ClipboardWrite {
+    /// The system clipboard took it (Windows, macOS, the web).
+    Written,
+    /// The system clipboard refused it (held by another app, no clipboard,
+    /// the browser declined, the clipboard capability not granted).
+    Failed,
+    /// Handed to the system, which does not say whether it took it (iOS,
+    /// Android, Linux, a GPUI host, a terminal).
+    #[default]
+    Requested,
+}
+
 /// An image read from the system clipboard (`Clipboard.readImage`).
 #[derive(Debug, Clone, Default, PartialEq, super::JsObject)]
 pub struct ClipboardImage {
@@ -509,12 +529,23 @@ pub(crate) struct Executor {
     derived: RefCell<super::animated::Derived>,
     /// The components' listeners of the back button.
     pub(crate) back: Rc<RefCell<super::back::BackListeners>>,
+    /// The components' listeners of the back gesture's steps.
+    pub(crate) back_progress: Rc<RefCell<super::back::BackProgressListeners>>,
+    /// The components' listeners of the host's events
+    /// ([`super::on_host_event`]).
+    pub(crate) host_events: Rc<RefCell<super::host_events::HostListeners>>,
     /// What runs as the app quits ([`super::desktop::on_app_quit`]).
     pub(crate) quit: Rc<RefCell<super::quit::QuitListeners>>,
     /// The quit listeners' work still running ([`crate::Core::start_quit`]).
     pub(crate) quitting: Rc<std::cell::Cell<usize>>,
     /// What hears the user ask to quit ([`super::desktop::on_quit_request`]).
     pub(crate) quit_requests: Rc<RefCell<super::quit::QuitRequestListeners>>,
+    /// What hears the OS ask the app to show itself
+    /// ([`super::desktop::on_reopen`]).
+    pub(crate) reopens: Rc<RefCell<super::quit::ReopenListeners>>,
+    /// What hears the app's last window close
+    /// ([`super::desktop::on_last_window_closed`]).
+    pub(crate) last_window_closed: Rc<RefCell<super::quit::LastWindowClosedListeners>>,
     /// The views' keyboard shortcuts.
     pub(crate) keys: Rc<RefCell<super::keys::ViewKeys>>,
     /// The views' menus' handlers.
@@ -528,6 +559,9 @@ pub(crate) struct Executor {
     /// What waits for the app to answer the events emitted before it
     /// ([`super::after_answer`]).
     answers: RefCell<Answers>,
+    /// What waits for the views of the commit being made
+    /// ([`super::after_render`]).
+    rendered: RefCell<Vec<AfterAnswer>>,
     /// The engine's sounds ([`super::audio`]).
     pub(crate) sounds: RefCell<super::audio::Sounds>,
 }
@@ -542,7 +576,8 @@ struct Answers {
     due: Vec<AfterAnswer>,
 }
 
-/// A closure of [`super::after_answer`] and the owner it runs under.
+/// A closure of [`super::after_answer`] or [`super::after_render`] and the
+/// owner it runs under.
 pub(crate) struct AfterAnswer {
     pub(crate) owner: super::Owner,
     pub(crate) f: Box<dyn FnOnce()>,
@@ -804,6 +839,17 @@ impl Executor {
     pub(crate) fn take_due_answers(&self) -> Vec<AfterAnswer> {
         std::mem::take(&mut self.answers.borrow_mut().due)
     }
+
+    /// Keeps `f` until the components of the commit being made have
+    /// rendered ([`super::after_render`]).
+    pub(crate) fn after_render(&self, f: AfterAnswer) {
+        self.rendered.borrow_mut().push(f);
+    }
+
+    /// The closures waiting for the commit's views, in order.
+    pub(crate) fn take_rendered(&self) -> Vec<AfterAnswer> {
+        std::mem::take(&mut self.rendered.borrow_mut())
+    }
 }
 
 /// A running task of the core. Dropping it cancels the
@@ -852,9 +898,31 @@ pub struct Answer<T> {
     slot: Rc<RefCell<Output<T>>>,
 }
 
-/// The answer to a dialog (`nsh_base::alert_dialog`): the index of the
-/// button pressed, -1 when it was dismissed.
-pub type DialogAnswer = Answer<i32>;
+/// The answer to a dialog (`nsh_base::alert_dialog`): the button pressed
+/// and the text of its text field.
+pub type DialogAnswer = Answer<DialogReply>;
+
+/// What the platform answered a dialog with ([`DialogAnswer`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DialogReply {
+    /// The index of the button pressed, -1 when it closed without one.
+    pub index: i32,
+    /// The text of its text field ([`crate::Dialog::input`]); `None`
+    /// without one, where the platform's alert has none, or when the app
+    /// closed it ([`DialogCloser`]).
+    pub value: Option<String>,
+}
+
+impl DialogReply {
+    /// Closed without a button or text.
+    pub fn dismissed() -> Self {
+        Self {
+            index: -1,
+            value: None,
+        }
+    }
+}
 
 impl<T> Answer<T> {
     pub(crate) fn new() -> (Self, Rc<RefCell<Output<T>>>) {
@@ -863,7 +931,7 @@ impl<T> Answer<T> {
     }
 }
 
-impl Answer<i32> {
+impl Answer<DialogReply> {
     /// What closes the dialog this answer waits for, kept apart from the
     /// answer (which a task usually takes): see [`DialogCloser`].
     pub fn closer(&self) -> DialogCloser {
@@ -878,7 +946,7 @@ impl Answer<i32> {
 /// made by [`Answer::closer`].
 #[derive(Clone)]
 pub struct DialogCloser {
-    slot: Rc<RefCell<Output<i32>>>,
+    slot: Rc<RefCell<Output<DialogReply>>>,
 }
 
 impl std::fmt::Debug for DialogCloser {
@@ -889,7 +957,7 @@ impl std::fmt::Debug for DialogCloser {
 
 impl DialogCloser {
     /// Closes the dialog, as if the user dismissed it: its answer resolves
-    /// with -1 now, and the platform takes it off the screen. Nothing
+    /// with -1 (and no text) now, and the platform takes it off the screen. Nothing
     /// happens once it was answered, or outside the engine.
     pub fn close(&self) {
         super::ambient::act_if_running(Action::CloseDialog(self.slot.clone()));

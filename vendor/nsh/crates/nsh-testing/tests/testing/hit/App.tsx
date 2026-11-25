@@ -1,4 +1,5 @@
 import { mount, signal, Text, View } from "nsh";
+import { Window } from "nsh/desktop";
 
 // Buttons for `press`: one a press reaches, one under a view drawn over
 // it, one of no size and one that hears no press.
@@ -32,9 +33,31 @@ function App() {
       <View style={box(10, 240, 120, 44)}>
         <Text>Unbound</Text>
       </View>
+      {/* Under a view whose clip path leaves it out: the press reaches it. */}
+      <View style={box(10, 310, 120, 44)} onPress={() => pressed.set("through")}>
+        <Text>Through</Text>
+      </View>
+      <View style={{ ...box(0, 300, 200, 70), clipPath: "inset(0 0 0 70% round 8px)" }}>
+        <Text>Clipped</Text>
+      </View>
+      {/* A wide target whose middle the overlay below covers: a press at a
+          position reaches the part of it nothing covers. */}
+      <View
+        style={box(10, 390, 200, 90)}
+        onPress={(e) =>
+          pressed.set(
+            `edge at ${e.position.x} ${e.position.y} in ${e.pagePosition.x} ${e.pagePosition.y}`,
+          )
+        }
+      >
+        <Text>Wide</Text>
+      </View>
+      <View style={box(100, 380, 120, 110)}>
+        <Text>Center overlay</Text>
+      </View>
       <Text>{`Pressed: ${pressed()}`}</Text>
     </View>
   );
 }
 
-mount(App);
+mount(() => <Window id="main">{App}</Window>);

@@ -6,7 +6,7 @@ use nsh_core::{
 };
 
 pub(crate) fn show_main_window() {
-    let window = desktop::main_window();
+    let window = desktop::current_window();
     let placement = load(Mode::Normal);
     if let Some(placement) = placement {
         window.set_placement(WindowPlacement::new(WindowMode::Normal, placement.bounds));

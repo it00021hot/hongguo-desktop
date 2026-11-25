@@ -178,6 +178,16 @@ public final class NshAppView: UIView {
         }
     }
 
+    /// Whether scroll views make the views of their content only near their
+    /// viewport (`true`, the default), or all of it (`false`). Turned off,
+    /// what is not made yet is made in the next frames, e.g. to draw a whole
+    /// scroll view into an image (a long screenshot); turned on again, what
+    /// is far away is given up. Applies to the running app and the apps
+    /// loaded from now on.
+    public var contentCulling = true {
+        didSet { nsh_app_set_content_culling(app, contentCulling) }
+    }
+
     /// Gives the address of the apps loaded from now on (`UrlScheme.setUrl`)
     /// to the system as the current `NSUserActivity`, so Handoff continues it
     /// on the user's other devices. An `http(s)` address is a web page, which
@@ -614,9 +624,11 @@ extension NshAppView {
     }
 
     /// Hands `url`, one the embedding app was opened with (its scene's
-    /// `openURLContexts`, for example), to the running app: its
-    /// `UrlScheme.on("open")` listeners get it (`nsh`). While no app runs, the
-    /// next one loaded gets it.
+    /// `openURLContexts`, or the `webpageURL` of a Universal Link that
+    /// reaches `scene(_:continue:)`), to the running app: its
+    /// `UrlScheme.on("open")` listeners get it (`nsh`) when it is of a scheme
+    /// or a web link the app claims. While no app runs, the next one loaded
+    /// gets it.
     public func openURL(_ url: URL) {
         do {
             try check(url.absoluteString.withCString { nsh_app_open_url(app, $0) })

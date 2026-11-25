@@ -35,6 +35,9 @@
 //! the spinner, the sticky cells' views, picking which view a key or a
 //! focused field scrolls, and the frame clock.
 
+#[doc(hidden)]
+pub mod wheel_glide;
+
 use std::f32::consts::PI;
 
 use crate::{
@@ -121,6 +124,18 @@ impl std::ops::Add for Offset {
     }
 }
 
+impl From<Offset> for Point<Points> {
+    fn from(o: Offset) -> Self {
+        point(Points(o.x), Points(o.y))
+    }
+}
+
+impl From<Point<Points>> for Offset {
+    fn from(p: Point<Points>) -> Self {
+        Offset::new(p.x.0, p.y.0)
+    }
+}
+
 /// What a scroll view is doing.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 enum Phase {
@@ -135,10 +150,14 @@ enum Phase {
     Thumb { start: f32 },
     /// Wheel or touchpad input: the last at `last` (ms), `total` points
     /// so far; `gesture` for touchpads (begin / end), not mouse wheels.
+    /// A `smoothWheel` view's notches glide (`glide`, [`wheel_glide`]) to
+    /// `raw`, where they point; otherwise `raw` is where the view is.
     Wheel {
         last: f64,
         total: f32,
         gesture: bool,
+        raw: Offset,
+        glide: wheel_glide::Glide,
     },
     /// Momentum after a fling: `velocity` points per ms at `last` (ms).
     Glide { velocity: Offset, last: f64 },
@@ -401,16 +420,34 @@ pub fn indicator_alpha(since: f64) -> f32 {
 /// `viewport` points showing `total` points at `offset`, or `None` when
 /// everything fits.
 pub fn indicator_span(viewport: Points, total: Points, offset: Points) -> Option<(Points, Points)> {
-    span(viewport.0, total.0, offset.0).map(|(start, len)| (Points(start), Points(len)))
+    indicator_span_within(viewport, total, offset, Points::ZERO, Points::ZERO)
 }
 
-fn span(viewport: f32, total: f32, offset: f32) -> Option<(f32, f32)> {
+/// [`indicator_span`] along a track that keeps `before` points from the
+/// viewport's start and `after` from its end (the view's
+/// [`crate::ScrollBehavior::scrollbar_inset`] along its axis), so that the
+/// indicator stays clear of bars floating over the ends of the view.
+/// `None` also when the insets leave no room for it.
+pub fn indicator_span_within(
+    viewport: Points,
+    total: Points,
+    offset: Points,
+    before: Points,
+    after: Points,
+) -> Option<(Points, Points)> {
+    span(viewport.0, total.0, offset.0, before.0, after.0)
+        .map(|(start, len)| (Points(start), Points(len)))
+}
+
+fn span(viewport: f32, total: f32, offset: f32, before: f32, after: f32) -> Option<(f32, f32)> {
     /// Short enough to see where it is in long lists, long enough to see.
     const MIN_LENGTH: f32 = 32.0;
-    if total <= viewport + 0.5 || viewport <= 4.0 * INDICATOR_MARGIN {
+    let (before, after) = (before.max(0.0), after.max(0.0));
+    let room = viewport - before - after;
+    if total <= viewport + 0.5 || room <= 4.0 * INDICATOR_MARGIN {
         return None;
     }
-    let track = viewport - 2.0 * INDICATOR_MARGIN;
+    let track = room - 2.0 * INDICATOR_MARGIN;
     let max = total - viewport;
     // Overscrolling shrinks it, as on iOS.
     let over = if offset < 0.0 {
@@ -420,7 +457,7 @@ fn span(viewport: f32, total: f32, offset: f32) -> Option<(f32, f32)> {
     };
     let len = (track * viewport / total - over).max(MIN_LENGTH).min(track);
     let t = (offset / max).clamp(0.0, 1.0);
-    Some((INDICATOR_MARGIN + (track - len) * t, len))
+    Some((before + INDICATOR_MARGIN + (track - len) * t, len))
 }
 
 /// How far the offset moves when the thumb moves by `d`: the thumb's
@@ -459,6 +496,19 @@ fn shifted(phase: Phase, d: Offset, horizontal: bool) -> Phase {
             duration,
             momentum,
             end,
+        },
+        Phase::Wheel {
+            last,
+            total,
+            gesture,
+            raw,
+            glide,
+        } => Phase::Wheel {
+            last,
+            total,
+            gesture,
+            raw: raw + d,
+            glide: glide.shifted(d.into()),
         },
         other => other,
     }
@@ -762,29 +812,41 @@ impl ScrollState {
         let (w, h) = (size.width.0, size.height.0);
         let (right, bottom) = Self::visible_edges(size, visible)?;
         let inset = self.behavior.content_inset;
-        let (dim, total, offset) = if self.horizontal {
+        let bar = self.behavior.scrollbar_inset.map(|v| v.0.max(0.0));
+        // Along the axis, from where the offset counts (the right of a
+        // mirrored view).
+        let (dim, total, offset, before, after) = if self.horizontal {
+            let (before, after) = if self.mirrored {
+                (bar.right, bar.left)
+            } else {
+                (bar.left, bar.right)
+            };
             (
                 w,
                 self.content.width.0 + inset.left.0 + inset.right.0,
                 self.x.0,
+                before,
+                after,
             )
         } else {
             (
                 h,
                 self.content.height.0 + inset.top.0 + inset.bottom.0,
                 self.y.0,
+                bar.top,
+                bar.bottom,
             )
         };
-        let (start, len) = span(dim, total, offset)?;
+        let (start, len) = span(dim, total, offset, before, after)?;
         let (x, y, rw, rh) = if self.horizontal {
             let x = if self.mirrored {
                 w - start - len
             } else {
                 start
             };
-            (x, bottom - thick - EDGE, len, thick)
+            (x, bottom - bar.bottom - thick - EDGE, len, thick)
         } else {
-            (right - thick - EDGE, start, thick, len)
+            (right - bar.right - thick - EDGE, start, thick, len)
         };
         let rect = Bounds {
             origin: point(Points(x), Points(y)),
@@ -793,7 +855,7 @@ impl ScrollState {
                 height: Points(rh),
             },
         };
-        Some((rect, dim - 2.0 * INDICATOR_MARGIN - len))
+        Some((rect, dim - before - after - 2.0 * INDICATOR_MARGIN - len))
     }
 
     /// Whether a mouse press `at` a point (view coordinates) in a view of
@@ -829,10 +891,18 @@ impl ScrollState {
         let Some((right, bottom)) = Self::visible_edges(size, visible) else {
             return false;
         };
+        // The edge the indicator runs along, moved in by its inset.
+        let bar = self.behavior.scrollbar_inset.map(|v| v.0.max(0.0));
         let (along, across, start, len, edge) = if self.horizontal {
-            (x, y, rect.origin.x.0, rect.size.width.0, bottom)
+            (
+                x,
+                y,
+                rect.origin.x.0,
+                rect.size.width.0,
+                bottom - bar.bottom,
+            )
         } else {
-            (y, x, rect.origin.y.0, rect.size.height.0, right)
+            (y, x, rect.origin.y.0, rect.size.height.0, right - bar.right)
         };
         (edge - THUMB_GRAB..=edge).contains(&across)
             && (start - THUMB_SLOP..=start + len + THUMB_SLOP).contains(&along)
@@ -1145,8 +1215,9 @@ pub fn deadline(host: &impl ScrollHost, now: f64) -> Option<f64> {
         Phase::Wheel {
             last,
             gesture: false,
+            glide,
             ..
-        } => last + WHEEL_IDLE,
+        } => (last + WHEEL_IDLE).max(glide.end()),
         _ => return None,
     };
     // A millisecond past it: a frame there finds it ended whatever the
@@ -1233,12 +1304,26 @@ fn tick(host: &impl ScrollHost, now: f64) -> bool {
             }
         }
         Phase::Wheel {
+            gesture: false,
+            raw,
+            glide,
+            ..
+        } if now < glide.end() => {
+            moved_to(host, glide.value(raw.into(), now).into());
+        }
+        Phase::Wheel {
             last,
             total,
             gesture: false,
+            raw,
+            glide,
         } if now - last > WHEEL_IDLE => {
-            // A mouse wheel came to rest: snapping views move on to the
-            // next snap point in the wheel's direction.
+            // A mouse wheel came to rest (a glide where it was going):
+            // snapping views move on to the next snap point in the wheel's
+            // direction.
+            if glide != wheel_glide::Glide::default() {
+                moved_to(host, raw);
+            }
             set_phase(host, Phase::Idle);
             let snaps = host
                 .scroll(|s, _| s.behavior.snaps() || s.behavior.paging)
@@ -1842,6 +1927,8 @@ pub fn wheel_begin(host: &impl ScrollHost) {
             last: host.now(),
             total: 0.0,
             gesture: true,
+            raw: Offset::default(),
+            glide: wheel_glide::Glide::default(),
         },
     );
     emit(host, EventKind::ScrollDragStart);
@@ -1850,18 +1937,73 @@ pub fn wheel_begin(host: &impl ScrollHost) {
 /// Scrolls the view by `delta` (positive toward the end). Without
 /// [`wheel_begin`] it is a mouse wheel, which settles when idle.
 pub fn wheel(host: &impl ScrollHost, delta: Point<Points>) {
+    wheel_by(host, delta, false);
+}
+
+/// A mouse wheel's notch of `delta` on a view that [`smooth_wheel`]s: it
+/// glides there as Chromium's does ([`wheel_glide`]), and a notch during
+/// the glide moves where it goes on from where the last one pointed, at the
+/// speed it has, so a run of notches is one motion. It settles as
+/// [`wheel`] does.
+#[doc(hidden)]
+pub fn wheel_smooth(host: &impl ScrollHost, delta: Point<Points>) {
+    wheel_by(host, delta, true);
+}
+
+/// Whether a mouse wheel's notches glide on the view (`smoothWheel`): not
+/// where they step through snap points or pages, or zoom.
+#[doc(hidden)]
+pub fn smooth_wheel(host: &impl ScrollHost) -> bool {
+    host.scroll(|s, _| {
+        s.behavior.smooth_wheel && !s.zooms() && !s.behavior.snaps() && !s.behavior.paging
+    })
+    .unwrap_or(false)
+}
+
+/// A notch's `delta` (points the platform gave it, `line` points a line
+/// along each axis) in the view's own lines (`wheelLineHeight`), when it
+/// sets them.
+#[doc(hidden)]
+pub fn wheel_line(
+    host: &impl ScrollHost,
+    delta: Point<Points>,
+    line: Point<Points>,
+) -> Point<Points> {
+    let height = host
+        .scroll(|s, _| s.behavior.wheel_line_height)
+        .unwrap_or(Points::ZERO)
+        .0;
+    let axis = |d: Points, line: Points| {
+        if height > 0.0 && line.0 > 0.0 {
+            Points(d.0 * height / line.0)
+        } else {
+            d
+        }
+    };
+    point(axis(delta.x, line.x), axis(delta.y, line.y))
+}
+
+fn wheel_by(host: &impl ScrollHost, delta: Point<Points>, smooth: bool) {
     let (dx, dy) = (delta.x.0, delta.y.0);
     if !enabled(host) {
         return;
     }
-    let (gesture, total) = match phase(host) {
-        Phase::Wheel { gesture, total, .. } => (gesture, total),
+    let (gesture, total, last) = match phase(host) {
+        Phase::Wheel {
+            gesture,
+            total,
+            raw,
+            glide,
+            ..
+        } => (gesture, total, (!gesture).then_some((raw, glide))),
         _ => {
             interrupt(host);
-            (false, 0.0)
+            (false, 0.0, None)
         }
     };
-    let Some((pos, total)) = host.scroll(|s, size| {
+    let smooth = smooth && !gesture;
+    let now = host.now();
+    let Some((pos, to, total)) = host.scroll(|s, size| {
         let (min, max) = s.range(size);
         let d = if s.zooms() {
             Offset::new(dx, dy)
@@ -1874,31 +2016,63 @@ pub fn wheel(host: &impl ScrollHost, delta: Point<Points>) {
             Offset::new(dy, 0.0)
         };
         let pos = s.pos();
+        // A smooth wheel's notches add up from where the last one pointed,
+        // not from where its glide has got to.
+        let from = match last {
+            Some((raw, _)) if smooth => raw,
+            _ => pos,
+        };
         // Past an edge (the refresh space) wheels only move back.
         let one =
             |p: f32, d: f32, min: f32, max: f32| (p + d).clamp(min.min(p), max.max(min).max(p));
         (
-            Offset::new(one(pos.x, d.x, min.x, max.x), one(pos.y, d.y, min.y, max.y)),
+            pos,
+            Offset::new(
+                one(from.x, d.x, min.x, max.x),
+                one(from.y, d.y, min.y, max.y),
+            ),
             total + d.along(s.horizontal),
         )
     }) else {
         return;
     };
+    let glide = match last {
+        _ if !smooth => wheel_glide::Glide::default(),
+        Some((raw, g)) if now < g.end() => g.retargeted(raw.into(), to.into(), now),
+        _ => wheel_glide::Glide::new(pos.into(), to.into(), now),
+    };
     set_phase(
         host,
         Phase::Wheel {
-            last: host.now(),
+            last: now,
             total,
             gesture,
+            raw: to,
+            glide,
         },
     );
-    moved_to(host, pos);
+    if !smooth {
+        moved_to(host, to);
+    }
     ensure_ticking(host);
 }
 
 /// The wheel scroll ended at a velocity of `(vx, vy)` points per second
 /// (0 for wheels without momentum).
 pub fn wheel_end(host: &impl ScrollHost, vx: f32, vy: f32) {
+    end_wheel(host, vx, vy, true);
+}
+
+/// The wheel scroll came to rest where it is, its momentum spent (Windows'
+/// precision touchpads, whose system glide comes as more deltas before
+/// the scroll ends): a snapping view settles on its nearest snap point,
+/// as browsers' scroll snapping does, rather than moving on in the
+/// scroll's direction as a mouse wheel's notches do.
+pub fn wheel_settle(host: &impl ScrollHost) {
+    end_wheel(host, 0.0, 0.0, false);
+}
+
+fn end_wheel(host: &impl ScrollHost, vx: f32, vy: f32, onward: bool) {
     let Phase::Wheel { gesture, total, .. } = phase(host) else {
         return;
     };
@@ -1920,12 +2094,65 @@ pub fn wheel_end(host: &impl ScrollHost, vx: f32, vy: f32) {
     if gesture {
         emit(host, EventKind::ScrollDragEnd);
     }
-    let snap = if v == Offset::default() && total.abs() >= 1.0 {
+    let snap = if onward && v == Offset::default() && total.abs() >= 1.0 {
         total.signum() * WHEEL_SNAP
     } else {
         0.0
     };
     release(host, v, snap);
+}
+
+/// Duration of a mouse wheel notch's animated scroll (ms), as browsers and
+/// Windows' own lists glide a notch; notches that follow retarget it.
+const WHEEL_STEP_ANIMATION: f64 = 150.0;
+
+/// Scrolls the view by one notch of a mouse wheel, `delta` (positive
+/// toward the end), animated: a notch while one runs adds to where it is
+/// headed, so a spun wheel scrolls on smoothly. Views that snap, page or
+/// zoom take it as [`wheel`] does (they settle on a snap point when the
+/// notches stop), as does a view pulled past an edge.
+pub fn wheel_step(host: &impl ScrollHost, delta: Point<Points>) {
+    if !enabled(host) {
+        return;
+    }
+    let Some(target) = host.scroll(|s, size| {
+        if s.zooms() || s.behavior.snaps() || s.behavior.paging {
+            return None;
+        }
+        let (min, max) = s.limits(size);
+        let max = max.max(min);
+        let (dx, dy) = (delta.x.0, delta.y.0);
+        let d = if !s.horizontal {
+            dy
+        } else if dx != 0.0 {
+            if s.mirrored { -dx } else { dx }
+        } else {
+            // Vertical wheels scroll horizontal views too.
+            dy
+        };
+        let pos = s.offset();
+        if pos < min - 0.5 || pos > max + 0.5 {
+            return None;
+        }
+        Some((s.goal() + d).clamp(min, max))
+    }) else {
+        return;
+    };
+    let Some(to) = target else {
+        wheel(host, delta);
+        return;
+    };
+    if matches!(phase(host), Phase::Wheel { gesture: true, .. }) {
+        // A touchpad's scroll is going on: it keeps the view.
+        return;
+    }
+    let goal = host.scroll(|s, _| s.goal()).unwrap_or(to);
+    if (to - goal).abs() < 0.5 {
+        // Headed there already (at an edge): nothing changes.
+        return;
+    }
+    interrupt(host);
+    animate_along(host, to, WHEEL_STEP_ANIMATION, false, true);
 }
 
 // The keyboard.
@@ -2272,13 +2499,13 @@ mod tests {
 
     #[test]
     fn indicator_geometry() {
-        assert_eq!(span(400.0, 400.0, 0.0), None);
-        let (s0, l0) = span(400.0, 1600.0, 0.0).unwrap();
+        assert_eq!(span(400.0, 400.0, 0.0, 0.0, 0.0), None);
+        let (s0, l0) = span(400.0, 1600.0, 0.0, 0.0, 0.0).unwrap();
         assert_eq!(s0, 2.0);
         assert!((l0 - 99.0).abs() < 0.01);
-        let (s1, l1) = span(400.0, 1600.0, 1200.0).unwrap();
+        let (s1, l1) = span(400.0, 1600.0, 1200.0, 0.0, 0.0).unwrap();
         assert!((s1 + l1 - 398.0).abs() < 0.01);
-        let (_, l2) = span(400.0, 1600.0, -50.0).unwrap();
+        let (_, l2) = span(400.0, 1600.0, -50.0, 0.0, 0.0).unwrap();
         assert!(l2 < l0);
         assert_eq!(
             indicator_span(Points(400.0), Points(1600.0), Points(0.0)),
@@ -2388,11 +2615,11 @@ mod tests {
         // The thumb's travel spans the scroll range: moving it by its
         // whole travel scrolls to the end, and it ends that far along.
         let p = Points;
-        let (s0, l0) = span(400.0, 1600.0, 0.0).unwrap();
+        let (s0, l0) = span(400.0, 1600.0, 0.0, 0.0, 0.0).unwrap();
         let travel = 400.0 - 2.0 * INDICATOR_MARGIN - l0;
         let end = thumb_scroll(p(travel), p(1200.0), p(travel)).0;
         assert!((end - 1200.0).abs() < 0.01);
-        let (s1, _) = span(400.0, 1600.0, end).unwrap();
+        let (s1, _) = span(400.0, 1600.0, end, 0.0, 0.0).unwrap();
         assert!((s1 - s0 - travel).abs() < 0.01);
         assert!(thumb_scroll(p(-10.0), p(1200.0), p(travel)).0 < 0.0);
         assert_eq!(thumb_scroll(p(10.0), p(1200.0), p(0.0)), p(0.0));
@@ -2409,6 +2636,75 @@ mod tests {
         assert!(s.grabs_thumb(size, pt(295.0, 10.0)));
         assert!(!s.grabs_thumb(size, pt(200.0, 10.0)));
         assert!(!s.grabs_thumb(size, pt(295.0, 300.0)));
+    }
+
+    #[test]
+    fn thumb_keeps_clear_of_the_scrollbar_inset() {
+        // A list under a 100-point bar floating at its bottom and a 50-point
+        // one at its top: the thumb runs between them, as far as before.
+        let (s0, l0) = span(400.0, 1600.0, 0.0, 50.0, 100.0).unwrap();
+        assert_eq!(s0, 50.0 + INDICATOR_MARGIN);
+        let (s1, l1) = span(400.0, 1600.0, 1200.0, 50.0, 100.0).unwrap();
+        assert!((s1 + l1 - (300.0 - INDICATOR_MARGIN)).abs() < 0.01);
+        // Its length is the shorter track's share of what shows.
+        let (_, full) = span(400.0, 1600.0, 0.0, 0.0, 0.0).unwrap();
+        assert!(l0 < full && (l0 - 246.0 / 4.0).abs() < 0.01, "{l0}");
+        // No room left between the insets: no indicator.
+        assert_eq!(span(400.0, 1600.0, 0.0, 200.0, 195.0), None);
+        // Negative insets count as none.
+        assert_eq!(
+            span(400.0, 1600.0, 0.0, -10.0, 0.0),
+            span(400.0, 1600.0, 0.0, 0.0, 0.0)
+        );
+        assert_eq!(
+            indicator_span_within(
+                Points(400.0),
+                Points(1600.0),
+                Points(0.0),
+                Points(50.0),
+                Points(100.0)
+            ),
+            Some((Points(s0), Points(l0)))
+        );
+
+        // In a view: the thumb, its travel and where a press grabs it.
+        let mut s = scroll_state((300.0, 1600.0), false);
+        s.indicator = true;
+        s.behavior.enabled = true;
+        s.behavior.scrollbar_inset = EdgeInsets {
+            top: Points(50.0),
+            right: Points(8.0),
+            bottom: Points(100.0),
+            left: Points::ZERO,
+        };
+        let size = sz(300.0, 400.0);
+        let (rect, travel) = s.thumb(size).unwrap();
+        assert_eq!(rect.origin.x.0, 300.0 - 8.0 - INDICATOR_THICK.0 - 2.0);
+        assert_eq!(rect.origin.y.0, s0);
+        assert!((travel.0 - (400.0 - 150.0 - 2.0 * INDICATOR_MARGIN - l0)).abs() < 0.01);
+        assert!(s.grabs_thumb(size, pt(287.0, 60.0)));
+        assert!(!s.grabs_thumb(size, pt(295.0, 60.0)), "past its edge");
+        assert!(!s.grabs_thumb(size, pt(287.0, 20.0)), "above its track");
+
+        // A horizontal one moves up by the bottom inset and runs between
+        // the left and right ones, from the right when mirrored.
+        let mut s = scroll_state((900.0, 2000.0), true);
+        s.behavior.scrollbar_inset = EdgeInsets {
+            top: Points::ZERO,
+            right: Points(30.0),
+            bottom: Points(20.0),
+            left: Points(10.0),
+        };
+        let size = sz(300.0, 400.0);
+        let (rect, _) = s.thumb(size).unwrap();
+        assert_eq!(rect.origin.y.0, 400.0 - 20.0 - INDICATOR_THICK.0 - 2.0);
+        assert_eq!(rect.origin.x.0, 10.0 + INDICATOR_MARGIN);
+        s.mirrored = true;
+        let (rect, _) = s.thumb(size).unwrap();
+        assert_eq!(
+            rect.origin.x.0 + rect.size.width.0,
+            300.0 - 30.0 - INDICATOR_MARGIN
+        );
     }
 
     #[test]
@@ -2613,6 +2909,131 @@ mod tests {
         key_scroll(&host, KeyMove::Points(KEY_LINE), true);
         assert_eq!(host.state.borrow().goal(), 1000.0 - KEY_LINE.0);
         assert_eq!(*host.key_moves.borrow(), [KeyMove::Points(KEY_LINE)]);
+    }
+
+    #[test]
+    fn wheel_notches_glide_and_add_up_where_the_scroll_is_headed() {
+        let host = TestHost::new(scroll_state((300.0, 10_000.0), false));
+        let notch = |dy: f32| wheel_step(&host, pt(0.0, dy));
+        notch(48.0);
+        // It eases there instead of jumping.
+        assert_eq!(host.state.borrow().y.0, 0.0);
+        assert_eq!(host.state.borrow().goal(), 48.0);
+        // A notch during the glide adds to its goal.
+        notch(48.0);
+        assert_eq!(host.state.borrow().goal(), 96.0);
+        frame(&host, WHEEL_STEP_ANIMATION);
+        assert_eq!(host.state.borrow().y.0, 96.0);
+        assert!(matches!(host.state.borrow().live.phase, Phase::Idle));
+        // The goal stays within the content.
+        notch(-1000.0);
+        assert_eq!(host.state.borrow().goal(), 0.0);
+        frame(&host, WHEEL_STEP_ANIMATION);
+        notch(-48.0);
+        assert!(matches!(host.state.borrow().live.phase, Phase::Idle));
+
+        // A snapping view settles on its snap points as with an unanimated
+        // wheel: the notch moves it at once.
+        let mut paging = scroll_state((300.0, 10_000.0), false);
+        paging.behavior.paging = true;
+        let host = TestHost::new(paging);
+        wheel_step(&host, pt(0.0, 48.0));
+        assert_eq!(host.state.borrow().y.0, 48.0);
+        assert!(matches!(
+            host.state.borrow().live.phase,
+            Phase::Wheel { gesture: false, .. }
+        ));
+    }
+
+    #[test]
+    fn smooth_wheel_notches_glide_on_chromiums_curve() {
+        let mut smooth = scroll_state((300.0, 10_000.0), false);
+        smooth.behavior.smooth_wheel = true;
+        let host = TestHost::new(smooth);
+        assert!(smooth_wheel(&host));
+        wheel_smooth(&host, pt(0.0, 40.0));
+        // It eases there instead of jumping.
+        assert_eq!(host.state.borrow().y.0, 0.0);
+        frame(&host, 60.0);
+        let y = host.state.borrow().y.0;
+        assert!(y > 0.0 && y < 40.0, "{y}");
+        // A notch during the glide goes on from where the last pointed.
+        wheel_smooth(&host, pt(0.0, 40.0));
+        assert!(matches!(
+            host.state.borrow().live.phase,
+            Phase::Wheel { gesture: false, raw, .. } if raw.y == 80.0
+        ));
+        // It arrives, then rests there once the notches stop.
+        let mut now = 60.0;
+        while let Some(next) = deadline(&host, now) {
+            now = next;
+            frame(&host, now);
+        }
+        assert_eq!(host.state.borrow().y.0, 80.0);
+        assert!(matches!(host.state.borrow().live.phase, Phase::Idle));
+
+        // Without it, or where notches step through snap points, they do
+        // not glide.
+        let host = TestHost::new(scroll_state((300.0, 10_000.0), false));
+        assert!(!smooth_wheel(&host));
+        let mut paging = scroll_state((300.0, 10_000.0), false);
+        paging.behavior.smooth_wheel = true;
+        paging.behavior.paging = true;
+        assert!(!smooth_wheel(&TestHost::new(paging)));
+    }
+
+    #[test]
+    fn wheel_line_height_rescales_a_notch() {
+        let mut lines = scroll_state((300.0, 10_000.0), false);
+        let host = TestHost::new(lines.clone());
+        // The platform's own line by default.
+        assert_eq!(
+            wheel_line(&host, pt(0.0, 30.0), pt(10.0, 10.0)),
+            pt(0.0, 30.0)
+        );
+        lines.behavior.wheel_line_height = Points(40.0);
+        let host = TestHost::new(lines);
+        // Three lines of 10 points become three of 40.
+        assert_eq!(
+            wheel_line(&host, pt(0.0, 30.0), pt(10.0, 10.0)),
+            pt(0.0, 120.0)
+        );
+        // Each axis by its own line (Linux's grow with the view).
+        assert_eq!(
+            wheel_line(&host, pt(25.0, 30.0), pt(25.0, 15.0)),
+            pt(40.0, 80.0)
+        );
+    }
+
+    #[test]
+    fn a_settled_touchpad_scroll_snaps_to_the_nearest_page() {
+        // Pages of 500 pt; the view rests on the second.
+        let paged = || {
+            let mut s = scroll_state((300.0, 5000.0), false);
+            s.behavior.paging = true;
+            s.y = Points(500.0);
+            let host = TestHost::new(s);
+            wheel_begin(&host);
+            // A little back toward the first.
+            wheel(&host, pt(0.0, -60.0));
+            host
+        };
+        let settle = |host: &TestHost| {
+            let mut now = 0.0;
+            while let Some(next) = deadline(host, now) {
+                now = next;
+                frame(host, now);
+            }
+            host.state.borrow().y.0
+        };
+        // At rest, its momentum spent: back to the page it is mostly on.
+        let host = paged();
+        wheel_settle(&host);
+        assert_eq!(settle(&host), 500.0);
+        // A gesture ended without a velocity moves on in its direction.
+        let host = paged();
+        wheel_end(&host, 0.0, 0.0);
+        assert_eq!(settle(&host), 0.0);
     }
 
     #[test]

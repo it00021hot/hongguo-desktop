@@ -16,10 +16,10 @@
 //! just above it instead, at its frame: the platform reports how far the
 //! text scrolled ([`Core::set_input_scroll`]) and takes the bar's scrolls.
 
-use std::sync::Arc;
-
 use super::{Core, Key, Kind, NO_KEY, dirty, list::StickyRange};
-use crate::{NodeId, ScrollbarSetting, element::BuiltInScrollbar, text::TextEngine};
+use crate::{
+    NodeId, ScrollbarSetting, element::BuiltInScrollbar, geometry::Points, text::TextEngine,
+};
 
 /// How far a bar's sticky range reaches: past any content.
 const BAR_RANGE: f32 = 1.0e9;
@@ -81,7 +81,10 @@ impl<M: TextEngine> Core<M> {
                 ScrollbarSetting::Shown => {
                     (Some(None), self.builtin_scrollbars.as_ref().map(|b| b.0))
                 }
-                ScrollbarSetting::Themed(theme) => (Some(Some(theme.clone())), themed),
+                theme @ ScrollbarSetting::Themed(_) => (Some(Some(theme.clone())), themed),
+                theme @ ScrollbarSetting::ThemeValue(value) => {
+                    (Some(Some(theme.clone())), Some(value.source()))
+                }
                 ScrollbarSetting::Hidden => (None, None),
             };
             let wanted = wanted.filter(|_| source.is_some());
@@ -116,7 +119,7 @@ impl<M: TextEngine> Core<M> {
     fn make_scrollbar(
         &mut self,
         key: Key,
-        own: Option<Arc<crate::JsonValue>>,
+        own: Option<ScrollbarSetting>,
         source: crate::element::ScrollbarSource,
     ) {
         let node = &self.nodes[key as usize];
@@ -137,7 +140,14 @@ impl<M: TextEngine> Core<M> {
         let Some(el) = source(&BuiltInScrollbar {
             target,
             horizontal,
-            theme: own.clone(),
+            theme: match &own {
+                Some(ScrollbarSetting::Themed(json)) => Some(json.clone()),
+                _ => None,
+            },
+            theme_value: match &own {
+                Some(ScrollbarSetting::ThemeValue(value)) => Some(value.theme().clone()),
+                _ => None,
+            },
             app_theme: self.builtin_scrollbars.as_ref().map(|b| b.1.clone()),
         }) else {
             return;
@@ -205,6 +215,20 @@ impl<M: TextEngine> Core<M> {
             if !node.created || size.width.0.is_nan() || size.height.0.is_nan() {
                 continue;
             }
+            // A scroll view's bar keeps within its `scrollbar_inset`, clear of
+            // the bars floating over the view (an input's has none).
+            let inset = (node.scroll.as_ref())
+                .filter(|_| node.kind != Kind::Input)
+                .map(|s| s.behavior.scrollbar_inset.map(|v| v.0.max(0.0)))
+                .unwrap_or_default();
+            let size = crate::geometry::size(
+                Points((size.width.0 - inset.left - inset.right).max(0.0)),
+                Points((size.height.0 - inset.top - inset.bottom).max(0.0)),
+            );
+            let at = taffy::Point {
+                x: inset.left,
+                y: inset.top,
+            };
             let mut style = self.layout.style(layout).clone();
             let want = taffy::Size {
                 width: taffy::Dimension::length(size.width.0),
@@ -218,7 +242,8 @@ impl<M: TextEngine> Core<M> {
             }
             // An input's bar follows the input where it moves.
             let bar_node = &self.nodes[bar as usize];
-            let moved = bar_node.beside != NO_KEY && bar_node.frame.origin != origin;
+            let moved = (bar_node.beside != NO_KEY && bar_node.frame.origin != origin)
+                || self.layout.unrounded_layout(layout).location != at;
             if restyled || moved || self.layout.dirty(layout) {
                 self.layout_root(
                     layout,
@@ -227,7 +252,10 @@ impl<M: TextEngine> Core<M> {
                         height: taffy::AvailableSpace::Definite(size.height.0),
                     },
                 );
-                self.emit_frames_in(bar, false, taffy::Point::ZERO);
+                let mut placed = *self.layout.unrounded_layout(layout);
+                placed.location = at;
+                self.layout.set_unrounded(layout, placed);
+                self.emit_frames_in(bar, false, super::Origin::default());
             }
         }
     }

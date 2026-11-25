@@ -41,9 +41,14 @@ tap text:Sheet
 expect Sheet: pending
 tap text:Empty
 expect Empty: rejected TypeError
+tap text:Prompt
+expect Prompt: pending
+tap text:Input in sheet
+expect Input in sheet: rejected TypeError
 wait 300
 expect Alert: pending
 expect Sheet: pending
+expect Prompt: pending
 covers [nsh/base] AlertDialog
 # base-avatar
 tap id:case-base-avatar
@@ -189,6 +194,15 @@ expect Mouse: move 6.5,1 page 288 left down out -2,0
 listens id:hover onContextMenu
 event id:hover onContextMenu position.x=5 position.y=7 pointerType=mouse
 expect Mouse: menu at 5,294
+# `busy`: screen readers say its action is running, following a signal;
+# presses still count.
+prop id:save accessibilityState {}
+tap text:Save
+expect Saves: 1
+prop id:save accessibilityState busy=true
+tap text:Saving…
+expect Saves: 2
+prop id:save accessibilityState {}
 covers [nsh/base] Button
 covers [props] hitSlop
 covers [props] role
@@ -199,6 +213,7 @@ covers [events] onPressDown
 covers [events] onPressUp
 covers [events] onPress
 covers [props] Button.selected
+covers [props] Button.busy
 covers [props] selectedStyle
 # base-link
 tap id:case-base-link
@@ -399,6 +414,9 @@ prop id:first title First title
 prop id:first headerVisible true
 prop id:first headerLargeTitle false
 prop id:first headerTransparent false
+prop id:first headerShadowVisible true
+prop id:first headerTitleAlign left
+prop id:first headerBackgroundOnScroll false
 prop id:first headerBackVisible true
 noprop id:first headerBackTitle
 prop id:first popOnSwipe true
@@ -416,6 +434,9 @@ prop id:second title Second title
 prop id:second headerVisible false
 prop id:second headerLargeTitle true
 prop id:second headerTransparent true
+prop id:second headerShadowVisible false
+prop id:second headerTitleAlign center
+prop id:second headerBackgroundOnScroll true
 prop id:second headerBackTitle Back to second
 prop id:second headerBackVisible false
 prop id:second popOnSwipe false
@@ -466,6 +487,9 @@ covers [props] title
 covers [props] headerVisible
 covers [props] headerLargeTitle
 covers [props] headerTransparent
+covers [props] headerShadowVisible
+covers [props] headerTitleAlign
+covers [props] headerBackgroundOnScroll
 covers [props] headerBackTitle
 covers [props] headerBackVisible
 covers [props] popOnSwipe
@@ -666,6 +690,8 @@ prop scroll:text:"let a = 1;" scrollbar false
 # The table's scroll view without its indicator.
 prop scroll:text:"Alpha" horizontal true
 prop scroll:text:"Alpha" scrollbar false
+# The table's grid, around its cells, styled by `tableGrid`.
+style parent:parent:text:"Alpha" backgroundColor #00ff00ff
 style text:"First item" color #0000ffff
 # A press on the link reports its URL and the modifier keys held;
 # nothing opens it.
@@ -683,6 +709,13 @@ expect Task: 0 false
 expect From HTML
 expect An hypertext paragraph.
 style span:hypertext fontWeight 600
+# Text in the colors HTML gives it (a span's style, a font's color).
+expect Colors: red text and green text
+style span:"red text" color #e54545ff
+style span:"green text" color #00aa00ff
+# A text style of the app's document, under its part's styles.
+style span:"Document color" color #336699ff
+style span:"Document color" fontWeight 600
 # The app's own blocks.
 expect From a document
 # Streaming: the `**` left open shows closed, the caret after the text.
@@ -713,7 +746,9 @@ expect Extended: text,custom
 expect CJK emphasis: strong,text
 expect CJK URL: https://example.com,text
 expect Math off: Math $x$
+expect Links off: a i
 expect From HTML: Hi there
+expect Text style: textStyle red
 expect Unknown tag: <US tech> up
 # A code block's annotations show in place of its code; its actions get
 # the block, its id too.
@@ -1373,6 +1408,40 @@ covers [props] accessibilityLabel
 covers [props] accessibilityDescription
 covers [events] onPress
 
+# base-tabs-orientation
+tap id:case-base-tabs-orientation
+expect Default selected: one
+expect Row selected: one
+expect Column selected: one
+# A list with no `orientation` moves with both pairs, as before, and
+# reports no orientation. The base app runs on iOS, where Tab does not
+# stop at views, so the focus reaches the tab through a focus event.
+event id:default-one onFocus
+key right
+expect Default selected: two
+key down
+expect Default selected: three
+key up
+expect Default selected: two
+# `"horizontal"` moves with Left and Right; Up and Down are the page's:
+# after the key settles, the tab the other pair would reach is absent.
+event id:row-one onFocus
+key right
+expect Row selected: two
+key down
+wait 300
+expect Row selected: two
+absent Row selected: three
+# `"vertical"` moves with Up and Down; Left and Right are the page's.
+event id:column-one onFocus
+key down
+expect Column selected: two
+key right
+wait 300
+expect Column selected: two
+absent Column selected: three
+covers [props] Tabs.orientation
+
 # base-toggle
 tap id:case-base-toggle
 # The group is a toolbar for screen readers; each toggle is a button of
@@ -1459,6 +1528,17 @@ covers [props] accessibilityLabel
 covers [events] onChange
 covers [events] onPressDown
 covers [events] onPressUp
+
+# base-title-bar
+tap id:case-base-title-bar
+expect Pressed: none
+# A row of its children, no padding where there are no window controls:
+# the bar as tall as the app says, its items centered across it.
+frame id:back 0 5 20 20
+frame id:share 370 5 20 20
+tap id:share
+expect Pressed: share
+covers [nsh/base] TitleBar
 
 # base-toolbar
 tap id:case-base-toolbar
@@ -2167,6 +2247,28 @@ covers [events] onChange
 covers [events] onFocus
 covers [events] onBlur
 covers [events] onSubmit
+
+# base-time-field
+tap id:case-base-time-field
+# The time the app owns, within `min` and `max`: typed digits before the
+# minimum are held to it when the hour completes.
+expect Appointment 09:30
+prop label:Appointment value 09:30
+type label:Appointment 08
+expect Appointment 09:00
+# After the maximum, held to it.
+expect Office 09:30
+type label:Office 18
+expect Office 17:30
+# A `min` after `max` leaves both out.
+expect Inverted 12:00
+type label:Inverted 08
+expect Inverted 08:00
+covers [nsh/base] TimeField
+covers [props] value
+covers [props] TimeField.min
+covers [props] TimeField.max
+covers [events] onChange
 # base-combobox
 tap id:case-base-combobox
 # The input is a combobox whose value is the selected titles.
@@ -2527,6 +2629,17 @@ tap label:2026-10-12
 prop label:2026-10-12 accessibilityState selected=true
 nostyle label:2026-10-12 backgroundColor
 nostyle label:2026-10-06 backgroundColor
+expect Trip: none
+# The mouse moving over a later day previews the range a press there
+# makes: the days from the start to it styled by the item's
+# `data-range-preview-start:`, `data-range-preview-middle:` and
+# `data-range-preview-end:` classes, the days between not selected.
+event label:2026-10-14 onMouseMove position.x=1 position.y=1
+style label:2026-10-12 backgroundColor #ff00ffff
+style label:2026-10-13 backgroundColor #ffff00ff
+style label:2026-10-14 backgroundColor #00ffffff
+prop label:2026-10-13 accessibilityState {}
+nostyle label:2026-10-15 backgroundColor
 expect Trip: none
 tap label:2026-10-14
 expect Trip: ["2026-10-12","2026-10-14"]
@@ -3740,6 +3853,15 @@ expect token radius-card 14
 style id:up backgroundColor #138a5aff
 style id:primary backgroundColor #17171780
 style id:faded color #138a5a80
+# A number token is a factor to scale, kept while held down, and a ring's
+# width or offset with the `length:` hint.
+style id:token-scale transform scale(0.97)
+state id:token-press pressed
+style id:token-press transform scale(0.97)
+state id:token-press none
+style id:token-ring boxShadow 0 0 0 3 #138a5aff
+style id:token-ring-offset boxShadow 0 0 0 2 #ffffffff, 0 0 0 4 #138a5aff
+style id:token-inset-ring boxShadow inset 0 0 0 3 #138a5aff
 covers [nsh] token
 
 # base-set-theme
@@ -3911,6 +4033,8 @@ expect Tab a*
 expect Tab b
 expect Tab c
 expect Panel a
+# The frame showing the panel is the tab panel for screen readers.
+prop parent:parent:parent:parent:id:panel-a role tabpanel
 # A tab of the other group shows that group.
 tap text:Tab c
 expect Tab c*
@@ -4359,6 +4483,28 @@ covers [props] DataTable.renderCell
 covers [events] DataTable.onSortChange
 covers [events] DataTable.onVisibleRowsChange
 
+# base-data-table-activate
+tap id:case-base-data-table-activate
+expect Activated: none
+# A press on a cell selects it and gives the table the keyboard. Enter /
+# Return activates the focused row, the number `onRowPress` reports.
+tap text:pear
+key enter
+expect Activated: 0
+# An arrow moves the selection; Enter activates the row it moved to.
+key down
+key enter
+expect Activated: 1
+covers [events] DataTable.onRowActivate
+
+# base-data-table-fit-grow
+tap id:case-base-data-table-fit-grow
+# The name column fits its text once the rows come; the qty column grows
+# into the rest of the table's 390 points.
+expect Name
+tap id:widths
+expect Widths: fill 390 fitted true
+
 # base-rich-editor-session
 tap id:case-base-rich-editor-session
 tap text:RunSession
@@ -4442,6 +4588,8 @@ covers [nsh/base] wrappingRule
 
 # base-rich-editor-tables
 tap id:case-base-rich-editor-tables
+prop scroll:text:"InternationalConferenceAuditorium" horizontal true
+scroll id:rich-editor-table-scroll 30 0
 tap text:RunTables
 expect Insert: true *|*/|
 expect AddRow: true *|*/|/|
@@ -4594,6 +4742,15 @@ expect Observed: true 1 日Seed
 # Host event names have one shared coverage key, including a component
 # that emits its own payload under that name.
 covers [events] onCompositionChange
+
+# base-rich-editor-accessory
+tap id:case-base-rich-editor-accessory
+# The input the editor types with names the bar, which is mounted.
+expect Format bar
+expect Rendered
+prop label:AccessoryNotes inputAccessoryViewID format
+prop label:AccessoryNotes inputAccessoryView true
+covers [props] RichEditor.inputAccessoryViewID
 
 # base-rich-editor-node-view
 tap id:case-base-rich-editor-node-view
@@ -4755,3 +4912,43 @@ tap id:content-size-narrow
 expect Width: true
 covers [events] onContentSizeChange
 covers [nsh/base] createRichEditor
+
+# base-dock-tab-scroll
+# The tabs do not fit the bar: they are in a scroll view as wide as the
+# bar, and the tab the ref displays stays the displayed one.
+tap id:case-base-dock-tab-scroll
+expect Strip a*
+expect Strip h
+frame scroll:id:strip-tab-a 0 0 390 24
+tap id:strip-show-h
+expect Strip h*
+
+# base-dock-render-handle
+# The handle between the two groups draws what `renderHandle` returns.
+tap id:case-base-dock-render-handle
+expect Tab a
+expect Tab b
+expect Grip 0 horizontal idle
+covers [props] DockArea.renderHandle
+
+# base-dock-toolbar
+# Each group's tab bar ends with what `renderToolbar` returns for its
+# displayed tab, and follows the tab the group displays.
+tap id:case-base-dock-toolbar
+expect Toolbar a of 0
+expect Toolbar c of 0
+tap id:toolbar-tab-b
+expect Toolbar b of 1
+covers [props] DockArea.renderToolbar
+
+# base-tree-slots
+# The header shows above the rows; `empty` shows while no item does.
+tap id:case-base-tree-slots
+expect Pinned files
+expect No files
+tap id:tree-slots-fill
+expect README.md
+absent No files
+expect Pinned files
+covers [props] Tree.header
+covers [props] Tree.empty

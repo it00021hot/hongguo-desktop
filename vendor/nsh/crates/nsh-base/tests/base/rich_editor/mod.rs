@@ -8,11 +8,13 @@ mod commands;
 mod composition;
 mod content_size;
 mod extensions;
+mod layout_hits;
 mod marks_clipboard_history;
 mod node_view_presses;
 mod selection;
 mod sizing;
 mod structure;
+mod tables;
 mod tiptap;
 mod touch;
 mod typing;
@@ -28,7 +30,6 @@ use nsh_base::rich_editor::{
 };
 use nsh_core::{
     PasteEvent, PayloadValue, Size,
-    element::Root,
     platform::{Idiom, Os},
     prelude::*,
 };
@@ -185,12 +186,24 @@ fn start_on(doc: Value, os: Os, apple_keyboard: bool) -> Headless {
 
 /// [`start_on`] in `idiom` (a phone: touch selection).
 fn start_with(doc: Value, os: Os, apple_keyboard: bool, idiom: Idiom) -> Headless {
+    start_session(move || session(doc.clone()), os, apple_keyboard, idiom)
+}
+
+/// [`start_with`] on the session `make` makes.
+fn start_session(
+    make: impl Fn() -> EditorSession + Send + Sync + 'static,
+    os: Os,
+    apple_keyboard: bool,
+    idiom: Idiom,
+) -> Headless {
     let mut config = EngineConfig {
         viewport: Size::new(px(800.0), px(900.0)),
         // Made in the engine, so its keymaps are the platform's the engine
         // says, not the machine's.
-        ..EngineConfig::new(Root::new::<Harness>(move || HarnessProps {
-            session: Some(session(doc.clone())),
+        ..EngineConfig::new(nsh_testing::windowed_root_with::<Harness>(move || {
+            HarnessProps {
+                session: Some(make()),
+            }
         }))
     };
     config.environment.os = os;
@@ -261,6 +274,49 @@ fn sink_text(app: &mut Headless, text: &str) {
     app.wait(Duration::from_millis(50)).unwrap();
 }
 
+/// The platform moved the sink's own caret to UTF-16 offset `at` of its
+/// text, without a key (an input method that types a pair of brackets and
+/// puts its caret between them). Sent to every node, as [`compose`] is.
+fn sink_caret(app: &mut Headless, at: u32) {
+    for id in 1..4096 {
+        app.engine().control().dispatch_event(
+            id,
+            EventKind::SelectionChange,
+            EventPayload::Map(vec![
+                ("start", PayloadValue::Number(f64::from(at))),
+                ("end", PayloadValue::Number(f64::from(at))),
+            ]),
+        );
+    }
+    app.wait(Duration::from_millis(50)).unwrap();
+}
+
+/// What AppKit reports as an input method types `text` with its caret at
+/// UTF-16 offset `at`: the caret first, then the text, in one turn.
+fn sink_caret_then_text(app: &mut Headless, at: u32, text: &str) {
+    for id in 1..4096 {
+        app.engine().control().dispatch_event(
+            id,
+            EventKind::SelectionChange,
+            EventPayload::Map(vec![
+                ("start", PayloadValue::Number(f64::from(at))),
+                ("end", PayloadValue::Number(f64::from(at))),
+            ]),
+        );
+    }
+    for id in 1..4096 {
+        app.engine().control().dispatch_event(
+            id,
+            EventKind::ChangeText,
+            EventPayload::Text {
+                text: text.to_owned(),
+                count: 0,
+            },
+        );
+    }
+    app.wait(Duration::from_millis(50)).unwrap();
+}
+
 #[test]
 fn typing_inserts_text_into_the_document() {
     let mut app = start(paragraphs(&[""]));
@@ -268,6 +324,84 @@ fn typing_inserts_text_into_the_document() {
     see(&mut app, &doc("Hello"));
     see(&mut app, "Sel 6-6");
     see(&mut app, "Hello");
+}
+
+#[test]
+fn the_caret_follows_an_input_method_that_moves_it_between_a_pair() {
+    let mut app = start(paragraphs(&["你好"]));
+    app.type_text("id:editor", "").unwrap();
+    keys(&mut app, &["end"]);
+    see(&mut app, "Sel 3-3");
+    // The input method types both halves, then puts its caret between them.
+    sink_text(&mut app, "（）");
+    see(&mut app, &doc("你好（）"));
+    see(&mut app, "Sel 5-5");
+    sink_caret(&mut app, 1);
+    see(&mut app, "Sel 4-4");
+    // What it types next goes in there, with the caret after it.
+    sink_text(&mut app, "（中）");
+    see(&mut app, &doc("你好（中）"));
+    see(&mut app, "Sel 5-5");
+    sink_caret(&mut app, 2);
+    sink_text(&mut app, "（中文）");
+    see(&mut app, &doc("你好（中文）"));
+    see(&mut app, "Sel 6-6");
+    // A Backspace between them deletes before the caret.
+    sink_text(&mut app, "（中）");
+    see(&mut app, &doc("你好（中）"));
+    see(&mut app, "Sel 5-5");
+}
+
+#[test]
+fn a_caret_reported_before_its_text_is_read_against_that_text() {
+    let mut app = start(paragraphs(&[""]));
+    app.type_text("id:editor", "").unwrap();
+    sink_text(&mut app, "（）");
+    sink_caret(&mut app, 1);
+    see(&mut app, "Sel 2-2");
+    // AppKit: the caret the insertion leaves, then the insertion's text.
+    sink_caret_then_text(&mut app, 2, "（中）");
+    see(&mut app, &doc("（中）"));
+    see(&mut app, "Sel 3-3");
+    sink_caret_then_text(&mut app, 3, "（中文）");
+    see(&mut app, &doc("（中文）"));
+    see(&mut app, "Sel 4-4");
+}
+
+#[test]
+fn a_caret_reported_a_turn_before_its_text_waits_for_it() {
+    let mut app = start(paragraphs(&[""]));
+    app.type_text("id:editor", "").unwrap();
+    sink_text(&mut app, "（）");
+    sink_caret(&mut app, 1);
+    see(&mut app, "Sel 2-2");
+    // The insertion's caret, then its text in a later turn.
+    for id in 1..4096 {
+        app.engine().control().dispatch_event(
+            id,
+            EventKind::SelectionChange,
+            EventPayload::Map(vec![
+                ("start", PayloadValue::Number(2.0)),
+                ("end", PayloadValue::Number(2.0)),
+            ]),
+        );
+    }
+    app.wait(Duration::from_millis(10)).unwrap();
+    sink_text(&mut app, "（中）");
+    see(&mut app, &doc("（中）"));
+    see(&mut app, "Sel 3-3");
+}
+
+#[test]
+fn a_sink_caret_past_what_the_sink_holds_is_left_alone() {
+    let mut app = start(paragraphs(&["ab"]));
+    app.type_text("id:editor", "").unwrap();
+    keys(&mut app, &["end"]);
+    // Reported before the text it belongs to.
+    sink_caret(&mut app, 1);
+    sink_text(&mut app, "c");
+    see(&mut app, &doc("abc"));
+    see(&mut app, "Sel 4-4");
 }
 
 #[test]
@@ -327,6 +461,33 @@ fn a_press_places_the_caret() {
     see(&mut app, "Sel 1-1");
 }
 
+/// The editor is one stop of Tab, its input, which takes the keys: the
+/// content box takes the pointer only, so Tab and Shift+Tab never stop on
+/// it (it has no role, and its keys would go nowhere).
+#[test]
+fn tab_stops_once_at_the_editor_and_its_keys_reach_it() {
+    let mut app = start(paragraphs(&["ab", "cd"]));
+    see(&mut app, "Sel 1-1");
+    keys(&mut app, &["tab", "ctrl+end"]);
+    see(&mut app, "Sel 7-7");
+    // The input is the only stop: Shift+Tab comes around to it.
+    keys(&mut app, &["shift+tab", "ctrl+home"]);
+    see(&mut app, "Sel 1-1");
+}
+
+/// A press in the content box gives the editor the keyboard, though the
+/// box is no stop of Tab.
+#[test]
+fn a_press_gives_the_editor_its_keys() {
+    let mut app = start(paragraphs(&["first", "second"]));
+    see(&mut app, "Sel 1-1");
+    app.press_at("text:second", Point::new(px(1.0), px(1.0)))
+        .unwrap();
+    see(&mut app, "Sel 8-8");
+    keys(&mut app, &["end"]);
+    see(&mut app, "Sel 14-14");
+}
+
 /// A paragraph with a link mark that has a title.
 fn linked_doc() -> Value {
     json!({"type": "doc", "content": [{"type": "paragraph", "content": [
@@ -365,15 +526,17 @@ fn a_link_marks_hint_shows_its_destination_and_leaves_editing_alone() {
     assert!(app.shows("The site"), "the title, above the URL");
     // A press on the link is the editor's: the caret goes before its
     // first character (no link plugin here opens it).
-    // Headless span bounds are the paragraph's bounds, and its approximate
-    // TextLine fills that width. Place the pointer after "go " in that line.
+    // Headless span bounds are the paragraph's bounds. Place the pointer
+    // after "go " in its line.
     let paragraph = app
         .screen()
         .layout_nodes()
         .into_iter()
         .find_map(|node| node.text.filter(|text| text.text.text == "go the site now"))
         .unwrap();
-    let advance = paragraph.content.size.width.0 / paragraph.text.text.chars().count() as f32;
+    // The editor hit tests with the text engine's layout: the headless
+    // engine's characters are each as wide.
+    let advance = char_advance(&paragraph.text);
     app.press_at(
         "text:go the site now",
         Point::new(px(3.0 * advance + 1.0), px(1.0)),
@@ -397,8 +560,10 @@ fn a_link_marks_hint_shows_its_destination_and_leaves_editing_alone() {
 fn a_link_mark_shows_no_hint_on_a_phone() {
     let mut config = EngineConfig {
         viewport: Size::new(px(390.0), px(844.0)),
-        ..EngineConfig::new(Root::new::<Harness>(|| HarnessProps {
-            session: Some(session(linked_doc())),
+        ..EngineConfig::new(nsh_testing::windowed_root_with::<Harness>(|| {
+            HarnessProps {
+                session: Some(session(linked_doc())),
+            }
         }))
     };
     config.environment.os = Os::Ios;
@@ -493,11 +658,13 @@ fn list_items_show_their_markers() {
 fn a_terminals_markers_are_in_flow_their_numbers_right_aligned() {
     let mut config = EngineConfig {
         viewport: Size::new(px(800.0), px(900.0)),
-        ..EngineConfig::new(Root::new::<Harness>(|| HarnessProps {
-            session: Some(session(json!({"type": "doc", "content": [
-                {"type": "bulletList", "content": [item("one", None)]},
-                {"type": "orderedList", "attrs": {"start": 9}, "content": [item("nine", None), item("ten", None)]},
-            ]}))),
+        ..EngineConfig::new(nsh_testing::windowed_root_with::<Harness>(|| {
+            HarnessProps {
+                session: Some(session(json!({"type": "doc", "content": [
+                    {"type": "bulletList", "content": [item("one", None)]},
+                    {"type": "orderedList", "attrs": {"start": 9}, "content": [item("nine", None), item("ten", None)]},
+                ]}))),
+            }
         }))
     };
     config.environment.os = Os::Linux;
@@ -517,14 +684,16 @@ fn a_terminals_quote_has_a_bar_and_its_rule_is_a_row_of_lines() {
     let started = |idiom: Idiom| {
         let mut config = EngineConfig {
             viewport: Size::new(px(800.0), px(900.0)),
-            ..EngineConfig::new(Root::new::<Harness>(|| HarnessProps {
-                session: Some(session(json!({"type": "doc", "content": [
-                    {"type": "blockquote", "content": [
-                        {"type": "paragraph", "content": [{"type": "text", "text": "Quoted"}]},
-                    ]},
-                    {"type": "horizontalRule"},
-                    {"type": "paragraph", "content": [{"type": "text", "text": "After"}]},
-                ]}))),
+            ..EngineConfig::new(nsh_testing::windowed_root_with::<Harness>(|| {
+                HarnessProps {
+                    session: Some(session(json!({"type": "doc", "content": [
+                        {"type": "blockquote", "content": [
+                            {"type": "paragraph", "content": [{"type": "text", "text": "Quoted"}]},
+                        ]},
+                        {"type": "horizontalRule"},
+                        {"type": "paragraph", "content": [{"type": "text", "text": "After"}]},
+                    ]}))),
+                }
             }))
         };
         config.environment.os = Os::Linux;
@@ -551,10 +720,12 @@ fn a_terminal_draws_no_caret_of_its_own() {
     let started = |idiom: Idiom| {
         let mut config = EngineConfig {
             viewport: Size::new(px(800.0), px(900.0)),
-            ..EngineConfig::new(Root::new::<Harness>(|| HarnessProps {
-                session: Some(session(json!({"type": "doc", "content": [
-                    {"type": "paragraph", "content": [{"type": "text", "text": "Hi"}]},
-                ]}))),
+            ..EngineConfig::new(nsh_testing::windowed_root_with::<Harness>(|| {
+                HarnessProps {
+                    session: Some(session(json!({"type": "doc", "content": [
+                        {"type": "paragraph", "content": [{"type": "text", "text": "Hi"}]},
+                    ]}))),
+                }
             }))
         };
         config.environment.os = Os::Linux;
@@ -572,4 +743,29 @@ fn a_terminal_draws_no_caret_of_its_own() {
     let texts = started(Idiom::Terminal);
     assert!(texts.iter().any(|t| t == "Hi"), "{texts:?}");
     assert!(!texts.iter().any(|t| t == "H"), "a caret cell in {texts:?}");
+}
+
+/// How wide each character of `text` is to the headless text engine
+/// (`ApproxTextEngine`: all alike).
+fn char_advance(text: &nsh_core::AttributedText) -> f32 {
+    use nsh_core::TextEngine as _;
+    let engine = nsh_core::ApproxTextEngine;
+    let width = engine.measure(&engine.prepare(text), None).width;
+    width.0 / text.text.chars().count().max(1) as f32
+}
+
+/// The middle of character `i` of the paragraph showing `line`, in its
+/// text's box.
+fn char_point(app: &Headless, line: &str, i: usize) -> Point<Points> {
+    let paragraph = app
+        .screen()
+        .layout_nodes()
+        .into_iter()
+        .find_map(|node| node.text.filter(|text| text.text.text == line))
+        .unwrap();
+    let advance = char_advance(&paragraph.text);
+    Point::new(
+        px(advance * (i as f32 + 0.5)),
+        px(paragraph.content.size.height.0 / 2.0),
+    )
 }

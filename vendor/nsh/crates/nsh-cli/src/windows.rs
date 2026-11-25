@@ -37,13 +37,6 @@ const ICON_ID: u16 = 1;
 /// 200% scaling, and Explorer's largest view.
 const ICON_SIZES: [u32; 7] = [16, 20, 24, 32, 40, 48, 64];
 
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WindowsConfig {
-    pub(crate) installer_language: Option<String>,
-    pub(crate) display_name: Option<String>,
-}
-
 /// A directory `<out>/<name>`: the release runner as `<name>.exe` (the
 /// app's icon embedded), the bundle and assets in `nsh\` (where the runner
 /// looks, next to itself), `nsh\app.json` (the window's title, the app's
@@ -81,7 +74,7 @@ pub(crate) fn package(
     if let Some(json) = built.capabilities_json() {
         fs::write(resources.join("capabilities.json"), json)?;
     }
-    for asset in &built.assets {
+    for asset in built.assets_for(options.target.asset_target()) {
         let dest = resources.join("assets").join(&asset.path);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
@@ -127,6 +120,26 @@ pub(crate) fn package(
         shortcut_icon,
         &config.windows,
     )?;
+    if options.format == crate::android::Format::Msix {
+        let msix = options.out.join(format!("{name}.msix"));
+        let step = ui::Step::start(format!("packaging {}", ui::path(&msix)));
+        let executable = exe.file_name().unwrap().to_string_lossy().into_owned();
+        let identity =
+            crate::msix::Identity::new(config, name, id, executable, crate::msix::arch(&exe)?)?;
+        crate::msix::write(
+            &dir,
+            &identity,
+            config.icon(crate::package::PackageTarget::Windows),
+            &msix,
+            options.sign.map(Path::new),
+        )?;
+        step.done(format!(
+            "packaged {} ({} {})",
+            ui::path(&msix),
+            identity.name,
+            identity.version
+        ));
+    }
     if options.run {
         Command::new(&exe)
             .current_dir(&dir)
@@ -161,7 +174,7 @@ fn installer(
     version: &str,
     dir: &Path,
     shortcut_icon: Option<String>,
-    config: &WindowsConfig,
+    config: &crate::msix::WindowsConfig,
 ) -> anyhow::Result<()> {
     let stem = file_stem(name);
     let script_path = out.join(format!("{stem}.iss"));

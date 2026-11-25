@@ -23,9 +23,9 @@
 //! hardware keycode GDK reports, so it names the key's physical place on
 //! any layout (`"KeyA"` for the key an AZERTY or Cyrillic layout may make
 //! type `q` or `ф`); `""` when the keycode names no key this backend
-//! knows, never a value derived from the character. The logical key is
-//! GDK's actual keyval, so Shift's case and a non-US character are
-//! reported as the source gives them.
+//! knows, never a value derived from the character. The logical key comes
+//! from GDK's keyval, preserving Shift's case and the layout's character.
+//! Common media, volume and browser keys use UI Events names.
 //!
 //! A captured key still notifies the focused view and its ancestors (the
 //! engine bubbles it), with `KeyEvent::default_prevented` set as the
@@ -108,12 +108,20 @@ fn keyboard_parent(surface: &Surface, view: &NshView) -> Option<NshView> {
     (parent.id() != view.id() && parent.root() == view.root()).then_some(parent)
 }
 
+/// The core's logical content view of an unfocused window.
+fn key_start(surface: &Surface, view: &NshView) -> NshView {
+    let content = view.state().props.key_content;
+    content
+        .and_then(|id| surface.mounter.try_borrow().ok()?.views.get(&id).cloned())
+        .unwrap_or_else(|| view.clone())
+}
+
 /// Whether `view` or a logical ancestor hears a raw key event, or captures
 /// keys: only then does a key need a [`KeyEvent`], its capture rules and
 /// the per-key state. A view that hears none takes
 /// [`crate::key_focus`]'s original path, with nothing built.
 pub(crate) fn listens(surface: &Surface, view: &NshView) -> bool {
-    let mut current = Some(view.clone());
+    let mut current = Some(key_start(surface, view));
     while let Some(view) = current {
         {
             let state = view.state();
@@ -157,7 +165,7 @@ pub(crate) fn captures(
     group: i32,
 ) -> bool {
     let stroke = shortcut_stroke(view, event, keycode, state, group);
-    let mut current = Some(view.clone());
+    let mut current = Some(key_start(surface, view));
     while let Some(view) = current {
         let state = view.state();
         if !state.props.accessibility.state.disabled
@@ -169,6 +177,45 @@ pub(crate) fn captures(
         current = keyboard_parent(surface, &view);
     }
     false
+}
+
+/// The text input a typing key moves into: the first enabled `Input` inside
+/// the nearest enabled ancestor of `view` (itself included) whose
+/// `captureKeys` rule is `"text"`. `None` when no rule applies or the rule's
+/// view holds no enabled input.
+pub(crate) fn text_target(surface: &Surface, view: &NshView) -> Option<NshView> {
+    let mut current = Some(key_start(surface, view));
+    while let Some(view) = current {
+        let rule = {
+            let state = view.state();
+            !state.props.accessibility.state.disabled && state.props.key_capture.types_into_input()
+        };
+        if rule {
+            return first_input(&view);
+        }
+        current = keyboard_parent(surface, &view);
+    }
+    None
+}
+
+/// The first visible, enabled `Input` in `view`'s subtree, in tree order.
+fn first_input(view: &NshView) -> Option<NshView> {
+    for child in view.child_views() {
+        {
+            let state = child.state();
+            if state.style.hidden || state.props.accessibility.state.disabled {
+                continue;
+            }
+            if state.kind == ViewKind::Input {
+                drop(state);
+                return Some(child);
+            }
+        }
+        if let Some(input) = first_input(&child) {
+            return Some(input);
+        }
+    }
+    None
 }
 
 /// Reports a key transition to the focused view (`KeyDown` / `KeyUp`): the
@@ -673,6 +720,24 @@ fn logical_key(keyval: gdk::Key) -> SharedString {
         K::Menu => "ContextMenu",
         K::ISO_Level3_Shift => "AltGraph",
         K::Multi_key => "Compose",
+        K::AudioPlay => "MediaPlayPause",
+        K::AudioPause => "MediaPause",
+        K::AudioStop => "MediaStop",
+        K::AudioNext => "MediaTrackNext",
+        K::AudioPrev => "MediaTrackPrevious",
+        K::AudioRecord => "MediaRecord",
+        K::AudioRewind => "MediaRewind",
+        K::AudioForward => "MediaFastForward",
+        K::AudioMute => "AudioVolumeMute",
+        K::AudioLowerVolume => "AudioVolumeDown",
+        K::AudioRaiseVolume => "AudioVolumeUp",
+        K::Back => "BrowserBack",
+        K::Forward => "BrowserForward",
+        K::Refresh => "BrowserRefresh",
+        K::Stop => "BrowserStop",
+        K::Search => "BrowserSearch",
+        K::Favorites => "BrowserFavorites",
+        K::HomePage => "BrowserHome",
         K::F1 => "F1",
         K::F2 => "F2",
         K::F3 => "F3",
@@ -717,6 +782,34 @@ mod tests {
 
     use super::*;
     use crate::gtk_test::{apply, run, surface, view};
+
+    #[test]
+    fn logical_media_volume_and_browser_keys_use_dom_names() {
+        use gdk::Key as K;
+
+        for (keyval, expected) in [
+            (K::AudioPlay, "MediaPlayPause"),
+            (K::AudioPause, "MediaPause"),
+            (K::AudioStop, "MediaStop"),
+            (K::AudioNext, "MediaTrackNext"),
+            (K::AudioPrev, "MediaTrackPrevious"),
+            (K::AudioRecord, "MediaRecord"),
+            (K::AudioRewind, "MediaRewind"),
+            (K::AudioForward, "MediaFastForward"),
+            (K::AudioMute, "AudioVolumeMute"),
+            (K::AudioLowerVolume, "AudioVolumeDown"),
+            (K::AudioRaiseVolume, "AudioVolumeUp"),
+            (K::Back, "BrowserBack"),
+            (K::Forward, "BrowserForward"),
+            (K::Refresh, "BrowserRefresh"),
+            (K::Stop, "BrowserStop"),
+            (K::Search, "BrowserSearch"),
+            (K::Favorites, "BrowserFavorites"),
+            (K::HomePage, "BrowserHome"),
+        ] {
+            assert_eq!(logical_key(keyval), expected, "{keyval:?}");
+        }
+    }
 
     /// The XTest pair: Shift_L and Shift_R down, Shift_L up (the right one
     /// still holds Shift, so the key up says so), the key typed meanwhile

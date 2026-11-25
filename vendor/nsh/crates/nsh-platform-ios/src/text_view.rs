@@ -4,6 +4,10 @@ use nsh_core::{
     AttributedText, Bounds, Points, TextLayout, TextLink,
     transition::{Recolor, TextColor},
 };
+use nsh_platform_apple::core_text::{
+    decoration_key, is_attachment_run, run_visual_span, strikethrough_key, stroke_decoration,
+    underline_key,
+};
 use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send,
     rc::Retained,
@@ -29,19 +33,27 @@ use objc2_ui_kit::{
 
 use crate::{
     native_view::NshView,
-    text::{CoreTextLayout, LaidLine, decoration_key, strikethrough_key, underline_key},
+    text::{CoreTextLayout, LaidLine},
     text_selection::{self, Selection},
 };
 
 /// Draws the decoration lines CoreText does not: strikethroughs, and
 /// underlines with a style, thickness or offset (y-up text space).
 fn draw_decorations(cx: &CGContext, line: &LaidLine) {
+    let mut positions = Vec::new();
+    let whole = CFRange {
+        location: 0,
+        length: 0,
+    };
     // SAFETY: the line's own run array (of CTRuns) and their attribute
     // dictionaries, whose values have the types set by the text engine.
     unsafe {
         let runs = line.line.glyph_runs();
         for i in 0..runs.count() {
             let run = &*runs.value_at_index(i).cast::<CTRun>();
+            if is_attachment_run(run) {
+                continue;
+            }
             let attributes = run.attributes();
             let attributes: &CFDictionary<CFString, CFType> = attributes.cast_unchecked();
             let strike = attributes
@@ -76,20 +88,10 @@ fn draw_decorations(cx: &CGContext, line: &LaidLine) {
             if thickness <= 0.0 {
                 thickness = font.underline_thickness().max(1.0);
             }
-            let range = run.string_range();
-            let x = line.origin.x
-                + line
-                    .line
-                    .offset_for_string_index(range.location, std::ptr::null_mut());
-            let width = run.typographic_bounds(
-                CFRange {
-                    location: 0,
-                    length: 0,
-                },
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            );
+            let Some((left, width)) = run_visual_span(run, whole, &mut positions) else {
+                continue;
+            };
+            let x = line.origin.x + left;
             if let Some(color) = strike {
                 let y = line.origin.y + font.x_height() / 2.0;
                 stroke_decoration(cx, &color, style, x, y, width, thickness);
@@ -121,37 +123,24 @@ fn draw_decorations(cx: &CGContext, line: &LaidLine) {
 /// hidden run's glyphs are clipped out, with their shadow and decorations.
 fn clip_hidden(cx: &CGContext, line: &LaidLine, text: &AttributedText) -> bool {
     let mut hidden: Vec<(CGFloat, CGFloat)> = Vec::new();
-    // SAFETY: the line's own run array (of CTRuns); one position (the run
-    // has a glyph) into a one-point buffer; null out pointers are allowed.
+    let mut positions = Vec::new();
+    let whole = CFRange {
+        location: 0,
+        length: 0,
+    };
+    // SAFETY: the line's own run array (of CTRuns) holds valid `CTRun`s.
     unsafe {
         let runs = line.line.glyph_runs();
         for i in 0..runs.count() {
             let run = &*runs.value_at_index(i).cast::<CTRun>();
             let range = run.string_range();
-            if range.length <= 0 || run.glyph_count() <= 0 || !text.hidden_at(range.location as u32)
-            {
+            if range.length <= 0 || !text.hidden_at(range.location as u32) {
                 continue;
             }
-            // The run's own left edge, whichever way it goes (a right to
-            // left run's first character is at its right).
-            let mut origin = CGPoint::new(0.0, 0.0);
-            run.positions(
-                CFRange {
-                    location: 0,
-                    length: 1,
-                },
-                std::ptr::NonNull::from(&mut origin),
-            );
-            let x = line.origin.x + origin.x;
-            let width = run.typographic_bounds(
-                CFRange {
-                    location: 0,
-                    length: 0,
-                },
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            );
+            let Some((left, width)) = run_visual_span(run, whole, &mut positions) else {
+                continue;
+            };
+            let x = line.origin.x + left;
             hidden.push((x, x + width));
         }
     }
@@ -177,62 +166,6 @@ fn clip_hidden(cx: &CGContext, line: &LaidLine, text: &AttributedText) -> bool {
     true
 }
 
-/// One decoration line centered on `y` (y-up), `style` as encoded by the
-/// text engine: solid, double, dotted, dashed, wavy.
-fn stroke_decoration(
-    cx: &CGContext,
-    color: &CGColor,
-    style: i32,
-    x: CGFloat,
-    y: CGFloat,
-    width: CGFloat,
-    thickness: CGFloat,
-) {
-    let c = Some(cx);
-    CGContext::save_g_state(c);
-    CGContext::set_stroke_color_with_color(c, Some(color));
-    CGContext::set_line_width(c, thickness);
-    let line = |y: CGFloat| {
-        CGContext::move_to_point(c, x, y);
-        CGContext::add_line_to_point(c, x + width, y);
-    };
-    match style {
-        1 => {
-            // Two lines a thickness apart.
-            line(y + thickness);
-            line(y - thickness);
-        }
-        2 => {
-            let pattern = [0.0, thickness * 2.0];
-            // SAFETY: a two-element pattern.
-            unsafe { CGContext::set_line_dash(c, 0.0, pattern.as_ptr(), 2) };
-            CGContext::set_line_cap(c, objc2_core_graphics::CGLineCap::Round);
-            line(y);
-        }
-        3 => {
-            let pattern = [thickness * 3.0, thickness * 2.0];
-            // SAFETY: a two-element pattern.
-            unsafe { CGContext::set_line_dash(c, 0.0, pattern.as_ptr(), 2) };
-            line(y);
-        }
-        4 => {
-            // A sine wave, one period per four thicknesses.
-            let amplitude = thickness * 1.5;
-            let period = (thickness * 4.0).max(4.0);
-            let steps = ((width / period) * 8.0).ceil().max(2.0) as usize;
-            CGContext::move_to_point(c, x, y);
-            for i in 1..=steps {
-                let t = width * i as CGFloat / steps as CGFloat;
-                let phase = t / period * std::f64::consts::TAU;
-                CGContext::add_line_to_point(c, x + t, y + amplitude * phase.sin());
-            }
-        }
-        _ => line(y),
-    }
-    CGContext::stroke_path(c);
-    CGContext::restore_g_state(c);
-}
-
 #[derive(Default)]
 pub(crate) struct TextViewIvars {
     pub(crate) layout: RefCell<Option<(TextLayout, Bounds<Points>)>>,
@@ -248,6 +181,9 @@ pub(crate) struct TextViewIvars {
     /// The part a selectable view selected (UTF-16 offsets) and its
     /// highlight (`selectable_view.rs`).
     area_highlight: std::cell::Cell<Option<((usize, usize), nsh_core::Color)>>,
+    /// The parts VoiceOver reads one by one, made when it asks
+    /// (`text_access.rs`).
+    pub(crate) access: RefCell<Option<std::rc::Rc<crate::text_access::Snapshot>>>,
 }
 
 define_class!(
@@ -263,7 +199,19 @@ define_class!(
         fn is_accessibility_element(&self) -> bool {
             // SAFETY: calling the superclass implementation.
             let explicit: bool = unsafe { msg_send![super(self), isAccessibilityElement] };
-            explicit || (!self.hidden_from_accessibility() && self.has_visible_text())
+            // Text with links or inline views is their container instead.
+            explicit
+                || (!self.hidden_from_accessibility()
+                    && self.has_visible_text()
+                    && !self.reads_in_parts())
+        }
+
+        #[unsafe(method_id(accessibilityElements))]
+        fn accessibility_elements(&self) -> Option<Retained<NSArray>> {
+            self.access_elements().or_else(|| {
+                // SAFETY: calling the superclass implementation.
+                unsafe { msg_send![super(self), accessibilityElements] }
+            })
         }
 
         #[unsafe(method_id(accessibilityLabel))]
@@ -828,7 +776,7 @@ impl TextView {
             .is_some_and(|t| !t.visible_text().is_empty())
     }
 
-    fn hidden_from_accessibility(&self) -> bool {
+    pub(crate) fn hidden_from_accessibility(&self) -> bool {
         // SAFETY: a plain getter.
         unsafe { msg_send![self, accessibilityElementsHidden] }
     }

@@ -63,7 +63,7 @@ use crate::{animation::UiAnimation, encode::Out, text::WebTextEngine};
 pub use crate::{
     filesystem::nsh_filesystem_reply,
     net::{nsh_fetch_body_wanted, nsh_fetch_data, nsh_fetch_end, nsh_fetch_failed, nsh_fetch_head},
-    storage::nsh_storage_reply,
+    storage::{nsh_storage_changed, nsh_storage_reply},
     websocket::{nsh_websocket_event, nsh_websocket_reply},
 };
 
@@ -134,11 +134,43 @@ pub fn add_ui_set(set: Registry) {
 /// The UI sets engines serve: [`set_ui_sets`]'s, else `nsh/base`'s parts
 /// and the app's sets their gates added ([`add_ui_set`]).
 fn ui_sets() -> Vec<Registry> {
-    UI_SETS.with(|s| s.borrow().clone()).unwrap_or_else(|| {
-        let mut sets = vec![base_set()];
-        APP_SETS.with(|a| sets.extend(a.borrow().iter().cloned()));
+    UI_SETS
+        .with(|s| s.borrow().clone())
+        .map(with_gated_parts)
+        .unwrap_or_else(|| {
+            let mut sets = vec![base_set()];
+            APP_SETS.with(|a| sets.extend(a.borrow().iter().cloned()));
+            sets
+        })
+}
+
+/// A Rust app's sets with the parts of `nsh/base` whose gates ran since
+/// (feature `rust-parts`): the side modules of the components it makes by
+/// name (`ComponentElement::by_name`).
+fn with_gated_parts(sets: Vec<Registry>) -> Vec<Registry> {
+    #[cfg(feature = "rust-parts")]
+    {
+        let mut sets = sets;
+        for part in nsh_base::gated_parts() {
+            let mut set = Registry::ui_set(nsh_base::SPECIFIER);
+            part(&mut set);
+            sets.push(set);
+        }
         sets
-    })
+    }
+    #[cfg(not(feature = "rust-parts"))]
+    sets
+}
+
+/// Asks the page for the part of `nsh/base` that registers component
+/// `name`, made by name and not registered yet: it loads the part's side
+/// module and runs its gate, then [`nsh_after_gate`].
+#[cfg(feature = "rust-parts")]
+fn request_part(name: &str) {
+    match nsh_base::part_of_component(name) {
+        Some(part) => ffi::load_data(&format!("part:{part}")),
+        None => log::warn!("`{name}` is made by name, and no part of nsh/base registers it"),
+    }
 }
 
 /// `nsh/base`: the parts the page asked for (`nsh_part_*`, which it calls
@@ -460,6 +492,21 @@ pub unsafe extern "C" fn nsh_asset_bytes(ptr: *const u8, len: usize) {
     ASSET.with(|a| *a.borrow_mut() = Some(data));
 }
 
+/// How the page reaches the network (`network()`): the page's
+/// `{ kind, expensive, constrained }`, a kind it does not name unknown. A
+/// browser does not say whether the user lets the app use cellular data.
+fn web_network(value: &serde_json::Value) -> nsh_core::platform::Network {
+    let kind = value
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .and_then(nsh_core::platform::NetworkKind::parse)
+        .unwrap_or_default();
+    let flag = |k: &str| value.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    nsh_core::platform::Network::new(kind)
+        .expensive(flag("expensive"))
+        .constrained(flag("constrained"))
+}
+
 fn environment(width: f32, height: f32, dark: bool, pixel_ratio: f32) -> Environment {
     Environment {
         window: nsh_core::Size::new(nsh_core::Points(width), nsh_core::Points(height)),
@@ -490,7 +537,9 @@ fn page() -> Environment {
 /// `reduceMotion`, `fontScale`, `pixelRatio`, `safeArea` (`[top, right,
 /// bottom, left]`), `keyboard` (the height the on-screen keyboard
 /// covers), `appleKeyboard` (the browser runs on an Apple platform: its
-/// shortcuts are Apple's), `host` (the page answers `nsh/host` calls:
+/// shortcuts are Apple's), `network` (`{ kind, expensive, constrained }`:
+/// `network()`, from `navigator.onLine` and `navigator.connection`),
+/// `host` (the page answers `nsh/host` calls:
 /// `createPlayer`'s `host`), `screenColor` (the browser has an
 /// `EyeDropper`), `share` (the browser has `navigator.share`) and `shaders` (`false` once a shader view found no
 /// WebGL 2); missing keys keep their value. Called before the app starts
@@ -598,7 +647,11 @@ pub unsafe extern "C" fn nsh_environment(ptr: *const u8, len: usize) -> f64 {
         Some(_) => Lifecycle::Active,
         None => env.lifecycle,
     };
+    if let Some(network) = value.get("network") {
+        env.network = web_network(network);
+    }
     env.screen_color = flag("screenColor").unwrap_or(env.screen_color);
+    env.clipboard_write_result = flag("clipboardWriteResult").unwrap_or(env.clipboard_write_result);
     env.share = flag("share").unwrap_or(env.share);
     env.notifications = flag("notifications").unwrap_or(env.notifications);
     env.audio = flag("audio").unwrap_or(env.audio);
@@ -617,7 +670,9 @@ pub unsafe extern "C" fn nsh_environment(ptr: *const u8, len: usize) -> f64 {
         e.safe_area = env.safe_area;
         e.keyboard_height = env.keyboard_height;
         e.lifecycle = env.lifecycle;
+        e.network = env.network;
         e.screen_color = env.screen_color;
+        e.clipboard_write_result = env.clipboard_write_result;
         e.share = env.share;
         e.notifications = env.notifications;
         e.audio = env.audio;
@@ -663,6 +718,9 @@ fn init() {
         }));
         // What this module leaves out (the syntaxes) comes from the page.
         nsh_core::runtime_data::set_loader(ffi::load_data);
+        // The parts of `nsh/base` a Rust app makes components of by name.
+        #[cfg(feature = "rust-parts")]
+        nsh_core::set_part_requester(request_part);
     });
 }
 
@@ -691,7 +749,7 @@ pub unsafe extern "C" fn nsh_data(
 /// Starts `app` in the page's surface.
 fn run(app: App, width: f32, height: f32, environment: Environment, limits: Limits) -> f64 {
     let storage =
-        BASE_URL.with(|b| storage::LocalStorage::new(app.app_id(), b.borrow().as_deref()));
+        BASE_URL.with(|b| storage::LocalStorage::open(app.app_id(), b.borrow().as_deref()));
     let namespace = BASE_URL.with(|b| {
         nsh_engine::local_storage_prefix(app.app_id(), b.borrow().as_deref().unwrap_or(""))
     });
@@ -718,7 +776,7 @@ fn run(app: App, width: f32, height: f32, environment: Environment, limits: Limi
         filesystem: Some(std::sync::Arc::new(filesystem::BrowserFileSystem {
             namespace,
         })),
-        storage: Some(std::sync::Arc::new(storage)),
+        storage: Some(storage),
         clock: Default::default(),
         context: Default::default(),
         pinned: Default::default(),
@@ -732,7 +790,6 @@ fn run(app: App, width: f32, height: f32, environment: Environment, limits: Limi
             host
         },
         picker: None,
-        speech: None,
         audio: None,
         windows: None,
         login_item: None,
@@ -804,6 +861,19 @@ fn run(app: App, width: f32, height: f32, environment: Environment, limits: Limi
 pub unsafe extern "C" fn nsh_after_gate(ptr: *const u8, len: usize) -> f64 {
     // SAFETY: guaranteed by the caller.
     let gate = unsafe { string(ptr, len) };
+    // A Rust app's shaders that waited for their gate (`shader::note`).
+    #[cfg(feature = "rust-parts")]
+    if gate == "nsh_feature_shader" {
+        let waiting = shader::gate_ran();
+        if !waiting.is_empty() {
+            let mut out = encode::Out::new();
+            for item in &waiting {
+                encode::encode(&mut out, item);
+            }
+            ffi::submit(&out.finish());
+        }
+        return pump();
+    }
     let running = APP.with(|a| a.borrow().is_some());
     if !running {
         return pump();
@@ -1085,8 +1155,9 @@ fn flush() {
         for uri in app.inline_images.prune() {
             ffi::release_image(&uri);
         }
-        // Bound properties follow the styles just applied.
-        app.animation.outputs(&mut out);
+        // Bound properties follow the styles just applied: all of them, so
+        // what the batch inserted gets its values.
+        app.animation.outputs(&mut out, true);
         if !out.is_empty() {
             ffi::submit(&out.finish());
         }
@@ -1149,20 +1220,21 @@ fn send(f: impl FnOnce(&mut Running)) -> f64 {
     pump()
 }
 
-/// A display frame (`requestAnimationFrame`, `now` in ms), or one the page
-/// runs at a deadline while frames stop ([`nsh_deadline`]): ticks the
-/// native animations and runs JS's frame callbacks. Returns the pump
-/// delay.
+/// A display frame (`requestAnimationFrame`, `now` in ms; `drawn` 1), or
+/// one the page runs at a deadline while frames stop ([`nsh_deadline`];
+/// `drawn` 0, which keeps the real time:
+/// [`nsh_core::animation::Graph::tick_frame`]): ticks the native animations
+/// and runs JS's frame callbacks. Returns the pump delay.
 #[unsafe(no_mangle)]
-pub extern "C" fn nsh_frame(now: f64) -> f64 {
+pub extern "C" fn nsh_frame(now: f64, drawn: u32) -> f64 {
     APP.with(|a| {
         let mut app = a.borrow_mut();
         let Some(app) = app.as_mut() else { return };
         if app.animation.animating() {
             // The animation graph's clock is in seconds.
-            app.animation.tick(now / 1000.0);
+            app.animation.tick(now / 1000.0, drawn != 0);
             let mut out = Out::new();
-            app.animation.outputs(&mut out);
+            app.animation.outputs(&mut out, false);
             if !out.is_empty() {
                 ffi::submit(&out.finish());
             }
@@ -1220,8 +1292,9 @@ pub unsafe extern "C" fn nsh_event(
 }
 
 /// `onPaste` of input `id`: what the user pasted, as JSON `{ text, files:
-/// [{ name, type, size }], uris }` and the files' bytes one after the other
-/// (they never cross as JS strings).
+/// [{ name, type, size, read }], uris }` and the bytes of the files read
+/// one after the other (they never cross as JS strings); a file with
+/// `read: false` is larger than the input's `pasteMaxSize`.
 ///
 /// # Safety
 ///
@@ -1259,7 +1332,17 @@ pub unsafe extern "C" fn nsh_paste(
         .into_iter()
         .flatten()
     {
-        let size = file.get("size").and_then(|s| s.as_u64()).unwrap_or(0) as usize;
+        let size = file.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+        // Not read: larger than the input's `pasteMaxSize`.
+        if file.get("read").and_then(|r| r.as_bool()) == Some(false) {
+            paste.too_large.push(nsh_core::PastedFile::too_large(
+                text(file, "name"),
+                text(file, "type"),
+                size,
+            ));
+            continue;
+        }
+        let size = size as usize;
         let Some(part) = bytes.get(at..at + size) else {
             break;
         };
@@ -1281,6 +1364,105 @@ pub unsafe extern "C" fn nsh_paste(
         app.control
             .dispatch_event(id, EventKind::Paste, EventPayload::Paste(Box::new(paste)))
     })
+}
+
+/// A file drag over view `id` (`kind` 0: `onFileDragEnter`, 1:
+/// `onFileDrop`): JSON `{ mimeTypes, x, y, files: [{ name, type, size,
+/// read, lastModified }] }` and the read files' bytes one after the other.
+/// The Web hands over contents, never paths: `uris` stays empty.
+///
+/// # Safety
+///
+/// `ptr..ptr + len` and `data..data + data_len` are memory from
+/// [`nsh_alloc`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nsh_file_drop(
+    id: u32,
+    kind: u32,
+    ptr: *const u8,
+    len: usize,
+    data: *const u8,
+    data_len: usize,
+) -> f64 {
+    // SAFETY: guaranteed by the caller.
+    let json = unsafe { string(ptr, len) };
+    // SAFETY: guaranteed by the caller.
+    let bytes: &[u8] = if data_len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, data_len) }
+    };
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+    let (files, mime_types, page_position) = file_contents(&value, bytes);
+    let (kind, page_position) = match kind {
+        0 => (EventKind::FileDragEnter, None),
+        _ => (EventKind::FileDrop, Some(page_position)),
+    };
+    let contents = nsh_core::FileContents::new(files, mime_types, page_position);
+    send(|app| {
+        app.control
+            .dispatch_event(id, kind, EventPayload::FileContents(Box::new(contents)))
+    })
+}
+
+/// The files, types and drop point of [`nsh_file_drop`]'s JSON over `bytes`.
+fn file_contents(
+    value: &serde_json::Value,
+    bytes: &[u8],
+) -> (
+    Vec<nsh_core::picker::PickedFile>,
+    Vec<String>,
+    nsh_core::geometry::Point<Points>,
+) {
+    let text = |v: &serde_json::Value, k: &str| {
+        v.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let num = |v: &serde_json::Value, k: &str| v.get(k).and_then(|n| n.as_f64()).unwrap_or(0.0);
+    let mut files = Vec::new();
+    let mut at = 0usize;
+    for file in value
+        .get("files")
+        .and_then(|f| f.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let size = num(file, "size").max(0.0) as u64;
+        let read = file.get("read").and_then(|r| r.as_bool()).unwrap_or(false);
+        let mut picked = if read {
+            let Some(part) = bytes.get(at..at + size as usize) else {
+                break;
+            };
+            at += size as usize;
+            nsh_core::picker::PickedFile::new(
+                text(file, "name"),
+                text(file, "type"),
+                nsh_core::ImageData::new(part.to_vec()),
+            )
+        } else {
+            nsh_core::picker::PickedFile::too_large(text(file, "name"), text(file, "type"), size)
+        };
+        let modified = num(file, "lastModified");
+        if modified.is_finite() && modified > 0.0 {
+            picked.last_modified =
+                Some(std::time::UNIX_EPOCH + std::time::Duration::from_millis(modified as u64));
+        }
+        files.push(picked);
+    }
+    let mime_types = value
+        .get("mimeTypes")
+        .and_then(|m| m.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m.as_str().map(str::to_owned))
+        .collect();
+    let at = nsh_core::geometry::point(
+        Points(num(value, "x") as f32),
+        Points(num(value, "y") as f32),
+    );
+    (files, mime_types, at)
 }
 
 thread_local! {
@@ -1507,6 +1689,7 @@ pub unsafe extern "C" fn nsh_touch(ptr: *const u8, len: usize) -> f64 {
                 alt: on("alt"),
                 shift: on("shift"),
                 cmd: on("platform"),
+                alt_graph: false,
             }
         },
         activated: value
@@ -1571,6 +1754,7 @@ pub extern "C" fn nsh_key(key: u32, modifiers: u32, focus: u32, repeat: u32) -> 
             alt: modifiers & 2 != 0,
             shift: modifiers & 4 != 0,
             cmd: modifiers & 8 != 0,
+            alt_graph: false,
         },
         key,
     };
@@ -1652,6 +1836,7 @@ pub unsafe extern "C" fn nsh_key_event(
         alt: modifiers & 2 != 0,
         shift: modifiers & 4 != 0,
         cmd: modifiers & 8 != 0,
+        alt_graph: false,
     };
     let stroke = key_of(stroke).map(|key| Keystroke { key, modifiers });
     let mut event = nsh_core::keyboard::KeyEvent::default();
@@ -1710,7 +1895,7 @@ pub extern "C" fn nsh_scroll(id: u32, x: f32, y: f32, applied: u32) -> f64 {
     send(|app| {
         if app.animation.scrolled(id, x, y) {
             let mut out = Out::new();
-            app.animation.outputs(&mut out);
+            app.animation.outputs(&mut out, false);
             if !out.is_empty() {
                 ffi::submit(&out.finish());
             }
@@ -1766,7 +1951,7 @@ pub extern "C" fn nsh_pull(id: u32, distance: f32) -> f64 {
     send(|app| {
         if app.animation.pulled(id, distance) {
             let mut out = Out::new();
-            app.animation.outputs(&mut out);
+            app.animation.outputs(&mut out, false);
             if !out.is_empty() {
                 ffi::submit(&out.finish());
             }
@@ -1789,23 +1974,35 @@ pub extern "C" fn nsh_zoom(id: u32, scale: f32) -> f64 {
 }
 
 /// A drag on a view with native pan values (`phase`: 0 start, 1 move, 2
-/// end), translated `(tx, ty)` since it began, at velocity `(vx, vy)`
-/// points per second.
+/// end, 3 cancelled), translated `(tx, ty)` since it began at `(ox, oy)`
+/// in the root, at velocity `(vx, vy)` points per second.
 #[unsafe(no_mangle)]
-pub extern "C" fn nsh_pan(id: u32, phase: u32, tx: f32, ty: f32, vx: f32, vy: f32) -> f64 {
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn nsh_pan(
+    id: u32,
+    phase: u32,
+    tx: f32,
+    ty: f32,
+    vx: f32,
+    vy: f32,
+    ox: f32,
+    oy: f32,
+) -> f64 {
     send(|app| {
         match phase {
             0 => app.animation.pan_began(id),
             _ => app.animation.pan_moved(id, tx, ty),
         }
         let mut out = Out::new();
-        app.animation.outputs(&mut out);
+        app.animation.outputs(&mut out, false);
         if !out.is_empty() {
             ffi::submit(&out.finish());
         }
         let (value_x, value_y) = app.animation.pan_values(id);
+        let origin = point(Points(ox), Points(oy));
         let payload = if phase == 3 {
             EventPayload::PanCancelled {
+                origin,
                 translation: point(Points(tx), Points(ty)),
                 velocity_x: vx,
                 velocity_y: vy,
@@ -1814,6 +2011,7 @@ pub extern "C" fn nsh_pan(id: u32, phase: u32, tx: f32, ty: f32, vx: f32, vy: f3
             }
         } else {
             EventPayload::Pan {
+                origin,
                 translation: point(Points(tx), Points(ty)),
                 velocity_x: vx,
                 velocity_y: vy,
@@ -1841,7 +2039,7 @@ pub extern "C" fn nsh_transform_gesture(id: u32, rotation: u32, phase: u32, amou
             _ => app.animation.transform_moved(id, rotation, amount),
         }
         let mut out = Out::new();
-        app.animation.outputs(&mut out);
+        app.animation.outputs(&mut out, false);
         if !out.is_empty() {
             ffi::submit(&out.finish());
         }
@@ -2013,3 +2211,7 @@ pub extern "C" fn nsh_set_dark(dark: u32) -> f64 {
         app.control.set_environment(app.environment);
     })
 }
+
+// The TSX runtime exports its own `nsh_part_*` gates (`base_parts!`).
+#[cfg(all(feature = "rust-parts", feature = "base-full"))]
+compile_error!("`rust-parts` is for a Rust app's runtime, without `base-full`");

@@ -1,29 +1,45 @@
 # Text
 
 - **Text**: `<Text>`; styles `numberOfLines`, `textOverflow` (`ellipsis|clip|ellipsis-start|ellipsis-middle`: `EllipsizeMode`'s
-  `Tail|Clip|Head|Middle`), `fontFamily` (system or imported fonts:
+  `Tail|Clip|Head|Middle`; on macOS the cut last line goes where its paragraph's alignment puts the other lines, and a
+  `clip` line wider than its box starts at its paragraph's start edge whatever the alignment, as CSS does for a
+  paragraph of that direction (`dir="auto"`): the right one for a right-to-left paragraph (its `writingDirection`, else
+  its first strong character's, as CoreText resolves a natural direction), so the beginning of the text stays in view;
+  such a right-to-left line's box starts left of the content box, and `onTextLayout` reports its negative `x`),
+  `fontFamily` (system or imported fonts:
   `import Inter from "./Inter.ttf"` evaluates to the family name and registers the font before the first frame; a host can register the same files itself, `NshView.registerFont` / `NshAppView.registerFont`, and the app names the family), `fontWeight`,
   `fontStyle` (italic runs leave color emoji upright, in runs of their own: `AttributedText::push`, as WebKit does;
-  Chrome and Android would slant them), `letterSpacing`, `textDecorationLine` + `textDecorationColor`, `textTransform`, `lineHeight`, `textAlign`,
+  Chrome and Android would slant them; a family without an italic face leans by CSS's oblique angle, 14°, as browsers
+  and Android synthesize it: on macOS and iOS a shear in the font's matrix, which `nsh_platform_apple::core_text`'s
+  `slant_fallbacks` also sets on the upright fonts CoreText falls back to, such as CJK in the system font's italic),
+  `letterSpacing`, `textDecorationLine` + `textDecorationColor`, `textTransform`, `lineHeight`, `textAlign`,
   `textAlignVertical` (the core moves the content box down). `adjustsFontSizeToFit` shrinks the fonts (down to
   `minimumFontScale`, at least 0.1) until the text fits its box and lines (`Paragraph::fit`, a binary search in the core).
   On iOS and macOS, a positive fixed-height box keeps its first line even when that line is taller than the box
   (Dynamic Type on iOS; on both, a box a fraction of a point shorter than the line's measured height).
   CoreText positions it from the same top edge as an unconstrained line; the view's drawing bounds clip the
   excess. Empty and zero-height boxes stay empty.
-  `onTextLayout` reports the final lines (`TextEngine::lines`: range, box, ascender, descender, cap / x height).
+  `onTextLayout` reports the final lines (`TextEngine::lines`: range, box, ascender, descender, cap / x height); Rust
+  components can subscribe with `Text::on_text_layout` (`TextGeometry`) to query `lines`, `hit_test`, `caret_rect` and
+  `range_rects` directly on the engine's final layout in source UTF-16 offsets (skipping synthetic span-padding
+  spacers).
+  The last line of a paragraph includes the whitespace hanging past its end in its width, unless an ellipsis
+  replaces it: a caret after typed spaces (`RichEditor` puts one at the line's width) stands past them on every
+  engine. A line broken inside a paragraph keeps its width within the box; a caret after its break-space stands
+  at the next line's start.
   Final layouts are hit-tested by their engine too, in the content box (`TextEngine::hit_test`,
   `caret_rect`, `range_rects`): the caret position nearest a point (`TextPosition`: a UTF-16 offset and its
   `Affinity`, which says whether an offset that ends a wrapped line and starts the next is on the earlier line), the
   caret's line-high box, and the line-high boxes a range covers, appended to the caller's buffer. Each backend's
   selection and selectable views hit-test with the same code; an engine that only reports `lines` gets an estimate
   (each line's characters spread evenly over its width). The headless engine hit-tests whole characters, 0.55 em
-  each, on its one line. CoreText retains original offsets for the visible suffix of head / middle
+  each (and each attachment's own width), on its one line. CoreText retains original offsets for the visible suffix of head / middle
   truncations and omits the ellipsis from range boxes; mixed-direction ranges split by visual run on both Apple
   backends. Web hit testing measures cluster rectangles in the complete drawn DOM run on first use, keeps both
   edges at bidi boundaries and caches them with the layout. Linux selection drawing reuses its rectangle buffer.
-  Test-id-only span updates remount the text metadata with its cached final layout (`LaidText`), retaining fitted
-  font sizes. They preserve prepared state and measurement caches and raise no `onTextLayout`.
+  Span updates of metadata only (a test id, a link's `href`) remount the text metadata with its cached final layout
+  (`LaidText`), retaining fitted font sizes. They preserve prepared state and measurement caches and raise no
+  `onTextLayout`.
 - A text laid out gives Taffy its first line's baseline, below its top through its padding and border
   (`TextEngine::first_baseline`: every built-in engine, CoreText on macOS and iOS, Android, Pango, DirectWrite, GPUI,
   the web, Cells and the headless one; `measure_leaf`, cached per width in `TextContext::baseline`), so a flex row
@@ -59,7 +75,8 @@
   `textSelectHandleLeft/Right` in popup windows (so they escape clipping and take their own touches), the highlight is
   `Layout.getSelectionPath` in `selectionColor` (55% alpha; the theme's `textColorHighlight` by default) and a floating
   action mode offers Copy, Select all and Share. A touch elsewhere in the surface (`Mounter.touchDown`), new text or
-  detaching ends it; one selection at a time per surface. Copy leaves attachments' placeholders out on both. Text that is
+  detaching ends it; one selection at a time per surface. Copy gives attachments as their copy texts and leaves the
+  others' placeholders out on both. Text that is
   not selectable has no interaction, listener or extra drawing. `selectable` is `Option<bool>` (unset, or `false` from
   `userSelect: "none"` / `select-none`; a view's `userSelect` reaches the texts in it that set none) because the
   web's desktop idiom selects text that is not set off by default, as a web page does, except inside views that take presses or touches. Web: the browser's own selection, `::selection` in
@@ -82,16 +99,18 @@
   boxes in the area's coordinates with scroll offsets applied, its text engine's hit test), feeds `SelectionModel` its
   gestures (press with the click count and Shift, drag, long press, a handle's drag, select all) and draws what
   `ranges` says with its own highlight (each text's `selectionColor`), handles and menu; Copy takes `text` (attachments
-  left out, texts on one row joined by a tab, the others by a line break, a text that continues the one before it by
+  as their copy texts or left out, texts on one row joined by a tab, the others by a line break, a text that continues the one before it by
   nothing). A component that lays one line out as several texts (a code view's soft-wrapped line: `DiffView`) marks
   the later parts with `Element::continues_text` (`ViewProps::continues_text`, the internal `Prop::ContinuesText`;
   `SelectionTexts::continues` reads it): a copy gives the line whole, a triple click selects the whole line, and a
   double click takes a word the wrap cut across its parts. Every backend reads it from its text views' props (Android
   passes it to the model with the texts, `nativeSetTexts`); the web's copy joins such texts by nothing (the browser's
   own selection takes the clicks). Positions are (text index, UTF-16 offset),
-  never inside a surrogate pair. A point outside every text is hit-tested in reading order: the horizontally nearest
-  text on its row, above every text the first text's start, below every text the last one's end, between rows the
-  nearer of the end of the text above and the start of the text below. Words are runs of letters, digits and `_`, runs
+  never inside a surrogate pair. A point outside every text is hit-tested in reading order: when it sits below a text
+  in a closer, horizontally disjoint column than any text whose row contains it, it stays in that column (clamping to
+  the vertically nearer text above or below in the column); otherwise the horizontally nearest text on its row, above
+  every text the first text's start, and between rows or below a column the vertically nearer edge in the point's
+  column (falling back to document order when no column has width). Words are runs of letters, digits and `_`, runs
   of spaces, or single other characters (each CJK ideograph, kana, emoji or punctuation mark); a triple click selects
   a whole text. Desktops select as their single texts do (drag, double click words, triple click paragraphs, drags go
   on by them, Shift+click extends; Ctrl / Cmd+A, Ctrl / Cmd+C, Escape; a press elsewhere clears), touch screens with a
@@ -105,13 +124,15 @@
   the tint, subviews of the area kept in front, with enlarged touch targets; scroll views wait for their drag to
   fail) move the ends and hide where a clipping scroll view cuts their caret off; a tap off the highlight clears, on
   it toggles the edit menu (`UIEditMenuInteraction` from iOS 16, `UIMenuController` before: Copy, Select All).
-  Pointers (Mac Catalyst's mouse, iPad trackpads) select as on the desktops, without handles. The texts are the
-  area's `TextView`s (key: their node), listed again when a gesture starts and, while something is selected, after
-  every batch and scroll; each draws its part of the highlight behind its glyphs (`selectionColor`, else the tint, at
-  20%), and texts in an area drop their own `UITextInteraction` (`TextView::in_selectable_view`). Resigning first
-  responder clears, so a surface shows one selection. Android (`selectable_view.rs`, `SelectableView.java`): the
-  shared Rust model runs on the UI thread over JNI, hit-testing through a Java callback; a long press selects a word,
-  then handles and a floating `ActionMode` (Copy, Select all, Share).
+  Touch selection plays a medium impact when the long press selects (the weight of a long press opening a menu) and a
+  selection tick as a drag moves an end, as text views do. Pointers (Mac Catalyst's mouse, iPad trackpads) select as
+  on the desktops, without handles. The texts are the area's `TextView`s (key: their node), listed again when a
+  gesture starts and, while something is selected, after every batch and scroll; each draws its part of the highlight
+  behind its glyphs (`selectionColor`, else the tint, at 20%), and texts in an area drop their own `UITextInteraction`
+  (`TextView::in_selectable_view`). Resigning first responder clears, so a surface shows one selection. Android
+  (`selectable_view.rs`, `SelectableView.java`): the shared Rust model runs on the UI thread over JNI, hit-testing
+  through a Java callback; a long press selects a word (the long press haptic), then handles (the text handles' tick
+  as an end moves) and a floating `ActionMode` (Copy, Select all, Share).
 - **Selection menu**: `selectionMenu` on a selectable view (Rust `Element::selection_menu`, the host prop
   `Prop::SelectionMenu`, `ViewProps::selection_menu`) takes `nsh/desktop`'s `MenuItem`s, each running its `onSelect`;
   they go after the system's items, which always stay. The core keeps plain items and separators
@@ -122,7 +143,7 @@
   built by `chrome::menu`), Windows and GPUI to their popup (`selectable_view::context_menu`), GTK as a section of
   the edit popover (`selection-menu.item-N` actions), iOS 16 and later to the edit menu
   (`editMenuInteraction:menuForConfiguration:suggestedActions:`; groups between separators are inline sections; iOS
-  15's `UIMenuController` shows the system's items alone), Android to the floating `ActionMode` after the
+  15's `UIMenuController` shows the system's items alone), Android to the floating `ActionMode` before the
   `PROCESS_TEXT` actions (`encode.rs` `selection_menu`, `SelectableView.addAppItems`). The web shows the browser's
   menu alone: the browser's renderer drops the prop.
 - **Color changes**: a text whose spans change only their colors (text, decoration and background) or which of them
@@ -139,6 +160,11 @@
   restyled span merges into its text again. The platforms only hit-test their links as they already do for hints
   and presses. A color change takes the path above; a decoration line typesets the paragraph again without laying
   out the views around it (`layout_eq`).
+- **Where links go**: a link's span with an `href` (`ViewProps::href`, from the hidden builder `Link` sets its own
+  with: `TextView` gives each of its links its URL) records it in its block's text (`AttributedText::link_hrefs`, by
+  the link's index in `links`, `Core::collect_text`). It is metadata, as `test_ids`: a new one is mounted without
+  typesetting again (`metadata_eq`), on a fitted text's drawn spans too (`set_metadata`). Platforms that make a
+  link a hyperlink take it: the web draws the link's characters as an `a` (`docs/dev/web.md` "Links of text").
 - **Span backgrounds**: `backgroundColor` / `borderRadius` on a nested `<Text>` (its view style, which spans otherwise
   ignore) become `ResolvedTextStyle::background` (`TextBackground`: color, radius and the span's node, so neighboring
   spans that look the same stay apart), inherited by the spans inside it; the block's own background stays its view's.
@@ -155,8 +181,9 @@
   hidden runs when it draws (glyphs, color emoji, decorations, shadows, animated colors), never relying on the
   transparent color alone; macOS, Windows, Linux and GPUI also leave them out of selection highlights
   (`AttributedText::visible_ranges`), while iOS and Android highlight a selection over them. What leaves
-  the text through the user goes through `AttributedText::copied_text` (copies: hidden runs and attachments'
-  placeholders left out) and `visible_text` (screen readers, the test model's texts); selectable views copy through
+  the text through the user goes through `AttributedText::copied_text` (copies: hidden runs left out, attachments as
+  their `copy_texts` or left out) and `visible_text` (screen readers, the test model's texts; macOS's accessibility
+  reads `text_without_attachments`, the inline views being read on their own); selectable views copy through
   `SelectionTexts::copied`. Android marks the runs with a span of their own in the laid out text, which its drawing,
   copies and TalkBack read; the web gives the runs `visibility: hidden`.
 - **Inline attachments**: any other element inside a `<Text>` (also inside its spans) is an attachment: laid out as its own
@@ -185,12 +212,14 @@
   spread around it, CSS's strut) and grows only where the attachment reaches past that box, on every engine: the
   line height is never a cap that cuts an attachment to the line. CSS's
   `top` / `bottom` (the line box's) and `sub` / `super` / lengths are not offered: the engines size placeholders
-  before lines exist. The headless engine's font is its line (ascent 1.2 em, descent 0, x height 0.5 em). After the final layout the core places its native view, a child of the text view (Android's
+  before lines exist. The headless engine's natural font is 1.2 em (ascent 1.2 em, descent 0, x height 0.5 em), with explicit `lineHeight` spread around that ascent by half-leading. After the final layout the core places its native view, a child of the text view (Android's
   `TextBox` is a ViewGroup for this), on the placeholder (`TextEngine::attachments`); attachments cut off by the line limit or
   an ellipsis move out of sight. Their own children are normal layout children, made with the attachment: a scroll
   view around the text never culls them (`Core::cull_scope`), as its walk does not reach inside texts, though past
   a turn's budget they may wait for the next turns as other views do (`pace.rs`); a text inside them built after the block
-  resizes them and builds the block again (`check_attachments`). They take presses of their own; copying leaves the
+  resizes them and builds the block again (`check_attachments`). They take presses of their own; copying gives an
+  attachment's `copyText` in its place (`AttributedText::copy_texts`: the text's metadata, as `test_ids`, so a new one
+  is mounted without typesetting again; a render's placeholder takes its content's) and leaves the other
   placeholders out. Text inside an attachment takes the color of the text around it (the nearest color set on its
   spans, its block or the views around, as CSS's `color` reaches an inline block and `currentColor` reaches the
   attachment's view), unless it sets its own; the rest of its text style (font, size, line height) is not passed in,

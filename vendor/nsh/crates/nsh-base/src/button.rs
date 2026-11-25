@@ -20,8 +20,16 @@ pub struct ButtonProps {
     /// classes.
     #[prop(default)]
     pub selected_style: Prop<Style>,
+    /// Busy: its action is running (a "Saving…" button), and screen readers
+    /// say so. Presses still count; the app sets `disabled` as well to
+    /// refuse them.
+    #[prop(default)]
+    pub busy: Prop<bool>,
     /// What screen readers say, when its content is not enough (an icon).
     pub accessibility_label: Prop<Option<SharedString>>,
+    /// What activating the button does, for screen readers, as a view's
+    /// `accessibilityHint`.
+    pub accessibility_hint: Prop<Option<SharedString>>,
     /// What it is for screen readers (default `"button"`: a link, a tab, a
     /// menu item, ...).
     pub role: Prop<Option<AccessibilityRole>>,
@@ -46,8 +54,8 @@ pub enum ButtonEvent {
     PressUp,
 }
 
-/// A press target that owns its behavior (presses, the disabled and
-/// selected states, its role for screen readers) and leaves its look to the
+/// A press target that owns its behavior (presses, the disabled, selected
+/// and busy states, its role for screen readers) and leaves its look to the
 /// app: no colors, sizes or label of its own. The app's `class` and `style`
 /// style it, its states with `active:`, `hover:`, `focus-visible:` (the
 /// keyboard's ring), `selected:` and `disabled:` classes or `activeStyle`,
@@ -63,8 +71,10 @@ pub fn Button(props: ButtonProps, cx: Scope<ButtonEvent>) -> impl IntoElement {
     view.disabled(disabled)
         .role(move || props.role.get().unwrap_or(AccessibilityRole::Button))
         .optional_label(props.accessibility_label)
+        .optional_hint(props.accessibility_hint)
         .accessibility_state(move || AccessibilityState {
             selected: props.selected.get(),
+            busy: props.busy.get(),
             ..AccessibilityState::default()
         })
         .selected_style(props.selected_style)

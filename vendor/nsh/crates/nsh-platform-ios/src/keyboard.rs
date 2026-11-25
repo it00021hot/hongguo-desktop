@@ -232,6 +232,7 @@ fn modifiers_of(flags: UIKeyModifierFlags) -> nsh_core::keymap::Modifiers {
         alt: flags.contains(UIKeyModifierFlags::Alternate),
         shift: flags.contains(UIKeyModifierFlags::Shift),
         cmd: flags.contains(UIKeyModifierFlags::Command),
+        alt_graph: false,
     }
 }
 
@@ -724,6 +725,57 @@ fn tab_focus(view: &NshView, target: &EventTarget, backward: bool) -> bool {
     tab_from(view, target, backward)
 }
 
+/// Raw keys delivered to the surface root while it has the keyboard focus
+/// (no view or input focused): the root hears them and they bubble from
+/// there, as a browser reports them at `document.body`. The root is no
+/// stop, so nothing is pressed; Tab's traversal still follows
+/// ([`root_tab`]) unless a capture took the key. True when a mounted
+/// capture consumed a press.
+pub(crate) fn root_raw(
+    view: &UIView,
+    target: &EventTarget,
+    presses: &NSSet<UIPress>,
+    down: bool,
+) -> bool {
+    if !view.isFirstResponder() {
+        return false;
+    }
+    let id = view.tag() as nsh_core::NodeId;
+    let listens = target.listens_keys(id);
+    let mtm = MainThreadMarker::from(view);
+    let state = target.keyboard();
+    let mut consumed = false;
+    for press in presses.iter() {
+        let Some(key) = press.key(mtm) else {
+            continue;
+        };
+        let Some(usage) = usage(&key) else {
+            continue;
+        };
+        let was_held = state.is_held(usage);
+        let mut reported = event(&key, usage, state, down);
+        if down {
+            state.down(usage);
+        } else {
+            state.up(usage);
+        }
+        if !listens && !(was_held && !down) {
+            continue;
+        }
+        let stroke = crate::keymap::keystroke(&key);
+        let captured = target.captures_stroke(id, stroke.as_ref());
+        reported.default_prevented = captured;
+        let kind = if down {
+            EventKind::KeyDown
+        } else {
+            EventKind::KeyUp
+        };
+        target.dispatch(id, kind, EventPayload::Key(reported));
+        consumed |= captured;
+    }
+    consumed
+}
+
 /// Tab / Shift+Tab delivered to the surface root while it has the keyboard
 /// focus: UIKit sends a hardware key to the first responder, and before a
 /// view or input takes the focus the root owns that role (its
@@ -807,6 +859,14 @@ pub(crate) fn root_focus_if_none(root: &UIView, window: &UIWindow) {
     let _ = root.becomeFirstResponder();
 }
 
+/// Whether `responder` is the surface root holding the hardware keys
+/// because nothing else had the focus ([`root_focus_if_none`]). Code that
+/// returns the focus to a control only where none has it treats this
+/// responder as no focus.
+pub(crate) fn is_root_focus(responder: &UIView) -> bool {
+    responder.tag() == nsh_core::ROOT_ID as isize
+}
+
 /// Whether `view` or any view below it is the first responder. A native
 /// input's field editor and a hosted view's content are views in the tree,
 /// so a transfer to either counts before the root is restored.
@@ -856,11 +916,27 @@ fn is_stop(view: &UIView) -> bool {
 }
 
 /// Whether `view` and its ancestors are shown (a hidden or transparent
-/// ancestor hides it) and it is in a window.
+/// ancestor hides it) and it is in a window: a stop Tab and UIKit's focus
+/// engine move the focus to.
 pub(crate) fn visible(view: &UIView) -> bool {
+    in_window(view, true)
+}
+
+/// Whether `view` and its ancestors are not hidden and it is in a window,
+/// whatever their opacity: a stop the first responder can move to as
+/// `ref.focus()` asks, as on the other platforms, where opacity keeps no
+/// focus away. A popup that comes in from `opacity: 0` (its starting look)
+/// is transparent as its items ask for the focus.
+pub(crate) fn shown(view: &UIView) -> bool {
+    in_window(view, false)
+}
+
+/// Whether `view` and its ancestors are not hidden, nor transparent when
+/// `opaque`, and it is in a window.
+fn in_window(view: &UIView, opaque: bool) -> bool {
     let mut current: Option<Retained<UIView>> = Some(view.retain());
     while let Some(v) = current {
-        if v.isHidden() || v.alpha() <= 0.01 {
+        if v.isHidden() || (opaque && v.alpha() <= 0.01) {
             return false;
         }
         current = v.superview();

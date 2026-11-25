@@ -17,8 +17,9 @@ import android.view.ViewGroup;
  * The texts' content goes over when it changes, their frames (area
  * coordinates, dp) with every gesture; the model hit-tests through
  * {@link #offsetAt}. A long press on a text of the area selects the word
- * there and the rest of the gesture extends the selection; the handles
- * ({@link SelectionHandle}) move its ends; the floating toolbar copies,
+ * there (with the long press haptic) and the rest of the gesture extends
+ * the selection; the handles ({@link SelectionHandle}) move its ends, each
+ * change with the text handles' tick; the floating toolbar copies,
  * selects all or shares; a touch elsewhere ends it. One selection per
  * surface: a text's own ({@link TextBox}) or an area's.
  */
@@ -66,6 +67,8 @@ final class SelectableView implements SelectionHandle.Owner {
     /** The texts drawing a highlight. */
     private final java.util.ArrayList<TextBox> highlighted = new java.util.ArrayList<>();
     private SelectionHandle startHandle, endHandle;
+    /** The color the handles are tinted in (`selectionColor`; null: the theme's). */
+    private Integer handleColor;
     /** A dragged handle passed the other: each marks the other end until the finger lifts. */
     private boolean swapped;
     private android.view.ActionMode mode;
@@ -98,8 +101,10 @@ final class SelectableView implements SelectionHandle.Owner {
     private final android.graphics.Path path = new android.graphics.Path();
     private final Runnable longPress = this::selectWordAtDown;
     private final Runnable recollect = this::recollect;
+    /** The area's width the toolbar was laid out for. */
+    private int toolbarWidth;
     private final android.view.ViewTreeObserver.OnPreDrawListener follow = () -> {
-        placeHandles();
+        follow();
         return true;
     };
 
@@ -107,6 +112,19 @@ final class SelectableView implements SelectionHandle.Owner {
         this.mounter = mounter;
         this.view = view;
         this.id = id;
+    }
+
+    /** Before each frame while there is a selection: the handles and the toolbar follow the text. */
+    private void follow() {
+        placeHandles();
+        if (mode == null) return;
+        // Laid out again at another width (the phone turned): the toolbar is measured again too.
+        if (view.getWidth() != toolbarWidth) {
+            toolbarWidth = view.getWidth();
+            mode.invalidate();
+        }
+        // Scrolled with its text: the toolbar goes along.
+        mode.invalidateContentRect();
     }
 
     /** The area's view is gone: ends the selection without reporting it. */
@@ -134,14 +152,17 @@ final class SelectableView implements SelectionHandle.Owner {
                 touched = text;
                 downX = e.getRawX();
                 downY = e.getRawY();
-                // A tap ends the selection (a long press makes a new one).
-                clear();
+                // A long press makes a new selection; a tap ends this one
+                // (`Mounter.touchUp`), a scroll keeps it.
+                view.removeCallbacks(longPress);
                 view.postDelayed(longPress, android.view.ViewConfiguration.getLongPressTimeout());
                 break;
             case MotionEvent.ACTION_MOVE: {
                 if (extending) {
                     float[] p = toArea(e.getRawX(), e.getRawY());
-                    gesture(DRAG, p[0], p[1]);
+                    if (gesture(DRAG, p[0], p[1])) tick();
+                    view.getLocationOnScreen(at);
+                    magnify(-1, e.getRawX() - at[0], e.getRawY() - at[1]);
                     break;
                 }
                 float slop = android.view.ViewConfiguration.get(view.getContext()).getScaledTouchSlop();
@@ -151,6 +172,7 @@ final class SelectableView implements SelectionHandle.Owner {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 view.removeCallbacks(longPress);
+                dismissMagnifier();
                 if (extending) {
                     extending = false;
                     showToolbar();
@@ -188,6 +210,8 @@ final class SelectableView implements SelectionHandle.Owner {
         if (mounter.selectedText != null) mounter.selectedText.clearSelection();
         if (mounter.selectedArea != null && mounter.selectedArea != this) mounter.selectedArea.clear();
         mounter.selectedArea = this;
+        mounter.keepSelection();
+        mounter.updateBack();
         observer = view.getViewTreeObserver();
         observer.addOnPreDrawListener(follow);
         return true;
@@ -196,6 +220,7 @@ final class SelectableView implements SelectionHandle.Owner {
     /** Ends the selection, its highlight, handles and toolbar. */
     void clear() {
         view.removeCallbacks(longPress);
+        dismissMagnifier();
         extending = false;
         if (handle == 0) return;
         long h = handle;
@@ -210,7 +235,10 @@ final class SelectableView implements SelectionHandle.Owner {
         }
         if (observer != null && observer.isAlive()) observer.removeOnPreDrawListener(follow);
         observer = null;
-        if (mounter.selectedArea == this) mounter.selectedArea = null;
+        if (mounter.selectedArea == this) {
+            mounter.selectedArea = null;
+            mounter.updateBack();
+        }
         Native.keepRendered(mounter.handle(), new int[0]);
         android.view.ActionMode m = mode;
         mode = null;
@@ -359,13 +387,12 @@ final class SelectableView implements SelectionHandle.Owner {
 
     /**
      * The UTF-16 range {@code start..end} of text {@code i} as a copy gives
-     * it (called from Rust within a native call): without attachments and
-     * hidden runs.
+     * it (called from Rust within a native call): attachments as their copy
+     * texts, without hidden runs ({@link TextBox#copied}).
      */
     String copiedText(int i, int start, int end) {
         if (i < 0 || i >= texts.size()) return "";
-        Layout layout = texts.get(i).layout();
-        return layout == null ? "" : TextLayouts.shown(layout.getText(), start, end);
+        return texts.get(i).copied(start, end);
     }
 
     /**
@@ -381,6 +408,13 @@ final class SelectableView implements SelectionHandle.Owner {
         // The area's dp to the text's content box in px, where the layout is.
         return TextLayouts.hitOffset(
                 TextLayouts.hitTest(layout, x * d - origins[i * 2], y * d - origins[i * 2 + 1], 1f));
+    }
+
+    /** A drag moved an end: the tick of Android's text handles (none before Android 8.1). */
+    private void tick() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.TEXT_HANDLE_MOVE);
+        }
     }
 
     /** Runs a gesture of the model at the area point ({@code x}, {@code y}); redraws when it changed. */
@@ -442,10 +476,16 @@ final class SelectableView implements SelectionHandle.Owner {
             return;
         }
         TextBox start = texts.get(b[0]), end = texts.get(b[2]);
+        Integer color = start.selectionColor();
         if (startHandle == null) {
-            Integer color = start.selectionColor();
             startHandle = new SelectionHandle(view, true, color, this);
             endHandle = new SelectionHandle(view, false, color, this);
+            handleColor = color;
+        } else if (!java.util.Objects.equals(color, handleColor)) {
+            // The handles outlive a selection: the next one's text (another color, the appearance changed) tints them.
+            startHandle.tint(color);
+            endHandle.tint(color);
+            handleColor = color;
         }
         // While a dragged handle has passed the other, each marks the other end.
         SelectionHandle forStart = swapped ? endHandle : startHandle, forEnd = swapped ? startHandle : endHandle;
@@ -490,7 +530,7 @@ final class SelectableView implements SelectionHandle.Owner {
         view.getLocationInWindow(at);
         float d = mounter.density;
         // Just above the line's bottom: the line the handle hangs from.
-        gesture(moveStart ? MOVE_START : MOVE_END, (x - at[0]) / d, (y - at[1]) / d - 2);
+        if (gesture(moveStart ? MOVE_START : MOVE_END, (x - at[0]) / d, (y - at[1]) / d - 2)) tick();
         int[] after = bounds();
         if (after == null) return;
         // The end that stayed is now on the other side: the handles passed.
@@ -501,10 +541,59 @@ final class SelectableView implements SelectionHandle.Owner {
             swapped = !swapped;
             placeHandles();
         }
+        magnify(moveStart != passed ? 0 : 1, x - at[0], y - at[1]);
+    }
+
+    /** Android's magnifier while an end of the selection is dragged (API 28 and later), as TextView shows it. */
+    private android.widget.Magnifier magnifier;
+
+    /**
+     * Shows the magnifier over end {@code end} of the selection (0 the start, 1 the end, -1 whichever is
+     * nearer the finger) on its line, the finger's {@code x} kept within the line, as TextView's; area
+     * coordinates in px.
+     */
+    private void magnify(int end, float x, float y) {
+        if (android.os.Build.VERSION.SDK_INT < 28 || handle == 0 || !view.isAttachedToWindow()) return;
+        int[] b = bounds();
+        if (b == null) return;
+        float best = Float.NaN, cx = 0, cy = 0;
+        view.getLocationInWindow(at);
+        for (int which = 0; which < 2; which++) {
+            if (end >= 0 && which != end) continue;
+            int i = b[which * 2], offset = b[which * 2 + 1];
+            if (i < 0 || i >= texts.size()) continue;
+            TextBox t = texts.get(i);
+            Layout layout = t.layout();
+            if (layout == null || !t.isShown()) continue;
+            offset = Math.min(offset, layout.getText().length());
+            int line = layout.getLineForOffset(offset);
+            // An end at a line's start is drawn on the line before (`placeHandles`).
+            if (which == 1 && line > 0 && offset == layout.getLineStart(line)) line--;
+            t.getLocationInWindow(at2);
+            float ox = at2[0] - at[0] + t.contentX(), oy = at2[1] - at[1] + t.contentY();
+            float lineY = oy + (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f;
+            float distance = Math.abs(lineY - y);
+            if (!Float.isNaN(best) && distance >= best) continue;
+            best = distance;
+            cx = Math.max(ox + layout.getLineLeft(line), Math.min(ox + layout.getLineRight(line), x));
+            cy = lineY;
+        }
+        if (Float.isNaN(best)) return;
+        if (magnifier == null) {
+            magnifier = android.os.Build.VERSION.SDK_INT >= 29
+                    ? new android.widget.Magnifier.Builder(view).build()
+                    : new android.widget.Magnifier(view);
+        }
+        magnifier.show(cx, cy);
+    }
+
+    private void dismissMagnifier() {
+        if (magnifier != null) magnifier.dismiss();
     }
 
     @Override
     public void handleUp() {
+        dismissMagnifier();
         if (swapped) {
             swapped = false;
             placeHandles();
@@ -521,8 +610,12 @@ final class SelectableView implements SelectionHandle.Owner {
     }
 
     /**
-     * The app's items (`selectionMenu`) after the system's and the text
-     * actions, in their order; a separator starts a new group.
+     * The app's items (`selectionMenu`) after the system's, in their order,
+     * and before other apps' text actions (Translate and the like): they act
+     * on this app's content, as TextView's own items come before those. The
+     * floating toolbar shows the first items that fit and the rest under its
+     * overflow, so an app's item behind every installed app's action was out
+     * of sight. A separator starts a new group.
      */
     private void addAppItems(android.view.Menu m) {
         int group = 1;
@@ -532,7 +625,7 @@ final class SelectableView implements SelectionHandle.Owner {
                 group++;
                 continue;
             }
-            m.add(group, APP_ITEM + i, 200 + i, entry.label).setEnabled(entry.enabled);
+            m.add(group, APP_ITEM + i, 50 + i, entry.label).setEnabled(entry.enabled);
         }
     }
 
@@ -596,7 +689,7 @@ final class SelectableView implements SelectionHandle.Owner {
                             .setType("text/plain")
                             .putExtra(android.content.Intent.EXTRA_TEXT, nativeText(handle, SelectableView.this));
                     android.content.Intent chooser = android.content.Intent.createChooser(send, null);
-                    if (!(context instanceof android.app.Activity)) {
+                    if (SystemUi.activity(context) == null) {
                         chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
                     }
                     try {
@@ -613,7 +706,7 @@ final class SelectableView implements SelectionHandle.Owner {
                     android.content.Intent send = new android.content.Intent(process)
                             .putExtra(android.content.Intent.EXTRA_PROCESS_TEXT, nativeText(handle, SelectableView.this))
                             .putExtra(android.content.Intent.EXTRA_PROCESS_TEXT_READONLY, true);
-                    if (!(context instanceof android.app.Activity)) {
+                    if (SystemUi.activity(context) == null) {
                         send.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
                     }
                     try {

@@ -46,14 +46,21 @@ colored with the theme's tokens; the app restyles each part over it.
 - **Each block is made with primitives** (`Cx::block`): a paragraph or heading is one `text` whose children are spans
   (`Inline` → nested texts, inline images, slots), lists are rows of a marker text and a column, code blocks a column
   with floating actions and a horizontal `scroll`, tables one grid in a horizontal `scroll` (below), disclosures a
-  pressable summary and an `If`. With `selectable`, every text carries `userSelect: "text"` (`.select_text()`) and the root is a selectable view
-  (`Element::selectable`), so one selection runs across the blocks, and inside a selectable view on into the
-  texts around the view ("Selectable views" in `text.md`).
+  pressable summary and an `If`. With `selectable`, every content text carries `userSelect: "text"` (`.select_text()`)
+  and the root is a selectable view (`Element::selectable`), so one selection runs across the blocks, and inside a
+  selectable view on into the texts around the view ("Selectable views" in `text.md`). Generated document chrome — list
+  markers (`listMarker`, also `pointerEvents: "none"` on non-terminal targets so drags across the indent start on the
+  item), task boxes (`taskMarker`), alert icons (`alertIcon`), disclosure triangles (`summaryMarker`), footnote numbers
+  (`footnoteLabel`), code block and table action bars (`codeBlockHeader`, `renderTableActions`), and terminal borders /
+  rules — carries `userSelect: "none"` (`Cx::chrome`, applied before part styles so apps can still override it), keeping
+  selections, copies and `selectedText` aligned with `Document::plain_text()`.
 - **Tables** (`Cx::table`) lay out as gpui-kit's: columns fit their content when there is room, shrink (their cells
   wrapping) down to a floor per column when the view is narrower, and below the floors the table scrolls horizontally
   (`tableScroll`; `tableScrollbar` hides its indicator, as `codeBlockScrollbar` a code block's). The cells are one CSS grid, so columns line up across rows: each column is a `minmax(<floor>,
   auto)` track (the spare width is shared out as CSS shares it among `auto` tracks), and the grid is `w-full` with
-  the floors' sum as its `min-width`, so past the floors it is wider than the scroll view. Taffy has no
+  the floors' sum as its `min-width`, so past the floors it is wider than the scroll view. The grid is the part
+  `tableGrid`: it draws the table's top and left lines, each cell its right and bottom ones, so no line is drawn
+  twice and an app's frame goes on the grid. Taffy has no
   `display: contents` and text has no min-content (longest word) measure, so the floor is computed in the component
   (`column_floor`): about half the column's widest line, estimated from the cells' text (wide characters an em, the
   rest about half), clamped to 10–30 rem, or the whole line plus 2 rem for padding when that is narrower. A row is a
@@ -101,7 +108,9 @@ above them after a block (1.1 / 1.6 / 1.4 em, 0.6 em after a heading, none first
 from `Before`, which the top level's rows keep as a memo); strong text semibold; links underlined 1 pt at 40 % of
 their color, at the platform's automatic underline position (or an offset an ancestor sets, which links inherit;
 the `Link` part's own wins); `<mark>` on a rounded yellow (a marker's,
-`HIGHLIGHT`); code, keys and TeX at 13 in the theme's `font-mono` (else the system's `monospace`) on a faint rounded
+`HIGHLIGHT`); text styles (`textStyle`) in the document's color, as given in both appearances, which the app's
+`textStyle` part overrides (its own colors in dark appearance, say);
+code, keys and TeX at 13 in the theme's `font-mono` (else the system's `monospace`) on a faint rounded
 background (spans have no padding); lists indented 1.4 em, their markers (`•`, `◦`, `▪` by depth, or numbers) right-aligned against the content in
 the indent (so `10.` reaches further left and the items stay in line), items 0.25 em apart, tasks a
 15 pt box drawn as a view (filled with a `✓` when done, the item's text then muted and struck); quotes a 2 pt line at
@@ -221,23 +230,25 @@ build without syntect. Without the feature, code blocks the app does not highlig
   does), `render` shows a custom node in Rust. A view provides them to every `TextView` below it with
   `provide_context(MarkdownPlugins::new().with(..))`. A plugin's `render` comes before `renderCustom`, which comes
   before the node's content.
-- **`MarkdownOptions`**: `math`, `html`, `alerts` (default on), `frontmatter`, `mdx`, `streaming` (default off).
+- **`MarkdownOptions`**: `math`, `html`, `alerts`, `links`, `images` (default on), `frontmatter`, `mdx`, `streaming` (default off).
   With `mdx`, JSX elements are custom nodes named by their tag and `{expressions}` custom nodes `expression`; raw HTML
   is then text.
 
 ## Streaming
 
 With `options.streaming`, `markdown/streaming.rs` repairs the last block of the text before parsing (the blocks before
-it are complete; a text ending inside a fenced code or `$$` block needs nothing): emphasis, strong, strikethrough
-(`**`, `*`, `__`, `_`, `~~`), inline code and formulas left open are closed in the reverse order they opened, a marker
-with nothing after it yet is removed (so is half a formula closer, `\[1\` reads as `\[1\]`, which escaped brackets
-around a reference number keep as text); `[text` and `[text](partial` show as their text, `![alt` and `![alt](partial`
-are removed; an HTML tag being typed (`<di`, `<a href="x`) is removed; a table's header followed by the start of its
-delimiter row is completed to a table (and a lone `-` under it is no heading). A last line not yet ended whose meaning the next
-characters decide is held back: a list marker alone, digits that may become one, a line of `-` or `=` (an underline
-now, a rule, an item or text later), a fence's opening line and the start of its closer; a lone `*` inside a word
-(`a*b`) is never closed. So a reply never flashes literal `**`
-or `[` while the next chunk is on its way. The repair is a `Cow`: text with nothing open is parsed as it is.
+it are complete; a text ending inside a fenced code or `$$` block needs nothing): emphasis, strong, strikethrough (`**`,
+`*`, `__`, `_`, `~~`), inline code and formulas left open are closed in the reverse order they opened, a marker with
+nothing after it yet is removed (so is half a formula closer, `\[1\` reads as `\[1\]`, which escaped brackets around a
+reference number keep as text), and a closer typed in part (`**bold*`, `~~del~`, `` ``a`b` ``) is completed rather than
+followed by a whole one; `[text`, `[text]` at the end and `[text](partial` show as their text, `![alt`, `![alt]` and
+`![alt](partial` are removed (a footnote reference and an alert marker stay); an HTML tag being typed
+(`<di`, `<a href="x`) is removed; a table's header followed by the start of its delimiter row is completed to a table
+(and a lone `-` under it is no heading). A last line not yet ended whose meaning the next characters decide is held
+back: a list marker alone, digits that may become one, an item's task box alone (`- [x]`), a line of `-` or `=` (an
+underline now, a rule, an item or text later), a fence's opening line and the start of its closer; a lone `*` inside a
+word (`a*b`) is never closed. So a reply never flashes literal `**` or `[` while the next chunk is on its way. The
+repair is a `Cow`: text with nothing open is parsed as it is.
 
 ### Reading only what can change
 
@@ -274,10 +285,14 @@ The whole text is parsed, as before, when a later line can change any block or t
 | When | Until |
 |---|---|
 | A link or footnote definition is in the text (references before it resolve, footnotes are numbered by first reference) | The text is replaced (a definition in the block still being written may yet stop being one: then the boundary moves again) |
-| Plugins (`ParseContext::source`, positions in the whole text), a declared `:::` container, `options.mdx` | They are gone |
+| Plugins that turn a construct on or off (`configure`), a declared `:::` container, `options.mdx` | They are gone |
 | Front matter is open (`---` first with `options.frontmatter`, its closing line not arrived) | It closes: nothing is kept before |
 | The repair holds back a line at the start of the tail (it then repairs the block before the boundary) | That update only |
 | The text does not start with the last one (replaced, edited, shorter), or `options` / `extensions` changed | That update: reading starts over from it |
+
+Plugins read a text as one parse shows it to them: `ParseContext::source` is the whole text and positions are in
+it, also for a node read from a tail. What a plugin made of a block may depend on any of the text, so with plugins no
+block is kept from one text to the next: each text is read from its start, a long one in parts.
 
 A text with definitions is still parsed once per update, never twice. A tree read from the text's start (the
 first set, a replaced text, and every update while nothing is kept) is the whole text's, definitions included: it
@@ -297,6 +312,11 @@ A reply that ends in one large block (a long table, list or code block) has that
 is the part parsed again on each update: the blocks before it are still kept. So is a reply with no paragraph for a
 long stretch (lists, quotes or code one after another): the boundary stays after its last paragraph.
 
+A long text given at once (a file opened, a reply shown whole) is read the same way, a part at a time
+(`parse_long`), because one parse of a whole text grows faster than the text does. The document is the one a single
+parse makes, and the module's tests hold the two to each other. A text the boundary cannot cross (one long table,
+list or code block) is read about as fast as by one parse; a text with definitions is read whole.
+
 ## HTML
 
 `html/` reads fragments and whole pages (their body) through html5ever, so unclosed and misplaced tags build the tree a
@@ -306,6 +326,15 @@ metadata, scripts, styles, form controls, embedded media; elements `hidden`, `ar
 `display: none`, such as KaTeX's HTML beside its MathML), and reads GitHub's own markup back (alerts, task list
 checkboxes, `<math>` with a TeX annotation, `language-*` classes of code). Depth is bounded (256) and `colspan` too
 (64): the input is untrusted.
+
+Text colors are read where rich text editors write them (Tiptap's `textStyle`, which `RichEditor` writes too): a
+`<span>` whose style has a `color`, or a `<font>` with a `color` style or attribute (the style first, as a browser
+ranks them), is a `TextStyle` holding its content, the color as written (`html/mod.rs` `text_color`). A value that is
+no CSS color (`inherit`, `currentColor`) or that would hide the text (fully transparent) is not read, and the element
+is its content, as a span without a color is. Colors elsewhere (a `<p style="color: …">`, a span around blocks) are
+not read. In Markdown a colored `<span>` or `<font>` pairs as the formatting tags do, its content Markdown
+(`formatting_element`). A selection copied as Markdown or HTML writes a text style back as `<span style="color: …">`,
+only when its color is a CSS color (`selection.rs` `style_color`): a document of the app's may carry any string.
 
 ## In a terminal
 
@@ -318,7 +347,8 @@ formulas are bands as wide as their longest line plus a Cell each side (`termina
 language label; an alert is one band across the body text's width, its icon and text a Cell in, and keeps a `│` in its
 tint where the terminal draws no bands; tables fit the view by narrowing their widest column, never below
 `MIN_COLUMN` Cells (`fit_columns`, cached in one `computed` from the table's laid-out width, with cells and rules
-borrowing its column widths through `Memo::with`), their cells wrapping; tasks show
+borrowing its column widths through `Memo::with`), their cells wrapping with the sides as tall as the row
+(`terminal::glyph_column`, as a quote's bar); tasks show
 `☐` / `☑`. The tests are `nsh-base`'s `tests/base/terminal.rs`.
 
 ## Accessibility
@@ -345,8 +375,10 @@ module, which has everything.
   blocks: a pointer copied and compared per block in the document's and the rows' memos, then `Each`'s own pass over
   its rows and the commit (`nsh-core`), about 1.2 µs a block in all (0.8 ms an update at 640 blocks). And the last
   block itself: a reply ending in a 400-row table parses and shows that table again on each update. Replaced text,
-  definitions, plugins, containers and MDX are parsed whole on each change. Baselines: `performance.md` "`TextView`
-  streaming".
+  definitions, containers and MDX are parsed whole on each change; with plugins each change reads the text from its
+  start, in parts when it is long. Baselines: `performance.md` "`TextView` streaming".
+- A long text given at once is read in parts ("Reading only what can change"), with plugins too: 1.9 MB of short
+  sections in about 0.3 s instead of 2.1 s. Baselines: `performance.md` "`TextView` long text".
 - Rows are made again only when their value changes (`Each` with the position and kind as the key, the row's item as
   the value), and render functions only when their value changes.
 - A disclosure makes its content only while open.

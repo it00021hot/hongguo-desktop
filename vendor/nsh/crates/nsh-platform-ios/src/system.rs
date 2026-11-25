@@ -16,13 +16,14 @@ use nsh_core::{
 };
 use nsh_engine::EngineControl;
 use objc2::{
-    AllocAnyThread, ClassType, MainThreadMarker, MainThreadOnly,
+    AllocAnyThread, ClassType, MainThreadMarker, MainThreadOnly, msg_send,
     rc::Retained,
-    runtime::{AnyObject, Bool},
+    runtime::{AnyObject, Bool, ProtocolObject},
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
-    NSAttributedString, NSData, NSDictionary, NSError, NSObjectProtocol, NSPropertyListReadOptions,
+    NSArray, NSAttributedString, NSData, NSDictionary, NSError, NSNotification,
+    NSNotificationCenter, NSObjectProtocol, NSOperationQueue, NSPropertyListReadOptions,
     NSPropertyListSerialization, NSRange, NSString, NSURL,
 };
 use objc2_ui_kit::{
@@ -31,8 +32,8 @@ use objc2_ui_kit::{
     NSRTFTextDocumentType, UIAlertAction, UIAlertActionStyle, UIAlertController,
     UIAlertControllerStyle, UIApplication, UIDevice, UIDeviceOrientation, UIInterfaceOrientation,
     UIInterfaceOrientationMask, UIPopoverArrowDirection, UIStatusBarAnimation, UIStatusBarStyle,
-    UIUserInterfaceIdiom, UIUserInterfaceStyle, UIView, UIViewController,
-    UIWindowSceneGeometryPreferencesIOS,
+    UITextField, UITextFieldTextDidChangeNotification, UITextInput, UIUserInterfaceIdiom,
+    UIUserInterfaceStyle, UIView, UIViewController, UIWindowSceneGeometryPreferencesIOS,
 };
 
 thread_local! {
@@ -71,6 +72,25 @@ pub(crate) fn alert_tint(
 ) -> Option<nsh_core::element::AdaptiveColor> {
     let themed = nsh_base::tokens_of(None).is_ok_and(|d| *tokens != d);
     tokens.color("primary").filter(|_| themed)
+}
+
+/// The color an alert tinted with `tint` ([`alert_tint`]) is given in the
+/// appearance it shows in, or `None` to keep the system's tint.
+///
+/// From iOS 26 UIKit draws an alert's preferred action (`filled`: there is
+/// one) as a capsule filled with the tint under a white title, whatever the
+/// tint: a tint white does not read on (WCAG's 3:1 for bold text) is left
+/// to the system's, as a theme's near-white dark `primary`, made to carry a
+/// dark `primary-foreground`, would show a white title on a white capsule.
+/// Otherwise the tint colors titles on the alert's own background (before
+/// iOS 26), or nothing.
+pub(crate) fn alert_tint_color(
+    tint: nsh_core::element::AdaptiveColor,
+    dark: bool,
+    filled: bool,
+) -> Option<nsh_core::color::Hsla> {
+    let color = if dark { tint.dark } else { tint.light };
+    (!filled || color.contrast_ratio(nsh_core::color::white()) >= 3.0).then_some(color)
 }
 
 /// The appearance the app asked for (`Unspecified`: the system's).
@@ -326,6 +346,11 @@ struct DialogAnswer {
     closed: Cell<bool>,
     /// Its surface's alerts, which it leaves once answered.
     dialogs: std::rc::Weak<RefCell<HashMap<u32, ShownDialog>>>,
+    /// The alert's text field (`Dialog::input`), whose text goes with the
+    /// answer.
+    field: RefCell<Option<objc2::rc::Weak<UITextField>>>,
+    /// Follows the field's text to enable the actions while it is required.
+    observer: RefCell<Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
 
 /// A surface's alerts shown and not answered yet, by dialog id: what
@@ -343,20 +368,95 @@ impl DialogAnswer {
         if self.answered.replace(true) {
             return;
         }
+        self.stop_following();
         if let Some(dialogs) = self.dialogs.upgrade()
             && let Ok(mut dialogs) = dialogs.try_borrow_mut()
         {
             dialogs.remove(&self.id);
         }
+        let mut payload = vec![
+            ("id", PayloadValue::Number(self.id as f64)),
+            ("index", PayloadValue::Number(index as f64)),
+        ];
+        if let Some(field) = self.field.borrow().as_ref() {
+            let text = field.load().and_then(|f| f.text());
+            let text = text.map(|t| t.to_string()).unwrap_or_default();
+            payload.push(("value", PayloadValue::Str(text)));
+        }
         self.control.dispatch_event(
             nsh_core::ROOT_ID,
             EventKind::Dialog,
-            EventPayload::Map(vec![
-                ("id", PayloadValue::Number(self.id as f64)),
-                ("index", PayloadValue::Number(index as f64)),
-            ]),
+            EventPayload::Map(payload),
         );
     }
+
+    /// Stops following the field's text, once the alert is answered.
+    fn stop_following(&self) {
+        if let Some(observer) = self.observer.take() {
+            // SAFETY: the observer `addObserverForName…` returned.
+            unsafe { NSNotificationCenter::defaultCenter().removeObserver(observer.as_ref()) };
+        }
+    }
+}
+
+/// Adds the text field of `dialog`'s input to `alert`, which has its
+/// actions already: return chooses its default action (UIKit's preferred
+/// one, drawn bold), and while a required field is empty only its cancel
+/// actions are enabled.
+fn add_text_field(alert: &UIAlertController, dialog: &Dialog, answer: &Rc<DialogAnswer>) {
+    let Some(input) = dialog.input.as_ref().filter(|_| !dialog.sheet) else {
+        return;
+    };
+    alert.addTextFieldWithConfigurationHandler(None);
+    let Some(field) = alert.textFields().and_then(|f| f.firstObject()) else {
+        return;
+    };
+    field.setText(Some(&NSString::from_str(&input.text)));
+    field.setPlaceholder(
+        input
+            .placeholder
+            .as_deref()
+            .map(NSString::from_str)
+            .as_deref(),
+    );
+    *answer.field.borrow_mut() = Some(objc2::rc::Weak::from_retained(&field));
+    let actions = alert.actions();
+    if let Some(default) = nsh_core::dialog_default_button(&dialog.buttons)
+        && default < actions.count()
+    {
+        alert.setPreferredAction(Some(&actions.objectAtIndex(default)));
+    }
+    if !input.required {
+        return;
+    }
+    let enable = {
+        let alert = objc2::rc::Weak::new(alert);
+        let buttons = dialog.buttons.clone();
+        let input = input.clone();
+        move |text: &str| {
+            let Some(alert) = alert.load() else { return };
+            for (action, button) in alert.actions().iter().zip(&buttons) {
+                action.setEnabled(input.enables(button, text));
+            }
+        }
+    };
+    enable(&input.text);
+    let watched = objc2::rc::Weak::from_retained(&field);
+    let block = RcBlock::new(move |_: NonNull<NSNotification>| {
+        let text = watched.load().and_then(|f| f.text());
+        enable(&text.map(|t| t.to_string()).unwrap_or_default());
+    });
+    // SAFETY: the block touches the alert on the main queue it is
+    // delivered on, and `stop_following` removes the observer.
+    let observer = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(UITextFieldTextDidChangeNotification),
+            Some(&field),
+            Some(&NSOperationQueue::mainQueue()),
+            &block,
+        )
+    };
+    *answer.observer.borrow_mut() = Some(observer);
 }
 
 /// Shows `dialog` over `view`'s window (a `UIAlertController`), tinted
@@ -376,6 +476,8 @@ pub(crate) fn show_dialog(
         presented: Cell::new(false),
         closed: Cell::new(false),
         dialogs: Rc::downgrade(dialogs),
+        field: RefCell::new(None),
+        observer: RefCell::new(None),
     });
     let Some(top) = top_controller(view) else {
         log::warn!("no window to show a dialog in");
@@ -395,22 +497,6 @@ pub(crate) fn show_dialog(
         mtm,
     );
     alert.setOverrideUserInterfaceStyle(appearance());
-    if let (Some(tint), Some(shown)) = (tint, alert.view()) {
-        // UIKit draws the regular and cancel actions in the tint and
-        // destructive ones red (iOS 17); iOS 26's alerts keep their own
-        // colors.
-        let dark = match appearance() {
-            UIUserInterfaceStyle::Unspecified => {
-                let traits = objc2_ui_kit::UITraitEnvironment::traitCollection(view);
-                (unsafe { traits.userInterfaceStyle() }) == UIUserInterfaceStyle::Dark
-            }
-            style => style == UIUserInterfaceStyle::Dark,
-        };
-        let (r, g, b, a) =
-            nsh_core::Color::from(if dark { tint.dark } else { tint.light }).to_f64();
-        let color = objc2_ui_kit::UIColor::colorWithRed_green_blue_alpha(r, g, b, a);
-        unsafe { shown.setTintColor(Some(&color)) };
-    }
     for (index, button) in dialog.buttons.iter().enumerate() {
         let style = match button.style {
             DialogButtonStyle::Default => UIAlertActionStyle::Default,
@@ -427,6 +513,30 @@ pub(crate) fn show_dialog(
         );
         alert.addAction(&action);
     }
+    add_text_field(&alert, dialog, &answer);
+    if let (Some(tint), Some(shown)) = (tint, alert.view()) {
+        // UIKit draws the regular and cancel actions in the tint and
+        // destructive ones red (iOS 17); iOS 26's alerts keep their own
+        // colors but fill the preferred action (`add_text_field`'s) with
+        // the tint.
+        let dark = match appearance() {
+            UIUserInterfaceStyle::Unspecified => {
+                let traits = objc2_ui_kit::UITraitEnvironment::traitCollection(view);
+                (unsafe { traits.userInterfaceStyle() }) == UIUserInterfaceStyle::Dark
+            }
+            style => style == UIUserInterfaceStyle::Dark,
+        };
+        let filled = crate::surface::os_version(mtm).0 >= 26 && alert.preferredAction().is_some();
+        if let Some(tint) = alert_tint_color(tint, dark, filled) {
+            let (r, g, b, a) = nsh_core::Color::from(tint).to_f64();
+            let color = objc2_ui_kit::UIColor::colorWithRed_green_blue_alpha(r, g, b, a);
+            unsafe { shown.setTintColor(Some(&color)) };
+        }
+    }
+    let select_all = dialog
+        .input
+        .as_ref()
+        .is_some_and(|i| i.select_all && !dialog.sheet);
     let phone = UIDevice::currentDevice(mtm).userInterfaceIdiom() == UIUserInterfaceIdiom::Phone;
     if dialog.sheet
         && !phone
@@ -471,6 +581,15 @@ pub(crate) fn show_dialog(
     // its presentation ends, so it goes then.
     let presented = RcBlock::new(move || {
         answer.presented.set(true);
+        // The field has the keyboard now: select its text without the
+        // edit menu `selectAll:` brings up.
+        if select_all && let Some(field) = answer.field.borrow().as_ref().and_then(|f| f.load()) {
+            let range = field.textRangeFromPosition_toPosition(
+                &field.beginningOfDocument(),
+                &field.endOfDocument(),
+            );
+            field.setSelectedTextRange(range.as_deref());
+        }
         if answer.closed.get()
             && let Some(alert) = weak.load()
         {
@@ -487,6 +606,7 @@ pub(crate) fn close_dialog(dialogs: &Dialogs, id: u32) {
         return;
     };
     shown.answer.answered.set(true);
+    shown.answer.stop_following();
     shown.answer.closed.set(true);
     if shown.answer.presented.get()
         && let Some(alert) = shown.alert.load()
@@ -558,6 +678,40 @@ pub(crate) fn open_url(id: u32, url: &str, control: &EngineControl) {
         MainThreadMarker::new(),
         NSURL::URLWithString(&NSString::from_str(url)),
     ) else {
+        return answer(false);
+    };
+    let completion = RcBlock::new(move |opened: Bool| answer(opened.as_bool()));
+    // SAFETY: an empty dictionary is valid options; UIKit calls the
+    // completion on the main thread.
+    unsafe {
+        UIApplication::sharedApplication(mtm).openURL_options_completionHandler(
+            &url,
+            &NSDictionary::new(),
+            Some(&completion),
+        )
+    };
+}
+
+/// `AppSettings.open`: opens the app's page in the Settings app
+/// (`UIApplication.openSettingsURLString`; the embedding app's page when
+/// NSH is embedded) and reports whether the system opened it
+/// ([`EventKind::OpenAppSettings`] `id`). Commands are applied on the main
+/// thread, as UIKit needs.
+pub(crate) fn open_app_settings(id: u32, control: &EngineControl) {
+    let control = control.clone();
+    let answer = move |opened: bool| {
+        control.dispatch_event(
+            nsh_core::ROOT_ID,
+            EventKind::OpenAppSettings,
+            EventPayload::Map(vec![
+                ("id", PayloadValue::Number(id as f64)),
+                ("opened", PayloadValue::Bool(opened)),
+            ]),
+        );
+    };
+    // SAFETY: a constant UIKit exports, valid for the process's life.
+    let settings = unsafe { objc2_ui_kit::UIApplicationOpenSettingsURLString };
+    let (Some(mtm), Some(url)) = (MainThreadMarker::new(), NSURL::URLWithString(settings)) else {
         return answer(false);
     };
     let completion = RcBlock::new(move |opened: Bool| answer(opened.as_bool()));
@@ -666,9 +820,14 @@ pub(crate) fn read_clipboard_image(id: u32, has_only: bool) -> EventPayload {
 
 /// What `board` holds, read as the user pastes into an input (`onPaste`):
 /// its text, the same content as HTML ([`pasted_html`]), its images (as
-/// they are in [`IMAGE_TYPES`], else PNG) and its local files' `file:` URLs
-/// (Mac Catalyst).
-pub(crate) fn pasted(board: &objc2_ui_kit::UIPasteboard) -> nsh_core::PasteEvent {
+/// they are in [`IMAGE_TYPES`], else PNG), its local files' `file:` URLs
+/// (Mac Catalyst) and the other files it holds as data ([`pasted_files`]).
+/// A file larger than `max_size` (`pasteMaxSize`) is not copied out of the
+/// pasteboard's data: only its name, type and size are reported.
+pub(crate) fn pasted(
+    board: &objc2_ui_kit::UIPasteboard,
+    max_size: Option<u64>,
+) -> nsh_core::PasteEvent {
     // SAFETY: plain getters of the pasteboard, read on the user's paste.
     unsafe {
         let mut paste = nsh_core::PasteEvent::new(
@@ -680,22 +839,29 @@ pub(crate) fn pasted(board: &objc2_ui_kit::UIPasteboard) -> nsh_core::PasteEvent
                 .unwrap_or_default(),
         );
         paste.html = pasted_html(board).unwrap_or_default();
+        let mut add = |file: Pasted| match file {
+            Pasted::Read(file) => paste.files.push(file),
+            Pasted::TooLarge(file) => paste.too_large.push(file),
+        };
         if board.hasImages() {
             let first = IMAGE_TYPES
                 .iter()
                 .find_map(|(_, kind)| board.dataForPasteboardType(&NSString::from_str(kind)));
             match first {
                 Some(data) if board.numberOfItems() <= 1 => {
-                    paste.files.push(nsh_core::PastedFile::image(data.to_vec()));
+                    add(pasted_data(&data, max_size, nsh_core::PastedFile::image));
                 }
                 _ => {
                     for image in board.images().map(|i| i.to_vec()).unwrap_or_default() {
                         if let Some(png) = image.png_representation() {
-                            paste.files.push(nsh_core::PastedFile::image(png.to_vec()));
+                            add(pasted_data(&png, max_size, nsh_core::PastedFile::image));
                         }
                     }
                 }
             }
+        }
+        for file in pasted_files(board, max_size) {
+            add(file);
         }
         if let Some(urls) = board.hasURLs().then(|| board.URLs()).flatten() {
             paste.uris = urls
@@ -706,6 +872,91 @@ pub(crate) fn pasted(board: &objc2_ui_kit::UIPasteboard) -> nsh_core::PasteEvent
                 .collect();
         }
         paste
+    }
+}
+
+/// A pasted file, read or too large to read ([`pasted_data`]).
+enum Pasted {
+    Read(nsh_core::PastedFile),
+    TooLarge(nsh_core::PastedFile),
+}
+
+/// `data` as the pasted file `make` names and types from its bytes; when
+/// it is larger than `max_size`, the same file unread, typed from its first
+/// bytes only (its bytes stay in the pasteboard's `NSData`).
+fn pasted_data(
+    data: &NSData,
+    max_size: Option<u64>,
+    make: impl FnOnce(Vec<u8>) -> nsh_core::PastedFile,
+) -> Pasted {
+    let len = data.length() as u64;
+    if max_size.is_none_or(|max| len <= max) {
+        return Pasted::Read(make(data.to_vec()));
+    }
+    // Enough for every signature `PastedFile::image` sniffs.
+    let mut head = vec![0u8; data.length().min(32)];
+    // SAFETY: `head` holds `head.len()` bytes, at most `data`'s length.
+    unsafe {
+        data.getBytes_length(
+            std::ptr::NonNull::new_unchecked(head.as_mut_ptr().cast()),
+            head.len(),
+        );
+    }
+    let file = make(head);
+    Pasted::TooLarge(nsh_core::PastedFile::too_large(file.name, file.mime, len))
+}
+
+/// The files `board` holds as data: an item that is no text, link or image
+/// (a document copied in Files offers `com.adobe.pdf` or
+/// `org.openxmlformats.spreadsheetml.sheet`, no file URL) gives its first
+/// file type's data, named as its item provider suggests and typed by its
+/// uniform type's MIME type ([`pasted_data`] with `max_size`). Text, links
+/// and images are read above.
+fn pasted_files(board: &objc2_ui_kit::UIPasteboard, max_size: Option<u64>) -> Vec<Pasted> {
+    let other = |kind: &NSString| {
+        crate::file_drop::conforms(kind, "public.text")
+            || crate::file_drop::conforms(kind, "public.url")
+            || crate::file_drop::conforms(kind, "public.image")
+    };
+    // SAFETY: UIPasteboard's documented getters (iOS 3, 11) and
+    // NSItemProvider's `suggestedName` (iOS 11), read on the user's paste.
+    unsafe {
+        let count = board.numberOfItems().max(0) as usize;
+        let providers: Option<Retained<NSArray<AnyObject>>> = msg_send![board, itemProviders];
+        let Some(index_set) = objc2::runtime::AnyClass::get(c"NSIndexSet") else {
+            return Vec::new();
+        };
+        (0..count)
+            .filter_map(|index| {
+                let set: Retained<AnyObject> = msg_send![index_set, indexSetWithIndex: index];
+                let types: Option<Retained<NSArray<NSArray<NSString>>>> =
+                    msg_send![board, pasteboardTypesForItemSet: &*set];
+                let types = types?.firstObject()?;
+                if types.iter().any(|kind| other(&kind)) {
+                    return None;
+                }
+                let kind = types
+                    .iter()
+                    .find(|kind| crate::file_drop::is_file_type(kind))?;
+                let data: Option<Retained<NSArray<NSData>>> =
+                    msg_send![board, dataForPasteboardType: &*kind, inItemSet: &*set];
+                let data = data?.firstObject()?;
+                let suggested: Option<Retained<NSString>> = providers
+                    .as_ref()
+                    .filter(|providers| index < providers.count())
+                    .and_then(|providers| {
+                        msg_send![&providers.objectAtIndex(index), suggestedName]
+                    });
+                let (mime, extension) = crate::file_drop::mime_and_extension(&kind);
+                let name = crate::file_drop::pasted_name(
+                    suggested.map(|s| s.to_string()).as_deref(),
+                    extension.as_deref(),
+                );
+                Some(pasted_data(&data, max_size, |bytes| {
+                    nsh_core::PastedFile::new(name, mime, bytes)
+                }))
+            })
+            .collect()
     }
 }
 
@@ -841,46 +1092,6 @@ pub(crate) fn announce(text: &str) {
     };
 }
 
-/// `Haptics` of `nsh/mobile`: UIKit's feedback generator for `haptic`
-/// plays it (nothing on devices without a Taptic Engine, or with system
-/// haptics off).
-// `initWithStyle:` is deprecated from iOS 17.5 for `feedbackGeneratorForView:`,
-// which iOS 15 lacks.
-#[allow(deprecated)]
-pub(crate) fn haptic(haptic: nsh_core::Haptic) {
-    use nsh_core::{Haptic, HapticImpact, HapticNotification};
-    use objc2_ui_kit::{
-        UIImpactFeedbackGenerator, UIImpactFeedbackStyle, UINotificationFeedbackGenerator,
-        UINotificationFeedbackType, UISelectionFeedbackGenerator,
-    };
-    let Some(mtm) = MainThreadMarker::new() else {
-        return;
-    };
-    let impact = |style| {
-        UIImpactFeedbackGenerator::initWithStyle(mtm.alloc(), style).impactOccurred();
-    };
-    let notification = |kind| UINotificationFeedbackGenerator::new(mtm).notificationOccurred(kind);
-    match haptic {
-        Haptic::Selection => UISelectionFeedbackGenerator::new(mtm).selectionChanged(),
-        Haptic::Impact(HapticImpact::Light) => impact(UIImpactFeedbackStyle::Light),
-        Haptic::Impact(HapticImpact::Medium) => impact(UIImpactFeedbackStyle::Medium),
-        Haptic::Impact(HapticImpact::Heavy) => impact(UIImpactFeedbackStyle::Heavy),
-        Haptic::Impact(HapticImpact::Soft) => impact(UIImpactFeedbackStyle::Soft),
-        Haptic::Impact(HapticImpact::Rigid) => impact(UIImpactFeedbackStyle::Rigid),
-        Haptic::Notification(HapticNotification::Success) => {
-            notification(UINotificationFeedbackType::Success)
-        }
-        Haptic::Notification(HapticNotification::Warning) => {
-            notification(UINotificationFeedbackType::Warning)
-        }
-        Haptic::Notification(HapticNotification::Error) => {
-            notification(UINotificationFeedbackType::Error)
-        }
-        // `Haptic`, `HapticImpact` and `HapticNotification` are non-exhaustive.
-        _ => {}
-    }
-}
-
 /// `setAccessibilityFocus`: VoiceOver moves to `view`.
 pub(crate) fn accessibility_focus(view: &UIView) {
     // SAFETY: layout changes take the element to focus.
@@ -894,7 +1105,9 @@ pub(crate) fn accessibility_focus(view: &UIView) {
 
 #[cfg(test)]
 mod tests {
-    use super::alert_tint;
+    use nsh_core::element::AdaptiveColor;
+
+    use super::{alert_tint, alert_tint_color};
 
     /// A surface's alert tint comes from its own tokens alone (each
     /// `Mounter` keeps its own): a themed surface tints with its `primary`,
@@ -911,5 +1124,22 @@ mod tests {
 
         assert_eq!(a, Some(ink));
         assert_eq!(b, None);
+    }
+
+    /// From iOS 26 an alert's preferred action is a capsule filled with the
+    /// tint under a white title: a theme's near-white dark `primary` (made
+    /// for a dark `primary-foreground`) leaves it to the system's tint, and
+    /// the light appearance's dark `primary` still tints. Without a filled
+    /// action the tint colors titles on the alert's background, so it is
+    /// kept.
+    #[test]
+    fn an_alert_keeps_the_systems_tint_where_white_does_not_read_on_the_theme_s() {
+        let tint = AdaptiveColor::rgb(0x18181b, 0xfafafa);
+        let blue = AdaptiveColor::rgb(0x2563eb, 0x3b82f6);
+
+        assert_eq!(alert_tint_color(tint, false, true), Some(tint.light));
+        assert_eq!(alert_tint_color(tint, true, true), None);
+        assert_eq!(alert_tint_color(blue, true, true), Some(blue.dark));
+        assert_eq!(alert_tint_color(tint, true, false), Some(tint.dark));
     }
 }

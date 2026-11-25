@@ -216,12 +216,7 @@ fn runtime_id(id: NodeId) -> [i32; 2] {
 fn local(parent: &NshView, child: &NshView) -> Option<Mat4> {
     let p = parent.try_state()?;
     let s = child.try_state()?;
-    let (x, y) = p.child_origin(s.frame, s.shift);
-    let m = Mat4::new().translate(x, y);
-    Some(match s.transform() {
-        Some(t) => Mat4::mul(&t, &m),
-        None => m,
-    })
+    Some(p.child_matrix(&s))
 }
 
 /// A rectangle (x, y, width, height).
@@ -1291,7 +1286,9 @@ fn control_type(c: Control) -> UIA_CONTROLTYPE_ID {
         Control::ToolBar => UIA_ToolBarControlTypeId,
         Control::List => UIA_ListControlTypeId,
         Control::ListItem => UIA_ListItemControlTypeId,
-        Control::Pane | Control::Dialog | Control::AlertDialog => UIA_PaneControlTypeId,
+        Control::Pane | Control::Dialog | Control::AlertDialog | Control::TabPanel => {
+            UIA_PaneControlTypeId
+        }
     }
 }
 
@@ -1332,6 +1329,7 @@ mod tests {
         assert_eq!(control_type(Control::ListItem), UIA_ListItemControlTypeId);
         assert_eq!(control_type(Control::Dialog), UIA_PaneControlTypeId);
         assert_eq!(control_type(Control::AlertDialog), UIA_PaneControlTypeId);
+        assert_eq!(control_type(Control::TabPanel), UIA_PaneControlTypeId);
     }
 
     #[test]

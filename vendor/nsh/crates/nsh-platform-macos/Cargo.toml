@@ -73,7 +73,7 @@ block2.workspace = true
 crossbeam-channel.workspace = true
 dispatch2.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSDockTile", "NSPanel", "NSSpellChecker"] }
+objc2-app-kit = { workspace = true, features = ["NSDockTile", "NSGestureRecognizer", "NSPanel", "NSSpellChecker"] }
 objc2-core-foundation.workspace = true
 objc2-core-graphics.workspace = true
 objc2-core-text.workspace = true
@@ -85,6 +85,8 @@ objc2-io-surface.workspace = true
 objc2-quartz-core.workspace = true
 rustc-hash.workspace = true
 serde_json.workspace = true
+# The direction of a paragraph from its content (`text::natural_rtl`).
+unicode-bidi.workspace = true
 libc.workspace = true
 nsh-dev = { workspace = true, features = ["client"], optional = true }
 nsh-testing = { workspace = true, features = ["agent"], optional = true }

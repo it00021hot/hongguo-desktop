@@ -57,7 +57,9 @@ use objc2_app_kit::{
 };
 use objc2_core_foundation::{CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGContext;
-use objc2_foundation::{NSArray, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSString};
+use objc2_foundation::{
+    NSArray, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString,
+};
 use objc2_quartz_core::{CALayer, CALayerDelegate, CATransform3D, kCAGravityBottomLeft};
 
 use crate::surface::{Surface, quiet};
@@ -446,6 +448,17 @@ pub(crate) struct Ivars {
     /// quantized: a descendant's density can step even when this view's
     /// does not, so only an unchanged scale may skip the subtree.
     sharpened: Cell<f64>,
+    /// The parent whose layer this view's layer is in, when the view
+    /// itself is in no view hierarchy: a leaf ([`NshView::leaf_eligible`]).
+    /// Weak: the parent holds its leaves ([`Ivars::leaves`]).
+    leaf_parent: RefCell<Option<objc2::rc::Weak<ViewObj>>>,
+    /// Its children that are leaves, bottom to top. A view has either these
+    /// or child views, never both, so the layer order is the child order.
+    leaves: RefCell<Vec<Retained<ViewObj>>>,
+    /// The plain layer its leaves' layers are in, in its container's layer.
+    /// AppKit takes a view's layer out of a view-backed layer that has no
+    /// such subview, but leaves a layer of no view alone.
+    leaf_host: RefCell<Option<Retained<CALayer>>>,
 }
 
 define_class!(
@@ -657,7 +670,10 @@ define_class!(
         fn view_will_start_live_resize(&self) {
             // SAFETY: NSView's own notification.
             unsafe { msg_send![super(self), viewWillStartLiveResize] }
-            if let Some(surface) = self.ivars().surface.borrow().upgrade() {
+            if let Some(surface) = self
+                .surface()
+                .or_else(|| self.ivars().window.borrow().upgrade())
+            {
                 surface.live_resize(true);
             }
         }
@@ -666,7 +682,10 @@ define_class!(
         fn view_did_end_live_resize(&self) {
             // SAFETY: NSView's own notification.
             unsafe { msg_send![super(self), viewDidEndLiveResize] }
-            if let Some(surface) = self.ivars().surface.borrow().upgrade() {
+            if let Some(surface) = self
+                .surface()
+                .or_else(|| self.ivars().window.borrow().upgrade())
+            {
                 surface.live_resize(false);
             }
         }
@@ -832,7 +851,7 @@ define_class!(
         #[unsafe(method(cursorUpdate:))]
         fn cursor_update(&self, event: &NSEvent) {
             match self.input_surface() {
-                Some(surface) => crate::input::cursor_update(&surface),
+                Some(surface) => crate::input::cursor_update(&surface, Some(event)),
                 // SAFETY: NSView's own handling (passes it up).
                 None => unsafe { msg_send![super(self), cursorUpdate: event] },
             }
@@ -1039,6 +1058,19 @@ define_class!(
             }
         }
 
+        // A leaf (#2066) has no superview: its parent is the view it is in.
+        #[unsafe(method_id(accessibilityParent))]
+        fn accessibility_parent(&self) -> Option<Retained<AnyObject>> {
+            let leaf_parent = self.ivars().leaf_parent.borrow().as_ref().and_then(|p| p.load());
+            match leaf_parent {
+                Some(parent) => Some(Retained::into_super(Retained::into_super(
+                    Retained::into_super(Retained::into_super(parent)),
+                ))),
+                // SAFETY: NSView's own parent.
+                None => unsafe { msg_send![super(self), accessibilityParent] },
+            }
+        }
+
         #[unsafe(method(accessibilityFrame))]
         fn accessibility_frame(&self) -> NSRect {
             crate::access::frame(self).unwrap_or_else(|| {
@@ -1058,8 +1090,11 @@ define_class!(
                 .map_or(crate::access::Reached::All, |s| crate::access::reached(&s));
             let all = || -> Option<Retained<NSArray>> {
                 // SAFETY: NSView's own children.
-                let all = unsafe { msg_send![super(self), accessibilityChildren] };
+                let all: Option<Retained<NSArray>> =
+                    unsafe { msg_send![super(self), accessibilityChildren] };
                 let view = NshView(self.retain());
+                // Leaves (#2066) are in no view hierarchy for AppKit to list.
+                let all = crate::access::with_leaves(&view, all);
                 crate::access::in_reading_order(&view, crate::access::text_spans::children(&view, all))
             };
             match reached {
@@ -1291,6 +1326,10 @@ define_class!(
             }
             NshView(self.retain()).set_layer_geometry();
             NshView(self.retain()).rescale();
+            // Leaves (#2066) are in no window for AppKit to tell.
+            for leaf in NshView(self.retain()).leaf_children() {
+                leaf.rescale();
+            }
             if self.ivars().window.borrow().strong_count() > 0 {
                 self.install_tracking();
             }
@@ -1338,6 +1377,9 @@ define_class!(
         #[unsafe(method(viewDidChangeBackingProperties))]
         fn view_did_change_backing_properties(&self) {
             NshView(self.retain()).rescale();
+            for leaf in NshView(self.retain()).leaf_children() {
+                leaf.rescale();
+            }
             if let Some(surface) = self.surface() {
                 crate::system::window_changed(&surface);
             }
@@ -1422,6 +1464,13 @@ impl ViewObj {
         if scrolling(self.mtm()) && crate::native::passes_wheel(&surface, &native) {
             return me();
         }
+        // An input keeps only the wheels its own text scrolls by; the rest
+        // scroll the app around it, as over a web textarea.
+        if let Some(event) = scroll_event(self.mtm())
+            && crate::text_input::passes_wheel(&surface, &native, &event)
+        {
+            return me();
+        }
         let Some(holder) = superview(&native) else {
             return me();
         };
@@ -1447,6 +1496,9 @@ impl ViewObj {
             }
         }
         if let Some(surface) = self.input_surface() {
+            if crate::input::saw_hosted(&surface, event) {
+                return;
+            }
             // Drags may scroll or pan (a frame for the performance
             // monitor); the rest changes the screen through the engine.
             let drag = matches!(
@@ -1471,6 +1523,7 @@ impl ViewObj {
         }
         let options = NSTrackingAreaOptions::MouseMoved
             | NSTrackingAreaOptions::MouseEnteredAndExited
+            | NSTrackingAreaOptions::CursorUpdate
             | NSTrackingAreaOptions::ActiveAlways
             | NSTrackingAreaOptions::InVisibleRect;
         // SAFETY: the owner (this view) outlives the tracking area, which
@@ -1672,15 +1725,30 @@ pub(crate) fn pressing(mtm: MainThreadMarker) -> bool {
     )
 }
 
-/// Whether the event AppKit handles is a mouse wheel or trackpad scroll.
-fn scrolling(mtm: MainThreadMarker) -> bool {
+/// Whether the event AppKit handles (or the test agent hands the window)
+/// is a left mouse press.
+pub(crate) fn left_pressing(mtm: MainThreadMarker) -> bool {
+    use objc2_app_kit::NSApplication;
     scripted_type()
         .or_else(|| {
-            objc2_app_kit::NSApplication::sharedApplication(mtm)
+            NSApplication::sharedApplication(mtm)
                 .currentEvent()
                 .map(|e| e.r#type())
         })
-        .is_some_and(|t| t == NSEventType::ScrollWheel)
+        .is_some_and(|t| t == NSEventType::LeftMouseDown)
+}
+
+/// Whether the event AppKit handles is a mouse wheel or trackpad scroll.
+fn scrolling(mtm: MainThreadMarker) -> bool {
+    scroll_event(mtm).is_some()
+}
+
+/// The event AppKit handles, when it is a mouse wheel or trackpad scroll.
+fn scroll_event(mtm: MainThreadMarker) -> Option<Retained<NSEvent>> {
+    SCRIPTED
+        .with_borrow(|e| e.clone())
+        .or_else(|| objc2_app_kit::NSApplication::sharedApplication(mtm).currentEvent())
+        .filter(|e| e.r#type() == NSEventType::ScrollWheel)
 }
 
 thread_local! {
@@ -1691,7 +1759,7 @@ thread_local! {
 }
 
 /// The type of the event the test agent hands its window now.
-fn scripted_type() -> Option<NSEventType> {
+pub(crate) fn scripted_type() -> Option<NSEventType> {
     SCRIPTED.with_borrow(|e| e.as_ref().map(|e| e.r#type()))
 }
 
@@ -1767,6 +1835,9 @@ impl NshView {
             rastered: Cell::new(false),
             waiting: Cell::new(0),
             sharpened: Cell::new(0.0),
+            leaf_parent: RefCell::new(None),
+            leaves: RefCell::new(Vec::new()),
+            leaf_host: RefCell::new(None),
         });
         // SAFETY: NSView's designated initializer.
         let obj: Retained<ViewObj> = unsafe { msg_send![super(obj), initWithFrame: NSRect::ZERO] };
@@ -1878,8 +1949,14 @@ impl NshView {
             ),
             None => self.ns().addSubview(&c),
         }
-        for child in children {
-            c.addSubview(child.ns());
+        if self.ivars().leaves.borrow().is_empty() {
+            for child in children {
+                c.addSubview(child.ns());
+            }
+        }
+        // Leaves (#2066) move with the layer they are in, and stay leaves.
+        if let (Some(host), Some(to)) = (&*self.ivars().leaf_host.borrow(), c.layer()) {
+            to.addSublayer(host);
         }
         *self.ivars().container.borrow_mut() = Some(c.clone());
         self.size_container();
@@ -2230,9 +2307,14 @@ impl NshView {
         }
     }
 
-    /// The scale of its window's backing (2 before it has one).
+    /// Device pixels per root point, including the host's bounds scale.
+    /// NSH's own scroll zooms are counted by `inherited_scale` instead.
     fn backing_scale(&self) -> CGFloat {
-        self.ns().window().map_or(2.0, |w| w.backingScaleFactor())
+        let mut root = self.clone();
+        while let Some(parent) = root.parent_view() {
+            root = parent;
+        }
+        backing_scale_of(root.ns())
     }
 
     /// The scale its own transform's 2D axes apply, or 1 without one.
@@ -2482,6 +2564,16 @@ impl NshView {
                 self.resize_content_layers();
             }
         }
+        // AppKit sizes a view's layer only while the view is in a
+        // hierarchy: a leaf's is sized here.
+        if self.is_leaf_layer()
+            && let Some(layer) = self.ns().layer()
+        {
+            let bounds = CGRect::new(CGPoint::new(0.0, 0.0), rect.size);
+            if layer.bounds() != bounds {
+                layer.setBounds(bounds);
+            }
+        }
         self.set_layer_geometry();
     }
 
@@ -2539,8 +2631,17 @@ impl NshView {
                 s.style.hidden || crate::decor::backface_away(&s) || self.ns().isHidden(),
             )
         };
-        layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        layer.setPosition(self.ns().frame().origin);
+        // Each place writes them again, mostly to the same values: only
+        // changes are written, as each write is a property Core Animation
+        // records and commits.
+        let anchor = CGPoint::new(0.0, 0.0);
+        if layer.anchorPoint() != anchor {
+            layer.setAnchorPoint(anchor);
+        }
+        let origin = self.ns().frame().origin;
+        if layer.position() != origin {
+            layer.setPosition(origin);
+        }
         let before = layer.transform();
         let t = transform.as_ref().map_or(IDENTITY, ca_transform);
         // Unrelated spinners must not rescan a long list's deferred rows.
@@ -2548,9 +2649,16 @@ impl NshView {
             crate::sight::moved();
         }
         let rescaled = scale_changed(&before, &t);
-        layer.setTransform(t);
-        layer.setOpacity(opacity.clamp(0.0, 1.0));
-        layer.setHidden(hidden);
+        if before != t {
+            layer.setTransform(t);
+        }
+        let opacity = opacity.clamp(0.0, 1.0);
+        if layer.opacity() != opacity {
+            layer.setOpacity(opacity);
+        }
+        if layer.isHidden() != hidden {
+            layer.setHidden(hidden);
+        }
         if rescaled {
             self.sharpen();
         }
@@ -2577,6 +2685,9 @@ impl NshView {
 
     /// The view's parent view, if it is attached to one.
     pub(crate) fn parent_view(&self) -> Option<NshView> {
+        if let Some(p) = &*self.ivars().leaf_parent.borrow() {
+            return p.load().map(NshView);
+        }
         let mut sup = superview(self.ns())?;
         if sup.downcast_ref::<Container>().is_some() {
             sup = superview(&sup)?;
@@ -2586,11 +2697,15 @@ impl NshView {
 
     /// Whether it is in a parent view.
     pub(crate) fn has_parent(&self) -> bool {
-        superview(self.ns()).is_some()
+        self.ivars().leaf_parent.borrow().is_some() || superview(self.ns()).is_some()
     }
 
-    /// Its child views, bottom to top.
+    /// Its child views, bottom to top: its leaves, when it has them.
     pub(crate) fn child_views(&self) -> Vec<NshView> {
+        let leaves = self.leaf_children();
+        if !leaves.is_empty() {
+            return leaves;
+        }
         self.container()
             .subviews()
             .iter()
@@ -2598,10 +2713,37 @@ impl NshView {
             .collect()
     }
 
+    /// Its children that are leaves ([`NshView::leaf_eligible`]), bottom
+    /// to top.
+    pub(crate) fn leaf_children(&self) -> Vec<NshView> {
+        self.ivars()
+            .leaves
+            .borrow()
+            .iter()
+            .cloned()
+            .map(NshView)
+            .collect()
+    }
+
     /// Inserts it into `parent` below `before` (on top of the other
     /// children without one; hosted native views stay above:
     /// [`first_foreign`]).
     pub(crate) fn insert_before(&self, parent: &NshView, before: Option<&NshView>) {
+        // A leaf has no children: one getting a child becomes a view.
+        if parent.is_leaf_layer()
+            && let Some(grand) = parent.parent_view()
+        {
+            grand.materialize_leaves();
+        }
+        if self.leaf_eligible() && parent.takes_leaves() {
+            return self.insert_leaf(parent, before);
+        }
+        // Children are all leaves or all views: the others become views.
+        parent.materialize_leaves();
+        self.insert_view(parent, before);
+    }
+
+    fn insert_view(&self, parent: &NshView, before: Option<&NshView>) {
         let container = parent.container();
         let above = match before {
             Some(b) => Some(Retained::from(b.ns())),
@@ -2627,8 +2769,151 @@ impl NshView {
         }
     }
 
+    /// Puts its layer in `parent`'s container layer, below `before`'s,
+    /// with no view in the hierarchy (#2066): AppKit's per-subview cost
+    /// (geometry, display and accessibility bookkeeping) is skipped.
+    fn insert_leaf(&self, parent: &NshView, before: Option<&NshView>) {
+        let (Some(parent_layer), Some(layer)) = (parent.leaf_host(), self.ns().layer()) else {
+            return self.insert_view(parent, before);
+        };
+        {
+            let mut leaves = parent.ivars().leaves.borrow_mut();
+            let at = before
+                .and_then(|b| {
+                    leaves
+                        .iter()
+                        .position(|l| Retained::as_ptr(l) == Retained::as_ptr(&b.0))
+                })
+                .unwrap_or(leaves.len());
+            match leaves.get(at).and_then(|b| b.layer()) {
+                Some(b) => parent_layer.insertSublayer_below(&layer, Some(&b)),
+                None => parent_layer.addSublayer(&layer),
+            }
+            leaves.insert(at, self.0.clone());
+        }
+        *self.ivars().leaf_parent.borrow_mut() = Some(objc2::rc::Weak::from_retained(&parent.0));
+        parent.adjust_waiting(self.ivars().waiting.get(), true);
+        // What AppKit's `viewDidMoveToSuperview` / `viewDidMoveToWindow`
+        // do for a view.
+        crate::sight::moved();
+        self.place();
+        self.sharpen();
+        if parent.ns().window().is_some() {
+            self.rescale();
+        }
+    }
+
+    /// The layer its leaves are in ([`Ivars::leaf_host`]), made on first use.
+    fn leaf_host(&self) -> Option<Retained<CALayer>> {
+        if let Some(host) = &*self.ivars().leaf_host.borrow() {
+            return Some(host.clone());
+        }
+        let container = self.container().layer()?;
+        let host = CALayer::new();
+        // At the container's origin with no size: its sublayers are placed
+        // in the container's space.
+        host.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        host.setPosition(CGPoint::new(0.0, 0.0));
+        container.addSublayer(&host);
+        *self.ivars().leaf_host.borrow_mut() = Some(host.clone());
+        Some(host)
+    }
+
+    /// Whether its children can be leaves: a plain view with no child views
+    /// and no hosted native views (which stack above children).
+    fn takes_leaves(&self) -> bool {
+        // Plain views only: scroll views, stacks and the like order or
+        // measure their children's views (sticky cells, screens).
+        !self.is_leaf_layer()
+            && self.kind() == ViewKind::View
+            && self.state().natives.is_empty()
+            && (!self.ivars().leaves.borrow().is_empty()
+                || !self
+                    .container()
+                    .subviews()
+                    .iter()
+                    .any(|v| NshView::from_ns(&v).is_some()))
+    }
+
+    /// A text with no listener, props, tracked states, hosted views or
+    /// children: nothing needs it to be an `NSView` in the hierarchy, so
+    /// only its layer is (#2066). Its own view still answers for it:
+    /// picking, accessibility and selection reach it through its parent's
+    /// leaves.
+    fn leaf_eligible(&self) -> bool {
+        if self.kind() != ViewKind::Text
+            || !self.ivars().leaves.borrow().is_empty()
+            || self.container().subviews().count() != 0
+        {
+            return false;
+        }
+        let s = self.state();
+        s.events == Default::default()
+            && *s.props == Default::default()
+            && s.tracked == 0
+            && s.natives.is_empty()
+            && s.input_count == 0
+    }
+
+    /// Whether it is `ancestor` or in its subtree: `isDescendantOf:`, which
+    /// for a leaf (in no view hierarchy) asks of its parent.
+    pub(crate) fn is_within(&self, ancestor: &NSView) -> bool {
+        match self.parent_view().filter(|_| self.is_leaf_layer()) {
+            Some(parent) => {
+                std::ptr::eq::<NSView>(self.ns(), ancestor) || parent.ns().isDescendantOf(ancestor)
+            }
+            None => self.ns().isDescendantOf(ancestor),
+        }
+    }
+
+    /// Whether its layer is in its parent's with no view in the hierarchy.
+    pub(crate) fn is_leaf_layer(&self) -> bool {
+        self.ivars().leaf_parent.borrow().is_some()
+    }
+
+    /// Makes its leaves child views again, in their order.
+    pub(crate) fn materialize_leaves(&self) {
+        let leaves = std::mem::take(&mut *self.ivars().leaves.borrow_mut());
+        for leaf in leaves {
+            let leaf = NshView(leaf);
+            leaf.ivars().leaf_parent.borrow_mut().take();
+            self.adjust_waiting(leaf.ivars().waiting.get(), false);
+            if let Some(layer) = leaf.ns().layer() {
+                layer.removeFromSuperlayer();
+            }
+            leaf.insert_view(self, None);
+        }
+    }
+
+    /// Makes it (and its sibling leaves) views again once something needs
+    /// it to be one: a listener, props or tracked states.
+    pub(crate) fn settle_leaf(&self) {
+        if self.is_leaf_layer()
+            && !self.leaf_eligible()
+            && let Some(parent) = self.parent_view()
+        {
+            parent.materialize_leaves();
+        }
+    }
+
     /// Takes it out of its parent.
     pub(crate) fn unparent(&self) {
+        let leaf_parent = self.ivars().leaf_parent.borrow_mut().take();
+        if let Some(parent) = leaf_parent {
+            if let Some(parent) = parent.load().map(NshView) {
+                parent
+                    .ivars()
+                    .leaves
+                    .borrow_mut()
+                    .retain(|l| Retained::as_ptr(l) != Retained::as_ptr(&self.0));
+                parent.adjust_waiting(self.ivars().waiting.get(), false);
+            }
+            if let Some(layer) = self.ns().layer() {
+                layer.removeFromSuperlayer();
+            }
+            crate::sight::moved();
+            return;
+        }
         if let Some(parent) = self.parent_view() {
             parent.track_inputs(self.state().input_count, false);
             parent.adjust_waiting(self.ivars().waiting.get(), false);
@@ -2937,6 +3222,21 @@ impl crate::sight::Tree for Planned {
 fn snap_to_scale(offset: f32, scale: CGFloat) -> CGFloat {
     let scale = scale.max(1.0);
     (offset as CGFloat * scale).round() / scale
+}
+
+/// Device pixels per point in the view's coordinates, including ancestor
+/// bounds scaling. Detached views use the usual 2x fallback.
+pub(crate) fn backing_scale_of(view: &NSView) -> CGFloat {
+    if view.window().is_none() {
+        return 2.0;
+    }
+    let size = view.convertSizeToBacking(NSSize::new(1.0, 1.0));
+    let scale = size.width.abs().max(size.height.abs());
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        2.0
+    }
 }
 
 #[cfg(test)]

@@ -17,9 +17,12 @@
 
 #![cfg(target_os = "android")]
 
+pub mod activity;
 #[cfg(feature = "dev")]
 mod agent;
 mod animation;
+mod component;
+mod context;
 #[cfg(feature = "dev")]
 mod dev;
 mod encode;
@@ -28,8 +31,12 @@ mod java;
 mod keymap;
 mod logger;
 mod net;
+pub mod notifications;
 #[cfg(feature = "js")]
 mod package;
+pub mod permissions;
+pub mod picker;
+pub mod proxy;
 mod selectable_view;
 mod shader;
 mod svg;
@@ -37,6 +44,7 @@ mod text;
 
 use std::ffi::c_void;
 
+pub use component::{ComponentContext, ComponentFactory, Components, NativeComponent};
 pub use host::{run_root, set_runtime};
 /// What [`ui_sets!`] gives.
 pub use nsh_core::element::Registry;
@@ -69,6 +77,30 @@ fn ui_sets() -> Vec<nsh_core::element::Registry> {
         return sets();
     }
     vec![nsh_base::registry()]
+}
+
+/// Returns the crate component registration callback exported via [`components!`].
+pub(crate) fn app_components_fn() -> Option<fn(&Components)> {
+    // SAFETY: looks up a symbol of the loaded libraries; [`components!`]
+    // defines it with this signature in a library built with this crate.
+    let app = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"nsh_app_components".as_ptr()) };
+    if app.is_null() {
+        return None;
+    }
+    // SAFETY: as above.
+    Some(unsafe { std::mem::transmute::<*mut c_void, fn(&Components)>(app) })
+}
+
+/// Registers the app crate's native components (`#[native_components(android)]`)
+/// on every `NshView` created from this `libnsh.so`.
+#[macro_export]
+macro_rules! components {
+    ($register:expr) => {
+        #[unsafe(no_mangle)]
+        fn nsh_app_components(components: &$crate::Components) {
+            ($register)(components);
+        }
+    };
 }
 
 /// Makes this library an app's `libnsh.so` that serves `$sets` (an
@@ -114,6 +146,17 @@ fn app_root() -> Option<Root> {
 
 /// The JNI bindings [`main`] expands to.
 pub use jni;
+
+/// Runs `f` with the current thread's JNI env (attaching the thread to the
+/// VM for good), inside a local frame, for Rust code that calls into Java
+/// ([`activity`], an nshm's own calls): what `f` returns, or why it failed
+/// (a Java exception is described to the log and cleared, so later calls
+/// work). Any thread, once the library is loaded.
+pub fn with_env<R>(
+    f: impl FnOnce(&mut jni::JNIEnv<'_>) -> jni::errors::Result<R>,
+) -> jni::errors::Result<R> {
+    java::try_with_env(f)
+}
 use jni::{JavaVM, sys::jint};
 
 /// Called by the VM when `System.loadLibrary("nsh")` runs.

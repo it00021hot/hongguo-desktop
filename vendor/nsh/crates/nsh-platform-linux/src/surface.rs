@@ -2,8 +2,9 @@
 //! thread.
 //!
 //! The engine thread hands each commit to [`Sink`], which queues it and
-//! wakes the main loop once (`MainContext::invoke`); the main thread
-//! drains the queue and applies every batch in order ([`Surface::drain`]).
+//! wakes the main loop once, ahead of the frame clock's layout and paint
+//! ([`DRAIN_PRIORITY`]); the main thread drains the queue and applies every
+//! batch in order ([`Surface::drain`]).
 //! Native animations, the platform's own (transitions, screen transitions,
 //! scroll glides: [`Surface::add_frame_callback`]) and JS frame requests
 //! run on the root view's frame clock (`add_tick_callback`) while there is
@@ -33,6 +34,16 @@ use nsh_engine::{Engine, EngineConfig, EngineControl, Environment, MainThreadTas
 use rustc_hash::FxHashMap;
 
 use crate::{animation::UiAnimation, mount::Mounter, text::PangoTextEngine, view::NshView};
+
+/// The main loop's priority for taking what the engine thread sent: after
+/// input (`G_PRIORITY_DEFAULT`), before the frame clock lays out and paints
+/// (`GDK_PRIORITY_REDRAW`, 120). At GLib's idle priority (200, what
+/// `MainContext::invoke` uses) a wake-up waits for the loop to have nothing
+/// else to do, and while a frame costs more than a refresh and something
+/// animates, the next paint is always due first: no batch was applied and no
+/// frame reached JS until a frame came in under a refresh, so an app that
+/// drew slowly did not slow down, it stopped.
+const DRAIN_PRIORITY: glib::Priority = glib::Priority::HIGH_IDLE;
 
 /// What the engine thread sends the main thread.
 enum Message {
@@ -71,7 +82,7 @@ impl Sink {
         let _ = self.tx.send(message);
         if !self.pending.swap(true, Ordering::AcqRel) {
             let key = self.key;
-            glib::MainContext::default().invoke(move || {
+            glib::MainContext::default().invoke_with_priority(DRAIN_PRIORITY, move || {
                 let surface = SURFACES.with(|s| s.borrow().get(&key).and_then(Weak::upgrade));
                 if let Some(surface) = surface {
                     surface.drain();
@@ -150,8 +161,9 @@ pub(crate) struct Surface {
     pub(crate) host_tokens: RefCell<Option<nsh_engine::Tokens>>,
     /// JS asked for a display frame.
     js_frame: Cell<bool>,
-    /// The tick callback runs.
-    ticking: Cell<bool>,
+    /// The view whose frame clock runs the tick callback
+    /// ([`crate::window::tick_root`]), while it runs.
+    ticking: RefCell<Option<NshView>>,
     /// Frame callbacks of the platform's own animations (transitions,
     /// screen transitions, scroll glides), called on every frame until
     /// they are done, each with its deadline ([`Next::At`]; a new one's is
@@ -273,7 +285,7 @@ impl Surface {
             host_environment: Cell::default(),
             host_tokens: RefCell::new(None),
             js_frame: Cell::new(false),
-            ticking: Cell::new(false),
+            ticking: RefCell::new(None),
             frame_callbacks: RefCell::default(),
             last_frame: Cell::new(0.0),
             last_run: Cell::new(0.0),
@@ -327,11 +339,26 @@ impl Surface {
         }
         let fps = Rc::new(crate::fps::Fps::new());
         crate::fps::install(self.root.upcast_ref(), &fps);
+        crate::fps::start_logging(&fps);
         if let Some(overlay) = self.fps_overlay.borrow().upgrade() {
             crate::fps::show(&overlay, &fps);
         }
         self.control(|c| c.set_perf_monitor(Some(fps.monitor.clone())));
         *self.fps.borrow_mut() = Some(fps);
+        crate::window::fps_follow_any(self);
+    }
+
+    /// The performance monitor measures and shows in app `<Window>`
+    /// `window` (content in `overlay`), or the host window for `None`.
+    pub(crate) fn fps_follow(&self, window: Option<(&gtk::Widget, &gtk::Overlay)>) {
+        if let Some(fps) = self.fps.borrow().as_ref() {
+            crate::fps::follow(fps, window, self.fps_overlay.borrow().upgrade());
+        }
+    }
+
+    /// The app `<Window>` the performance monitor follows, if any.
+    pub(crate) fn fps_window(&self) -> Option<gtk::Widget> {
+        self.fps.borrow().as_ref().and_then(|f| f.window())
     }
 
     #[cfg(test)]
@@ -411,6 +438,7 @@ impl Surface {
         *self.rx.borrow_mut() = Some(rx);
         *self.pending.borrow_mut() = pending;
         let family = crate::text::ui_family();
+        crate::text::read_font_rendering();
         // The embedding app's theme overrides are in the first frame, and
         // the links that came before are the app's address when its code
         // first runs (`UrlScheme.url()`).
@@ -531,13 +559,8 @@ impl Surface {
             s.frame.size.width.0 = width;
             s.frame.size.height.0 = height;
         }
-        let mut env = self.environment.get();
-        env.window = nsh_core::Size::new(nsh_core::Points(width), nsh_core::Points(height));
-        self.environment.set(env);
-        self.control(|c| {
-            c.resize(Size::new(Points(width), Points(height)));
-            c.set_environment(env);
-        });
+        self.control(|c| c.resize(Size::new(Points(width), Points(height))));
+        crate::system::window_environment(self);
         crate::navigation::surface_resized(self, width, height);
         crate::system::surface_resized(self, width, height);
         crate::window::main_resized(self);
@@ -672,6 +695,15 @@ impl Surface {
             || !self.frame_callbacks.borrow().is_empty()
     }
 
+    /// The view ticking now, else the root: where the tick callback stays
+    /// while the window list is held ([`crate::window::tick_root`]).
+    pub(crate) fn ticking_or_root(&self) -> NshView {
+        self.ticking
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| self.root.clone())
+    }
+
     /// Runs the tick callback while animations run, frame callbacks are
     /// left or JS wants a frame, and keeps their deadlines
     /// ([`Surface::keep_deadline`]).
@@ -680,14 +712,23 @@ impl Surface {
             return;
         }
         self.keep_deadline();
-        if self.ticking.replace(true) {
+        // The clock of a window that shows: a hidden window's (the main
+        // window under Window Model v2 while only the app's own show)
+        // never ticks, which left animations to the deadline timer.
+        let root = crate::window::tick_root(self);
+        if self.ticking.borrow().as_ref() == Some(&root) {
             return;
         }
+        *self.ticking.borrow_mut() = Some(root.clone());
         let weak = Rc::downgrade(self);
-        self.root.add_tick_callback(move |_, clock| {
+        root.add_tick_callback(move |view, clock| {
             let Some(surface) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
+            // Another window's clock took over.
+            if surface.ticking.borrow().as_ref() != Some(view) {
+                return glib::ControlFlow::Break;
+            }
             // GDK frame times are microseconds; the animation graph runs on
             // seconds. Never before a frame a deadline ran meanwhile.
             let now = clock.frame_time() as f64 / 1_000_000.0;
@@ -695,7 +736,7 @@ impl Surface {
             if surface.wants_frames() {
                 glib::ControlFlow::Continue
             } else {
-                surface.ticking.set(false);
+                *surface.ticking.borrow_mut() = None;
                 glib::ControlFlow::Break
             }
         });
@@ -770,6 +811,10 @@ impl Surface {
         self.last_frame.set(now);
         self.last_run.set(monotonic());
         if self.anim.borrow().animating() {
+            // Frame clock frames and deadline runs both step here, so it
+            // keeps the plain tick, without the first frame's stall
+            // compensation (`Animator::tick_frame`) the other backends give
+            // their display frames.
             self.anim.borrow_mut().tick(now);
             self.write_animations();
         }
@@ -852,6 +897,38 @@ mod tests {
             let until = Instant::now() + Duration::from_millis(200);
             gtk_test::wait_until(|| Instant::now() >= until);
             assert_eq!(calls.borrow().len(), 2, "drawing only, without frames");
+        });
+    }
+
+    /// What the engine sends is taken while the main loop always has a
+    /// paint due: frames that cost more than a refresh, one after another.
+    #[test]
+    fn the_engines_messages_are_taken_while_a_paint_is_always_due() {
+        gtk_test::run(|| {
+            let surface = gtk_test::surface();
+            let (tx, rx) = crossbeam_channel::unbounded();
+            let pending = Arc::new(AtomicBool::new(false));
+            *surface.rx.borrow_mut() = Some(rx);
+            *surface.pending.borrow_mut() = pending.clone();
+            let sink = Sink {
+                key: surface.key,
+                tx,
+                pending,
+            };
+            // A source at the frame clock's paint priority that is ready at
+            // every turn of the loop, as the clock's own is while each frame
+            // takes longer than the refresh interval.
+            let painting = glib::idle_add_local_full(
+                glib::Priority::from(gtk::gdk::PRIORITY_REDRAW as i32),
+                || glib::ControlFlow::Continue,
+            );
+            // From another thread, as the engine's is: JS asks for a frame.
+            std::thread::spawn(move || sink.request_frame())
+                .join()
+                .expect("the request is sent");
+            let asked = gtk_test::wait_until(|| surface.js_frame.get());
+            painting.remove();
+            assert!(asked, "the request waited for the paints to end");
         });
     }
 }

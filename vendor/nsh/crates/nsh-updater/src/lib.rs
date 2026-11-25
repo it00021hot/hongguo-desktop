@@ -31,6 +31,13 @@ use sha2::{Digest as _, Sha256};
 ))]
 pub mod install;
 
+#[cfg(any(
+    all(target_os = "linux", not(target_env = "ohos")),
+    target_os = "macos",
+    windows
+))]
+pub mod delta;
+
 /// The name of the manifest, next to the release's assets.
 pub const MANIFEST: &str = "latest.json";
 /// The name of the manifest's detached signature.
@@ -68,10 +75,16 @@ pub enum Error {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct Config {
-    /// The app's id: a manifest for another app is refused.
+    /// The app's id: what finds the installed app ([`install`]). A manifest
+    /// and the package it names may carry another id (an app moved to a new
+    /// one): the manifest's signature is what binds an update to the app.
     pub id: String,
     /// The running version.
     pub version: String,
+    /// The app's display name (`nsh.json` `"name"`), which the built-in
+    /// update prompt shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// `owner/repo`: updates from its GitHub Releases.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<String>,
@@ -258,6 +271,7 @@ impl Config {
             url,
             sha256: asset.sha256.clone(),
             size: asset.size,
+            delta: self.delta(&asset.deltas)?,
         }))
     }
 
@@ -302,6 +316,17 @@ impl Config {
     }
 
     /// The manifest's notes files, their URLs absolute and HTTPS.
+    /// The patch of `deltas` from the running version, its URL absolute.
+    fn delta(&self, deltas: &[Delta]) -> Result<Option<Delta>, Error> {
+        let Some(delta) = deltas.iter().find(|delta| delta.from == self.version) else {
+            return Ok(None);
+        };
+        let mut delta = delta.clone();
+        delta.url = resolve(&self.manifest_url(), &delta.url);
+        check_url(&delta.url).map_err(Error::Manifest)?;
+        Ok(Some(delta))
+    }
+
     fn localized_notes(
         &self,
         mut notes: BTreeMap<String, NotesFile>,
@@ -313,7 +338,9 @@ impl Config {
         Ok(notes)
     }
 
-    /// The manifest, its signature checked and its id this app's.
+    /// The manifest, its signature checked. Its id is not checked against
+    /// the app's: an update may move the app to a new id or name, and the
+    /// signature, with the manifest's URL, decides what installs.
     fn open(&self, manifest: &[u8], signature: Option<&[u8]>) -> Result<Manifest, Error> {
         if let Some(key) = &self.public_key {
             let signature =
@@ -322,12 +349,6 @@ impl Config {
         }
         let parsed: Manifest =
             serde_json::from_slice(manifest).map_err(|e| Error::Manifest(e.to_string()))?;
-        if parsed.id != self.id {
-            return Err(Error::Manifest(format!(
-                "it is for {:?}, this app is {:?}",
-                parsed.id, self.id
-            )));
-        }
         Ok(parsed)
     }
 }
@@ -473,6 +494,33 @@ pub struct Asset {
     /// The archive's size in bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+    /// Patches from earlier versions to this one ([`delta`]): an app
+    /// running `from` downloads one instead of the archive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deltas: Vec<Delta>,
+}
+
+/// A zstd patch from the app of one version to the app of the
+/// [`Manifest`]'s ([`delta`]). The app rebuilds its installed files as
+/// [`delta::base`] does, checks them against `base`, applies the patch and
+/// checks the result against `result`; on any difference it downloads the
+/// archive instead.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct Delta {
+    /// The version it patches.
+    pub from: String,
+    /// The SHA-256 of that version's files, as [`delta::base`] writes them.
+    pub base: String,
+    /// Where the patch is, absolute or relative to the manifest.
+    pub url: String,
+    /// The patch's SHA-256, in hex.
+    pub sha256: String,
+    /// The patch's size in bytes.
+    pub size: u64,
+    /// The SHA-256 of what the patch makes: a `.tar` of the new app.
+    pub result: String,
 }
 
 /// A newer version for this machine.
@@ -492,6 +540,8 @@ pub struct Available {
     pub sha256: Option<String>,
     /// The archive's size.
     pub size: Option<u64>,
+    /// The patch from the running version, if the manifest has one.
+    pub delta: Option<Delta>,
 }
 
 /// This machine's key in [`Manifest::platforms`]: `<os>-<arch>` on the
@@ -861,6 +911,45 @@ mod tests {
     }
 
     #[test]
+    fn the_patch_from_the_running_version_is_offered() {
+        let delta = |from: &str| {
+            serde_json::json!({ "from": from, "base": "aa", "url": format!("from-{from}.patch"),
+                                "sha256": "bb", "size": 3, "result": "cc" })
+        };
+        let manifest = |deltas: serde_json::Value| {
+            serde_json::to_vec(&serde_json::json!({
+                "id": "com.example.app", "version": "1.3.0",
+                "platforms": { "linux-x86_64": { "url": "a.tar.gz", "sha256": "ab", "size": 2,
+                                                 "deltas": deltas } },
+            }))
+            .unwrap()
+        };
+        let check = |bytes: Vec<u8>| {
+            config()
+                .check(&bytes, None, "linux-x86_64")
+                .unwrap()
+                .unwrap()
+        };
+        let available = check(manifest(serde_json::json!([
+            delta("1.1.0"),
+            delta("1.2.0")
+        ])));
+        let offered = available.delta.unwrap();
+        assert_eq!(offered.from, "1.2.0");
+        assert_eq!(
+            offered.url,
+            "https://github.com/owner/repo/releases/latest/download/from-1.2.0.patch"
+        );
+        assert!(
+            check(manifest(serde_json::json!([delta("1.1.0")])))
+                .delta
+                .is_none()
+        );
+        // Older manifests have none.
+        assert!(check(manifest(serde_json::json!([]))).delta.is_none());
+    }
+
+    #[test]
     fn only_a_newer_version_for_this_platform_is_offered() {
         let check = |version: &str, platform: &str| {
             config()
@@ -909,9 +998,17 @@ mod tests {
     }
 
     #[test]
-    fn a_manifest_of_another_app_or_plain_http_is_refused() {
-        let other = br#"{"id":"com.other","version":"9.0.0","platforms":{}}"#;
-        assert!(config().check(other, None, "linux-x86_64").is_err());
+    fn a_manifest_of_another_id_is_taken_plain_http_is_refused() {
+        // An app moving to a new id: the signature binds, not the id.
+        let other = manifest("2.0.0", "https://x.dev/a.tar.gz");
+        let other = String::from_utf8(other)
+            .unwrap()
+            .replace("com.example.app", "com.other");
+        let found = config()
+            .check(other.as_bytes(), None, "linux-x86_64")
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.version, "2.0.0");
         let plain = manifest("2.0.0", "http://x.dev/a.tar.gz");
         assert!(config().check(&plain, None, "linux-x86_64").is_err());
     }
@@ -1009,12 +1106,6 @@ mod tests {
                 .check_package(&bytes, Some(signature.as_bytes()), 3, "0.5.0")
                 .unwrap()
                 .is_some()
-        );
-        let other = br#"{"id":"com.other","version":"1.0.0","package":{"version":"1","build":9,"url":"p","sha256":"ab","minRuntime":"0.1.0"}}"#;
-        assert!(
-            takes_packages()
-                .check_package(other, None, 3, "0.5.0")
-                .is_err()
         );
         let plain = serde_json::to_vec(&serde_json::json!({
             "id": "com.example.app", "version": "1.0.0",

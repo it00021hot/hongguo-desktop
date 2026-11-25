@@ -1,6 +1,6 @@
 # NSH 壳开发与验证
 
-当前使用 NSH 0.6.1 固定源码 `vendor/nsh`，上游发布提交为 `2f51d8611677c8a6bbad937b39756e8d0cc45350`。启动、检查、打包统一使用 NSH CLI。旧 Tauri、GPUI 和 WebView 流程仅保存在备份分支，不能恢复。
+当前使用 NSH 0.7.0 固定源码 `vendor/nsh`，上游发布提交为 `3f8ecd8b3c55ad6274c6babbf7ee55c4cd4ae359`。启动、检查、打包统一使用 NSH CLI。旧 Tauri、GPUI 和 WebView 流程仅保存在备份分支，不能恢复。
 
 ## 工具与入口
 
@@ -28,7 +28,7 @@ Makefile 转发到这些命令，并在 macOS 设置 VVdeC 的阻塞等待策略
 
 English: Pinned MetaSec files live under assets/metasec/v5. Cargo validates local size/SHA-256 and embeds them in every host. Neither clean builds nor runtime download APK material or require curl/material caches. Device SDK sessions remain private database data.
 
-`nativeHost` 是本项目为固定 CLI 增加的通用原生宿主接入口，尚非上游 0.6.1 标准能力，必须使用仓库构建的 CLI。它通过参数数组调用 `tools/build` 的 Rust 工具，失败即中止。工具只准备 SDK、独立宿主、媒体依赖和重链接材料；NSH 自己生成安装器、APK/AAB、Apple 包和签名。仓库根可用 `cargo build-tool <命令>` 调用同一工具。补丁范围见 `vendor/nsh/UPSTREAM.md`。
+`nativeHost` 是本项目为固定 CLI 增加的通用原生宿主接入口，尚非上游 0.7.0 标准能力，必须使用仓库构建的 CLI。它通过参数数组调用 `tools/build` 的 Rust 工具，失败即中止。工具只准备 SDK、独立宿主、媒体依赖和重链接材料；NSH 自己生成安装器、APK/AAB、Apple 包和签名。仓库根可用 `cargo build-tool <命令>` 调用同一工具。补丁范围见 `vendor/nsh/UPSTREAM.md`。
 
 `cargo build-tool` 与 `nativeHost` 都通过 `--target host-tuple` 在当前宿主编译构建工具，避免移动端或交叉编译的 `CARGO_BUILD_TARGET` 把工具本身编译成目标平台程序；SDK 目标仍通过参数或该环境变量选择。
 
@@ -59,7 +59,7 @@ Windows 安装与卸载提示通过 `windows.installerLanguage=ChineseSimplified
 
 Android 需要 `ANDROID_HOME`、`ANDROID_NDK_HOME`（兼容 `NDK_HOME`）、JDK 和 SDK 37。NDK 必须匹配认证媒体 SDK 的 `30.0.16248370`。应用最低 API 28，`android.abis` 默认 arm64-v8a；未配置的 ABI 明确失败。NSH 负责 AAPT2、zipalign、APK/AAB 和签名，不依赖 Gradle。默认用调试签名；正式签名使用 `--keystore`、`--key-alias` 和环境变量 `NSH_KEYSTORE_PASSWORD`，不将密码放入命令历史或日志。
 
-`NSH_DISTRIBUTION` 必须指向校验后的 embedding SDK 安装目录，其中包含 `embed/android/nsh.aar`。从同版本 [官方发布页](https://github.com/longbridge/nsh/releases/tag/v0.6.1) 下载 `nsh-embed-android.zip` 及 `.sha256`，验证 SHA-256 后提取 AAR。Java 层从 vendor 源码构建，原生库只取本项目宿主的 `libnsh.so`。最终链接拒绝未解析符号，ELF 审计拒绝静态 C++ 运行库残留的动态导入。HTTP 明文只允许回环媒体供数。
+`NSH_DISTRIBUTION` 必须指向校验后的 embedding SDK 安装目录，其中包含 `embed/android/nsh.aar`。从同版本 [官方发布页](https://github.com/longbridge/nsh/releases/tag/v0.7.0) 下载 `nsh-embed-android.zip` 及 `.sha256`，验证 SHA-256 后提取 AAR。Java 层从 vendor 源码构建，原生库只取本项目宿主的 `libnsh.so`。最终链接拒绝未解析符号，ELF 审计拒绝静态 C++ 运行库残留的动态导入。HTTP 明文只允许回环媒体供数。
 
 iOS 需要完整 Xcode，最低 16.0。设备签名通过 NSH `--sign` 与 `--profile`，profile 必须授权 `com.guava.app`；缺少参数时 NSH 保留未签名 `.app` 并警告，不能报告为可安装包。模拟器由 NSH ad hoc 签名。凭证通过安全文件、环境或 CI secrets 注入，不入库。
 

@@ -1,10 +1,13 @@
 //! Replacing the installed app with a downloaded one, on the desktop.
 //!
 //! The new app is unpacked next to the installed one (a rename needs the
-//! same volume) and checked: its id and executable must be this app's, and
-//! on macOS `codesign` must accept it. Then, on Linux and macOS, the whole
-//! directory or `.app` is swapped by two renames, under the path the user
-//! knows. Windows refuses to rename a directory holding the running
+//! same volume) and checked: it must hold one runnable app, and on macOS
+//! `codesign` must accept it. Its id and executable name may differ from the
+//! installed app's (an app renamed, or moved to a new id): the manifest's
+//! signature, checked before, is what binds the update to this app. Then, on
+//! Linux and macOS, the whole directory or `.app` is swapped by two renames,
+//! under the path the user knows (on macOS, a renamed `.app` takes its new
+//! name beside the old one's place when that name is free). Windows refuses to rename a directory holding the running
 //! executable but renames the executable itself, so there each entry of the
 //! directory is swapped (inside the directories holding the executable, their
 //! entries), undone if one fails, and what is still in use is removed by the
@@ -32,7 +35,7 @@ use std::{
 use crate::Error;
 
 /// Names what this code leaves next to the app or in it.
-const STAGING: &str = ".nsh-updater-";
+pub(crate) const STAGING: &str = ".nsh-updater-";
 const OLD: &str = ".nsh-updater-old-";
 /// An update unpacked and checked, waiting to replace the app
 /// (`<STAGED><pid>-<app's directory name>`, [`Installation::stage`]).
@@ -45,8 +48,6 @@ pub struct Installation {
     root: PathBuf,
     /// The executable, under `root`.
     executable: PathBuf,
-    /// The app's id; `None` for a plain directory.
-    id: Option<String>,
 }
 
 impl Installation {
@@ -75,7 +76,6 @@ impl Installation {
         let installation = Installation {
             root: root.to_owned(),
             executable: executable.strip_prefix(root).ok()?.to_owned(),
-            id: Some(id.to_owned()),
         };
         let holds_config = fs::read(resources(root).join("assets").join(crate::CONFIG_ASSET))
             .is_ok_and(|held| held == config);
@@ -89,7 +89,6 @@ impl Installation {
         Some(Installation {
             root: root.to_owned(),
             executable: executable.strip_prefix(root).ok()?.to_owned(),
-            id: None,
         })
     }
 
@@ -100,6 +99,12 @@ impl Installation {
             return false;
         };
         fs::remove_dir(&probe).is_ok()
+    }
+
+    /// Writes the installed app as the reference of a patch to it
+    /// ([`crate::delta::base`]), returning its SHA-256.
+    pub fn delta_base(&self, out: impl std::io::Write) -> Result<String, Error> {
+        crate::delta::base(&self.root, out)
     }
 
     /// Where the new app is unpacked: the directory it can be renamed from.
@@ -150,9 +155,11 @@ impl Installation {
     }
 
     /// Replaces the app with the archive at `archive` (`.tar.gz` or `.zip`,
-    /// already verified, as `nsh package` makes them). The running app is
-    /// left as it is: the caller restarts it (`nsh_core::restart`).
-    pub fn install(&self, archive: &Path) -> Result<(), Error> {
+    /// already verified, as `nsh package` makes them), returning the new
+    /// app's executable, the one to restart (its name, and on macOS its
+    /// `.app`'s, may have changed). The running app is left as it is: the
+    /// caller restarts it (`nsh_core::restart`).
+    pub fn install(&self, archive: &Path) -> Result<PathBuf, Error> {
         self.stage(archive)?.finish()
     }
 
@@ -173,10 +180,13 @@ impl Installation {
             installation: self.clone(),
             scratch,
             new: PathBuf::new(),
+            target: self.root.clone(),
+            executable: PathBuf::new(),
         };
         unpack(archive, &staged.scratch)?;
         staged.new = single_entry(&staged.scratch)?;
-        self.check_new(&staged.new)?;
+        staged.executable = self.check_new(&staged.new)?;
+        staged.target = self.target(&staged.new);
         Ok(staged)
     }
 
@@ -193,33 +203,29 @@ impl Installation {
         Ok(self.scratch_parent().join(staged))
     }
 
-    /// Whether `new` is this app, runnable.
-    fn check_new(&self, new: &Path) -> Result<(), Error> {
-        if let Some(id) = &self.id {
-            match package_id(new) {
-                Some(new_id) if new_id == *id => {}
-                new_id => {
-                    return Err(Error::Install(format!(
-                        "the archive holds {new_id:?}, this app is {id:?}"
-                    )));
-                }
-            }
+    /// Where the new app goes: the installed app's place, except on macOS
+    /// for a `.app` renamed by the update (`Pal.app` to `Endless.app`) when
+    /// its new name is free beside it. Windows swaps the entries of the
+    /// directory holding the running executable, which cannot move, and
+    /// Linux keeps the directory the user's launchers name.
+    fn target(&self, new: &Path) -> PathBuf {
+        if cfg!(target_os = "macos")
+            && let (Some(name), Some(parent)) = (new.file_name(), self.root.parent())
+            && Some(name) != self.root.file_name()
+            && !parent.join(name).exists()
+        {
+            return parent.join(name);
         }
-        if !new.join(&self.executable).is_file() {
-            return Err(Error::Install(format!(
-                "the archive has no {}",
-                self.executable.display()
-            )));
-        }
+        self.root.clone()
+    }
+
+    /// Whether `new` holds a runnable app; its executable, under `new`.
+    fn check_new(&self, new: &Path) -> Result<PathBuf, Error> {
+        let executable = new_executable(new, &self.executable)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            if fs::metadata(new.join(&self.executable))?
-                .permissions()
-                .mode()
-                & 0o111
-                == 0
-            {
+            if fs::metadata(new.join(&executable))?.permissions().mode() & 0o111 == 0 {
                 return Err(Error::Install("the new app is not executable".into()));
             }
         }
@@ -232,7 +238,7 @@ impl Installation {
                 return Err(Error::Install("its code signature is not valid".into()));
             }
         }
-        Ok(())
+        Ok(executable)
     }
 }
 
@@ -245,6 +251,11 @@ pub struct Staged {
     scratch: PathBuf,
     /// The new app, in `scratch`.
     new: PathBuf,
+    /// Where the new app goes: the installed app's place, or on macOS its
+    /// new name beside it ([`Installation::target`]).
+    target: PathBuf,
+    /// The new app's executable, under it.
+    executable: PathBuf,
 }
 
 impl Staged {
@@ -252,16 +263,20 @@ impl Staged {
     /// [`Installation::install`] does: on Linux and macOS two renames, on
     /// Windows the entries of the directory. Fails, leaving the installed
     /// app as it was, when either moved meanwhile (another update, the user
-    /// moving the app). The running app is left as it is.
-    pub fn finish(self) -> Result<(), Error> {
-        let Installation {
-            root, executable, ..
-        } = &self.installation;
-        if cfg!(windows) {
-            swap_entries(root, &self.new, executable)
-        } else {
-            swap_directory(root, &self.new)
+    /// moving the app). Returns the new app's executable, the one to
+    /// restart. The running app is left as it is.
+    pub fn finish(self) -> Result<PathBuf, Error> {
+        let Installation { root, executable } = &self.installation;
+        if self.target != *root {
+            // The next run, under the new name, would not know these.
+            self.installation.remove_leftovers();
         }
+        if cfg!(windows) {
+            swap_entries(root, &self.new, executable)?;
+        } else {
+            swap_directory(root, &self.new, &self.target)?;
+        }
+        Ok(self.target.join(&self.executable))
     }
 }
 
@@ -269,6 +284,65 @@ impl Drop for Staged {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.scratch);
     }
+}
+
+/// The executable of the app at `new`, relative to it: where the installed
+/// app has its own (`installed`) when it is there, else the one the new app
+/// names (macOS: `Info.plist`'s `CFBundleExecutable`), else the one runnable
+/// file in the directory the installed app's executable sits in
+/// (`Contents/MacOS`, or the app's directory).
+fn new_executable(new: &Path, installed: &Path) -> Result<PathBuf, Error> {
+    if new.join(installed).is_file() {
+        return Ok(installed.to_owned());
+    }
+    if cfg!(target_os = "macos")
+        && let Some(name) = bundle_executable(new)
+    {
+        let executable = Path::new("Contents/MacOS").join(name);
+        if new.join(&executable).is_file() {
+            return Ok(executable);
+        }
+    }
+    let dir = installed.parent().unwrap_or(Path::new(""));
+    let mut found = fs::read_dir(new.join(dir))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file()))
+        .filter(|entry| runnable(&entry.path()))
+        .map(|entry| dir.join(entry.file_name()));
+    match (found.next(), found.next()) {
+        (Some(executable), None) => Ok(executable),
+        _ => Err(Error::Install(format!(
+            "the archive has no single app executable in {:?}",
+            dir.display().to_string()
+        ))),
+    }
+}
+
+/// Whether the file at `path` is a program: an `.exe` on Windows, an
+/// executable file elsewhere.
+fn runnable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+    }
+}
+
+/// `CFBundleExecutable` in a bundle's XML `Info.plist`, as `nsh package`
+/// writes it.
+fn bundle_executable(bundle: &Path) -> Option<String> {
+    let text = fs::read_to_string(bundle.join("Contents/Info.plist")).ok()?;
+    let rest = &text[text.find("<key>CFBundleExecutable</key>")? + 29..];
+    let rest = rest.trim_start().strip_prefix("<string>")?;
+    let name = &rest[..rest.find("</string>")?];
+    (!name.is_empty() && !name.contains('/')).then(|| name.to_owned())
 }
 
 /// The id in a package's `nsh/app.json`.
@@ -323,11 +397,27 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), Error> {
             tar.set_preserve_permissions(true);
             unpack_tar(&mut tar, into).map_err(|e| Error::Install(format!("unpack: {e}")))
         }
+        _ if is_tar(&mut file)? => {
+            let mut tar = tar::Archive::new(file);
+            tar.set_preserve_permissions(true);
+            unpack_tar(&mut tar, into).map_err(|e| Error::Install(format!("unpack: {e}")))
+        }
         b"PK" => zip::ZipArchive::new(file)
             .and_then(|mut zip| zip.extract(into))
             .map_err(|e| Error::Install(format!("unpack: {e}"))),
-        _ => Err(Error::Install("not a .tar.gz or .zip".into())),
+        _ => Err(Error::Install("not a .tar.gz, .tar or .zip".into())),
     }
+}
+
+/// Whether `file` is a plain `.tar` (a patched update, [`crate::delta`]):
+/// `ustar` at offset 257. Leaves the file at its start.
+fn is_tar(file: &mut fs::File) -> std::io::Result<bool> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut magic = [0u8; 5];
+    file.seek(SeekFrom::Start(257))?;
+    let tar = file.read_exact(&mut magic).is_ok() && &magic == b"ustar";
+    file.rewind()?;
+    Ok(tar)
 }
 
 /// As [`tar::Archive::unpack`], without the AppleDouble files (`._<name>`)
@@ -370,9 +460,10 @@ fn single_entry(dir: &Path) -> Result<PathBuf, Error> {
     }
 }
 
-/// Swaps two directories by renames; puts the old one back if the new one
-/// cannot move.
-fn swap_directory(root: &Path, new: &Path) -> Result<(), Error> {
+/// Replaces `root` by `new`, moved to `target` (`root`, or a new name
+/// beside it), by renames; puts the old one back if the new one cannot
+/// move.
+fn swap_directory(root: &Path, new: &Path, target: &Path) -> Result<(), Error> {
     let name = root
         .file_name()
         .ok_or_else(|| Error::Install("the app has no directory name".into()))?;
@@ -382,7 +473,7 @@ fn swap_directory(root: &Path, new: &Path) -> Result<(), Error> {
         name.to_string_lossy()
     ));
     fs::rename(root, &old)?;
-    if let Err(e) = fs::rename(new, root) {
+    if let Err(e) = fs::rename(new, target) {
         fs::rename(&old, root)?;
         return Err(e.into());
     }
@@ -494,14 +585,27 @@ mod tests {
 
     /// A package of `id`, version `version`, under `dir/name`.
     fn package(dir: &Path, name: &str, id: &str, version: &str) -> (PathBuf, PathBuf) {
+        package_of(dir, name, "App", id, version)
+    }
+
+    /// As [`package`], its executable named `executable`.
+    fn package_of(
+        dir: &Path,
+        name: &str,
+        executable: &str,
+        id: &str,
+        version: &str,
+    ) -> (PathBuf, PathBuf) {
         let root = dir.join(name);
         let (exe, resources) = if cfg!(target_os = "macos") {
             (
-                root.join("Contents/MacOS/App"),
+                root.join("Contents/MacOS").join(executable),
                 root.join("Contents/Resources/nsh"),
             )
+        } else if cfg!(windows) {
+            (root.join(format!("{executable}.exe")), root.join("nsh"))
         } else {
-            (root.join("App"), root.join("nsh"))
+            (root.join(executable), root.join("nsh"))
         };
         fs::create_dir_all(exe.parent().unwrap()).unwrap();
         fs::create_dir_all(resources.join("assets")).unwrap();
@@ -530,18 +634,28 @@ mod tests {
     /// Makes the package runnable as far as `codesign` is concerned, as `nsh
     /// package` does; elsewhere there is nothing to do.
     fn sign(root: &Path) {
+        sign_as(root, "App", "com.example.app");
+    }
+
+    fn sign_as(root: &Path, executable: &str, id: &str) {
         if !cfg!(target_os = "macos") {
             return;
         }
-        fs::copy("/usr/bin/true", root.join("Contents/MacOS/App")).unwrap();
+        fs::copy(
+            "/usr/bin/true",
+            root.join("Contents/MacOS").join(executable),
+        )
+        .unwrap();
         fs::write(
             root.join("Contents/Info.plist"),
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>App</string>
-<key>CFBundleIdentifier</key><string>com.example.app</string>
+<key>CFBundleExecutable</key><string>{executable}</string>
+<key>CFBundleIdentifier</key><string>{id}</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-</dict></plist>"#,
+</dict></plist>"#
+            ),
         )
         .unwrap();
         let output = Command::new("/usr/bin/codesign")
@@ -614,6 +728,30 @@ mod tests {
     /// `tar -czf` on a Mac, as the guide has a developer archive an app they
     /// signed themselves.
     #[test]
+    fn a_patch_from_the_installed_app_installs() {
+        let dir = TempDir::new();
+        let (root, exe) = package(dir.path(), name(), "com.example.app", "1.0.0");
+        let build = dir.path().join("build");
+        let (new, _) = package(&build, name(), "com.example.app", "2.0.0");
+        fs::write(resources(&new).join("added"), "x").unwrap();
+        sign(&new);
+        let installation = Installation::of(&exe, "com.example.app", CONFIG).unwrap();
+        let mut base = Vec::new();
+        installation.delta_base(&mut base).unwrap();
+        let mut tar = Vec::new();
+        let result = crate::delta::tree(&new, &mut tar).unwrap();
+        let mut patch = Vec::new();
+        crate::delta::make(&base, &tar, &mut patch).unwrap();
+
+        let patched = build.join("patched.tar");
+        let out = fs::File::create(&patched).unwrap();
+        crate::delta::apply(&base, &patch[..], out, &result).unwrap();
+        installation.install(&patched).unwrap();
+        assert_eq!(version(&root), "2.0.0");
+        assert!(resources(&root).join("added").exists());
+    }
+
+    #[test]
     fn apple_double_files_are_not_installed() {
         let dir = TempDir::new();
         let (root, exe) = package(dir.path(), name(), "com.example.app", "1.0.0");
@@ -667,16 +805,91 @@ mod tests {
         assert_eq!(version(&root), "1.0.0");
     }
 
+    /// `Pal` (`com.example.pal`) becomes `Endless` (`com.example.endless`):
+    /// a new id and executable name install, the restart starts the new
+    /// executable, and nothing is left beside the app.
     #[test]
-    fn an_archive_of_another_app_changes_nothing() {
+    fn an_app_moved_to_a_new_id_and_name_installs() {
+        let (old_name, new_name) = if cfg!(target_os = "macos") {
+            ("Pal.app", "Endless.app")
+        } else {
+            ("Pal", "Endless")
+        };
         let dir = TempDir::new();
-        let (_, exe) = package(dir.path(), name(), "com.example.app", "1.0.0");
+        let (root, exe) = package_of(dir.path(), old_name, "Pal", "com.example.pal", "1.0.0");
         let build = dir.path().join("build");
-        let (new, _) = package(&build, name(), "com.other", "2.0.0");
+        let (new, _) = package_of(&build, new_name, "Endless", "com.example.endless", "2.0.0");
+        sign_as(&new, "Endless", "com.example.endless");
+        let archive = tar_gz(&build, &new, "new.tar.gz");
+
+        let installation = Installation::of(&exe, "com.example.pal", CONFIG).unwrap();
+        // A stage an earlier run of Pal left when it crashed.
+        let crashed = dir.path().join(format!("{STAGED}1-{old_name}"));
+        fs::create_dir_all(&crashed).unwrap();
+        let installed = installation.install(&archive).unwrap();
+
+        // macOS renames the bundle; Linux and Windows keep the directory.
+        let expected_root = if cfg!(target_os = "macos") {
+            dir.path().join(new_name)
+        } else {
+            root.clone()
+        };
+        let expected_exe = if cfg!(target_os = "macos") {
+            expected_root.join("Contents/MacOS/Endless")
+        } else if cfg!(windows) {
+            expected_root.join("Endless.exe")
+        } else {
+            expected_root.join("Endless")
+        };
+        assert_eq!(installed, expected_exe);
+        assert!(installed.is_file());
+        assert_eq!(version(&expected_root), "2.0.0");
+        assert_eq!(
+            package_id(&expected_root).as_deref(),
+            Some("com.example.endless")
+        );
+        if cfg!(target_os = "macos") {
+            assert!(!root.exists());
+        } else {
+            assert!(!exe.exists());
+        }
+        // The new app, at its next start, is found by its new id and
+        // removes what it may (Windows: the old executable).
+        Installation::of(&installed, "com.example.endless", CONFIG)
+            .unwrap()
+            .remove_leftovers();
+        assert_eq!(left_beside(dir.path()), Vec::<String>::new());
+    }
+
+    /// Windows' layout, on every system: the running `Pal.exe` is swapped
+    /// for `Endless.exe` in place.
+    #[test]
+    fn entries_swap_to_a_renamed_executable() {
+        let dir = TempDir::new();
+        let root = dir.path().join("Pal");
+        let new = dir.path().join("Endless");
+        fs::create_dir_all(root.join("nsh")).unwrap();
+        fs::create_dir_all(new.join("nsh")).unwrap();
+        fs::write(root.join("Pal.exe"), "old").unwrap();
+        fs::write(new.join("Endless.exe"), "new").unwrap();
+        swap_entries(&root, &new, Path::new("Pal.exe")).unwrap();
+        assert_eq!(fs::read_to_string(root.join("Endless.exe")).unwrap(), "new");
+        assert!(!root.join("Pal.exe").exists());
+    }
+
+    #[test]
+    fn an_archive_without_a_single_executable_changes_nothing() {
+        let dir = TempDir::new();
+        let (root, exe) = package(dir.path(), name(), "com.example.app", "1.0.0");
+        let build = dir.path().join("build");
+        let (new, new_exe) = package_of(&build, name(), "One", "com.example.app", "2.0.0");
+        let second = new_exe.with_file_name(if cfg!(windows) { "Two.exe" } else { "Two" });
+        fs::copy(&new_exe, &second).unwrap();
         let archive = tar_gz(&build, &new, "new.tar.gz");
         let installation = Installation::of(&exe, "com.example.app", CONFIG).unwrap();
-        assert!(installation.install(&archive).is_err());
-        assert_eq!(fs::read_to_string(&exe).unwrap(), "1.0.0");
+        let error = installation.install(&archive).unwrap_err().to_string();
+        assert!(error.contains("single app executable"), "{error}");
+        assert_eq!(version(&root), "1.0.0");
     }
 
     #[cfg(unix)]
@@ -756,7 +969,8 @@ mod tests {
         let dir = TempDir::new();
         let (root, exe) = package(dir.path(), name(), "com.example.app", "1.0.0");
         let build = dir.path().join("build");
-        let (new, _) = package(&build, name(), "com.other", "2.0.0");
+        let new = build.join(name());
+        fs::create_dir_all(resources(&new)).unwrap();
         let archive = tar_gz(&build, &new, "new.tar.gz");
         let installation = Installation::of(&exe, "com.example.app", CONFIG).unwrap();
         assert!(installation.stage(&archive).is_err());

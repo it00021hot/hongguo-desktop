@@ -8,9 +8,28 @@ import test from "node:test";
 
 const source = await readFile(new URL("nsh.js", import.meta.url), "utf8");
 // `Player` is not exported; the page only gets it from `createPlayer`.
-const { Player, keyCode, elementTag, runtimeSheet, charLength, clipChars } = await import(
-  `data:text/javascript,${encodeURIComponent(`${source}\nexport { Player, keyCode, runtimeSheet, charLength, clipChars };`)}`
+const { Player, keyCode, elementTag, runtimeSheet, charLength, clipChars, webNetwork } = await import(
+  `data:text/javascript,${encodeURIComponent(`${source}\nexport { Player, keyCode, runtimeSheet, charLength, clipChars, webNetwork };`)}`
 );
+
+test("the network is the browser's link, none while it is offline", () => {
+  const network = (onLine, connection) => webNetwork({ onLine, connection });
+  // A desktop browser names no link: online, of an unknown kind.
+  assert.deepEqual(network(true, undefined), { kind: "unknown", expensive: false, constrained: false });
+  assert.deepEqual(network(false, undefined), { kind: "none", expensive: false, constrained: false });
+  assert.deepEqual(network(true, { type: "wifi" }), { kind: "wifi", expensive: false, constrained: false });
+  assert.deepEqual(network(true, { type: "ethernet" }), { kind: "wired", expensive: false, constrained: false });
+  assert.deepEqual(network(true, { type: "cellular", saveData: true }), {
+    kind: "cellular",
+    expensive: true,
+    constrained: true,
+  });
+  assert.deepEqual(network(true, { type: "bluetooth" }).kind, "other");
+  assert.deepEqual(network(true, { type: "unknown" }).kind, "unknown");
+  // Offline wins over the link the connection last named.
+  assert.deepEqual(network(false, { type: "wifi" }).kind, "none");
+  assert.deepEqual(webNetwork(undefined).kind, "unknown");
+});
 
 /** A player on a fake engine; `sent` holds `[name, payload]` of the events it got. */
 function fakePlayer(options = {}) {
@@ -109,6 +128,20 @@ test("views are drawn as headings and links by their role, else the element they
   assert.equal(elementTag({}), "div");
 });
 
+test("a textbox role is ARIA's textbox", () => {
+  const { player } = fakePlayer();
+  const attrs = new Map();
+  const el = {
+    attrs,
+    getAttribute: (name) => attrs.get(name) ?? null,
+    setAttribute: (name, value) => attrs.set(name, value),
+    removeAttribute: (name) => attrs.delete(name),
+  };
+  el._props = { role: "textbox" };
+  player.updateAria(el);
+  assert.equal(el.attrs.get("role"), "textbox");
+});
+
 test("links the app shows no menu for keep the browser's context menu", () => {
   const { player } = fakePlayer();
   const link = {
@@ -152,12 +185,13 @@ test("a field's maxlength lets in what fits by characters, an emoji counting onc
     tagName: "INPUT",
     value: "",
     classList: { toggle() {} },
+    getAttribute: () => null,
     setAttribute() {},
     removeAttribute(name) {
       if (name === "maxlength") delete this.maxLength;
     },
   };
-  const el = { _field: field, removeAttribute() {} };
+  const el = { _field: field, getAttribute: () => null };
   player.view = () => el;
   player.op_in(["in", 1, { multiline: false, maxLength: 10 }, null]);
   assert.equal(field.maxLength, 10);
@@ -188,15 +222,91 @@ test("a field's maxlength lets in what fits by characters, an emoji counting onc
   assert.equal(field.maxLength, undefined);
 });
 
+test("a pasted file larger than pasteMaxSize is not read, only named", async () => {
+  const { player } = fakePlayer();
+  const pasted = [];
+  player.wasm.nsh_paste = (_id, jp, jl, bp, bl) => {
+    const memory = player.wasm.memory.buffer;
+    pasted.push([JSON.parse(new TextDecoder().decode(new Uint8Array(memory, jp, jl))), [...new Uint8Array(memory, bp, bl)]]);
+    return -1;
+  };
+  const read = [];
+  const file = (name, type, bytes) => ({
+    name,
+    type,
+    size: bytes.length,
+    arrayBuffer() {
+      read.push(name);
+      return Promise.resolve(new Uint8Array(bytes).buffer);
+    },
+  });
+  const el = { _id: 7, _events: new Set(["onPaste"]), _config: { pasteMaxSize: 4 } };
+  player.pasted(el, {
+    preventDefault() {},
+    clipboardData: {
+      getData: () => "",
+      files: [file("a.png", "image/png", [1, 2, 3, 4]), file("clip.mp4", "video/mp4", [1, 2, 3, 4, 5])],
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(read, ["a.png"]);
+  assert.deepEqual(pasted, [
+    [
+      {
+        text: "",
+        html: "",
+        files: [
+          { name: "a.png", type: "image/png", size: 4 },
+          { name: "clip.mp4", type: "video/mp4", size: 5, read: false },
+        ],
+        uris: [],
+      },
+      [1, 2, 3, 4],
+    ],
+  ]);
+});
+
+test("a textarea reports its scrolling only while a bar of the app's follows it", () => {
+  const { player } = fakePlayer();
+  const field = {
+    tagName: "TEXTAREA",
+    value: "",
+    scrollTop: 40,
+    clientWidth: 280,
+    scrollHeight: 400,
+    clientHeight: 90,
+    classList: { toggle() {} },
+    getAttribute: () => null,
+    setAttribute() {},
+    removeAttribute() {},
+  };
+  const el = { _id: 6, _field: field, getAttribute: () => null };
+  player.view = () => el;
+  const reports = [];
+  player.call = (f) => f({ nsh_input_scroll: (...args) => reports.push(args) });
+  player.op_in(["in", 6, { multiline: true }, null]);
+  assert.deepEqual(reports, [], "nothing follows it");
+  player.op_in(["in", 6, { multiline: true, noIndicator: true, reportScroll: true }, null]);
+  assert.deepEqual(reports, [[6, 40, 280, 400, 90]]);
+  field.scrollTop = 60;
+  player.inputScrolled(el, field);
+  assert.deepEqual(reports.at(-1), [6, 60, 280, 400, 90]);
+  player.op_in(["in", 6, { multiline: true }, null]);
+  field.scrollTop = 80;
+  player.inputScrolled(el, field);
+  assert.equal(reports.length, 2, "no longer followed");
+});
+
 test("input autofill hints are set, changed and cleared on both field kinds", () => {
   const { player } = fakePlayer();
   const attrs = new Map();
   const field = {
     classList: { toggle() {} },
+    getAttribute: (name) => attrs.get(name) ?? null,
     setAttribute: (name, value) => attrs.set(name, value),
     removeAttribute: (name) => attrs.delete(name),
   };
-  const el = { _field: field, removeAttribute() {} };
+  const el = { _field: field, getAttribute: () => null };
   player.view = () => el;
   for (const multiline of [false, true]) {
     field.tagName = multiline ? "TEXTAREA" : "INPUT";
@@ -220,10 +330,11 @@ test("input autoCorrect sets spellcheck and the autocorrect attribute on both fi
   const attrs = new Map();
   const field = {
     classList: { toggle() {} },
+    getAttribute: (name) => attrs.get(name) ?? null,
     setAttribute: (name, value) => attrs.set(name, value),
     removeAttribute: (name) => attrs.delete(name),
   };
-  const el = { _field: field, removeAttribute() {} };
+  const el = { _field: field, getAttribute: () => null };
   player.view = () => el;
   for (const multiline of [false, true]) {
     field.tagName = multiline ? "TEXTAREA" : "INPUT";
@@ -239,12 +350,58 @@ test("input autoCorrect sets spellcheck and the autocorrect attribute on both fi
   }
 });
 
+test("view and field ARIA write only changed attributes", () => {
+  const { player } = fakePlayer();
+  const element = () => {
+    const attrs = new Map();
+    const writes = [];
+    return {
+      attrs,
+      writes,
+      getAttribute: (name) => attrs.get(name) ?? null,
+      setAttribute(name, value) {
+        writes.push(["set", name, value]);
+        attrs.set(name, value);
+      },
+      removeAttribute(name) {
+        writes.push(["remove", name]);
+        attrs.delete(name);
+      },
+    };
+  };
+  const el = element();
+  player.updateAria(el);
+  assert.deepEqual(el.writes, []);
+
+  // A label can arrive before the field, which then takes it from the view.
+  el._props = { label: "Price" };
+  player.updateAria(el);
+  assert.deepEqual(el.writes.splice(0), [["set", "aria-label", "Price"]]);
+  const field = element();
+  el._field = field;
+  player.fieldAria(el, field);
+  assert.deepEqual(el.writes.splice(0), [["remove", "aria-label"]]);
+  assert.deepEqual(field.writes.splice(0), [["set", "aria-label", "Price"]]);
+
+  player.updateAria(el);
+  assert.deepEqual(el.writes, []);
+  assert.deepEqual(field.writes, []);
+  el._props = {};
+  player.updateAria(el);
+  assert.deepEqual(field.writes.splice(0), [["remove", "aria-label"]]);
+  assert.equal(field.attrs.has("aria-label"), false);
+  player.updateAria(el);
+  assert.deepEqual(el.writes, []);
+  assert.deepEqual(field.writes, []);
+});
+
 test("an invalid view is aria-invalid, and so is the field of an input", () => {
   const { player } = fakePlayer();
   const element = () => {
     const attrs = new Map();
     return {
       attrs,
+      getAttribute: (name) => attrs.get(name) ?? null,
       setAttribute: (name, value) => attrs.set(name, value),
       removeAttribute: (name) => attrs.delete(name),
     };
@@ -277,6 +434,7 @@ for (const multiline of [false, true]) {
         const attrs = new Map();
         return {
           attrs, style: {}, classList: { toggle() {} },
+          getAttribute: (name) => attrs.get(name) ?? null,
           setAttribute: (name, value) => attrs.set(name, value),
           removeAttribute: (name) => attrs.delete(name),
         };
@@ -351,6 +509,7 @@ test("a combo box's field names its highlighted row and its list by DOM id", () 
     return {
       attrs,
       id: "",
+      getAttribute: (name) => attrs.get(name) ?? null,
       setAttribute: (name, value) => attrs.set(name, value),
       removeAttribute: (name) => attrs.delete(name),
       ...extra,
@@ -404,6 +563,7 @@ test("a field names the line describing it by DOM id, followed as it comes and g
     return {
       attrs,
       id: "",
+      getAttribute: (name) => attrs.get(name) ?? null,
       setAttribute: (name, value) => attrs.set(name, value),
       removeAttribute: (name) => attrs.delete(name),
       ...extra,
@@ -629,8 +789,59 @@ test("a browser-cancelled pan reports cancellation rather than a release", () =>
     player.velocity = () => [0, 400];
     player.call = (f) => f({ nsh_pan: (...args) => sent.push(args) });
     player.pointerUp({ pointerId: 7 }, cancelled);
-    assert.deepEqual(sent, [[12, phase, 0, 100, 0, 400]]);
+    assert.deepEqual(sent, [[12, phase, 0, 100, 0, 400, 10, 20]]);
     assert.equal(player.pointers.size, 0);
+  }
+});
+
+test("a pan activation with a way or an edge decides as PanActivation does", () => {
+  const { player } = fakePlayer();
+  const right = [null, null, null, null, "right", null];
+  assert.equal(player.decideActivation(right, 6, 2), undefined);
+  assert.equal(player.decideActivation(right, 11, 4), true);
+  // The other way, or mostly across, fails.
+  assert.equal(player.decideActivation(right, -11, 0), false);
+  assert.equal(player.decideActivation(right, 3, 12), false);
+  // Its axis's active offset; a fail offset across decides across.
+  const up = [null, 20, 30, null, "up", null];
+  assert.equal(player.decideActivation(up, 0, -15), undefined);
+  assert.equal(player.decideActivation(up, 0, -21), true);
+  assert.equal(player.decideActivation(up, 0, 21), false);
+  assert.equal(player.decideActivation(up, 25, -5), undefined);
+  assert.equal(player.decideActivation(up, 31, -5), false);
+  // An edge pan moves away from its edge, whatever the direction says.
+  const edge = [null, null, null, null, "left", "left"];
+  assert.equal(player.decideActivation(edge, 12, 1), true);
+  assert.equal(player.decideActivation(edge, -12, 1), false);
+  assert.equal(player.startsAt(edge, 20, 400, 390, 844), true);
+  assert.equal(player.startsAt(edge, 21, 400, 390, 844), false);
+  assert.equal(player.startsAt([null, null, null, null, null, "bottom"], 200, 830, 390, 844), true);
+  assert.equal(player.startsAt([null, null, null, null, null, "bottom"], 200, 800, 390, 844), false);
+  assert.equal(player.startsAt(right, 200, 400, 390, 844), true);
+  assert.equal(player.startsAt(undefined, 200, 400, 390, 844), true);
+  // The offsets alone, as before.
+  assert.equal(player.decideActivation([10, null, null, 8], -11, 3), true);
+  assert.equal(player.decideActivation([10, null, null, 8], 4, -9), false);
+});
+
+test("a native pan with a way starts only that way, and its start says where it began", () => {
+  for (const [dx, started] of [[30, true], [-30, false]]) {
+    const { player } = fakePlayer();
+    const sent = [];
+    const pan = { _id: 12, _props: { panActivation: [null, null, null, null, "right", null] } };
+    player.pointers = new Map([[7, {
+      pan, touchPath: [], states: [], mode: null, gate: null, gateState: 0,
+      startX: 10, startY: 20, x: 10, y: 20, t: 0, layer: null,
+    }]]);
+    player.point = (e) => [e.x, e.y];
+    player.track = () => {};
+    player.velocity = () => [0, 0];
+    player.pressOut = () => {};
+    player.call = (f) => f({ nsh_pan: (...args) => sent.push(args) });
+    player.pointerMove({ pointerId: 7, x: 10 + dx, y: 20, preventDefault() {} });
+    assert.equal(sent.length > 0, started);
+    if (started) assert.deepEqual(sent[0], [12, 0, 0, 0, 0, 0, 10, 20]);
+    else assert.equal(player.pointers.get(7).pan, null);
   }
 });
 
@@ -743,6 +954,65 @@ test("Tab stops are the pressables and the focusable views, pressable or not", (
   delete globalThis.document;
 });
 
+test("a view laid out at no size, as in a display none subtree, is no Tab stop, nor is its field", () => {
+  const { player } = fakePlayer();
+  player.updateAria = () => {};
+  player.placeFrame = () => {};
+  player.readingChanged = () => {};
+  player.caretMoved = () => {};
+  globalThis.document = { activeElement: null };
+  try {
+    const classes = () => ({ toggle() {}, remove() {} });
+    const stop = (el) => (el.hasAttribute("tabindex") ? el.tabIndex : null);
+    const button = Object.assign(focusView(true, {}), { classList: classes() });
+    const field = Object.assign(focusView(false, {}), { classList: classes(), style: {} });
+    const input = Object.assign(focusView(false, {}), { classList: classes(), _field: field });
+    const views = new Map([[2, button], [4, input]]);
+    player.view = (id) => views.get(id);
+    // Its props come before its first frame: a stop until the frame says.
+    player.updateFocusable(button);
+    assert.equal(stop(button), 0);
+    player.op_f([0, 2, 0, 0, 120, 32]);
+    assert.equal(stop(button), 0, "shown");
+    player.op_f([0, 4, 0, 40, 120, 32]);
+    player.op_ic([0, 4, 8, 4, 104, 24]);
+    assert.equal(stop(field), null, "a shown field keeps the browser's Tab stop");
+    // Hidden with the focus on it: no stop, and it gives the focus up.
+    document.activeElement = button;
+    player.op_f([0, 2, 0, 0, 0, 0]);
+    assert.equal(stop(button), null, "hidden");
+    assert.equal(button.blurred, true);
+    document.activeElement = field;
+    player.op_f([0, 4, 0, 0, 0, 0]);
+    player.op_ic([0, 4, 0, 0, 0, 0]);
+    assert.equal(stop(field), -1, "a hidden field");
+    assert.equal(field.blurred, true);
+    // Shown again: stops again.
+    player.op_f([0, 2, 0, 0, 120, 32]);
+    assert.equal(stop(button), 0);
+    player.op_f([0, 4, 0, 40, 120, 32]);
+    player.op_ic([0, 4, 8, 4, 104, 24]);
+    assert.equal(stop(field), null);
+    // A link is a stop without a `tabindex`: hidden, it gets -1 instead.
+    const link = Object.assign(focusView(true, {}), { classList: classes(), tagName: "A", matches: () => true });
+    views.set(6, link);
+    player.updateFocusable(link);
+    player.op_f([0, 6, 0, 0, 120, 32]);
+    assert.equal(stop(link), 0);
+    player.op_f([0, 6, 0, 0, 0, 0]);
+    assert.equal(stop(link), -1, "a hidden link");
+    player.op_f([0, 6, 0, 0, 120, 32]);
+    assert.equal(stop(link), 0);
+    // A field whose view is mounted hidden, before any content box.
+    const late = Object.assign(focusView(false, {}), { classList: classes(), _frame: [0, 0, 0, 0] });
+    late._field = field;
+    player.fieldStop(late);
+    assert.equal(stop(field), -1);
+  } finally {
+    delete globalThis.document;
+  }
+});
+
 test("setAccessibilityFocus leaves the keyboard focus in a field the user is typing in", async () => {
   const { player } = fakePlayer();
   player.live = { textContent: "" };
@@ -826,6 +1096,55 @@ test("a touch whose press focused a field leaves the focus there", () => {
   assert.equal(kept("touch", pressable, {}, true), false, "the field no longer has the focus");
   delete globalThis.document;
   delete globalThis.window;
+});
+
+test("an autoFocus input is focused as the batch that shows it is applied, not after it", () => {
+  const { player } = fakePlayer();
+  Object.assign(player, {
+    views: new Map(),
+    changedStacks: new Set(),
+    removals: [],
+    endLayoutAnimation() {},
+  });
+  const focused = [];
+  const input = (id) => {
+    const field = {
+      tagName: "INPUT",
+      classList: { toggle() {} },
+      getAttribute: () => null,
+      setAttribute() {},
+      removeAttribute() {},
+      focus: () => focused.push(id),
+    };
+    const el = { _id: id, _field: field, isConnected: false, getAttribute: () => null };
+    player.views.set(id, el);
+    return el;
+  };
+  // Shown by this batch: focused when it is applied, in the same turn (an
+  // event's handler: iOS Safari raises the keyboard only there), and the
+  // press's, so the mouse events of a touch leave it there.
+  const shown = input(1);
+  player.op_x = () => (shown.isConnected = true);
+  player.apply([["in", 1, { multiline: false, autoFocus: true }, null], ["x"]]);
+  assert.deepEqual(focused, [1]);
+  assert.equal(player.pressFocus, shown._field);
+  // Shown again: focused once only, as it appeared.
+  player.apply([["in", 1, { multiline: false, autoFocus: true }, null]]);
+  assert.deepEqual(focused, [1]);
+  // Not in the page yet: it waits for the batch that puts it there.
+  const later = input(2);
+  player.apply([["in", 2, { multiline: false, autoFocus: true }, null]]);
+  assert.deepEqual(focused, [1]);
+  later.isConnected = true;
+  player.apply([]);
+  assert.deepEqual(focused, [1, 2]);
+  // Removed before it was shown: forgotten.
+  input(3);
+  player.apply([["in", 3, { multiline: false, autoFocus: true }, null]]);
+  player.views.delete(3);
+  player.apply([]);
+  assert.deepEqual(focused, [1, 2]);
+  assert.equal(player.autoFocusing.size, 0);
 });
 
 test("Return presses a focused pressable, not a focused stop that takes no presses", () => {
@@ -927,7 +1246,7 @@ test("a key a field's own handler took is not the page's shortcut as well", () =
   let mounted = true;
   const body = { closest: () => null };
   const field = { ...focusView(false, {}), classList: { contains: () => true }, closest: (selector) => (selector.includes(".nsh-field") ? field : null) };
-  const root = { contains: (el) => mounted && el === field };
+  const root = { children: [], contains: (el) => mounted && el === field };
   player.root = root;
   globalThis.document = { activeElement: field, body };
   Player.active = player;
@@ -982,6 +1301,88 @@ test("Return a shortcut takes does not submit the field as well", () => {
   assert.equal(press("Enter"), true);
   assert.equal(submits(), 1);
   assert.deepEqual(sent.find(([name]) => name === "onSubmitEditing")[1], { text: "/rev", count: 4 });
+});
+
+test("selectTextOnFocus selects the text on focus and keeps a press's own selection", () => {
+  const { player } = fakePlayer();
+  player.setState = () => {};
+  player.caretMoved = () => {};
+  const reported = [];
+  player.event = (_, name, value) => name === "onSelectionChange" && reported.push([value.start, value.end]);
+  globalThis.document = { activeElement: null };
+  try {
+    for (const tagName of ["INPUT", "TEXTAREA"]) {
+      reported.length = 0;
+      const listeners = {};
+      const field = {
+        tagName,
+        value: "Hello",
+        selectionStart: 0,
+        selectionEnd: 0,
+        addEventListener: (type, listener) => (listeners[type] = listener),
+        setSelectionRange(start, end) {
+          this.selectionStart = start;
+          this.selectionEnd = end;
+        },
+      };
+      const el = { _id: 4, _events: new Set(["onSelectionChange"]), _config: { selectTextOnFocus: true } };
+      player.wireInput(el, field);
+      const focus = () => {
+        listeners.focus();
+        document.activeElement = field;
+      };
+      const blur = () => {
+        listeners.blur();
+        document.activeElement = null;
+      };
+      // A press: its pointerdown focuses an unfocused field, the browser
+      // places the caret (or the drag's range), then its mouseup.
+      const press = ({ shiftKey = false, caret = [2, 2] } = {}) => {
+        const focused = document.activeElement === field;
+        listeners.pointerdown({ shiftKey });
+        if (!focused) focus();
+        field.setSelectionRange(...caret);
+        listeners.pointerup();
+        let prevented = false;
+        listeners.mouseup({ preventDefault: () => (prevented = true) });
+        return prevented;
+      };
+      const selection = () => [field.selectionStart, field.selectionEnd];
+
+      // Focus without a press (Tab, `ref.focus()`, `autoFocus`) selects all, reported.
+      focus();
+      assert.deepEqual(selection(), [0, 5]);
+      assert.deepEqual(reported.at(-1), [0, 5]);
+      // A click on the focused field places the caret.
+      assert.equal(press(), false);
+      assert.deepEqual(selection(), [2, 2]);
+      blur();
+      // A click that focuses selects all over the caret its mouseup would place.
+      assert.equal(press(), true);
+      assert.deepEqual(selection(), [0, 5]);
+      assert.deepEqual(reported.at(-1), [0, 5]);
+      blur();
+      // A drag's range is kept.
+      assert.equal(press({ caret: [1, 3] }), false);
+      assert.deepEqual(selection(), [1, 3]);
+      blur();
+      // A Shift-click's selection is kept.
+      assert.equal(press({ shiftKey: true, caret: [0, 2] }), false);
+      assert.deepEqual(selection(), [0, 2]);
+      blur();
+      // Without the prop, focus leaves the selection alone.
+      el._config = { selectTextOnFocus: false };
+      field.setSelectionRange(1, 1);
+      focus();
+      assert.deepEqual(selection(), [1, 1]);
+      blur();
+      assert.equal(press(), false);
+      assert.deepEqual(selection(), [2, 2]);
+      blur();
+    }
+  } finally {
+    delete globalThis.document;
+  }
 });
 
 /** A player whose core answers are `interest` — whether the focused view's
@@ -1503,6 +1904,54 @@ test("a paused WebSocket holds its events, in order, until the engine resumes it
   } finally {
     clearTimeout(player.timer);
     globalThis.WebSocket = saved;
+  }
+});
+
+test("another tab's changes to the app's storage reach the engine as this tab now reads them", () => {
+  const { player } = fakePlayer();
+  const text = (p, l) => new TextDecoder().decode(new Uint8Array(player.wasm.memory.buffer, p, l));
+  const got = [];
+  player.wasm.nsh_storage_changed = (pp, pl, kp, kl, vp, vl, kind) => {
+    got.push([text(pp, pl), text(kp, kl), text(vp, vl), kind]);
+    return -1;
+  };
+  const listeners = new Set();
+  const kept = new Map();
+  const area = { getItem: (key) => kept.get(key) ?? null };
+  const saved = { window: globalThis.window, localStorage: globalThis.localStorage };
+  globalThis.window = {
+    addEventListener: (type, f) => type === "storage" && listeners.add(f),
+    removeEventListener: (type, f) => type === "storage" && listeners.delete(f),
+  };
+  globalThis.localStorage = area;
+  const dispatch = (event) => listeners.forEach((f) => f({ storageArea: area, ...event }));
+  try {
+    player.followStorage("nsh:app:");
+    player.followStorage("nsh:app:");
+    assert.equal(listeners.size, 1, "one listener however many loads");
+    // This tab wrote "mine" after the other tab's "theirs": it keeps its own.
+    kept.set("nsh:app:draft", "mine");
+    dispatch({ key: "nsh:app:draft", newValue: "theirs" });
+    kept.delete("nsh:app:gone");
+    dispatch({ key: "nsh:app:gone", newValue: null });
+    // Other apps' keys, the page's own and `sessionStorage` are not the app's.
+    dispatch({ key: "nsh:other:draft", newValue: "x" });
+    dispatch({ key: "draft", newValue: "x" });
+    dispatch({ key: "nsh:app:draft", newValue: "x", storageArea: {} });
+    dispatch({ key: null, newValue: null });
+    assert.deepEqual(got, [
+      ["nsh:app:", "draft", "mine", 1],
+      ["nsh:app:", "gone", "", 0],
+      ["nsh:app:", "", "", 2],
+    ]);
+    // A stopped app follows nothing until the next one loads its storage.
+    globalThis.cancelAnimationFrame ??= () => {};
+    player.stop();
+    assert.equal(listeners.size, 0);
+    assert.equal(player.storagePrefixes.size, 0);
+  } finally {
+    clearTimeout(player.timer);
+    Object.assign(globalThis, saved);
   }
 });
 
@@ -2235,10 +2684,11 @@ function animating(t) {
     else player.requestFrame();
     return -1;
   };
-  const frame = () => {
+  // The page's animation frame, which began at `at` (now by default).
+  const frame = (at = clock.now) => {
     const due = frames;
     frames = [];
-    for (const f of due) f(clock.now);
+    for (const f of due) f(at);
   };
   // Time passes by `ms`: the timers due run, and what the calls into the
   // engine left for after them (`deadlineSoon`).
@@ -2248,7 +2698,7 @@ function animating(t) {
     t.mock.timers.tick(ms);
     await null;
   };
-  return { player, ticks, frame, pass, ended: () => ended };
+  return { player, ticks, frame, pass, clock, ended: () => ended };
 }
 
 test("a native animation ends on time while no animation frames come", async (t) => {
@@ -2279,6 +2729,33 @@ test("while animation frames come the page runs no frames of its own", async (t)
   assert.equal(ticks.length, frames, "every frame the browser's");
   await pass(1000);
   assert.equal(ticks.length, frames);
+});
+
+test("a frame a task held steps the animations when its callbacks run", (t) => {
+  const { player, ticks, frame, clock } = animating(t);
+  player.requestFrame();
+  // The frame began at 0; a press handled before its callbacks took
+  // 170 ms (it opened a sheet, whose entrance asks for this frame).
+  clock.now = 170;
+  frame(0);
+  assert.deepEqual(ticks, [170], "the entrance starts when it was asked for, not 170 ms in");
+  // The next frames are on time: their own times keep the display's pace.
+  clock.now = 189;
+  frame(186.7);
+  clock.now = 205;
+  frame(203.3);
+  assert.deepEqual(ticks, [170, 186.7, 203.3]);
+});
+
+test("an animation frame never steps earlier than the one before", (t) => {
+  const { player, ticks, frame, clock } = animating(t);
+  player.requestFrame();
+  clock.now = 170;
+  frame(0);
+  // On time by its own measure, but begun before the held one ran.
+  clock.now = 172;
+  frame(160);
+  assert.deepEqual(ticks, [170, 170]);
 });
 
 test("a dialog comes in and reports it shown without animation frames", () => {
@@ -2376,7 +2853,7 @@ test("UrlScheme.setUrl gives its address to the entry of the page pushed with it
     let depth = 0;
     const player = Object.create(Player.prototype);
     Object.assign(player, {
-      history: true, historyDepth: 0, historyIndex: 0, historyDepths: [0], ignoredPops: 0, historySession: "s", pageUrl: null,
+      history: true, historyDepth: 0, historyIndex: 0, historyDepths: [0], historyUrls: ["https://a.test/debugger/"], ignoredPops: 0, historySession: "s", pageUrl: null,
       backDepth: () => depth, syncHistorySoon() {}, showError: (m) => calls.push(["error", m]),
     });
     // A page pushed and its address set in one turn: the entry first.
@@ -2426,7 +2903,7 @@ test("the main window's title titles the page once the turn's entries exist, und
     let depth = 0;
     const player = Object.create(Player.prototype);
     Object.assign(player, {
-      history: true, historyDepth: 0, historyIndex: 0, historyDepths: [0], ignoredPops: 0, historySession: "s", pageUrl: null,
+      history: true, historyDepth: 0, historyIndex: 0, historyDepths: [0], historyUrls: ["https://a.test/inbox"], ignoredPops: 0, historySession: "s", pageUrl: null,
       views: new Map(), backDepth: () => depth, tellAddress() {}, showError: (m) => calls.push(["error", m]),
     });
     // A page pushed and the title set in one turn, the title's command
@@ -2489,7 +2966,7 @@ test("the browser's back gives the core the entry's address with no open, and a 
     let lets = true;
     const player = Object.create(Player.prototype);
     Object.assign(player, {
-      history: true, historyDepth: 1, historyIndex: 1, historyDepths: [0, 1], ignoredPops: 0, historySession: "s", pageUrl: null,
+      history: true, historyDepth: 1, historyIndex: 1, historyDepths: [0, 1], historyUrls: ["https://a.test/inbox", "https://a.test/inbox?message=a"], ignoredPops: 0, historySession: "s", pageUrl: null,
       shownUrl: "https://a.test/inbox?message=a",
       backDepth: () => depth, showError: (m) => calls.push(["error", m]),
       back: () => lets && (depth--, true),
@@ -2589,7 +3066,7 @@ test("an address the app sets while the browser's back pops its page wins over t
     let depth = 1;
     const player = Object.create(Player.prototype);
     Object.assign(player, {
-      history: true, historyDepth: 1, historyIndex: 1, historyDepths: [0, 1], ignoredPops: 0, historySession: "s", pageUrl: null,
+      history: true, historyDepth: 1, historyIndex: 1, historyDepths: [0, 1], historyUrls: ["https://a.test/inbox?message=42", "https://a.test/inbox?message=42"], ignoredPops: 0, historySession: "s", pageUrl: null,
       backDepth: () => depth, showError: (m) => calls.push(["error", m]),
       event: (id, name, payload) => calls.push(["event", name, payload]),
     });
@@ -2655,7 +3132,7 @@ test("a forward the app shows goes on from the entry the browser is at", () => {
     let depth = 0;
     const player = Object.create(Player.prototype);
     Object.assign(player, {
-      history: true, historyDepth: 0, historyIndex: 0, historyDepths: [0], ignoredPops: 0, historySession: "s", pageUrl: null,
+      history: true, historyDepth: 0, historyIndex: 0, historyDepths: [0], historyUrls: ["https://a.test/inbox"], ignoredPops: 0, historySession: "s", pageUrl: null,
       backDepth: () => depth, showError: (m) => calls.push(["error", m]),
       // The app takes the link: its stack shows the page again.
       event: (id, name, payload) => { calls.push(["event", name, payload]); if (!payload.quiet) depth = 1; },
@@ -2909,6 +3386,69 @@ test("in one turn, pushes make one entry with the last address, and a push wins 
   assert.deepEqual(calls.splice(0), [["replace", 0, 1, "https://a.test/inbox?tab=mine&sort=new"]]);
 });
 
+/** The player's own `syncHistorySoon`: the turn's entries a task later. */
+function realSoon(player) {
+  player.syncHistorySoon = Player.prototype.syncHistorySoon;
+}
+
+test("a push with no page open writes its entry in the task it came in, before the browser draws", (t) => {
+  const { player, calls, user } = historyPlayer(t);
+  realSoon(player);
+  player.setPageUrl("?item=1", true);
+  // No task passes: the entry exists before the next frame.
+  assert.deepEqual(calls.splice(0), [["push", 0, 1, "https://a.test/inbox?item=1"]]);
+  // More of the turn in the same task: the last address is that entry's, with no entry of its own.
+  player.setPageUrl("?item=2", true);
+  t.mock.timers.tick(0);
+  assert.deepEqual(calls.splice(0), [["replace", 0, 1, "https://a.test/inbox?item=2"]]);
+  // A later task's push makes an entry of its own, at once again.
+  player.setPageUrl("?item=3", true);
+  assert.deepEqual(calls.splice(0), [["push", 0, 2, "https://a.test/inbox?item=3"]]);
+  t.mock.timers.tick(0);
+  assert.deepEqual(calls.splice(0), []);
+  // Back twice and forward twice go through every entry.
+  user(-1);
+  user(-1);
+  user(1);
+  user(1);
+  assert.deepEqual(calls.splice(0).map((c) => [c[2].url, c[2].change]), [
+    ["https://a.test/inbox?item=2", "back"],
+    ["https://a.test/inbox", "back"],
+    ["https://a.test/inbox?item=2", "forward"],
+    ["https://a.test/inbox?item=3", "forward"],
+  ]);
+});
+
+test("a push from a sheet waits for the turn, so a dismissal a task later takes the sheet's entry over and loses none", (t) => {
+  const { player, calls, app, at, entries, user } = historyPlayer(t);
+  app.depth = 1;
+  player.syncHistory();
+  calls.splice(0);
+  realSoon(player);
+  // The sheet's item pushes a page's address; the sheet goes a task later.
+  player.setPageUrl("?item=1", true);
+  assert.deepEqual(calls.splice(0), []);
+  app.depth = 0;
+  player.syncHistorySoon();
+  t.mock.timers.tick(0);
+  assert.deepEqual(calls.splice(0), [["replace", 0, 1, "https://a.test/inbox?item=1"]]);
+  assert.equal(at(), 1);
+  assert.equal(entries().length, 2);
+  user(-1);
+  assert.deepEqual(calls.splice(0), [["event", "onUrlScheme", { url: "https://a.test/inbox", page: true, change: "back" }]]);
+});
+
+test("a push waits while a traversal of the player's is waited for or a page is going", (t) => {
+  const { player, calls } = historyPlayer(t);
+  realSoon(player);
+  player.dismissing = 1;
+  player.setPageUrl("?item=1", true);
+  assert.deepEqual(calls.splice(0), []);
+  player.dismissing = 0;
+  t.mock.timers.tick(0);
+  assert.deepEqual(calls.splice(0), [["push", 0, 1, "https://a.test/inbox?item=1"]]);
+});
+
 test("a push in the turn that pushes a page gives the page's entry its address, with no entry of its own", (t) => {
   const { player, calls, app } = historyPlayer(t);
   inOneTurn(player, () => {
@@ -2918,8 +3458,8 @@ test("a push in the turn that pushes a page gives the page's entry its address, 
   assert.deepEqual(calls.splice(0), [["push", 1, 1], ["replace", 1, 1, "https://a.test/inbox?message=42"]]);
 });
 
-test("a push in the turn that pops a page waits for the back over its entry, then makes its own", (t) => {
-  const { player, calls, app, at } = historyPlayer(t);
+test("a push in the turn that pops a page takes the page's entry over: nothing goes back, no entry of its own", (t) => {
+  const { player, calls, app, at, entries, user } = historyPlayer(t);
   app.depth = 1;
   player.syncHistory();
   calls.splice(0);
@@ -2927,9 +3467,82 @@ test("a push in the turn that pops a page waits for the back over its entry, the
     app.depth = 0;
     player.setPageUrl("?tab=all", true);
   });
-  assert.deepEqual(calls.splice(0), [["go", -1], ["push", 0, 1, "https://a.test/inbox?tab=all"]]);
+  // The entry under it is not left again, so a browser's picture of it is the one taken as the page came.
+  assert.deepEqual(calls.splice(0), [["replace", 0, 1, "https://a.test/inbox?tab=all"]]);
   assert.equal(at(), 1);
+  assert.equal(entries().length, 2);
   assert.equal(player.historyDepth, 0);
+  assert.deepEqual(player.historyDepths, [0, 0]);
+  // Back from it goes to the entry under, as from an entry of its own.
+  user(-1);
+  assert.deepEqual(calls.splice(0), [["event", "onUrlScheme", { url: "https://a.test/inbox", page: true, change: "back" }]]);
+  user(1);
+  assert.deepEqual(calls.splice(0), [["event", "onUrlScheme", { url: "https://a.test/inbox?tab=all", page: true, change: "forward" }]]);
+});
+
+test("a push in the turn that pops a page with an address of its own takes its entry over, unless the address is the entry under it's", (t) => {
+  const { player, calls, app, at, entries } = historyPlayer(t);
+  inOneTurn(player, () => {
+    app.depth = 1;
+    player.setPageUrl("?sheet=1", true);
+  });
+  calls.splice(0);
+  // Back to its opener's address: the back lands on the opener's entry and the push makes nothing.
+  inOneTurn(player, () => {
+    app.depth = 0;
+    player.setPageUrl("/inbox", true);
+  });
+  assert.deepEqual(calls.splice(0), [["go", -1], ["replace", 0, 0, "https://a.test/inbox"]]);
+  assert.equal(at(), 0);
+  assert.deepEqual(entries().map((e) => e.url), ["https://a.test/inbox", "https://a.test/inbox?sheet=1"]);
+  inOneTurn(player, () => {
+    app.depth = 1;
+    player.setPageUrl("?sheet=1", true);
+  });
+  calls.splice(0);
+  inOneTurn(player, () => {
+    app.depth = 0;
+    player.setPageUrl("?tab=all", true);
+  });
+  assert.deepEqual(calls.splice(0), [["replace", 0, 1, "https://a.test/inbox?tab=all"]]);
+  inOneTurn(player, () => {
+    app.depth = 1;
+    player.setPageUrl("?sheet=2", true);
+  });
+  calls.splice(0);
+  // To the address of the entry under it, not its opener's first one: the same.
+  inOneTurn(player, () => {
+    app.depth = 0;
+    player.setPageUrl("?tab=all", true);
+  });
+  assert.deepEqual(calls.splice(0), [["go", -1], ["replace", 0, 1, "https://a.test/inbox?tab=all"]]);
+  assert.equal(at(), 1);
+  assert.deepEqual(entries().map((e) => e.url), ["https://a.test/inbox", "https://a.test/inbox?tab=all", "https://a.test/inbox?sheet=2"]);
+});
+
+test("a push in the turn that pops two pages, or one the user went back onto, waits for the back over their entries, then makes its own", (t) => {
+  const { player, calls, app, at, user } = historyPlayer(t);
+  app.depth = 2;
+  player.syncHistory();
+  calls.splice(0);
+  inOneTurn(player, () => {
+    app.depth = 0;
+    player.setPageUrl("?tab=all", true);
+  });
+  assert.deepEqual(calls.splice(0), [["go", -2], ["push", 0, 1, "https://a.test/inbox?tab=all"]]);
+  assert.equal(at(), 1);
+  // A page whose entry has one after it (the user went back onto it): the push drops that one.
+  player.setPageUrl("?tab=live", true);
+  app.depth = 1;
+  player.syncHistory();
+  player.setPageUrl("?tab=mine", true);
+  user(-1);
+  calls.splice(0);
+  inOneTurn(player, () => {
+    app.depth = 0;
+    player.setPageUrl("?tab=new", true);
+  });
+  assert.deepEqual(calls.splice(0)[0], ["go", -1]);
 });
 
 test("a push drops the browser's forward entries, and the address shown makes none", (t) => {
@@ -3194,6 +3807,122 @@ function fakeClipboard(t, { failWrite } = {}) {
   return log;
 }
 
+test("a copy gives attachments' copy texts where the layout put them among the runs", (t) => {
+  const saved = ["getComputedStyle", "document"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  t.after(() => {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  });
+  globalThis.getComputedStyle = () => ({ visibility: "visible" });
+  // `runOffset`'s range: the boundary's offset in the run's text.
+  globalThis.document = {
+    createRange: () => ({ setStart() {}, setEnd(_, offset) { this.offset = offset; }, toString() { return "x".repeat(this.offset); } }),
+  };
+  const { player } = fakePlayer();
+  // "Area is <formula> here,\n<formula> next" in two lines: run 0
+  // "Area is " (0..8), a formula at 8 after it, run 1 " here," (9..15)
+  // with the line's break, a formula at 16 first on the next line, before
+  // run 2 " next" (17..22).
+  const el = {
+    _copyTexts: [[8, "$x^2$", 0, 0], [16, "$y$", 2, 1]],
+    getBoundingClientRect: () => ({ top: 0, bottom: 40 }),
+  };
+  const runs = [[0, "Area is "], [9, " here,", "\n"], [17, " next"]].map(([start, text, after], i) => {
+    const run = { _run: i, _start: start, _after: after, textContent: text, parentNode: el };
+    run.contains = (node) => node === run;
+    return run;
+  });
+  player.selectableText = () => true;
+  player.areaOf = () => el;
+  const root = { querySelectorAll: () => runs };
+  const reaching = (first, last, end = null) => ({
+    intersectsNode: (run) => runs.indexOf(run) >= first && runs.indexOf(run) <= last,
+    startContainer: null,
+    endContainer: end?.[0] ?? null,
+    endOffset: end?.[1] ?? 0,
+  });
+  assert.equal(player.selectedText(root, reaching(0, 2)), "Area is $x^2$ here,\n$y$ next");
+  // From the second run on: the first formula is before the selection.
+  assert.equal(player.selectedText(root, reaching(1, 2)), " here,\n$y$ next");
+  // Up to the end of the first run: the formula after it is not selected...
+  assert.equal(player.selectedText(root, reaching(0, 0)), "Area is ");
+  // ...up to the start of the next run, it is.
+  assert.equal(player.selectedText(root, reaching(0, 1, [runs[1], 0])), "Area is $x^2$");
+  // A text without copy texts copies its runs.
+  el._copyTexts = null;
+  assert.equal(player.selectedText(root, reaching(0, 2)), "Area is  here,\n next");
+});
+
+test("a selectable view's selection carries the box around it", (t) => {
+  const saved = ["getComputedStyle", "document", "getSelection"].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  t.after(() => {
+    for (const [k, d] of saved) d ? Object.defineProperty(globalThis, k, d) : delete globalThis[k];
+  });
+  globalThis.getComputedStyle = () => ({ visibility: "visible" });
+  // Where the selected part of each run shows on the page.
+  const shown = new Map();
+  globalThis.document = {
+    createRange: () => ({
+      selectNodeContents(run) {
+        this.run = run;
+      },
+      setStart() {},
+      setEnd() {},
+      getClientRects() {
+        return shown.get(this.run) ?? [];
+      },
+    }),
+  };
+  const { player, sent } = fakePlayer();
+  const runs = [{}, {}, {}];
+  for (const run of runs) run.contains = () => false;
+  // A view 320 by 60 drawn at twice its size (a scaled player), at 100, 200
+  // on the page.
+  const area = {
+    _id: 4,
+    _events: new Set(["onSelectionChange"]),
+    isConnected: true,
+    querySelectorAll: () => runs,
+    getBoundingClientRect: () => ({ left: 100, top: 200, width: 640, height: 120 }),
+    offsetWidth: 320,
+    offsetHeight: 60,
+  };
+  // From the first run into the second; the third is not reached.
+  const range = { intersectsNode: (run) => run !== runs[2], startContainer: null, endContainer: null };
+  globalThis.getSelection = () => ({ rangeCount: 1, isCollapsed: false, anchorNode: { nodeType: 1 }, getRangeAt: () => range });
+  // The first line's part, and the empty box at its end (its break only).
+  shown.set(runs[0], [
+    { left: 140, top: 200, right: 300, bottom: 240, width: 160, height: 40 },
+    { left: 320, top: 200, right: 320, bottom: 240, width: 0, height: 40 },
+  ]);
+  shown.set(runs[1], [{ left: 100, top: 256, right: 180, bottom: 296, width: 80, height: 40 }]);
+  shown.set(runs[2], [{ left: 100, top: 300, right: 700, bottom: 340, width: 600, height: 40 }]);
+  Object.assign(player, {
+    root: { contains: () => true },
+    areaOf: () => area,
+    selectableText: () => true,
+    selectedText: () => "beta\nDel",
+    selectionStart: () => 6,
+  });
+  const reports = () => sent.filter(([name]) => name === "onSelectionChange").map(([, p]) => p);
+  player.areaSelectionChanged();
+  // In the view's own points, from its top left corner.
+  assert.deepEqual(reports(), [
+    { text: "beta\nDel", start: 6, bounds: { origin: { x: 0, y: 0 }, size: { width: 100, height: 48 } } },
+  ]);
+  // The same selection where it was: nothing to report.
+  player.areaSelectionChanged();
+  assert.equal(reports().length, 1);
+  // The same text selected elsewhere (the second line's part further on).
+  shown.set(runs[1], [{ left: 100, top: 256, right: 400, bottom: 296, width: 300, height: 40 }]);
+  player.areaSelectionChanged();
+  assert.equal(reports().length, 2);
+  assert.deepEqual(reports()[1].bounds, { origin: { x: 0, y: 0 }, size: { width: 150, height: 48 } });
+  // Nothing selected: no box.
+  player.selectedText = () => "";
+  player.areaSelectionChanged();
+  assert.deepEqual(reports().slice(2), [{ text: "", start: 0 }]);
+});
+
 test("text with its HTML goes on the clipboard as one item of both types", async (t) => {
   const log = fakeClipboard(t);
   const { player } = fakePlayer();
@@ -3356,9 +4085,10 @@ function leavingPage() {
       preventDefault() { this.defaultPrevented = true; },
     });
   const hide = (persisted = false) => dispatch("pagehide", { persisted });
+  const show = (persisted = false) => dispatch("pageshow", { persisted });
   const guards = () => (listeners.get("beforeunload") ?? []).length;
   const watchers = () => (listeners.get("pagehide") ?? []).length;
-  return { leave, hide, guards, watchers, restore: () => Object.assign(globalThis, saved) };
+  return { leave, hide, show, guards, watchers, restore: () => Object.assign(globalThis, saved) };
 }
 
 /** A running app (it watches the page's end, as `begin` has it) that
@@ -3460,6 +4190,45 @@ test("a page kept in the back / forward cache keeps its app running", () => {
     page.hide();
     assert.equal(calls.quits, 1);
   } finally {
+    page.restore();
+  }
+});
+
+test("a page in the back / forward cache is in the background until it comes back", () => {
+  const page = leavingPage();
+  const document = globalThis.document;
+  // A browser that tells no `visibilitychange` around the cache: the page
+  // stays visible and focused throughout.
+  globalThis.document = { visibilityState: "visible", hasFocus: () => true };
+  try {
+    const { player, calls } = quittingPlayer(() => true);
+    const reported = [];
+    Object.assign(player, { reported: "{}", environment: () => ({ lifecycle: player.lifecycle() }) });
+    player.wasm.nsh_environment = (ptr, len) => {
+      reported.push(JSON.parse(new TextDecoder().decode(new Uint8Array(player.wasm.memory.buffer, ptr, len))).lifecycle);
+      return -1;
+    };
+    player.watchPageCache(() => player.environmentChanged());
+    page.show();
+    page.hide(true);
+    assert.deepEqual(reported, ["background"], "kept in the cache: the app goes to the background");
+    assert.equal(calls.quits, 0, "and runs on");
+    page.show(true);
+    assert.deepEqual(reported, ["background", "active"], "restored: back in the foreground");
+    // Hidden again: the cache and visibility are one background.
+    page.hide(true);
+    globalThis.document.visibilityState = "hidden";
+    page.show(true);
+    assert.deepEqual(reported, ["background", "active", "background"]);
+    globalThis.document.visibilityState = "visible";
+    player.environmentChanged();
+    // The page's real end ends the app, once, with no lifecycle edge.
+    page.hide();
+    page.hide();
+    assert.equal(calls.quits, 1);
+    assert.deepEqual(reported, ["background", "active", "background", "active"]);
+  } finally {
+    globalThis.document = document;
     page.restore();
   }
 });
@@ -3812,8 +4581,9 @@ test("links and addresses resolve against the site's base where the page names i
 });
 
 /** An element whose DOM state, as a real one's, is not among its own
- * enumerable keys (`retag` copies those); a `style` attribute set as text
- * applies nothing, as under a strict `style-src`. */
+ * enumerable keys (`retag` copies those), listeners included; a `style`
+ * attribute set as text applies nothing, as under a strict `style-src`;
+ * focused, it is focused from the keyboard. */
 function fakeElement(tag, attributes = {}) {
   const attrs = new Map(Object.entries(attributes));
   const set = [];
@@ -3823,14 +4593,26 @@ function fakeElement(tag, attributes = {}) {
     attributes: { get: () => [...attrs].map(([name, value]) => ({ name, value })) },
     setAttribute: { value(name, value) { set.push(name); if (name !== "style") attrs.set(name, String(value)); } },
     getAttribute: { value: (name) => attrs.get(name) ?? null },
+    hasAttribute: { value: (name) => attrs.has(name) },
     removeAttribute: { value: (name) => attrs.delete(name) },
     attributesSet: { value: set },
+    tabIndex: { get: () => Number(attrs.get("tabindex") ?? -1), set: (v) => attrs.set("tabindex", String(v)) },
+    dataset: { value: {} },
+    classList: { value: { toggle() {} } },
+    matches: { value: (selector) => selector === ":focus-visible" },
     style: { value: { cssText: attributes.style ?? "" } },
     childNodes: { value: [] },
     append: { value(...nodes) { this.childNodes.push(...nodes); } },
     replaceWith: { value() {} },
+    listeners: { value: [] },
+    addEventListener: { value(type, listener) { this.listeners.push([type, listener]); } },
   });
   return el;
+}
+
+/** Dispatches `event` of `type` to the listeners `el` (`fakeElement`) has. */
+function fire(el, type, event = {}) {
+  for (const [t, listener] of el.listeners) if (t === type) listener({ type, ...event });
 }
 
 test("a view drawn as another element keeps its frame under a strict style-src", () => {
@@ -3854,6 +4636,276 @@ test("a view drawn as another element keeps its frame under a strict style-src",
   } finally {
     globalThis.document = savedDocument;
   }
+});
+
+test("a link drawn as an a keeps its hover and its keyboard focus", () => {
+  const savedDocument = globalThis.document;
+  globalThis.document = { createElement: (tag) => fakeElement(tag), activeElement: null };
+  try {
+    const { player } = fakePlayer();
+    const reported = [];
+    player.wasm.nsh_states = (id, states) => {
+      reported.push([id, states]);
+      return -1;
+    };
+    const heard = [];
+    player.event = (id, name) => heard.push([id, name]);
+    Object.assign(player, { views: new Map(), mouseTracked: new Set(), wheelTracked: new Set() });
+    player.updateAria = () => {};
+    player.updateTouchAction = () => {};
+    const el = fakeElement("div", { class: "nsh-v" });
+    Object.assign(el, { _id: 6, _kind: "view", _events: new Set(), _frame: null });
+    player.views.set(6, el);
+    // A new `Link` with `hover:` and `focus:` classes, in the core's order:
+    // its tracked states and events come before the props whose `href`
+    // draws it as an `a`.
+    player.op_ts([, 6, 2 | 4]);
+    player.op_e([, 6, ["onPress"]]);
+    player.op_vp([, 6, { role: "link", href: "/notes" }]);
+    const link = player.view(6);
+    assert.equal(link.localName, "a");
+    // Listeners of its own, once each: the div's went with the div.
+    assert.deepEqual(link.listeners.map(([type]) => type), ["pointerenter", "pointerleave", "focus", "blur"]);
+    fire(link, "pointerenter", { pointerType: "mouse" });
+    fire(link, "focus");
+    fire(link, "pointerleave", { pointerType: "mouse" });
+    fire(link, "blur");
+    // Hovered, then focused too, then focused only, then neither.
+    assert.deepEqual(reported, [[6, 2], [6, 6], [6, 4], [6, 0]]);
+    assert.deepEqual(heard, [[6, "onFocus"], [6, "onBlur"]]);
+  } finally {
+    globalThis.document = savedDocument;
+  }
+});
+
+test("a text drawn as a heading after its links keeps their hover", () => {
+  const savedDocument = globalThis.document;
+  globalThis.document = { createElement: (tag) => fakeElement(tag) };
+  try {
+    const { player } = fakePlayer();
+    const heard = [];
+    player.event = (id, name) => heard.push([id, name]);
+    player.mouseEvent = () => null;
+    player.views = new Map();
+    const el = fakeElement("div", { class: "nsh-v" });
+    Object.assign(el, { _id: 8, _kind: "text" });
+    player.views.set(8, el);
+    // Its runs hold a link the mouse is reported for (`runs`); then a
+    // `role="header"` draws it as an `h2`.
+    player.installLinkHover(el);
+    const heading = player.retag(el, "h2");
+    const run = { _link: { node: 10, events: new Set(["onMouseEnter", "onMouseLeave"]) } };
+    fire(heading, "pointerover", { pointerType: "mouse", target: run });
+    fire(heading, "pointerleave", { pointerType: "mouse" });
+    assert.deepEqual(heard, [[10, "onMouseEnter"], [10, "onMouseLeave"]]);
+  } finally {
+    globalThis.document = savedDocument;
+  }
+});
+
+test("a click with a modifier key on a link is the browser's: the link takes no press", () => {
+  inPage(() => {
+    globalThis.document.elementFromPoint = () => null;
+    const { player, sent } = dialogPlayer(false);
+    player.editable = () => false;
+    // A `Link` with an `href` (drawn as an `a`) and a pressable that is no link.
+    const pressable = (id, link) => {
+      const el = {
+        _id: id,
+        _events: new Set(["onPressIn", "onPress"]),
+        _props: {},
+        _tracked: 0,
+        getBoundingClientRect: () => ({ left: 600, top: 300, right: 700, bottom: 340 }),
+        closest: (selector) => (link && selector.split(", ").includes("a.nsh-v[href]") ? el : null),
+      };
+      return el;
+    };
+    const link = pressable(9, true);
+    const button = pressable(10, false);
+    /** What a click on `target` (in view `view`) sends, holding `keys`. */
+    const click = (target, keys = {}, view = target) => {
+      sent.length = 0;
+      player.viewOf = () => view;
+      player.ancestors = () => [view];
+      const e = {
+        pointerId: 1, pointerType: "mouse", button: 0, buttons: 1, clientX: 640, clientY: 320, target,
+        metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...keys,
+      };
+      player.pointerDown(e);
+      player.pointerUp({ ...e, buttons: 0 }, false);
+      return sent.map(([name, payload]) => [name, payload?.modifiers?.platform]);
+    };
+    // A plain click presses the link: the app opens it.
+    assert.deepEqual(click(link), [["onPressIn", false], ["onPress", false]]);
+    // With Cmd, Ctrl, Shift or Alt the browser opens it (a new tab or
+    // window, a download), as it does on a middle click: the link hears
+    // nothing, so nothing opens it a second time.
+    for (const key of ["metaKey", "ctrlKey", "shiftKey", "altKey"]) {
+      assert.deepEqual(click(link, { [key]: true }), [], key);
+    }
+    assert.deepEqual(click(link, { button: 1 }), []);
+    // A pressable that is no link still takes a press with a modifier, and
+    // reports the key.
+    assert.deepEqual(click(button, { metaKey: true }), [["onPressIn", true], ["onPress", true]]);
+    // A link of text that goes somewhere is an `a` too (`fillRun`), in a
+    // text that takes no presses of its own: the same.
+    const text = { ...pressable(11, false), _events: new Set() };
+    const textLink = {
+      _link: { node: 12, events: new Set(["onPressIn", "onPress"]) },
+      closest: (selector) => (selector.split(", ").includes("a.nsh-link[href]") ? textLink : null),
+    };
+    const pressed = [];
+    const nshEvent = player.wasm.nsh_event;
+    player.wasm.nsh_event = (id, ...rest) => {
+      pressed.push(id);
+      return nshEvent(id, ...rest);
+    };
+    // A plain click presses the link's node, through its text.
+    assert.deepEqual(click(textLink, {}, text), [["onPressIn", false], ["onPress", false]]);
+    assert.deepEqual(pressed, [12, 12]);
+    for (const key of ["metaKey", "ctrlKey", "shiftKey", "altKey"]) {
+      assert.deepEqual(click(textLink, { [key]: true }, text), [], key);
+    }
+    assert.deepEqual(click(textLink, { button: 1 }, text), []);
+  });
+});
+
+/** A document whose elements keep what `replaceRuns` and `fillRun` give
+ * them: tag, attributes, classes, children (strings for text). */
+function runDocument(baseURI) {
+  const element = (tag) => {
+    const el = {
+      localName: tag,
+      style: {},
+      childNodes: [],
+      attributes: new Map(),
+      classes: new Set(),
+      setAttribute(name, value) { el.attributes.set(name, String(value)); },
+      getAttribute: (name) => el.attributes.get(name) ?? null,
+      append(...nodes) { el.childNodes.push(...nodes); },
+    };
+    el.classList = { add: (name) => el.classes.add(name), contains: (name) => el.classes.has(name) };
+    Object.defineProperty(el, "className", { set(value) { el.classes = new Set(value.split(" ")); } });
+    Object.defineProperty(el, "textContent", {
+      get: () => el.childNodes.map((n) => (typeof n === "string" ? n : n.textContent)).join(""),
+      set(value) { el.childNodes = [String(value)]; },
+    });
+    return el;
+  };
+  return { baseURI, createElement: element, createDocumentFragment: () => element("#fragment") };
+}
+
+test("a link of text that goes somewhere a browser opens is an a, any other a span", () => {
+  const savedDocument = globalThis.document;
+  globalThis.document = runDocument("https://site.test/app/n/1");
+  try {
+    const { player } = fakePlayer();
+    player.siteBase = "https://site.test/app/";
+    player.styleClass = () => null;
+    player.lineBreaks = () => {};
+    let hover = 0;
+    player.installLinkHover = () => hover++;
+    let inserted = null;
+    const el = { _animation: {}, querySelectorAll: () => [], insertBefore: (frag) => { inserted = frag; } };
+    // One run, five links (`[node, events, href?]`): to a page, to nowhere,
+    // to an app's own route, watched for a hint only, and to a path.
+    const text = "the guide this MU hint quote";
+    const parts = [[0, 9, 0], [10, 14, 1], [15, 17, 2], [18, 22, 3], [23, 28, 4]];
+    player.replaceRuns(el, 0, 0, [[0, 0, text, 0, 0, parts]], [null], null, [
+      [10, ["onPressIn", "onPress"], "https://example.com/guide"],
+      [11, ["onPress"]],
+      [12, ["onPress"], "lbt:stock/ST/US/MU"],
+      [13, ["onMouseEnter", "onMouseLeave"], "https://example.com/hint"],
+      [14, ["onPress"], "/zh-CN/quote/MU.US"],
+    ]);
+    const [run] = inserted.childNodes;
+    assert.equal(run.textContent, text, "the run's characters, in their order");
+    const links = run.childNodes.filter((n) => typeof n !== "string");
+    const drawn = links.map((l) => [l.localName, l.textContent, l.getAttribute("href"), l.classes.has("nsh-link"), l._link.node]);
+    assert.deepEqual(drawn, [
+      ["a", "the guide", "https://example.com/guide", true, 10],
+      ["span", "this", null, true, 11],
+      ["span", "MU", null, true, 12],
+      // No presses: no link of the browser's, whatever its `href`.
+      ["span", "hint", null, false, 13],
+      // A path of the app's, under the site's base as a `Link`'s.
+      ["a", "quote", "https://site.test/zh-CN/quote/MU.US", true, 14],
+    ]);
+    // A drag selects its characters; Tab passes it, as it passes the other
+    // links of text.
+    for (const a of links.filter((l) => l.localName === "a")) {
+      assert.equal(a.draggable, false);
+      assert.equal(a.tabIndex, -1);
+    }
+    assert.equal(hover, 1, "the hinted link hears the mouse");
+  } finally {
+    globalThis.document = savedDocument;
+  }
+});
+
+test("a link of text is an a for web pages, paths of the site, mail and phone", () => {
+  const savedDocument = globalThis.document;
+  globalThis.document = { baseURI: "https://page.test/app/n/1" };
+  try {
+    const { player } = fakePlayer();
+    player.siteBase = "https://site.test/app/";
+    const address = (href) => player.textLinkAddress(href);
+    assert.equal(address("https://example.com/a?b=1#c"), "https://example.com/a?b=1#c");
+    assert.equal(address("http://example.com/"), "http://example.com/");
+    assert.equal(address(" https://example.com/b "), "https://example.com/b", "as the browser reads an href");
+    assert.equal(address("//cdn.test/x"), "https://cdn.test/x");
+    assert.equal(address("/zh-CN/quote/MU.US"), "https://site.test/zh-CN/quote/MU.US");
+    assert.equal(address("notes/1"), "https://site.test/app/notes/1");
+    assert.equal(address("mailto:me@example.com"), "mailto:me@example.com");
+    assert.equal(address("tel:+85212345678"), "tel:+85212345678");
+    // A heading of the text's own document, the app's own routes, scripts
+    // and data: spans, the app's to route.
+    for (const href of ["#notes", "lbt:stock/ST/US/MU", "myapp://open", "javascript:alert(1)", "JavaScript:alert(1)",
+      "data:text/html,x", "file:///etc/hosts", undefined, null]) {
+      assert.equal(address(href), null, String(href));
+    }
+    // Without a site base the page's own base resolves it, and the `href`
+    // is kept as written, as a `Link`'s.
+    player.siteBase = null;
+    assert.equal(address("/zh-CN/quote/MU.US"), "/zh-CN/quote/MU.US");
+    assert.equal(address("lbt:stock/ST/US/MU"), null);
+  } finally {
+    globalThis.document = savedDocument;
+  }
+});
+
+test("a link of text has the browser's menu unless its text shows one", () => {
+  const { player } = fakePlayer();
+  const handled = [];
+  player.event = (id, name) => handled.push([id, name]);
+  player.point = () => [0, 0];
+  const text = {
+    _id: 8,
+    _events: new Set(),
+    localName: "div",
+    hasAttribute: () => false,
+    matches: () => false,
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 100, bottom: 20 }),
+  };
+  const page = { ...text, _id: 2, _events: new Set(["onContextMenu"]) };
+  player.viewOf = () => text;
+  player.ancestors = () => [text, page];
+  const link = { closest: (selector) => (selector === "a.nsh-link[href]" ? link : null) };
+  const plain = { closest: () => null };
+  const menu = (target) => {
+    handled.length = 0;
+    let prevented = false;
+    const shown = player.contextMenu({ target, button: 2, pointerType: "mouse", clientX: 5, clientY: 5,
+      preventDefault: () => { prevented = true; } });
+    return [shown, prevented, handled.map(([id]) => id)];
+  };
+  // On the link: the browser's (open in a new tab, copy the link).
+  assert.deepEqual(menu(link), [true, false, []]);
+  // Elsewhere in the text: the page's own menu.
+  assert.deepEqual(menu(plain), [true, true, [2]]);
+  // A text with a menu of its own shows it on its links too.
+  text._events = new Set(["onContextMenu"]);
+  assert.deepEqual(menu(link), [true, true, [8]]);
 });
 
 test("a web view's relative URL is the site's where the page names its base", () => {
@@ -3926,5 +4978,174 @@ test("share reports shared, dismissed and unavailable, never shared when it coul
   } finally {
     if (saved) Object.defineProperty(globalThis, "navigator", saved);
     else delete globalThis.navigator;
+  }
+});
+
+test("window blur resets hoverButtons and cancels all active pointers", () => {
+  const windowListeners = new Map();
+  const savedWindow = globalThis.window;
+  const savedDocument = globalThis.document;
+  const noop = () => {};
+  globalThis.window = {
+    addEventListener: (type, fn) => windowListeners.set(type, fn),
+  };
+  globalThis.document = {
+    addEventListener: noop,
+    createElement: (tag) => fakeElement(tag),
+  };
+  try {
+    const { player } = fakePlayer();
+    player.root = fakeElement("div");
+    player.installFileDrop = noop;
+    player.installInput();
+    const canceled = [];
+    const p1 = { scrolls: { active: true } };
+    const p2 = { scrolls: null };
+    player.hoverButtons = 1;
+    player.pointers = new Map([[11, p1], [12, p2]]);
+    player.pointerUp = (e, cancel) => {
+      canceled.push([e.pointerId, e.buttons, cancel]);
+      player.pointers.delete(e.pointerId);
+    };
+    const onBlur = windowListeners.get("blur");
+    assert.equal(typeof onBlur, "function", "registers window blur listener");
+    onBlur();
+    assert.equal(player.hoverButtons, 0);
+    assert.equal(p1.scrolls, null);
+    assert.deepEqual(canceled, [[11, 0, true], [12, 0, true]]);
+    assert.equal(player.pointers.size, 0);
+  } finally {
+    if (savedWindow === undefined) delete globalThis.window;
+    else globalThis.window = savedWindow;
+    if (savedDocument === undefined) delete globalThis.document;
+    else globalThis.document = savedDocument;
+  }
+});
+
+test("point, corner, wheel, context menu, pinch, and scrollbar drag undo ancestor CSS zoom", () => {
+  const savedStyle = globalThis.getComputedStyle;
+  const styles = new Map();
+  globalThis.getComputedStyle = (node) => styles.get(node) ?? { zoom: "1", direction: "ltr" };
+  try {
+    const { player, sent } = fakePlayer();
+    const host = { parentElement: null };
+    const root = {
+      parentElement: host,
+      getBoundingClientRect: () => ({ left: 30, top: 15 }),
+    };
+    styles.set(host, { zoom: "1.5" });
+    styles.set(root, { zoom: "1" });
+    player.root = root;
+
+    // Fallback path when currentCSSZoom is absent: multiplies ancestor computed zoom.
+    assert.equal(player.cssZoom(root), 1.5);
+    assert.deepEqual(player.point({ clientX: 180, clientY: 90, target: root }, null), [100, 50]);
+
+    // Fast path when currentCSSZoom is present.
+    const view = {
+      _id: 9,
+      parentNode: root,
+      parentElement: root,
+      currentCSSZoom: 1.5,
+      _events: new Set(["onWheel", "onContextMenu", "onPinch"]),
+      getBoundingClientRect: () => ({ left: 60, top: 45, right: 360, bottom: 195 }),
+      matches: () => false,
+    };
+    root.currentCSSZoom = 1.5;
+    assert.deepEqual(player.corner(view, null), [20, 20]);
+    assert.deepEqual(player.point({ clientX: 210, clientY: 120, target: view }, null), [120, 70]);
+
+    // Wheel local position and pagePosition both report logical points.
+    player.viewOf = () => view;
+    player.ancestors = () => [view];
+    player.wheelTracked = new Set([9]);
+    player.size = [800, 600];
+    player.wheelEvent({
+      target: view,
+      clientX: 210,
+      clientY: 120,
+      deltaX: 0,
+      deltaY: 40,
+      deltaMode: 0,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+    });
+    assert.deepEqual(sent.at(-1)[1].position, { x: 100, y: 50 });
+    assert.deepEqual(sent.at(-1)[1].pagePosition, { x: 120, y: 70 });
+
+    // Context menu local position and pagePosition both report logical points.
+    player.contextMenu({
+      target: view,
+      clientX: 210,
+      clientY: 120,
+      button: 2,
+      pointerType: "mouse",
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+      preventDefault() {},
+    });
+    assert.deepEqual(sent.at(-1)[1].position, { x: 100, y: 50 });
+    assert.deepEqual(sent.at(-1)[1].pagePosition, { x: 120, y: 70 });
+
+    // Pinch local position and pagePosition both report logical points.
+    view.isConnected = true;
+    player.pinchEvent(
+      {
+        target: view,
+        clientX: 210,
+        clientY: 120,
+        scale: 1.2,
+        ctrlKey: false,
+        altKey: false,
+        shiftKey: false,
+        metaKey: false,
+        preventDefault() {},
+      },
+      0,
+    );
+    assert.deepEqual(sent.at(-1)[1].position, { x: 100, y: 50 });
+    assert.deepEqual(sent.at(-1)[1].pagePosition, { x: 120, y: 70 });
+
+    // mousePoint and mouseEvent fallback both undo ancestor CSS zoom.
+    styles.set(view, { transform: "none", scale: "none", zoom: "1", width: "200px", height: "100px" });
+    styles.set(host, { transform: "none", scale: "none", zoom: "1.5" });
+    styles.set(root, { transform: "none", scale: "none", zoom: "1" });
+    assert.deepEqual(player.mousePoint(view, { clientX: 210, clientY: 120 }), [100, 50]);
+    styles.set(view, { transform: "none", scale: "0", zoom: "1", width: "200px", height: "100px" });
+    const mousePayload = player.mouseEvent(
+      view,
+      { clientX: 210, clientY: 120, buttons: 0, pointerType: "mouse" },
+      true,
+    );
+    assert.deepEqual(mousePayload.position, { x: 100, y: 50 });
+    assert.deepEqual(mousePayload.pagePosition, { x: 120, y: 70 });
+
+    // Scrollbar hit-testing and drag divide viewport coordinates by CSS zoom.
+    const scroll = {
+      _horizontal: false,
+      clientWidth: 200,
+      clientHeight: 100,
+      scrollTop: 0,
+      currentCSSZoom: 1.5,
+      getBoundingClientRect: () => ({ left: 60, top: 45 }),
+    };
+    player.barShown = () => true;
+    player.barThumb = () => [10, 40, 60, 300];
+    player.barEdge = () => 200;
+    // Viewport x = 60 + 195 * 1.5 = 352.5 (logical 195, inside right edge grab zone),
+    // y = 45 + 25 * 1.5 = 82.5 (logical 25, inside thumb [10, 50]).
+    assert.equal(player.barHit(scroll, { clientX: 352.5, clientY: 82.5 }), true);
+    // Unscaled logical y = 25 would look like 25/1.5 = 16.6 if not zoomed; check outside at logical 60.
+    assert.equal(player.barHit(scroll, { clientX: 352.5, clientY: 45 + 60 * 1.5 }), false);
+    player.dragBar({ scroll, start: 82.5, offset: 0 }, { clientY: 82.5 + 30 });
+    // 30 viewport px / 1.5 = 20 logical px; 20 * (300 / 60) = 100 logical scroll offset.
+    assert.equal(scroll.scrollTop, 100);
+  } finally {
+    if (savedStyle === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = savedStyle;
   }
 });

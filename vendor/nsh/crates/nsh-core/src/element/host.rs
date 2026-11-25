@@ -16,11 +16,11 @@ use super::{
     },
 };
 use crate::{
-    AudioSession, AutoCapitalize, AutoFill, Color, EventKind, HeaderSlot, Hsla, JsonValue,
-    KeyboardAppearance, KeyboardType, ModalAnimation, ModalPresentation, ModalProp, NativeProp,
-    OverlayProp, PasteBehavior, PasteEvent, Points, Prop, ResizeMode, ReturnKeyType, Rgba,
-    ScreenAnimation, ScreenProp, ScrollProp, SheetDetent, Size, StatusBarSetting, SubmitBehavior,
-    Tag, WebSource,
+    AudioSession, AutoCapitalize, AutoFill, Color, EventKind, HeaderSlot, HeaderTitleAlign, Hsla,
+    JsonValue, KeyboardAppearance, KeyboardType, ModalAnimation, ModalPresentation, ModalProp,
+    NativeProp, OverlayProp, PasteBehavior, PasteEvent, Points, Prop, ResizeMode, ReturnKeyType,
+    Rgba, ScreenAnimation, ScreenProp, ScrollProp, SheetDetent, Size, StatusBarSetting,
+    SubmitBehavior, Tag, WebSource,
     canvas::{
         CanvasFont, CanvasGradient, CanvasImage, CanvasOp, CanvasTextAlign, CanvasTextBaseline,
         Composite, Drawing, FillRule, LineCap, LineJoin, Num, Paint, Path, PathOp, ViewPaint,
@@ -772,9 +772,13 @@ impl Input {
     }
 
     /// Whether a multiline input's scroll bar shows (default yes): the
-    /// platform's indicator, or the app's built-in bar once it set one.
-    pub fn scrollbar(self, shows: impl IntoReactive<bool>) -> Self {
-        self.bind_prop(shows, |shows: bool| Prop::Scrollbar(shows.into()))
+    /// platform's indicator, or the app's built-in bar once it set one; or
+    /// a built-in bar of this input's own theme (TS `scrollbar={theme}`:
+    /// `nsh_base::ScrollbarTheme` converts into a setting). The built-in
+    /// bar lies over the input's frame, padding included, while the text
+    /// stays in the content box.
+    pub fn scrollbar(self, setting: impl IntoReactive<crate::ScrollbarSetting>) -> Self {
+        self.bind_prop(setting, Prop::Scrollbar)
     }
 
     /// At most `length` characters, counted as Unicode scalar values
@@ -804,6 +808,14 @@ impl Input {
         self.bind_prop(behavior, Prop::PasteBehavior)
     }
 
+    /// Reads pasted files of at most `bytes` bytes (`pasteMaxSize`); a
+    /// larger one reaches [`Self::on_paste`] in
+    /// [`PasteEvent::too_large`], its name, type and size only. Default:
+    /// every file is read.
+    pub fn paste_max_size(self, bytes: impl IntoReactive<u64>) -> Self {
+        self.bind_prop(bytes, |bytes: u64| Prop::PasteMaxSize(Some(bytes)))
+    }
+
     /// The user pasted: the text, the files with their bytes (a
     /// screenshot) and local files' URLs, before the text it inserts is
     /// reported.
@@ -814,6 +826,13 @@ impl Input {
     /// Focused when it appears.
     pub fn auto_focus(self, focus: impl IntoReactive<bool>) -> Self {
         self.bind_prop(focus, |focus: bool| Prop::AutoFocus(focus))
+    }
+
+    /// Selects the whole text when the input takes the focus (TS:
+    /// `selectTextOnFocus`); a click that drags or extends a selection keeps
+    /// the user's.
+    pub fn select_text_on_focus(self, select: impl IntoReactive<bool>) -> Self {
+        self.bind_prop(select, |select: bool| Prop::SelectTextOnFocus(select))
     }
 
     /// The caret is drawn (default yes; TS: `caret`).
@@ -877,7 +896,8 @@ impl Input {
         )
     }
 
-    /// A key was pressed: the character, `Backspace` or `Enter`.
+    /// A key was pressed: the character, `Backspace`, `Enter`, `Escape`,
+    /// `ArrowUp` or `ArrowDown`.
     pub fn on_key_press<M>(self, listener: impl IntoListener<str, M>) -> Self {
         self.listen(EventKind::KeyPress, listener.into_listener(), events::key)
     }
@@ -909,9 +929,11 @@ impl Scroll {
         self.set(Prop::Horizontal(true))
     }
 
-    /// Whether the scroll indicator shows (default yes).
-    pub fn scrollbar(self, shows: impl IntoReactive<bool>) -> Self {
-        self.bind_prop(shows, |shows: bool| Prop::Scrollbar(shows.into()))
+    /// Whether the scroll indicator shows (default yes); or a built-in bar
+    /// of this view's own theme (TS `scrollbar={theme}`:
+    /// `nsh_base::ScrollbarTheme` converts into a setting).
+    pub fn scrollbar(self, setting: impl IntoReactive<crate::ScrollbarSetting>) -> Self {
+        self.bind_prop(setting, Prop::Scrollbar)
     }
 
     /// Pinch zoom between `min` and `max`.
@@ -1000,6 +1022,33 @@ impl Screen {
     pub fn header_transparent(self, transparent: impl IntoReactive<bool>) -> Self {
         self.bind_prop(transparent, |v| {
             Prop::Screen(ScreenProp::HeaderTransparent(v))
+        })
+    }
+
+    /// The hairline under the header (iOS; on by default, as UIKit's opaque
+    /// bars draw it). Off matches iOS 26's bars, which separate the
+    /// content by the scroll edge effect instead (TS: `headerShadowVisible`).
+    pub fn header_shadow_visible(self, visible: impl IntoReactive<bool>) -> Self {
+        self.bind_prop(visible, |v| {
+            Prop::Screen(ScreenProp::HeaderShadowVisible(v))
+        })
+    }
+
+    /// Where the title sits in the header (TS: `headerTitleAlign`): at the
+    /// start (the default) or centered. Android's header follows it; iOS's
+    /// system bar always centers the title and ignores the value.
+    pub fn header_title_align(self, align: impl IntoReactive<HeaderTitleAlign>) -> Self {
+        self.bind_prop(align, |a| Prop::Screen(ScreenProp::HeaderTitleAlign(a)))
+    }
+
+    /// With [`Self::header_transparent`], the header stays clear while the
+    /// content rests at its top and shows its background (UIKit's default,
+    /// or [`Self::header_style_with`]'s color) once the content scrolls
+    /// under it, as UIKit's own bars do (iOS; off by default; TS:
+    /// `headerBackgroundOnScroll`).
+    pub fn header_background_on_scroll(self, on: impl IntoReactive<bool>) -> Self {
+        self.bind_prop(on, |v| {
+            Prop::Screen(ScreenProp::HeaderBackgroundOnScroll(v))
         })
     }
 
@@ -1559,6 +1608,18 @@ impl WebView {
         })
     }
 
+    /// One more origin the web view may show and navigate to besides
+    /// `webview.hosts`, known only while the app runs
+    /// (`scheme://host[:port]`, matched exactly): needs
+    /// `"runtimeOrigin": true` in `capabilities.webview`
+    /// ([`crate::access::WebOrigin`]). Set with the source, it applies to
+    /// it; changed later, from the next navigation.
+    pub fn allow_origin(self, origin: impl IntoReactive<String>) -> Self {
+        self.bind_prop(origin, |origin: String| {
+            Prop::Native(NativeProp::AllowOrigin(Some(origin.into())))
+        })
+    }
+
     /// Runs before each page's own scripts.
     pub fn injected_java_script_before_content(self, script: impl IntoReactive<String>) -> Self {
         self.bind_prop(script, |script: String| {
@@ -1600,6 +1661,14 @@ impl WebView {
     /// when the web view is made, so it takes a value, not a signal.
     pub fn incognito(self, incognito: bool) -> Self {
         self.set(Prop::Native(NativeProp::Incognito(incognito)))
+    }
+
+    /// Lets the person pinch to zoom the page, also past its viewport's
+    /// scale limits (default no: each platform's own behavior, see the
+    /// `zoomable` prop). Read when the web view is made, as
+    /// [`incognito`](Self::incognito).
+    pub fn zoomable(self, zoomable: bool) -> Self {
+        self.set(Prop::Native(NativeProp::Zoomable(zoomable)))
     }
 
     /// Serves the page the URLs of `scheme` (`"app-image"` for
@@ -2640,6 +2709,7 @@ impl From<Drawing> for Painter {
 }
 
 crate::static_reactive!(ScreenAnimation: ScreenAnimation);
+crate::static_reactive!(HeaderTitleAlign: HeaderTitleAlign);
 
 /// A program where an optional one goes (`.transition_shader(wipe)`).
 impl IntoReactive<Option<crate::shader::TransitionShader>> for crate::shader::TransitionShader {

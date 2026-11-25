@@ -376,6 +376,10 @@ pub(super) struct ListState {
     pub(super) offset: f32,
     /// Main-axis size of the list viewport (from layout).
     pub(super) viewport: f32,
+    /// The list's `contentInset` along the main axis (leading, trailing):
+    /// its offsets run from `-leading` to the content's end plus
+    /// `trailing`, as the platforms scroll it.
+    pub(super) inset: (f32, f32),
     /// Window, bindings or positions need recomputing.
     pub(super) dirty: bool,
     /// Cross-axis size the cells were last laid out at.
@@ -484,6 +488,7 @@ impl ListState {
             start_threshold: START_THRESHOLD,
             offset: 0.0,
             viewport: 0.0,
+            inset: (0.0, 0.0),
             dirty: true,
             cells_cross: f32::NAN,
             load_more_at: None,
@@ -595,15 +600,22 @@ impl ListState {
         if self.parent {
             self.limits
         } else {
-            (0.0, (self.content_len() - self.viewport).max(0.0))
+            (-self.inset.0, self.own_end())
         }
+    }
+
+    /// The end of a list in its own scroll view: the content's end plus
+    /// the trailing inset, at the viewport's end; content too short to
+    /// scroll rests at its start, under the leading inset.
+    fn own_end(&self) -> f32 {
+        (self.content_len() + self.inset.1 - self.viewport).max(-self.inset.0)
     }
 
     /// The items changed: `removed` items at `at` were replaced by
     /// `inserted` new ones. Measurements and cells follow the items that
-    /// stay, and when the change is above the first visible item of a list
-    /// scrolled past its start, the visible content keeps its place
-    /// ([`Self::visible_anchor`]).
+    /// stay, and when the change is above the first row that starts in the
+    /// viewport of a list scrolled past its start, the visible content
+    /// keeps its place ([`Self::reading_anchor`]).
     pub(super) fn splice(&mut self, at: u32, removed: u32, inserted: u32) {
         let at = at.min(self.count);
         let removed = removed.min(self.count - at);
@@ -614,7 +626,7 @@ impl ListState {
         // The visible content keeps its place instead.
         self.pin = None;
         let anchor = self
-            .visible_anchor()
+            .reading_anchor()
             .filter(|&(index, _)| index >= at + removed)
             .map(|(index, from_top)| (index - removed + inserted, from_top));
         let natural_before = self.natural_offset();
@@ -646,8 +658,10 @@ impl ListState {
     /// its measurement and its cell (the content, the state in it, the
     /// focus) wherever it goes, the items it passes too; only new items
     /// need a cell, and only gone ones free theirs. The first visible item
-    /// that kept its order keeps its place, as for a splice: one that moved
-    /// away leaves the rows around it where they were.
+    /// that kept its order keeps its place, from the first row that starts
+    /// in the viewport, as for a splice ([`Self::reading_anchor`]): one
+    /// that moved away leaves the rows around it where they were. The row
+    /// the viewport's start cuts through comes last.
     pub(super) fn reorder(&mut self, diff: &ListDiff) {
         if diff.old_len != self.count {
             // Not a change of these items: all of them are new.
@@ -660,11 +674,13 @@ impl ListState {
         }
         self.items_changed = true;
         self.pin = None;
-        let anchor = self.visible_anchor().and_then(|(first, _)| {
+        let anchor = self.visible_anchor().and_then(|(cut, _)| {
+            let (first, _) = self.reading_anchor()?;
             let top = self.natural_offset();
             let bottom = top + self.viewport;
             (first..self.count)
                 .take_while(|&i| self.item_at(i) < bottom)
+                .chain(cut..first)
                 .find_map(|i| match diff.new_index(i) {
                     Some((to, false)) => Some((to, self.item_at(i) - top)),
                     _ => None,
@@ -844,6 +860,30 @@ impl ListState {
                 let index = (row * self.columns).min(self.count - 1);
                 (index, self.item_at(index) - top)
             })
+    }
+
+    /// The visible item a change of the items keeps in place, and where it
+    /// is in the viewport, as [`Self::visible_anchor`]: the first row that
+    /// starts in the viewport rather than one its start cuts through, which
+    /// shows only its end. A change right after that row keeps the rows
+    /// below in place and moves it up, as a change above the viewport;
+    /// otherwise the rows being read would all move down. A row taller
+    /// than the viewport, with no row starting in view, is the anchor
+    /// itself.
+    fn reading_anchor(&self) -> Option<(u32, f32)> {
+        let (index, from_top) = self.visible_anchor()?;
+        // A row a pixel's rounding past the start shows whole.
+        if from_top >= -PIN_SLACK {
+            return Some((index, from_top));
+        }
+        let next = (self.row_of(index) + 1) * self.columns;
+        Some(
+            Some(next)
+                .filter(|&next| next < self.count)
+                .map(|next| (next, self.item_at(next) - self.natural_offset()))
+                .filter(|&(_, next_from_top)| next_from_top < self.viewport)
+                .unwrap_or((index, from_top)),
+        )
     }
 
     /// The row the viewport starts in, by its first item, and how far
@@ -1299,6 +1339,23 @@ impl ListState {
         (start, (cross - start - end).max(0.0))
     }
 
+    /// A cell's cross-axis origin within its column, or an extra's full span.
+    pub(super) fn align_cross(&self, start: f32, cross: f32, cell: f32) -> f32 {
+        let free = cross - cell;
+        let align = self
+            .content
+            .align_items
+            .unwrap_or(taffy::AlignItems::STRETCH);
+        start
+            + if align == taffy::AlignItems::CENTER {
+                free / 2.0
+            } else if align == taffy::AlignItems::FLEX_END {
+                free
+            } else {
+                0.0
+            }
+    }
+
     /// Main-axis size of item `i`'s row.
     pub(super) fn row_extent(&self, i: u32) -> f32 {
         self.row_size(self.row_of(i))
@@ -1413,7 +1470,8 @@ impl ListState {
                     content.row_gap.0
                 } else {
                     content.column_gap.0
-                };
+                }
+                || self.content.align_items != content.align_items;
             self.content = content;
             if cross_changed {
                 self.cells_cross = f32::NAN;
@@ -1563,6 +1621,28 @@ impl ListState {
         }
     }
 
+    /// Records the size of item `i` when it has none yet, without
+    /// scrolling: for a cell the window just bound to the row it already
+    /// shows (a cell that took back the row now at its index after the
+    /// items changed, [`Self::adopt_orphans`]). No render lays it out
+    /// again, so it is measured where it is placed, in the same commit, and
+    /// the rows after it move with it. The window was set from the
+    /// estimate: the list updates again in the next commit.
+    pub(super) fn measured_unknown(&mut self, i: u32, size: f32) {
+        let idx = i as usize;
+        if !self.sizes.get(idx).is_some_and(|s| s.is_nan()) {
+            return;
+        }
+        let row = self.row_of(i);
+        let before = self.row_size(row);
+        self.sizes[idx] = size;
+        let delta = self.row_size(row) - before;
+        if delta != 0.0 {
+            self.rows.add(row as usize, delta as f64);
+        }
+        self.dirty = true;
+    }
+
     /// Records the size of an extra cell; returns the anchoring change as
     /// [`ListState::measured`] does.
     pub(super) fn measured_extra(&mut self, kind: ExtraKind, size: f32) -> f32 {
@@ -1608,8 +1688,8 @@ impl ListState {
         if self.viewport <= 0.0 {
             return 0.0;
         }
-        let end = (self.content_len() - self.viewport).max(0.0);
         if !self.inverted {
+            let end = self.own_end();
             let bottom = self.bottom();
             let threshold = match self.follow_end {
                 Some(threshold) => threshold,
@@ -1647,6 +1727,7 @@ impl ListState {
             self.offset = end;
             return delta;
         }
+        let end = (self.content_len() - self.viewport).max(0.0);
         let delta = if self.anchored_end.is_nan() {
             end - self.offset
         } else {
@@ -1702,7 +1783,7 @@ impl ListState {
             let (min, max) = self.limits;
             (self.content_len() - self.viewport).clamp(min, max)
         } else {
-            (self.content_len() - self.viewport).max(0.0)
+            self.own_end()
         }
     }
 
@@ -2443,6 +2524,35 @@ mod tests {
     }
 
     #[test]
+    fn lists_under_a_content_inset_follow_their_end() {
+        // Under a bar it scrolls beneath: offsets start at minus the
+        // leading inset, where content too short to scroll rests.
+        let mut l = list(2, 50.0, 956.0);
+        l.follow_end = Some(80.0);
+        l.inset = (116.0, 0.0);
+        assert_eq!(l.measured(0, 176.0), 0.0);
+        assert_eq!(l.measured(1, 176.0), 0.0);
+        l.reported(-116.0, 0);
+        assert_eq!(l.anchor_end(0.0), 0.0);
+        assert_eq!(l.offset_limits(), (-116.0, -116.0));
+        // The keyboard shortens the viewport as the last row grows past
+        // it: the list was at its end, so it follows.
+        l.viewport = 609.0;
+        assert_eq!(l.measured(1, 442.0), 0.0);
+        assert_eq!(l.anchor_end(0.0), 125.0);
+        assert_eq!(l.offset, 9.0);
+        // The trailing inset is scrolled past too.
+        l.inset = (116.0, 34.0);
+        assert_eq!(l.end_offset(), 43.0);
+        assert_eq!(l.offset_limits(), (-116.0, 43.0));
+        // Scrolled up past the threshold, growth below leaves it alone.
+        l.anchor_end(0.0);
+        l.reported(-116.0, 0);
+        l.measured(1, 500.0);
+        assert_eq!(l.anchor_end(0.0), 0.0);
+    }
+
+    #[test]
     fn inverted_lists_load_at_their_start_and_keep_the_visible_rows() {
         let mut l = list(100, 50.0, 400.0);
         l.set_inverted(true);
@@ -2534,6 +2644,32 @@ mod tests {
     }
 
     #[test]
+    fn cells_align_on_the_cross_axis() {
+        for horizontal in [false, true] {
+            let mut l = list(2, 50.0, 200.0);
+            l.set_horizontal(horizontal);
+            let (start, cross) = l.column(200.0, 0, None);
+            assert_eq!(l.align_cross(start, cross, 40.0), 0.0, "{horizontal}");
+            for (align, expected) in [
+                (taffy::AlignItems::STRETCH, 0.0),
+                (taffy::AlignItems::FLEX_START, 0.0),
+                (taffy::AlignItems::CENTER, 80.0),
+                (taffy::AlignItems::FLEX_END, 160.0),
+            ] {
+                assert!(l.set_content(ListContentStyle {
+                    align_items: Some(align),
+                    ..ListContentStyle::default()
+                }));
+                assert_eq!(
+                    l.align_cross(start, cross, 40.0),
+                    expected,
+                    "{horizontal}: {align:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_mirrored_horizontal_list_keeps_its_left_padding_on_the_left() {
         // Laid out left to right and shown mirrored: the left padding is the
         // end of its main axis, so it shows on the left.
@@ -2564,6 +2700,7 @@ mod tests {
             },
             row_gap: px(8.0),
             column_gap: px(0.0),
+            ..ListContentStyle::default()
         });
         l.add_slot_cell(CellSlot::Header, 7);
         l.measured_extra(ExtraKind::Header, 30.0);
@@ -2982,6 +3119,70 @@ mod tests {
         l.reorder(&ListDiff::new(&old, &new).unwrap());
         assert_eq!(l.item_at(21) - l.offset, next);
         assert_eq!(l.take_splice_anchor(), -50.0);
+    }
+
+    /// Row 20 at the top with 30 of its 50 points scrolled past: row 21 is
+    /// the first row that starts in view, 20 points down.
+    fn cut_by_the_viewport() -> ListState {
+        with_cells(100, 1030.0)
+    }
+
+    #[test]
+    fn a_change_right_after_a_row_cut_by_the_viewport_keeps_the_rows_below() {
+        // Rows arrive right after row 20: row 21 (now 23) stays, and row 20
+        // moves up out of view instead.
+        let mut l = cut_by_the_viewport();
+        l.splice(21, 0, 2);
+        assert_eq!(l.item_at(23) - l.offset, 20.0);
+        assert_eq!(l.take_splice_anchor(), 100.0);
+        // Row 20 itself goes: row 21 (now 20) stays.
+        let mut l = cut_by_the_viewport();
+        l.splice(20, 1, 0);
+        assert_eq!(l.item_at(20) - l.offset, 20.0);
+        assert_eq!(l.take_splice_anchor(), -50.0);
+        // A row from below moves in right after row 20: row 21 (now 22)
+        // stays.
+        let mut l = cut_by_the_viewport();
+        let (old, new) = moved_row(100, 60, 21);
+        l.reorder(&ListDiff::new(&old, &new).unwrap());
+        assert_eq!(l.item_at(22) - l.offset, 20.0);
+        assert_eq!(l.take_splice_anchor(), 50.0);
+    }
+
+    #[test]
+    fn changes_elsewhere_keep_their_anchoring_by_a_row_cut_by_the_viewport() {
+        // Below the first row that starts in view, only the rows below the
+        // change move.
+        let mut l = cut_by_the_viewport();
+        l.splice(22, 0, 2);
+        assert_eq!((l.offset, l.take_splice_anchor()), (1030.0, 0.0));
+        let mut l = cut_by_the_viewport();
+        let (old, new) = moved_row(100, 60, 22);
+        l.reorder(&ListDiff::new(&old, &new).unwrap());
+        assert_eq!((l.offset, l.take_splice_anchor()), (1030.0, 0.0));
+        // Above the cut row, it keeps its place with the rows below it.
+        let mut l = cut_by_the_viewport();
+        l.splice(5, 0, 2);
+        assert_eq!(l.item_at(22) - l.offset, -30.0);
+        assert_eq!(l.item_at(23) - l.offset, 20.0);
+        // A row starting at the viewport's start, a pixel's rounding away:
+        // a change right after it moves the rows below.
+        let mut l = with_cells(100, 1000.5);
+        l.splice(21, 0, 2);
+        assert_eq!((l.offset, l.take_splice_anchor()), (1000.5, 0.0));
+        // At its start the list stays there: the rows that arrive show.
+        let mut l = with_cells(100, 0.0);
+        l.splice(0, 0, 2);
+        assert_eq!((l.offset, l.take_splice_anchor()), (0.0, 0.0));
+        // A row taller than the viewport, no row starting in view: the rows
+        // below a change after it move.
+        let mut l = list(100, 50.0, 400.0);
+        l.measured(20, 600.0);
+        l.offset = 1100.0;
+        l.splice(21, 0, 2);
+        assert_eq!((l.offset, l.take_splice_anchor()), (1100.0, 0.0));
+        l.splice(10, 0, 2);
+        assert_eq!(l.item_at(22) - l.offset, -100.0);
     }
 
     #[test]

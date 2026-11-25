@@ -12,12 +12,12 @@
 use std::{cell::RefCell, fmt::Write as _};
 
 use nsh_core::{
-    BorderStyle, Color, Command, EventKind, EventMask, Filter, Gradient, GradientKind,
+    BorderStyle, ClipInset, Color, Command, EventKind, EventMask, Filter, Gradient, GradientKind,
     GradientSize, ImageSource, InputConfig, Keyframes, LayoutCurve, LayoutTransition, MountItem,
     NativeProps, ObjectPosition, Points, ResizeMode, ScreenAnimation, ScrollBehavior, Transform,
     TransformKind, TransitionProps, ViewKind, ViewProps, ViewStyle, WebSource,
     element::PropEnum,
-    geometry::{DefiniteLength, REM_SIZE, Radians, Size, relative},
+    geometry::{DefiniteLength, Percentage, REM_SIZE, Radians, Size, relative},
 };
 use rustc_hash::FxHashMap;
 
@@ -502,6 +502,9 @@ pub(crate) fn view_css(s: &ViewStyle) -> (String, Option<String>) {
             // `-webkit-mask-image` for WebKit, which still needs the prefix.
             let _ = write!(css, "mask-image:{m};-webkit-mask-image:{m};");
         }
+        if let Some(clip) = &effects.clip_path {
+            let _ = write!(css, "clip-path:{};", clip_path(clip));
+        }
     }
     if !shadows.is_empty() {
         let _ = write!(css, "box-shadow:{};", shadows.join(","));
@@ -560,6 +563,9 @@ pub(crate) fn view_css(s: &ViewStyle) -> (String, Option<String>) {
         }
         if p.has(TransitionProps::SHAPE) {
             props.extend(["border-radius", "outline-width"]);
+        }
+        if p.has(TransitionProps::CLIP_PATH) {
+            props.push("clip-path");
         }
         let easing = match t.spring {
             // It times itself: its progress over the time it settles in.
@@ -630,6 +636,29 @@ pub(crate) fn view_css(s: &ViewStyle) -> (String, Option<String>) {
         None
     };
     (css, border)
+}
+
+/// CSS's `inset()` of a clip path: each edge its points plus its fraction
+/// of the box (`calc()` when it has both, as an interpolated inset does),
+/// then the corners' radii.
+fn clip_path(clip: &ClipInset) -> String {
+    let edge = |o: Points, f: Percentage| match (o.0 != 0.0, f.0 != 0.0) {
+        (true, true) => format!("calc({}px + {}%)", o.0, f.0 * 100.0),
+        (false, true) => format!("{}%", f.0 * 100.0),
+        _ => format!("{}px", o.0),
+    };
+    let (o, f, r) = (clip.offsets, clip.fractions, clip.radii);
+    format!(
+        "inset({} {} {} {} round {}px {}px {}px {}px)",
+        edge(o.top, f.top),
+        edge(o.right, f.right),
+        edge(o.bottom, f.bottom),
+        edge(o.left, f.left),
+        r.top_left.0,
+        r.top_right.0,
+        r.bottom_right.0,
+        r.bottom_left.0
+    )
 }
 
 fn border_style(s: BorderStyle) -> &'static str {
@@ -765,14 +794,18 @@ fn props_json(p: &ViewProps) -> String {
         let _ = write!(s, ",\"longPressDelay\":{d}");
     }
     if let Some(a) = p.pan_activation {
+        use nsh_core::element::PropEnum as _;
         let n = |v: Option<f32>| v.map_or("null".to_owned(), |v| v.to_string());
+        let name = |v: Option<&'static str>| v.map_or("null".to_owned(), |v| format!("\"{v}\""));
         let _ = write!(
             s,
-            ",\"panActivation\":[{},{},{},{}]",
+            ",\"panActivation\":[{},{},{},{},{},{}]",
             n(a.active_offset_x.map(|v| v.0)),
             n(a.active_offset_y.map(|v| v.0)),
             n(a.fail_offset_x.map(|v| v.0)),
-            n(a.fail_offset_y.map(|v| v.0))
+            n(a.fail_offset_y.map(|v| v.0)),
+            name(a.direction.map(|d| d.js_name())),
+            name(a.edge.map(|e| e.js_name()))
         );
     }
     if let Some(l) = &a.label {
@@ -784,6 +817,9 @@ fn props_json(p: &ViewProps) -> String {
     }
     // The role's JS name, which is ARIA's (`columnheader`, `treeitem`).
     let _ = write!(s, ",\"role\":{}", json_str(enum_name(&a.role)));
+    if let Some(o) = a.orientation {
+        let _ = write!(s, ",\"orientation\":{}", json_str(enum_name(&o)));
+    }
     if a.state.disabled {
         s.push_str(",\"disabled\":true");
     }
@@ -907,11 +943,17 @@ fn input_json(c: &InputConfig) -> String {
     if c.paste_behavior != nsh_core::PasteBehavior::Insert {
         s.push_str(",\"pasteInserts\":false");
     }
+    if let Some(max) = c.paste_max_size {
+        let _ = write!(s, ",\"pasteMaxSize\":{max}");
+    }
     if !c.scrollbar_visible {
         s.push_str(",\"noIndicator\":true");
     }
-    if c.replaced {
-        s.push_str(",\"replaced\":true");
+    if c.report_scroll {
+        s.push_str(",\"reportScroll\":true");
+    }
+    if c.select_text_on_focus {
+        s.push_str(",\"selectTextOnFocus\":true");
     }
     s.push('}');
     s
@@ -944,7 +986,7 @@ fn field_css(c: &InputConfig) -> String {
 fn behavior_json(b: &ScrollBehavior) -> String {
     let offsets: Vec<String> = b.snap_offsets.iter().map(|o| o.0.to_string()).collect();
     format!(
-        "{{\"paging\":{},\"snapInterval\":{},\"snapOffsets\":[{}],\"snapAlignment\":{},\"enabled\":{},\"bounces\":{},\"inset\":[{},{},{},{}],\"minZoom\":{},\"maxZoom\":{},\"bouncesZoom\":{},\"pinch\":{},\"centerContent\":{},\"refreshIndicator\":{}}}",
+        "{{\"paging\":{},\"snapInterval\":{},\"snapOffsets\":[{}],\"snapAlignment\":{},\"enabled\":{},\"bounces\":{},\"inset\":[{},{},{},{}],\"bar\":[{},{},{},{}],\"minZoom\":{},\"maxZoom\":{},\"bouncesZoom\":{},\"pinch\":{},\"centerContent\":{},\"refreshIndicator\":{}}}",
         b.paging,
         b.snap_interval.0,
         offsets.join(","),
@@ -955,6 +997,10 @@ fn behavior_json(b: &ScrollBehavior) -> String {
         b.content_inset.right.0,
         b.content_inset.bottom.0,
         b.content_inset.left.0,
+        b.scrollbar_inset.top.0,
+        b.scrollbar_inset.right.0,
+        b.scrollbar_inset.bottom.0,
+        b.scrollbar_inset.left.0,
         b.min_zoom,
         b.max_zoom,
         b.bounces_zoom,
@@ -1198,7 +1244,17 @@ pub(crate) fn encode(out: &mut Out, item: &MountItem) {
                 Some(c) => out.str(&css_color(c)),
                 None => out.raw("null"),
             };
-            if !layout.backgrounds.is_empty() || !text.links.is_empty() {
+            // What attachments copy as, where the copy puts them among the
+            // runs (which hold no attachments): hidden ones and ones cut off
+            // copy as nothing.
+            let copies: Vec<_> = text
+                .copy_texts
+                .iter()
+                .filter(|copy| !text.hidden_at(copy.index))
+                .filter_map(|copy| Some((copy, layout.attachment_place(copy.index)?)))
+                .collect();
+            let copies_sent = !copies.is_empty();
+            if !layout.backgrounds.is_empty() || !text.links.is_empty() || copies_sent {
                 // Span backgrounds: `[x, y, width, height, radius, color]`.
                 out.s.push_str(",[");
                 for (i, b) in layout.backgrounds.iter().enumerate() {
@@ -1215,8 +1271,10 @@ pub(crate) fn encode(out: &mut Out, item: &MountItem) {
                 }
                 out.s.push(']');
             }
-            if !text.links.is_empty() {
-                // Links, as runs name them: `[node, events]`.
+            if !text.links.is_empty() || copies_sent {
+                // Links, as runs name them: `[node, events]`, and its
+                // `href` after them when the link goes somewhere (drawn as
+                // an `<a href>`).
                 out.s.push_str(",[");
                 for (i, link) in text.links.iter().enumerate() {
                     if i > 0 {
@@ -1224,7 +1282,26 @@ pub(crate) fn encode(out: &mut Out, item: &MountItem) {
                     }
                     let _ = write!(out.s, "[{},", link.node);
                     push_events(&mut out.s, link.events);
+                    if let Some(href) = text.link_href(i) {
+                        out.s.push(',');
+                        push_str(&mut out.s, href);
+                    }
                     out.s.push(']');
+                }
+                out.s.push(']');
+            }
+            if copies_sent {
+                // `[offset, text, run, before]`: the copy text goes after
+                // that run's characters (before its line's break), or
+                // before them (`before` 1).
+                out.s.push_str(",[");
+                for (i, (copy, (run, before))) in copies.iter().enumerate() {
+                    if i > 0 {
+                        out.s.push(',');
+                    }
+                    let _ = write!(out.s, "[{},", copy.index);
+                    push_str(&mut out.s, &copy.text);
+                    let _ = write!(out.s, ",{run},{}]", u8::from(*before));
                 }
                 out.s.push(']');
             }
@@ -1318,6 +1395,8 @@ pub(crate) fn encode(out: &mut Out, item: &MountItem) {
             out.item("shi").num(*id).end();
         }
         MountItem::NavShader { id, shader } => {
+            #[cfg(feature = "rust-parts")]
+            crate::shader::note(item);
             let layer = shader.as_ref().map(|s| &*s.layer);
             let ms = shader
                 .as_ref()
@@ -1329,6 +1408,8 @@ pub(crate) fn encode(out: &mut Out, item: &MountItem) {
                 .end();
         }
         MountItem::Shader { id, layer } => {
+            #[cfg(feature = "rust-parts")]
+            crate::shader::note(item);
             out.item("sh")
                 .num(*id)
                 .raw(&crate::shader::encode_layer(layer.as_deref()))
@@ -1455,6 +1536,7 @@ fn encode_command(out: &mut Out, id: u32, command: &Command) {
     match command {
         Command::Focus => out.item("cmd").num(id).str("focus").end(),
         Command::Blur => out.item("cmd").num(id).str("blur").end(),
+        Command::ClearSelection => out.item("cmd").num(id).str("clearSelection").end(),
         Command::ScrollTo { x, y, animated } => {
             out.item("cmd")
                 .num(id)
@@ -1501,7 +1583,18 @@ fn encode_command(out: &mut Out, id: u32, command: &Command) {
                 push_str(&mut out.s, &kebab(&format!("{:?}", b.style)));
             }
             out.s.push(']');
-            out.bool(d.cancelable).bool(d.sheet).end();
+            out.bool(d.cancelable).bool(d.sheet);
+            // The text field: its text (null: none), placeholder, select
+            // all and required.
+            match d.input.as_ref().filter(|_| !d.sheet) {
+                Some(input) => out
+                    .str(&input.text)
+                    .opt_str(input.placeholder.as_deref())
+                    .bool(input.select_all)
+                    .bool(input.required),
+                None => out.raw("null"),
+            };
+            out.end();
         }
         Command::CloseDialog(dialog) => {
             out.item("cmd")
@@ -1910,6 +2003,39 @@ mod tests {
     use nsh_core::desktop::{DesktopCommand, WindowAttributes, WindowRequest};
 
     use super::*;
+
+    #[test]
+    fn a_clip_path_is_css_clip_path_and_transitions_by_name() {
+        let mut style = nsh_core::Style::default();
+        style
+            .set(
+                "clipPath",
+                nsh_core::StyleValue::Str("inset(0 8px 100% 50% round 12px 0 4px 2px)"),
+            )
+            .unwrap();
+        style
+            .set("transitionProperty", nsh_core::StyleValue::Str("clip-path"))
+            .unwrap();
+        let (css, _) = view_css(&style.view);
+        assert!(
+            css.contains("clip-path:inset(0px 8px 100% 50% round 12px 0px 4px 2px);"),
+            "{css}"
+        );
+        assert!(css.contains("transition-property:clip-path;"), "{css}");
+        // Between a length and a percentage, an edge is both: `calc()`.
+        let half = ClipInset::new()
+            .bottom(nsh_core::geometry::percentage(1.0))
+            .lerp(&ClipInset::new().bottom(Points(10.0)), 0.5);
+        assert_eq!(
+            clip_path(&half),
+            "inset(0px 0px calc(5px + 50%) 0px round 0px 0px 0px 0px)"
+        );
+        // `none` writes nothing.
+        style
+            .set("clipPath", nsh_core::StyleValue::Str("none"))
+            .unwrap();
+        assert!(!view_css(&style.view).0.contains("clip-path:inset"));
+    }
 
     fn commands(id: u32, command: DesktopCommand) -> String {
         let mut out = Out::new();

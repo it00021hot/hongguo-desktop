@@ -14,8 +14,7 @@ use nsh_base::editor::{
     Editor, EditorApi, EditorCommand, EditorSearch, EditorSearchResult, EditorSelection, editor,
 };
 use nsh_core::{
-    MountItem, NodeId, PointerEvents, Size,
-    element::Root,
+    MountItem, NodeId, PayloadValue, PointerEvents, Size,
     platform::{Idiom, Os},
     prelude::*,
 };
@@ -159,7 +158,9 @@ fn Harness(props: HarnessProps) -> impl IntoElement {
 fn start(props: HarnessProps) -> Headless {
     let mut config = EngineConfig {
         viewport: Size::new(px(800.0), px(900.0)),
-        ..EngineConfig::new(Root::new::<Harness>(move || props.clone()))
+        ..EngineConfig::new(nsh_testing::windowed_root_with::<Harness>(move || {
+            props.clone()
+        }))
     };
     config.environment.os = Os::Linux;
     config.environment.idiom = Idiom::Desktop;
@@ -200,7 +201,7 @@ fn the_caret_sink_has_no_built_in_scrollbar() {
     }
     let mut config = EngineConfig {
         viewport: Size::new(px(800.0), px(900.0)),
-        ..EngineConfig::new(Root::of::<ThemedEditor>())
+        ..EngineConfig::new(nsh_testing::windowed_root::<ThemedEditor>())
     };
     config.environment.os = Os::MacOs;
     config.environment.idiom = Idiom::Desktop;
@@ -349,6 +350,62 @@ fn typing_the_same_text_after_moving_the_caret_inserts_it() {
     see(&mut app, "Sel 0:0");
     app.type_text("id:editor", "a").unwrap();
     see(&mut app, &value("aa"));
+}
+
+/// The sink's text changed to `text`, as a platform reports it. The
+/// headless driver does not expose an input's node id, so the event goes to
+/// every node; only the sink listens to it.
+fn sink_text(app: &mut Headless, text: &str) {
+    for id in 1..4096 {
+        app.engine().control().dispatch_event(
+            id,
+            EventKind::ChangeText,
+            EventPayload::Text {
+                text: text.to_owned(),
+                count: 0,
+            },
+        );
+    }
+    app.wait(Duration::from_millis(50)).unwrap();
+}
+
+/// The platform moved the sink's own caret to UTF-16 offset `at` of its
+/// text, without a key (an input method that types a pair of brackets and
+/// puts its caret between them). Sent to every node, as [`sink_text`] is.
+fn sink_caret(app: &mut Headless, at: u32) {
+    for id in 1..4096 {
+        app.engine().control().dispatch_event(
+            id,
+            EventKind::SelectionChange,
+            EventPayload::Map(vec![
+                ("start", PayloadValue::Number(f64::from(at))),
+                ("end", PayloadValue::Number(f64::from(at))),
+            ]),
+        );
+    }
+    app.wait(Duration::from_millis(50)).unwrap();
+}
+
+#[test]
+fn the_caret_follows_an_input_method_that_moves_it_between_a_pair() {
+    let mut app = start(props("f"));
+    focus(&mut app);
+    keys(&mut app, &["end"]);
+    see(&mut app, "Sel 0:1");
+    // The input method types both halves, then puts its caret between them.
+    sink_text(&mut app, "()");
+    see(&mut app, &value("f()"));
+    see(&mut app, "Sel 0:3");
+    sink_caret(&mut app, 1);
+    see(&mut app, "Sel 0:2");
+    // What it types next goes in there, with the caret after it.
+    sink_text(&mut app, "(x)");
+    see(&mut app, &value("f(x)"));
+    see(&mut app, "Sel 0:3");
+    sink_caret(&mut app, 2);
+    sink_text(&mut app, "(xy)");
+    see(&mut app, &value("f(xy)"));
+    see(&mut app, "Sel 0:4");
 }
 
 #[test]
@@ -634,7 +691,9 @@ fn the_rows_text_lets_the_pointer_through_to_the_scroll_views() {
     let text = props("alpha\nbeta\ngamma");
     let mut config = EngineConfig {
         viewport: Size::new(px(800.0), px(900.0)),
-        ..EngineConfig::new(Root::new::<Harness>(move || text.clone()))
+        ..EngineConfig::new(nsh_testing::windowed_root_with::<Harness>(move || {
+            text.clone()
+        }))
     };
     config.environment.os = Os::Ios;
     config.environment.idiom = Idiom::Phone;
@@ -684,7 +743,9 @@ fn start_idle(os: Os) -> (Headless, Arc<Mutex<usize>>) {
     let mut config = EngineConfig {
         viewport: Size::new(px(800.0), px(900.0)),
         clock: nsh_engine::Clock::manual(std::time::SystemTime::now()),
-        ..EngineConfig::new(Root::new::<Harness>(move || props("abc")))
+        ..EngineConfig::new(nsh_testing::windowed_root_with::<Harness>(move || {
+            props("abc")
+        }))
     };
     config.environment.os = os;
     config.environment.idiom = Idiom::Desktop;
@@ -726,4 +787,100 @@ fn the_carets_blink_for_good_on_macos() {
     let (mut app, items) = start_idle(Os::MacOs);
     app.run_for(Duration::from_secs(11)).unwrap();
     assert!(items_over(&mut app, &items, 3) > 0);
+}
+
+#[test]
+fn auto_focus_focuses_the_caret_sink_on_mount() {
+    #[component]
+    fn AutoFocused() -> impl IntoElement {
+        let value = signal(String::new());
+        let focused = signal(0u32);
+        view()
+            .w(px(400.0))
+            .h(px(200.0))
+            .child(
+                editor()
+                    .auto_focus(true)
+                    .default_value("")
+                    .on_focus(move || focused.update(|n| *n += 1))
+                    .on_change(move |text: &SharedString| value.set(text.to_string()))
+                    .size_full(),
+            )
+            .child(text(move || format!("Focused {}", focused.get())))
+            .child(text(move || format!("Value {:?}", value.get())))
+    }
+
+    let mut config = EngineConfig {
+        viewport: Size::new(px(400.0), px(250.0)),
+        clock: nsh_engine::Clock::manual(std::time::SystemTime::now()),
+        ..EngineConfig::new(nsh_testing::windowed_root::<AutoFocused>())
+    };
+    config.environment.os = Os::Linux;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).expect("the engine starts");
+    let auto_focused_inputs = Arc::new(Mutex::new(0usize));
+    let seen = auto_focused_inputs.clone();
+    app.observe(move |_, batch| {
+        for item in &batch.items {
+            if let MountItem::Input { config, .. } = item
+                && config.auto_focus
+            {
+                *seen.lock().unwrap() += 1;
+            }
+        }
+    });
+    app.first_render().unwrap();
+    assert_eq!(
+        *auto_focused_inputs.lock().unwrap(),
+        1,
+        "autoFocus should configure the caret sink input on first mount"
+    );
+    app.press_key("a").unwrap();
+    see(&mut app, &value("a"));
+    see(&mut app, "Focused 1");
+}
+
+#[test]
+fn auto_focus_cancelled_before_mount_does_not_focus() {
+    #[component]
+    fn ToggledBeforeMount() -> impl IntoElement {
+        let auto = signal(true);
+        let value = signal(String::new());
+        let ed = editor()
+            .auto_focus(move || auto.get())
+            .default_value("")
+            .on_change(move |text: &SharedString| value.set(text.to_string()))
+            .size_full();
+        auto.set(false);
+        view()
+            .w(px(400.0))
+            .h(px(200.0))
+            .child(ed)
+            .child(text(move || format!("Value {:?}", value.get())))
+    }
+
+    let mut config = EngineConfig {
+        viewport: Size::new(px(400.0), px(250.0)),
+        clock: nsh_engine::Clock::manual(std::time::SystemTime::now()),
+        ..EngineConfig::new(nsh_testing::windowed_root::<ToggledBeforeMount>())
+    };
+    config.environment.os = Os::Linux;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).expect("the engine starts");
+    let auto_focused_inputs = Arc::new(Mutex::new(0usize));
+    let seen = auto_focused_inputs.clone();
+    app.observe(move |_, batch| {
+        for item in &batch.items {
+            if let MountItem::Input { config, .. } = item
+                && config.auto_focus
+            {
+                *seen.lock().unwrap() += 1;
+            }
+        }
+    });
+    app.first_render().unwrap();
+    app.run_for(Duration::from_millis(50)).unwrap();
+    assert_eq!(*auto_focused_inputs.lock().unwrap(), 0);
+    app.press_key("a").unwrap();
+    see(&mut app, &value(""));
 }

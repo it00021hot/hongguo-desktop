@@ -11,7 +11,7 @@
 //! Hit testing walks the views ([`pick`]), as the Linux backend does:
 //! points go into children through their frames, the parent's scroll
 //! offset and sticky shift ([`ViewState::child_origin`]) and their
-//! transforms (inverted with [`Mat4::unproject`], so 3D transforms hit
+//! transforms (inverted with [`crate::geom::Mat4::unproject`], so 3D transforms hit
 //! where they are drawn). Hidden and concealed views, `pointerEvents`,
 //! `hitSlop` and `overflow: hidden` are honored; outside a view's bounds,
 //! only the area its descendants cover (`MountItem::Overflow`: a dropdown
@@ -77,7 +77,6 @@ use nsh_core::{
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    geom::Mat4,
     surface::Surface,
     view::{ItemPointer, Native, NshView, ViewState},
 };
@@ -90,8 +89,13 @@ struct Transform {
     view: NshView,
     pinch: bool,
     rotation: bool,
+    /// It zooms `view`, a zoomable scroll view, rather than driving its
+    /// pinch values.
+    zoom: bool,
     scale: f32,
     degrees: f32,
+    /// Where the pinch is centered (root coordinates).
+    at: (f32, f32),
 }
 
 /// Two touchscreen fingers transforming a view.
@@ -149,6 +153,7 @@ impl Modifiers {
             alt: self.alt,
             shift: self.shift,
             cmd: self.meta,
+            alt_graph: false,
         }
     }
 }
@@ -555,7 +560,7 @@ pub(crate) fn reset(surface: &Surface) {
     crate::file_drop::reset(surface);
     crate::keyboard::reset(surface);
     let input = &surface.input;
-    input.window_press.borrow_mut().take();
+    crate::chrome::reset_hover(surface);
     input.pointers.borrow_mut().clear();
     input.two.borrow_mut().take();
     input.zoom.borrow_mut().take();
@@ -746,7 +751,7 @@ pub(crate) fn command(surface: &Rc<Surface>, _id: NodeId, command: &Command) {
 // --- Cursors ------------------------------------------------------------------------
 
 /// The cursor of a CSS `cursor` value, `None` to inherit the parent's.
-fn css_cursor(cursor: nsh_core::Cursor) -> Option<Cursor> {
+pub(crate) fn css_cursor(cursor: nsh_core::Cursor) -> Option<Cursor> {
     use nsh_core::Cursor as C;
     Some(match cursor {
         C::Auto => return None,
@@ -1138,6 +1143,12 @@ fn raw_pointer(surface: &Rc<Surface>, key: Key, event: &PointerEvent) -> bool {
         // A press anywhere clears a text selection.
         crate::text::window_pressed(surface, x, y);
         crate::selectable_view::window_pressed(surface, x, y);
+        // The page takes the press, not the core's picking: the overlays
+        // watching presses that the web view is outside of (an open menu)
+        // hear `onPressOutside`, as for a press on any other view.
+        let id = view.id();
+        let page = nsh_core::prelude::point(nsh_core::Points(x), nsh_core::Points(y));
+        surface.control(|c| c.press_on_native(id, page));
     }
     let (lx, ly) = local(view, x, y);
     native.item.pointer(&ItemPointer {
@@ -1502,20 +1513,22 @@ fn pick_in(view: &NshView, x: f32, y: f32, items: bool) -> Option<Hit> {
         return None;
     }
     let pe = s.props.pointer_events;
-    let clip = s.clips();
+    let clip = s.clips() || s.style.clip_path().is_some();
+    let at = point(Points(x), Points(y));
     let HitArea {
         inside,
         in_slop,
         children,
         ..
     } = input::hit_area(
-        point(Points(x), Points(y)),
+        at,
         s.frame.size,
         s.props.hit_slop,
         s.overflow,
-        clip,
+        s.clips(),
         laid_out(s.kind, s.id),
-    );
+    )
+    .clipped(s.style.clip_path(), at, s.frame.size);
     // Hosted items are drawn above the children, clipped with them.
     if items && !s.natives.is_empty() && (!clip || inside) {
         let natives = s.natives.clone();
@@ -1550,13 +1563,13 @@ fn pick_in(view: &NshView, x: f32, y: f32, items: bool) -> Option<Hit> {
         kids.iter().rev().find_map(|child| {
             let (cx, cy) = {
                 let c = child.state();
-                let (ox, oy) = s.child_origin(c.frame, c.shift);
+                let zoomed = s.child_scale() != 1.0;
                 match c.transform() {
-                    None => (x - ox, y - oy),
-                    Some(t) => {
-                        let local = Mat4::mul(&t, &Mat4::new().translate(ox, oy));
-                        local.unproject(x, y)?
+                    None if !zoomed => {
+                        let (ox, oy) = s.child_origin(c.frame, c.shift);
+                        (x - ox, y - oy)
                     }
+                    _ => s.child_matrix(&c).unproject(x, y)?,
                 }
             };
             pick_in(child, cx, cy, items)
@@ -1710,6 +1723,18 @@ fn down(
         _ => {
             if let Some(target) = crate::keyboard::focus_target(surface, &hit.view) {
                 crate::keyboard::focus_pointer(surface, &target);
+            } else if !matches!(item, Some(Item::Text(_) | Item::Area(..)))
+                && let Some(field) = crate::text_input::focused(surface)
+                && crate::app_window::window_of(surface, &field)
+                    == crate::app_window::window_of(surface, &hit.view)
+            {
+                // A press on no stop (blank space) leaves the field of its
+                // window, as one on a stop does: the field is drawn here,
+                // not a system control that would lose the focus to the
+                // click itself. A press that starts a text selection keeps
+                // the field focused, so Ctrl+C copies the selection around
+                // a chat's composer (copy-selection-windows.test.tsx).
+                crate::text_input::blur(&field);
             }
         }
     }
@@ -1722,7 +1747,10 @@ fn down(
     let views = chain(&hit.view);
     // The gate follows the first pointer only, as on the other platforms.
     let first = input.pointers.borrow().is_empty();
-    let options = GrabOptions::new(touch, native, selects, first);
+    // Where the pointer is from the edges of the root it is measured in.
+    let root_size = surface.input_root().state().frame.size;
+    let options = GrabOptions::new(touch, native, selects, first)
+        .start(point(Points(x), Points(y)), root_size);
     let mut grab = Grab::default();
     for v in &views {
         let s = v.state();
@@ -1745,6 +1773,12 @@ fn down(
         gate,
         ..
     } = grab;
+    // A zoomable scroll view nearer than a view with pinch values is what
+    // two fingers zoom.
+    let pinch = views
+        .iter()
+        .find(|v| pinch.as_ref() == Some(*v) || crate::scroll::pinches(surface, v))
+        .cloned();
     // A text field takes its own clicks (focus, caret, selection drags);
     // the `Input` itself hears them as a press too (a combobox opens its
     // list), but no view around it does.
@@ -1843,8 +1877,8 @@ fn motion(surface: &Rc<Surface>, key: Key, x: f32, y: f32, time: f64) {
     let (tx, ty) = (x - p.start.0, y - p.start.1);
     let activated = Gate::step(&mut p.gate, &mut p.candidates, Points(tx), Points(ty));
     // The view's JS responder takes the drag over: nothing native starts
-    // meanwhile.
-    if activated.is_some() && p.mode == Mode::Idle {
+    // meanwhile, but the view's own pan.
+    if p.mode == Mode::Idle && input::activation_frees(activated, &p.candidates) {
         p.mode = Mode::Free;
     }
     if p.reporting {
@@ -1860,9 +1894,10 @@ fn motion(surface: &Rc<Surface>, key: Key, x: f32, y: f32, time: f64) {
     // take the gesture (and block native drags) before one starts.
     let js_pending = p.reporting && !moved;
     if p.mode == Mode::Idle && distance > PAN_SLOP.0 && !js_pending {
-        // While the gate decides, the candidates around it wait (the
-        // pointer stays idle and they are asked again on the next move).
-        if p.gate.is_none() {
+        // While the gate decides, or a pan's `panActivation`, the candidates
+        // around wait (the pointer stays idle and they are asked again on
+        // the next move).
+        if !input::waits(&p.candidates, p.gate.as_ref(), Points(tx), Points(ty)) {
             p.mode = Mode::Free;
         }
         let started = if surface.input.js_block.get() {
@@ -2189,9 +2224,11 @@ fn released_inside(view: &NshView, x: f32, y: f32) -> bool {
 
 // --- Pans ---------------------------------------------------------------------------
 
-fn pan_payload(surface: &Surface, id: NodeId, t: (f32, f32), v: (f32, f32)) -> EventPayload {
+fn pan_payload(surface: &Surface, id: NodeId, p: &Pointer, t: (f32, f32)) -> EventPayload {
     let (value_x, value_y) = surface.anim.borrow().pan_values(id);
+    let v = p.velocity.velocity();
     EventPayload::Pan {
+        origin: point(Points(p.start.0), Points(p.start.1)),
         translation: point(Points(t.0), Points(t.1)),
         velocity_x: v.0,
         velocity_y: v.1,
@@ -2207,7 +2244,7 @@ fn pan_start(surface: &Rc<Surface>, view: &NshView, p: &Pointer) {
     };
     surface.anim.borrow_mut().pan_began(id);
     if events.contains(EventKind::PanStart) {
-        let payload = pan_payload(surface, id, (0.0, 0.0), p.velocity.velocity());
+        let payload = pan_payload(surface, id, p, (0.0, 0.0));
         surface.event(id, EventKind::PanStart, payload);
     }
 }
@@ -2231,7 +2268,7 @@ fn pan_end(surface: &Rc<Surface>, view: &NshView, p: &Pointer, write: bool) {
     }
     if events.contains(EventKind::PanEnd) {
         let t = (p.x - p.start.0, p.y - p.start.1);
-        let payload = pan_payload(surface, id, t, p.velocity.velocity());
+        let payload = pan_payload(surface, id, p, t);
         surface.event(id, EventKind::PanEnd, payload);
     }
 }
@@ -2245,22 +2282,28 @@ fn transform_payload(key: &'static str, amount: f32) -> EventPayload {
     ])
 }
 
-fn transform_view(surface: &Surface, view: &NshView) -> Transform {
+fn transform_view(surface: &Rc<Surface>, view: &NshView) -> Transform {
     let (id, events) = {
         let s = view.state();
         (s.id, s.events)
     };
     let (pinch, rotation) = transforms(&gesture_values(surface, view, id), events);
+    let zoom = crate::scroll::pinches(surface, view);
     Transform {
         view: view.clone(),
-        pinch,
-        rotation,
+        pinch: pinch && !zoom,
+        rotation: rotation && !zoom,
+        zoom,
         scale: 1.0,
         degrees: 0.0,
+        at: (0.0, 0.0),
     }
 }
 
-fn transform_begin(surface: &Surface, t: &Transform) {
+fn transform_begin(surface: &Rc<Surface>, t: &Transform) {
+    if t.zoom {
+        return crate::scroll::pinch_begin(surface, &t.view);
+    }
     let (id, events) = {
         let s = t.view.state();
         (s.id, s.events)
@@ -2284,6 +2327,10 @@ fn transform_begin(surface: &Surface, t: &Transform) {
 }
 
 fn transform_move(surface: &Rc<Surface>, t: &Transform) {
+    if t.zoom {
+        let (x, y) = local(&t.view, t.at.0, t.at.1);
+        return crate::scroll::pinch(surface, &t.view, t.scale, x, y);
+    }
     let id = t.view.state().id;
     {
         let mut anim = surface.anim.borrow_mut();
@@ -2298,7 +2345,11 @@ fn transform_move(surface: &Rc<Surface>, t: &Transform) {
     surface.ensure_ticking();
 }
 
-fn transform_end(surface: &Surface, t: &Transform) {
+fn transform_end(surface: &Rc<Surface>, t: &Transform) {
+    if t.zoom {
+        let (x, y) = local(&t.view, t.at.0, t.at.1);
+        return crate::scroll::pinch_end(surface, &t.view, x, y);
+    }
     let (id, events) = {
         let s = t.view.state();
         (s.id, s.events)
@@ -2369,6 +2420,7 @@ fn two_finger_moved(surface: &Rc<Surface>) {
         let Some((a, b)) = positions else { return };
         let (scale, rotation) = t.pinch.at(a, b);
         t.transform.scale = scale;
+        t.transform.at = ((a.x.0 + b.x.0) / 2.0, (a.y.0 + b.y.0) / 2.0);
         t.transform.degrees = rotation.0.to_degrees();
         t.transform.clone()
     };
@@ -2403,7 +2455,12 @@ fn wheel_zoom(surface: &Rc<Surface>, x: f32, y: f32, dy: f32) -> bool {
             let Some(hit) = pick(&surface.input_root(), x, y, true) else {
                 return false;
             };
+            // A zoomable scroll view nearer than a view with pinch values
+            // zooms around the pointer.
             let view = chain(&hit.view).into_iter().find(|v| {
+                if crate::scroll::pinches(surface, v) {
+                    return true;
+                }
                 let s = v.state();
                 transforms(&gesture_values(surface, v, s.id), s.events).0
             });
@@ -2415,6 +2472,7 @@ fn wheel_zoom(surface: &Rc<Surface>, x: f32, y: f32, dy: f32) -> bool {
         }
     };
     t.scale *= zoom_factor(dy);
+    t.at = (x, y);
     transform_move(surface, &t);
     *input.zoom.borrow_mut() = Some((t, generation));
     let weak = Rc::downgrade(surface);
@@ -2800,9 +2858,28 @@ fn wheel_input(
                 return false;
             };
             *input.latch.borrow_mut() = Some((view.clone(), horizontal, time));
-            // Without a begin, the scroll module takes it as a mouse wheel:
-            // it settles (and snaps) by itself once the notches stop.
-            scroll_wheel(surface, &view, dx, dy);
+            // Lines of 16 points (`WM_MOUSEWHEEL`'s default), or the view's
+            // own (`wheelLineHeight`); a `smoothWheel` view glides them on
+            // Chromium's curve.
+            let notch = if view.kind() == ViewKind::Scroll {
+                let line = nsh_core::geometry::point(Points(16.0), Points(16.0));
+                crate::scroll::wheel_notch(surface, &view, dx, dy, line)
+            } else {
+                Some((dx, dy))
+            };
+            let Some((dx, dy)) = notch else {
+                return true;
+            };
+            if view.kind() == ViewKind::Scroll && !surface.environment.get().reduce_motion {
+                // A notch glides, as in Windows' own apps and browsers
+                // (unless the system's animations are off).
+                crate::scroll::wheel_step(surface, &view, dx, dy);
+            } else {
+                // Without a begin, the scroll module takes it as a mouse
+                // wheel: it settles (and snaps) by itself once the notches
+                // stop.
+                scroll_wheel(surface, &view, dx, dy);
+            }
             true
         }
         WheelInput::Touchpad => {
@@ -2838,9 +2915,10 @@ fn wheel_input(
                 return false;
             };
             // The system glides on by itself (its inertia comes as more
-            // deltas, which this scroll took): no velocity to add.
+            // deltas, which this scroll took): no velocity to add, and a
+            // snapping view settles where it came to rest.
             if w.view.kind() == ViewKind::Scroll {
-                crate::scroll::wheel_end(surface, &w.view, 0.0, 0.0);
+                crate::scroll::wheel_settle(surface, &w.view);
             }
             true
         }
@@ -2977,6 +3055,70 @@ mod tests {
         assert_eq!(pressed(10.0), Some(4));
         // A field that does not listen: the row around it is not pressed.
         assert_eq!(pressed(60.0), None);
+    }
+
+    /// A click on blank space (no stop of the keyboard focus) blurs the
+    /// field that has the focus; a click on the field keeps it.
+    #[test]
+    fn a_click_on_blank_space_blurs_the_field() {
+        let surface = Surface::new(nsh_core::platform::Environment::default());
+        surface.root.state_mut().frame = rect(0.0, 0.0, 400.0, 400.0);
+        let field = view(
+            &surface.root,
+            2,
+            ViewKind::Input,
+            rect(0.0, 0.0, 200.0, 40.0),
+        );
+        crate::text_input::create(&surface, &field);
+        // A field left focused reaches thread-locals the test thread has
+        // already dropped as it ends: blurred however the test ends.
+        struct Blurred(Rc<Surface>);
+        impl Drop for Blurred {
+            fn drop(&mut self) {
+                crate::text_input::blur_all(&self.0);
+            }
+        }
+        let _blurred = Blurred(surface.clone());
+        view(
+            &surface.root,
+            4,
+            ViewKind::View,
+            rect(0.0, 100.0, 400.0, 200.0),
+        );
+        let area = view(
+            &surface.root,
+            5,
+            ViewKind::View,
+            rect(0.0, 300.0, 400.0, 100.0),
+        );
+        area.state_mut().props.selectable_view = true;
+        let click = |x: f32, y: f32| {
+            let event = |kind| PointerEvent {
+                kind,
+                x,
+                y,
+                button: 0,
+                buttons: if kind == PointerKind::Down { 1 } else { 0 },
+                pointer: 1,
+                touch: false,
+                pen: false,
+                time: 0.0,
+                clicks: 1,
+                modifiers: Modifiers::default(),
+            };
+            pointer(&surface, event(PointerKind::Down));
+            pointer(&surface, event(PointerKind::Up));
+        };
+        click(10.0, 10.0);
+        assert_eq!(crate::text_input::focused(&surface), Some(field.clone()));
+        click(10.0, 10.0);
+        assert_eq!(crate::text_input::focused(&surface), Some(field.clone()));
+        // A press that starts a selection keeps the field focused, so
+        // Ctrl+C copies the selection around it.
+        click(200.0, 350.0);
+        assert_eq!(crate::text_input::focused(&surface), Some(field.clone()));
+        click(200.0, 200.0);
+        assert_eq!(crate::text_input::focused(&surface), None);
     }
 
     #[test]

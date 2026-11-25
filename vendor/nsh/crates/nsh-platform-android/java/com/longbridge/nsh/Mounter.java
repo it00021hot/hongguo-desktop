@@ -79,8 +79,20 @@ final class Mounter {
      * its message, its buttons and a destructive action, each light then dark ARGB (0: the system's).
      */
     final int[] dialogColors = new int[10];
+    /**
+     * The language the app's text shows in ({@code encode.rs} {@code Command::TextLocale}), which
+     * the state words services read ({@link A11y}) and the date and time pickers' values and
+     * dialogs ({@link DateTimePickerComponent}) follow; null until the core names one (English state
+     * words, the system's language for the pickers).
+     */
+    java.util.Locale textLocale;
     /** The alerts shown and not answered yet, by dialog id: what {@link SystemUi#closeDialog} takes back. */
     final SparseArray<android.app.AlertDialog> dialogs = new SparseArray<>();
+    /**
+     * By dialog id, what takes each of {@link #dialogs} off the activity going for a configuration change, unanswered,
+     * and gives what shows it again in the next one ({@link #leaveWindows}).
+     */
+    final SparseArray<java.util.function.Supplier<Runnable>> dialogMoves = new SparseArray<>();
     /**
      * The status bar the app asked for last (style, hidden; -1: never), applied again when the app's or the system's
      * appearance changes.
@@ -120,6 +132,9 @@ final class Mounter {
         boolean shown = true, transparent, backVisible = true, gesture = true, preventBack;
         int tint, background, titleColor, animation, left = -1, right = -1, titleView = -1;
         float headerHeight;
+        /** `headerTitleAlign` "center". */
+        boolean centerTitle;
+        boolean hidesBottomBar;
     }
 
     /** Properties that animations can override, as last set by a style. */
@@ -181,12 +196,20 @@ final class Mounter {
     /** A portaled view's logical keyboard parent (`ViewProps::key_parent`); absent: ordinary. */
     private final android.util.SparseIntArray keyParents = new android.util.SparseIntArray();
     /**
+     * While the views move to the activity made again ({@link NshView#leaveActivity}): the focus they lose and take
+     * back on the way is no change for the app, and its listeners do not hear it.
+     */
+    boolean moving;
+    /**
      * A managed view took or lost the focus: the core styles it (`FOCUSED`),
      * and its `onFocus` / `onBlur` listeners hear it as an input's do.
      */
     private final View.OnFocusChangeListener focusChange = (view, focused) -> {
-        if (!(view instanceof Node)) return;
+        if (!(view instanceof Node) || moving) return;
         int id = ((Node) view).nodeId();
+        // The focus went somewhere (the user's Tab or tap, or the view a
+        // pending `focus()` waits for): that request is over.
+        if (focused) dropPendingFocus();
         // A programmatic focus only opts this focus session into touch
         // mode. Once it ends, default buttons must remain touch-neutral.
         if (!focused && !Focusable.touch(focusProps.get(id, -1))) {
@@ -235,13 +258,59 @@ final class Mounter {
     TextBox selectedText;
     /** The selectable view with a selection (one per surface, a text's or an area's). */
     SelectableView selectedArea;
+
+    /** Whether a text or a selectable view holds a selection (back ends it first). */
+    boolean hasSelection() {
+        return selectedText != null || selectedArea != null;
+    }
+
+    /** Ends the selection there is; false when there is none. */
+    private boolean endSelection() {
+        if (selectedArea != null) {
+            selectedArea.clear();
+            return true;
+        }
+        if (selectedText != null) {
+            selectedText.clearSelection();
+            return true;
+        }
+        return false;
+    }
     /** Selectable views (`ViewProps.selectable_view`), by view. */
     private final SparseArray<SelectableView> selectableViews = new SparseArray<>();
 
-    /** A finger went down at the screen point: a selection elsewhere ends. */
+    /**
+     * A finger went down off the selection's handles while something is selected: if it lifts without
+     * moving past the touch slop (a tap), the selection ends; a drag (a scroll) keeps it, as TextView's.
+     */
+    private boolean tapEndsSelection;
+    private float tapX, tapY;
+
+    /** A finger went down at the screen point: a tap away from the selection will end it ({@link #touchUp}). */
     void touchDown(float rawX, float rawY) {
-        if (selectedText != null && !selectedText.selectionContains(rawX, rawY)) selectedText.clearSelection();
-        if (selectedArea != null && !selectedArea.selectionContains(rawX, rawY)) selectedArea.clear();
+        tapEndsSelection = (selectedText != null && !selectedText.selectionContains(rawX, rawY))
+                || (selectedArea != null && !selectedArea.selectionContains(rawX, rawY));
+        tapX = rawX;
+        tapY = rawY;
+    }
+
+    /** The finger moved: past the slop it is no tap, and the selection stays. */
+    void touchMoved(float rawX, float rawY, float slop) {
+        if (tapEndsSelection && Math.hypot(rawX - tapX, rawY - tapY) > slop) tapEndsSelection = false;
+    }
+
+    /** The gesture ended ({@code tap}: lifted, not cancelled): a tap ends the selection. */
+    void touchUp(boolean tap) {
+        if (!tapEndsSelection) return;
+        tapEndsSelection = false;
+        if (!tap) return;
+        if (selectedText != null) selectedText.clearSelection();
+        if (selectedArea != null) selectedArea.clear();
+    }
+
+    /** A long press made a new selection: the gesture that made it does not end it. */
+    void keepSelection() {
+        tapEndsSelection = false;
     }
 
     /** The outermost selectable view {@code text} is in (an area inside another is part of it), or null. */
@@ -260,6 +329,13 @@ final class Mounter {
     /** `hitSlop` of views that have one (px: top, right, bottom, left). */
     private final SparseArray<float[]> slops = new SparseArray<>();
     private final SparseArray<A11y> a11y = new SparseArray<>();
+    /**
+     * The view whose node an accessibility service last clicked through its delegate
+     * (TalkBack's double tap), and when (uptime ms): a checked or selected state it changes in a
+     * later batch is told as that click's (`A11y.changed`).
+     */
+    View accessibilityClicked;
+    long accessibilityClickedAt;
     /** Layout animation of the batch being applied: create, update, delete. */
     private Transition[] layoutAnimation;
     /** Views created by the batch being applied. */
@@ -287,6 +363,9 @@ final class Mounter {
     private final java.util.ArrayList<StackBox> stacks = new java.util.ArrayList<>();
     private final java.util.ArrayList<ModalHost> shownModals = new java.util.ArrayList<>();
 
+    /** Re-syncs the tab bars when stacks, screens, or their visibility changed in a batch. */
+    private boolean bottomBarDirty;
+
     /** The surface root (node 1). */
     final Box root;
 
@@ -297,7 +376,10 @@ final class Mounter {
         this.images = images;
         components.put(TabBarComponent.NAME, c -> new TabBarComponent(context, c, this::night));
         components.put(SwitchComponent.NAME, c -> new SwitchComponent(context, c, this::night));
-        components.put(DateTimePickerComponent.NAME, c -> new DateTimePickerComponent(context, c, this::night));
+        components.put(DateTimePickerComponent.NAME,
+                c -> new DateTimePickerComponent(context, c, this::night, () -> textLocale));
+        components.put(MenuButtonComponent.NAME, c -> new MenuButtonComponent(context, c, this::night));
+        components.put(ContextMenuComponent.NAME, c -> new ContextMenuComponent(context, c, this::night));
         images.redirects = (base, location) -> Native.mediaRedirect(handle(), base, location);
         images.inline = uri -> {
             long handle = handle();
@@ -320,9 +402,13 @@ final class Mounter {
         views.put(1, root);
     }
 
-    /** Whether the running app's web views may navigate to {@code url} (its capabilities). */
-    boolean allowsWebview(String url) {
-        return Native.allowsWebview(handle(), url);
+    /**
+     * Whether a web view whose {@code allowOrigin} is {@code origin} (null:
+     * none) may navigate to {@code url} (the app's capabilities). The origin
+     * is compared in Rust.
+     */
+    boolean allowsWebview(String url, String origin) {
+        return Native.allowsWebview(handle(), url, origin);
     }
 
     /** Whether the running app's web pages may capture {@code kind} (its {@code webview.media}). */
@@ -363,6 +449,7 @@ final class Mounter {
                 case INSERT: insert(b.getInt(), b.getInt(), b.getInt()); break;
                 case REMOVE: {
                     int id = b.getInt();
+                    noteKeyboardLeaving(views.get(id));
                     if (!removeHosted(id)) remove(id);
                     break;
                 }
@@ -394,8 +481,17 @@ final class Mounter {
                     // updating live allocates nothing for it.
                     boolean uniform = b.getInt() != 0;
                     int uniformColor = b.getInt();
+                    // What attachments copy as: offset, string object.
+                    int copies = b.getInt();
+                    int[] copyAt = copies == 0 ? TextLayouts.NO_COPIES : new int[copies];
+                    String[] copyTexts = copies == 0 ? TextLayouts.NO_COPY_TEXTS : new String[copies];
+                    for (int i = 0; i < copies; i++) {
+                        copyAt[i] = b.getInt();
+                        copyTexts[i] = (String) objects[b.getInt()];
+                    }
                     if (v instanceof TextBox) {
                         TextBox t = (TextBox) v;
+                        t.setCopyTexts(copyAt, copyTexts);
                         t.setSelectable(selectable == 1, selectable == 0, selectionColor);
                         t.setLayout((Layout) layout, x * density, y * density, w * density, h * density);
                         t.recolor(uniform, uniformColor, effects.get(t.id));
@@ -531,11 +627,13 @@ final class Mounter {
                     boolean bouncesZoom = b.getInt() != 0, pinch = b.getInt() != 0, center = b.getInt() != 0;
                     boolean ownIndicator = b.getInt() != 0;
                     float indicatorHeight = b.getFloat();
+                    float barTop = b.getFloat(), barRight = b.getFloat(), barBottom = b.getFloat(), barLeft = b.getFloat();
                     if (v instanceof ScrollBox) {
                         ((ScrollBox) v).setBehavior(paging, interval, offsets, alignment, deceleration, enabled, bounces,
                                 top, right, bottom, left, taps, oneStep);
                         ((ScrollBox) v).setZoom(zooms, minZoom, maxZoom, bouncesZoom, pinch, center);
                         ((ScrollBox) v).setRefresh(ownIndicator, indicatorHeight);
+                        ((ScrollBox) v).setBarInset(barTop, barRight, barBottom, barLeft);
                     }
                     break;
                 }
@@ -565,7 +663,11 @@ final class Mounter {
                     Dynamic d = statics.get(id);
                     if (v != null && d != null) applyDynamic(v, d);
                     // Its props bound again are handed over again.
-                    if (v instanceof ComponentBox) ((ComponentBox) v).forgetAnimated();
+                    if (v instanceof ComponentBox) {
+                        NshComponent c = ((ComponentBox) v).component;
+                        if (c instanceof RustComponent) ((RustComponent) c).step(seq);
+                        else ((ComponentBox) v).forgetAnimated();
+                    }
                     break;
                 }
                 case GESTURES: {
@@ -637,7 +739,7 @@ final class Mounter {
                     if (v instanceof InputBox) ((InputBox) v).setContent(px(x), px(y), px(x + w) - px(x), px(y + h) - px(y));
                     break;
                 }
-                case COMMAND: command(b, objects); break;
+                case COMMAND: command(b, objects, seq); break;
                 case COMPONENT: {
                     int id = b.getInt();
                     component(id, string(objects, b.getInt()));
@@ -674,17 +776,29 @@ final class Mounter {
                     View v = views.get(b.getInt());
                     String[] names = new String[b.getInt()];
                     for (int i = 0; i < names.length; i++) names[i] = string(objects, b.getInt());
-                    if (v instanceof ComponentBox) ((ComponentBox) v).slots = names;
+                    if (v instanceof ComponentBox) {
+                        NshComponent c = ((ComponentBox) v).component;
+                        if (c instanceof RustComponent) ((RustComponent) c).step(seq);
+                        else ((ComponentBox) v).slots = names;
+                    }
                     break;
                 }
                 case COMPONENT_PROPS: {
                     View v = views.get(b.getInt());
                     int count = b.getInt();
                     NshComponent c = v instanceof ComponentBox ? ((ComponentBox) v).component : null;
-                    for (int i = 0; i < count; i++) {
-                        String name = string(objects, b.getInt());
-                        String json = string(objects, b.getInt());
-                        if (c != null) c.setProp(name, Json.parse(json));
+                    if (c instanceof RustComponent) {
+                        for (int i = 0; i < count; i++) {
+                            b.getInt();
+                            b.getInt();
+                        }
+                        ((RustComponent) c).step(seq);
+                    } else {
+                        for (int i = 0; i < count; i++) {
+                            String name = string(objects, b.getInt());
+                            String json = string(objects, b.getInt());
+                            if (c != null) c.setProp(name, Json.parse(json));
+                        }
                     }
                     break;
                 }
@@ -698,6 +812,11 @@ final class Mounter {
         }
         created.clear();
         finishNavigation();
+        // Commands run before the navigation: a page's `focus()` in the
+        // batch that pushes it finds the page placed only now, so it is
+        // focused before the frame draws.
+        if (pendingFocus.id() != 0) retryFocus();
+        settleKeyboardLeaving();
         outputs(Native.afterBatch(handle(), seq));
     }
 
@@ -824,8 +943,10 @@ final class Mounter {
      */
     void destroyComponents() {
         Notifications.forget(this);
-        // A page's orientations go with the app.
+        // A page's orientations go with the app, and so does a focus
+        // request still waiting (no `DELETE` ends it).
         orientations(0);
+        dropPendingFocus();
         if (audio != null) {
             audio.release();
             audio = null;
@@ -915,6 +1036,7 @@ final class Mounter {
             return;
         }
         ((ComponentBox) v).attach(factory.create(new NshComponentContext(host, id)));
+        if (((ComponentBox) v).component instanceof TabBarComponent) bottomBarDirty = true;
     }
 
     private static ViewGroup container(View parent) {
@@ -926,6 +1048,8 @@ final class Mounter {
     }
 
     private void insert(int parentId, int childId, int beforeId) {
+        // Moved, not removed: the keyboard is not its to hide.
+        if (keyboardLeaving != null && views.get(childId) == keyboardLeaving) forgetKeyboardLeaving();
         if (insertHosted(parentId, childId, beforeId)) return;
         View parent = views.get(parentId), child = views.get(childId);
         ViewGroup group = container(parent);
@@ -1038,6 +1162,13 @@ final class Mounter {
 
     private void delete(int id) {
         View v = views.get(id);
+        // Still in the tree: a subtree released at once comes as deletes
+        // without a remove, and each detaches its view here.
+        if (v != null && v.getParent() != null) noteKeyboardLeaving(v);
+        if (id == pendingFocus.id()) {
+            dropPendingFocus();
+            android.util.Log.w("nsh", "focus(): view " + id + " was removed before it was shown; the request is dropped");
+        }
         if (v != null && managed(v) && v.isFocused()) {
             // The view goes away: report its blur before it leaves the tree.
             v.setOnFocusChangeListener(focusChange);
@@ -1088,6 +1219,7 @@ final class Mounter {
         keyParents.delete(id);
         slops.remove(id);
         a11y.remove(id);
+        if (accessibilityClicked == v) accessibilityClicked = null;
     }
 
     private void frame(int id, float x, float y, float w, float h) {
@@ -1105,9 +1237,9 @@ final class Mounter {
             return;
         }
         if (headerItems.contains(id)) {
-            // A header item: the toolbar places it at its size.
+            // A header item: the toolbar (or the row of a leading item and its title) places it at its size.
             headerSizes.put(id, new int[] {px(w), px(h)});
-            if (v.getParent() instanceof android.widget.Toolbar) {
+            if (v.getParent() instanceof android.widget.Toolbar || v.getParent() instanceof StackBox.ScreenBox.HeaderRow) {
                 ViewGroup.LayoutParams p = v.getLayoutParams();
                 p.width = Math.max(1, px(w));
                 p.height = Math.max(1, px(h));
@@ -1116,6 +1248,7 @@ final class Mounter {
             return;
         }
         Box.Frame f = Box.frame(v);
+        boolean wasEmpty = f.right <= f.left || f.bottom <= f.top;
         Transition t = layoutAnimation != null ? layoutAnimation[1] : null;
         // A view never placed has no frame to move from; one placed zero
         // high (a collapsed reveal) or zero wide grows from it, as on iOS.
@@ -1147,18 +1280,12 @@ final class Mounter {
             f.bottom = to[3];
             Box.place(v);
         }
+        if (!stacks.isEmpty() && wasEmpty != (to[2] <= to[0] || to[3] <= to[1])) bottomBarDirty = true;
         if (v instanceof ImageBox) loadImage((ImageBox) v);
     }
 
     private Decor decor(View v) {
-        if (v instanceof StackBox.ScreenBox) return ((StackBox.ScreenBox) v).root.decor;
-        if (v instanceof StackBox) return ((StackBox) v).decor;
-        if (v instanceof Box) return ((Box) v).decor;
-        if (v instanceof TextBox) return ((TextBox) v).decor;
-        if (v instanceof ImageBox) return ((ImageBox) v).decor;
-        if (v instanceof ScrollBox) return ((ScrollBox) v).decor;
-        if (v instanceof InputBox) return ((InputBox) v).decor;
-        return null;
+        return Decor.of(v);
     }
 
     private void style(ByteBuffer b) {
@@ -1189,6 +1316,15 @@ final class Mounter {
         boolean originYFraction = b.getInt() == 1;
         float originY = b.getFloat();
         boolean backfaceHidden = b.getInt() != 0;
+        // `clipPath`: whether there is one, then its offsets, fractions and
+        // radii (`encode.rs` `view_style`).
+        boolean hasClip = b.getInt() != 0;
+        float[] clip = new float[12];
+        for (int i = 0; i < 12; i++) clip[i] = b.getFloat();
+        for (int i = 0; i < 4; i++) {
+            clip[i] *= density;
+            clip[8 + i] *= density;
+        }
         Effects fx = Effects.read(b, density);
         d.opacity = opacity;
         d.background = background;
@@ -1215,6 +1351,8 @@ final class Mounter {
             decor.originY = originYFraction ? originY : originY * density;
             decor.originYFraction = originYFraction;
             decor.backfaceHidden = backfaceHidden;
+            decor.clipPath = hasClip ? clip : null;
+            if (!stacks.isEmpty() && decor.hidden != fx.hidden) bottomBarDirty = true;
             decor.hidden = fx.hidden;
             decor.boxShadows = fx.shadows;
             decor.boxShadowColors = fx.shadowColors;
@@ -1265,10 +1403,13 @@ final class Mounter {
         final int[] borderColors = new int[4];
         final float[] radii = new float[4];
         final float[] borderWidths = new float[4];
+        /** The clip path on screen (mid-transition included), or null. */
+        final float[] clipPath;
         final float opacity, tx, ty, sx, sy, rotate;
 
         Snapshot(View v, Decor decor, Dynamic d) {
             fill = decor != null ? decor.fill : 0;
+            clipPath = decor != null && decor.clipPath != null ? decor.clipPath.clone() : null;
             if (decor != null) {
                 System.arraycopy(decor.borderColors, 0, borderColors, 0, 4);
                 System.arraycopy(decor.radii, 0, radii, 0, 4);
@@ -1315,6 +1456,12 @@ final class Mounter {
         final float[] widths = decor != null ? decor.borderWidths.clone() : new float[4];
         final int props = fx.transitionProps;
         boolean colors = (props & 1) != 0, opacity = (props & 2) != 0, transform = (props & 4) != 0, shape = (props & 16) != 0;
+        // The clip path moves edge by edge (`TransitionProps::CLIP_PATH`);
+        // to or from none it changes at once, as in CSS.
+        final float[] clipTo = decor != null ? decor.clipPath : null;
+        final boolean clip = (props & 32) != 0 && clipTo != null && from.clipPath != null
+                && !java.util.Arrays.equals(clipTo, from.clipPath);
+        final float[] clipNow = clip ? from.clipPath.clone() : null;
         ValueAnimator a = ValueAnimator.ofFloat(0, 1);
         a.setDuration((long) fx.transitionDuration);
         a.setStartDelay((long) fx.transitionDelay);
@@ -1335,6 +1482,11 @@ final class Mounter {
                     // Same as above: the ripple's cached mask must follow the
                     // animated shape (e.g. the press corner morph).
                     rippleMaskDirty(id);
+                }
+                if (clip) {
+                    for (int i = 0; i < 12; i++) clipNow[i] = from.clipPath[i] + (clipTo[i] - from.clipPath[i]) * t;
+                    for (int i = 8; i < 12; i++) clipNow[i] = Math.max(0, clipNow[i]);
+                    decor.clipPath = clipNow;
                 }
             }
             now.opacity = opacity ? from.opacity + (to.opacity - from.opacity) * t : to.opacity;
@@ -1368,6 +1520,7 @@ final class Mounter {
             decor.fill = from.fill;
             System.arraycopy(from.borderColors, 0, decor.borderColors, 0, 4);
         }
+        if (clip) decor.clipPath = clipNow;
         a.start();
     }
 
@@ -1736,7 +1889,9 @@ final class Mounter {
             rippleRadius = b.getFloat();
         }
         if (b.getInt() != 0) {
-            panActivations.put(id, new float[] {b.getFloat(), b.getFloat(), b.getFloat(), b.getFloat()});
+            // The offsets, then the way it activates in and its edge (`encode.rs`).
+            panActivations.put(id, new float[] {
+                b.getFloat(), b.getFloat(), b.getFloat(), b.getFloat(), b.getInt(), b.getInt()});
         } else {
             panActivations.remove(id);
         }
@@ -1799,9 +1954,12 @@ final class Mounter {
         }
         if (v instanceof InputBox) ((InputBox) v).pointerEvents = pointerEvents;
         if (v instanceof TextBox) ((TextBox) v).a11y = a;
+        A11y before = a11y.get(id);
         a11y.put(id, a);
         a.apply(v);
         updateFocusable(id, v);
+        // After the new delegate is in place: services answer by querying the node.
+        a.changed(v, before);
         if (v instanceof ScrollBox) keyScroll((ScrollBox) v, nativeId);
     }
 
@@ -1989,10 +2147,13 @@ final class Mounter {
         o.titleView = b.getInt();
         o.headerHeight = b.getFloat();
         o.backTitle = string(objects, b.getInt());
+        o.centerTitle = b.getInt() == 1;
+        o.hidesBottomBar = b.getInt() != 0;
         screenOptions.put(id, o);
         dirtyScreens.add(id);
         int stack = hosts.get(id, -1);
         if (stack >= 0) dirtyStacks.add(stack);
+        bottomBarDirty = true;
     }
 
     private static int skip(ByteBuffer b) {
@@ -2006,8 +2167,20 @@ final class Mounter {
             View v = views.get(id);
             if (v instanceof StackBox) {
                 StackBox stack = (StackBox) v;
-                for (int s : stack.screens) dirtyScreens.add(s);
+                for (int s : stack.screens) {
+                    dirtyScreens.add(s);
+                    // The transition reads each screen's animation and hidesBottomBar:
+                    // a screen mounted in this batch is configured only below, so give
+                    // it its options before the stack reconciles and animates it in.
+                    View sv = views.get(s);
+                    ScreenOptions so = screenOptions.get(s);
+                    if (sv instanceof StackBox.ScreenBox && so != null) {
+                        ((StackBox.ScreenBox) sv).animation = so.animation;
+                        ((StackBox.ScreenBox) sv).hidesBottomBar = so.hidesBottomBar;
+                    }
+                }
                 stack.reconcile();
+                bottomBarDirty = true;
             }
         }
         dirtyStacks.clear();
@@ -2022,7 +2195,7 @@ final class Mounter {
             ScreenOptions below = canGoBack ? screenOptions.get(((StackBox) stack).screens.get(index - 1)) : null;
             ((StackBox.ScreenBox) v).configure(this, o.title, o.shown, o.transparent, o.tint, o.background,
                     o.titleColor, o.backVisible, o.gesture, o.preventBack, o.animation, o.left, o.right, o.titleView,
-                    o.headerHeight, canGoBack, below != null ? below.backTitle : null);
+                    o.headerHeight, o.centerTitle, o.hidesBottomBar, canGoBack, below != null ? below.backTitle : null);
             reportScreenInsets(id, o);
         }
         dirtyScreens.clear();
@@ -2040,6 +2213,10 @@ final class Mounter {
             }
         }
         dirtyModals.clear();
+        if (bottomBarDirty) {
+            bottomBarDirty = false;
+            for (StackBox s : stacks) s.syncBottomBar(false);
+        }
         updateBack();
     }
 
@@ -2077,7 +2254,7 @@ final class Mounter {
      * by asking JS: the system asks synchronously.
      */
     boolean wantsBack() {
-        if (!shownModals.isEmpty()) return true;
+        if (!shownModals.isEmpty() || hasSelection()) return true;
         return backStack() != null || wants(1, Native.BACK_PRESS);
     }
 
@@ -2097,6 +2274,35 @@ final class Mounter {
             if (window != null) windows.add(window);
         }
         return windows;
+    }
+
+    /**
+     * The control a native component draws for the app (a {@code MenuButton}'s
+     * button) that the test agent presses: in the view of a node whose
+     * {@code testID} is {@code testId}, or labelled {@code label}; null when
+     * none shows.
+     */
+    View componentControl(String testId, String label) {
+        for (int i = 0; i < views.size(); i++) {
+            View v = views.valueAt(i);
+            if (!(v instanceof ComponentBox) || ((ComponentBox) v).component == null) continue;
+            View control = ((ComponentBox) v).component.view();
+            if (!control.isClickable() || !control.isShown()) continue;
+            if (label != null) {
+                CharSequence name = control.getContentDescription();
+                if (name != null && label.contentEquals(name)) return control;
+                continue;
+            }
+            for (int j = 0; j < a11y.size(); j++) {
+                if (!testId.equals(a11y.valueAt(j).testId)) continue;
+                View named = views.get(a11y.keyAt(j));
+                for (View at = v; named != null && at != null;
+                        at = at.getParent() instanceof View ? (View) at.getParent() : null) {
+                    if (at == named) return control;
+                }
+            }
+        }
+        return null;
     }
 
     /** The window of the topmost dialog shown, or null. */
@@ -2123,15 +2329,104 @@ final class Mounter {
         updateBack();
     }
 
+    // --- Moving to the activity made again ------------------------------------------
+
+    /** The view focused in the host's window as it left the activity. */
+    private View movedFocus;
+    /** The text field the software keyboard was up for as it left the activity. */
+    private View movedKeyboard;
+    /** What shows the alerts taken off the activity that went again, in the new one. */
+    private final java.util.ArrayList<Runnable> movedDialogs = new java.util.ArrayList<>();
+
+    /**
+     * The activity goes, to be made again for a configuration change ({@link NshView#leaveActivity}): what the app
+     * shows in windows of the activity's own goes off it now, or the activity would leak with them. Dialogs and
+     * alerts come back in {@link #enterWindows}; menus and date pickers close, as when the user leaves them.
+     */
+    void leaveWindows() {
+        moving = true;
+        movedKeyboard = fieldWithKeyboard();
+        movedFocus = host.findFocus();
+        SystemMenus.dismissOf(context);
+        for (int i = 0; i < views.size(); i++) {
+            View v = views.valueAt(i);
+            if (v instanceof ComponentBox && ((ComponentBox) v).component instanceof DateTimePickerComponent) {
+                ((DateTimePickerComponent) ((ComponentBox) v).component).closeDialog();
+            }
+        }
+        java.util.ArrayList<java.util.function.Supplier<Runnable>> alerts = new java.util.ArrayList<>();
+        for (int i = 0; i < dialogMoves.size(); i++) alerts.add(dialogMoves.valueAt(i));
+        for (java.util.function.Supplier<Runnable> alert : alerts) movedDialogs.add(alert.get());
+        // Those still going too: their dismissal ends now.
+        for (int i = 0; i < modals.size(); i++) modals.valueAt(i).leaveWindow();
+    }
+
+    /** Shows the dialogs and alerts {@link #leaveWindows} took in the activity made again, the focus as it was. */
+    void enterWindows() {
+        for (ModalHost m : shownModals) m.enterWindow();
+        for (Runnable show : movedDialogs) show.run();
+        movedDialogs.clear();
+        View focus = movedFocus;
+        movedFocus = null;
+        if (focus != null && focus.getRootView() == host.getRootView()) focus.requestFocus();
+        applySystemBars();
+        moving = false;
+        // The keyboard comes back up for its field once its window has the focus.
+        View field = movedKeyboard;
+        movedKeyboard = null;
+        for (View v = field; v != null; v = v.getParent() instanceof View ? (View) v.getParent() : null) {
+            if (v instanceof InputBox) {
+                ((InputBox) v).focus();
+                break;
+            }
+        }
+    }
+
+    /** The text field the software keyboard is up for: the focus of the topmost window, the host's or a dialog's. */
+    private View fieldWithKeyboard() {
+        View field = shownModals.isEmpty() ? host.findFocus() : shownModals.get(shownModals.size() - 1).focus();
+        if (field == null || !field.onCheckIsTextEditor()) return null;
+        if (Build.VERSION.SDK_INT < 30) return field;
+        android.view.WindowInsets insets = field.getRootWindowInsets();
+        return insets != null && insets.isVisible(android.view.WindowInsets.Type.ime()) ? field : null;
+    }
+
     /** Whether the app's back listeners hear the button before the stacks. */
     boolean listensToBack() {
         return wants(1, Native.BACK_PRESS);
+    }
+
+    /**
+     * Whether the app follows the back gesture itself: it listens to the
+     * gesture's steps ({@code BackHandler.on("progress")}) and no modal
+     * takes the gesture. The stacks then leave it to the app.
+     */
+    boolean followsBack() {
+        return shownModals.isEmpty() && wants(1, Native.BACK_PROGRESS);
+    }
+
+    /**
+     * A step of the back gesture the app follows: {@code phase} is
+     * {@code "start"}, {@code "move"}, {@code "end"} or {@code "cancel"},
+     * {@code progress} from 0 to 1, {@code edge} {@code "left"},
+     * {@code "right"} or null.
+     */
+    void backProgress(String phase, float progress, String edge) {
+        if (edge == null) {
+            eventMap(1, Native.BACK_PROGRESS, new String[] {"phase", "progress"},
+                    new Object[] {phase, (double) progress});
+        } else {
+            eventMap(1, Native.BACK_PROGRESS, new String[] {"phase", "progress", "edge"},
+                    new Object[] {phase, (double) progress, edge});
+        }
     }
 
     /** The back button: the newest modal asks to close, else the app's
      * listeners hear it (and send {@code Command::Back} when none takes it),
      * else the innermost stack pops. Returns false if nothing did. */
     boolean handleBack() {
+        // A selection goes first, as TextView's: back ends it and goes no further.
+        if (endSelection()) return true;
         if (!shownModals.isEmpty()) {
             shownModals.get(shownModals.size() - 1).backPressed();
             return true;
@@ -2268,7 +2563,8 @@ final class Mounter {
         int keyboard = b.getInt(), returnKey = b.getInt(), capitalize = b.getInt();
         boolean autoCorrect = b.getInt() != 0, multiline = b.getInt() != 0;
         int maxLength = b.getInt();
-        boolean editable = b.getInt() != 0, autoFocus = b.getInt() != 0, hasSelection = b.getInt() != 0;
+        boolean editable = b.getInt() != 0, autoFocus = b.getInt() != 0, selectOnFocus = b.getInt() != 0;
+        boolean hasSelection = b.getInt() != 0;
         int selection = b.getInt();
         boolean hasCaret = b.getInt() != 0;
         int caret = b.getInt();
@@ -2277,17 +2573,83 @@ final class Mounter {
         boolean inputRtl = b.getInt() != 0;
         boolean caretHidden = b.getInt() != 0;
         boolean pasteInserts = b.getInt() != 0;
-        boolean scrollbarVisible = b.getInt() != 0, replaced = b.getInt() != 0;
+        int pasteMaxSize = b.getInt();
+        boolean scrollbarVisible = b.getInt() != 0, reportScroll = b.getInt() != 0;
+        int fontVariant = b.getInt();
         if (!(v instanceof InputBox)) return;
+        if (autoFocus && !((InputBox) v).isConfigured()) focusAsked = true;
         ((InputBox) v).pasteInserts = pasteInserts;
-        ((InputBox) v).setScrollbar(scrollbarVisible, replaced);
+        ((InputBox) v).pasteMaxSize = pasteMaxSize;
+        ((InputBox) v).setScrollbar(scrollbarVisible, reportScroll);
         ((InputBox) v).edit.setCursorVisible(!caretHidden);
         ((InputBox) v).setAutofill(autofill);
         ((InputBox) v).edit.setLayoutDirection(inputRtl ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR);
         String family = familyIndex >= 0 ? (String) objects[familyIndex] : null;
         ((InputBox) v).configure(size, weight, italic, color, family, spacing, align, placeholder,
                 hasPlaceholderColor, placeholderColor, secure, keyboard, returnKey, capitalize, autoCorrect,
-                multiline, maxLength, editable, autoFocus, hasSelection, selection, hasCaret, caret, submit);
+                multiline, maxLength, editable, autoFocus, selectOnFocus, hasSelection, selection, hasCaret, caret, submit,
+                inputRtl, fontVariant);
+    }
+
+    /**
+     * The view removed or deleted in this batch with the text field that has the keyboard inside it, and that
+     * field's window: once detached, the view no longer finds its focus. Settled when the batch ends, never kept
+     * across batches.
+     */
+    private View keyboardLeaving, keyboardWindow;
+    private android.os.IBinder keyboardToken;
+    /** A field asked for the focus in this batch (`focus()`, or a new field's `autoFocus`): the keyboard is its. */
+    private boolean focusAsked;
+
+    private void noteKeyboardLeaving(View v) {
+        View f = v == null ? null : v.findFocus();
+        if (f == null || !f.onCheckIsTextEditor()) return;
+        keyboardLeaving = v;
+        keyboardWindow = f.getRootView();
+        keyboardToken = f.getWindowToken();
+    }
+
+    private void forgetKeyboardLeaving() {
+        keyboardLeaving = null;
+        keyboardWindow = null;
+        keyboardToken = null;
+    }
+
+    /**
+     * The field with the keyboard was removed or deleted in this batch and not put back: the keyboard hides with
+     * it, as when a page or dialog leaves ({@link #hideKeyboardIn}), unless a field takes it: one asked for the
+     * focus in the batch, waits for it, or has it once the batch's own posted focus requests ran.
+     */
+    private void settleKeyboardLeaving() {
+        View window = keyboardWindow;
+        android.os.IBinder token = keyboardToken;
+        boolean asked = focusAsked;
+        focusAsked = false;
+        forgetKeyboardLeaving();
+        if (window == null || asked) return;
+        host.post(() -> {
+            if (pendingFocus.id() != 0) return;
+            View now = window.findFocus();
+            if (now != null && now.onCheckIsTextEditor()) return;
+            InputMethodManager imm = (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
+            imm.hideSoftInputFromWindow(token, 0);
+            focusWindowRoot(window);
+        });
+    }
+
+    /** Leaves the focus at the root of {@code window}, where the keyboard's field was: the host's or a dialog's. */
+    private void focusWindowRoot(View window) {
+        if (window == host.getRootView()) {
+            host.requestFocus();
+            return;
+        }
+        for (int i = 0; i < modals.size(); i++) {
+            ModalHost modal = modals.valueAt(i);
+            if (modal.window() == window) {
+                modal.focusRoot();
+                return;
+            }
+        }
     }
 
     /**
@@ -2383,15 +2745,23 @@ final class Mounter {
         view.performHapticFeedback(feedback);
     }
 
-    private void command(ByteBuffer b, Object[] objects) {
+    /** Whether {@code inner} is {@code outer} or inside it. */
+    private static boolean within(View inner, View outer) {
+        for (Object at = inner; at instanceof View; at = ((View) at).getParent()) {
+            if (at == outer) return true;
+        }
+        return false;
+    }
+
+    private void command(ByteBuffer b, Object[] objects, long seq) {
         int id = b.getInt(), kind = b.getInt();
         View v = views.get(id);
         switch (kind) {
             case 0:
-                if (v instanceof InputBox) ((InputBox) v).focus();
-                else focusManaged(id);
+                focus(id, v);
                 break;
             case 1:
+                blurPending(id, v);
                 if (v instanceof InputBox) {
                     ((InputBox) v).blur();
                 } else if (v != null && managed(v) && v.isFocused()) {
@@ -2492,7 +2862,17 @@ final class Mounter {
                     texts[i] = (String) objects[b.getInt()];
                     styles[i] = b.getInt();
                 }
-                SystemUi.dialog(this, dialog, title, message, cancelable, sheet, texts, styles);
+                // Its text field: the text, the placeholder, select all, required.
+                String input = null, placeholder = null;
+                boolean selectAll = false, required = false;
+                if (b.getInt() != 0) {
+                    input = (String) objects[b.getInt()];
+                    placeholder = optString(b, objects);
+                    selectAll = b.getInt() != 0;
+                    required = b.getInt() != 0;
+                }
+                SystemUi.dialog(this, dialog, title, message, cancelable, sheet, texts, styles, input, placeholder,
+                        selectAll, required);
                 break;
             }
             case 60:
@@ -2545,11 +2925,22 @@ final class Mounter {
             case 50:
                 if (v instanceof InputBox) ((InputBox) v).closeEditMenu();
                 break;
+            case 62: {
+                // ref.clearSelection(): the selection of the selectable view
+                // v is, is in or holds.
+                SelectableView area = selectedArea;
+                if (area != null && v != null && (within(area.view, v) || within(v, area.view))) {
+                    area.clear();
+                }
+                break;
+            }
             case 21: {
                 String name = string(objects, b.getInt());
                 String json = string(objects, b.getInt());
-                if (v instanceof ComponentBox && ((ComponentBox) v).component != null) {
-                    ((ComponentBox) v).component.command(name, Json.parse(json));
+                if (v instanceof ComponentBox) {
+                    NshComponent c = ((ComponentBox) v).component;
+                    if (c instanceof RustComponent) ((RustComponent) c).step(seq);
+                    else if (c != null) c.command(name, Json.parse(json));
                 }
                 break;
             }
@@ -2688,6 +3079,14 @@ final class Mounter {
                 eventMap(1, Native.OPEN_URL, new String[] {"id", "opened"}, new Object[] {(double) request, opened});
                 break;
             }
+            case 63: {
+                // `encode.rs` `Command::OpenAppSettings`: the request.
+                int request = b.getInt();
+                boolean opened = SystemUi.openAppSettings(context);
+                eventMap(1, Native.OPEN_APP_SETTINGS, new String[] {"id", "opened"},
+                        new Object[] {(double) request, opened});
+                break;
+            }
             case 23: {
                 int request = b.getInt();
                 boolean hasOnly = b.getInt() != 0;
@@ -2717,6 +3116,26 @@ final class Mounter {
             case 17: {
                 String text = (String) objects[b.getInt()];
                 (v != null ? v : host).announceForAccessibility(text);
+                break;
+            }
+            case 64: {
+                textLocale = java.util.Locale.forLanguageTag((String) objects[b.getInt()]);
+                // Date and time pickers show their values in it.
+                for (int i = 0; i < views.size(); i++) {
+                    View view = views.valueAt(i);
+                    if (view instanceof ComponentBox && ((ComponentBox) view).component instanceof DateTimePickerComponent) {
+                        ((DateTimePickerComponent) ((ComponentBox) view).component).textLocaleChanged();
+                    }
+                }
+                // Services keep copies of the nodes: those with state words read them again.
+                android.view.accessibility.AccessibilityManager manager = host.accessibility();
+                // Without a running service there is no copy to refresh.
+                if (manager != null && manager.isEnabled()) {
+                    for (int i = 0; i < a11y.size(); i++) {
+                        View view = views.get(a11y.keyAt(i));
+                        if (view != null) a11y.valueAt(i).wordsChanged(view);
+                    }
+                }
                 break;
             }
             case 48: {
@@ -2765,7 +3184,11 @@ final class Mounter {
                 }
                 String injected = optString(b, objects), before = optString(b, objects), ua = optString(b, objects);
                 boolean scroll = b.getInt() != 0, js = b.getInt() != 0, incognito = b.getInt() != 0;
-                if (v instanceof WebBox) ((WebBox) v).configure(source, injected, before, ua, scroll, js, incognito);
+                boolean zoomable = b.getInt() != 0;
+                String allowOrigin = optString(b, objects);
+                if (v instanceof WebBox) {
+                    ((WebBox) v).configure(source, injected, before, ua, scroll, js, incognito, zoomable, allowOrigin);
+                }
                 break;
             }
             case 4: {
@@ -2789,6 +3212,9 @@ final class Mounter {
 
     void inputFocused(InputBox input, boolean focused) {
         if (focused) {
+            // As a managed view's focus does (`focusChange`): a request
+            // still waiting for another view would take it from the field.
+            dropPendingFocus();
             this.focused = input;
             host.post(this::revealFocused);
         } else if (this.focused == input) {
@@ -2798,12 +3224,19 @@ final class Mounter {
 
     /** The scroll view padded to clear the keyboard. */
     private int avoided = -1;
+    /**
+     * The scroll view around the focused input of a modal window while the
+     * keyboard is up: it shrinks as the window lays out above the keyboard.
+     */
+    private int shrinking = -1;
 
     /**
      * The software keyboard's top edge moved, in screen coordinates
      * ({@code Integer.MAX_VALUE} when hidden): pads the scroll view around
-     * the focused input so it can clear the keyboard (in the surface or a
-     * modal window).
+     * the focused input of the surface so it can clear the keyboard. A
+     * modal window lays its content out above the keyboard instead
+     * ({@link ModalHost}), after this: its scroll view gets no padding and
+     * reveals the input once it has shrunk ({@link #scrollShrank}).
      */
     void keyboard(int screenTop) {
         ScrollBox scroll = focused == null ? null : scrollAround(focused);
@@ -2815,13 +3248,30 @@ final class Mounter {
             }
             avoided = -1;
         }
+        shrinking = -1;
         if (scroll == null || hidden) return;
+        // Measured now, before the modal window's layout, the padding would
+        // be what the keyboard covers of the content where it was, and it
+        // would stay under the content once that is above the keyboard.
+        if (scroll.getRootView() != host.getRootView()) {
+            shrinking = scroll.id;
+            return;
+        }
         int[] at = new int[2];
         scroll.getLocationOnScreen(at);
         int covered = Math.max(0, at[1] + scroll.getHeight() - screenTop);
         scroll.setContentPaddingBottom(covered);
         avoided = scroll.id;
         host.post(this::revealFocused);
+    }
+
+    /**
+     * Scroll view {@code scroll} got shorter: the one around the focused
+     * input of a modal window that now lays out above the keyboard keeps the
+     * input in sight.
+     */
+    void scrollShrank(ScrollBox scroll) {
+        if (scroll.id == shrinking && focused != null) host.post(this::revealFocused);
     }
 
     private void revealFocused() {
@@ -2895,6 +3345,11 @@ final class Mounter {
     boolean wants(int id, int kind) {
         if (kind >= 64) return (eventsHigh.get(id) & (1L << (kind - 64))) != 0;
         return (events.get(id) & (1L << kind)) != 0;
+    }
+
+    /** Whether {@code id} is a file drop destination: it listens to `onFileDrop` and is enabled. */
+    boolean takesFileDrops(int id) {
+        return wants(id, Native.FILE_DROP) && keyEnabled(id);
     }
 
     /** Whether `id`'s own state lets it hear keys (a disabled view captures and listens to none). */
@@ -2999,17 +3454,171 @@ final class Mounter {
     }
 
     /**
-     * `ref.focus()` on a managed stop: makes it focusable and focuses it.
-     * The request is explicit, so it opts into touch-mode focus as an
-     * explicit `focusable` does; `updateFocusable` keeps that while the
-     * view holds the focus.
+     * A `ref.focus()` whose view is not shown yet (`PendingFocus`: a page
+     * the batch pushes, a page under its transition shader, a dialog's
+     * content before its window shows).
      */
-    void focusManaged(int id) {
+    private final PendingFocus pendingFocus = new PendingFocus();
+    /**
+     * Tries a pending focus again each frame, posted only while a managed
+     * view waits: Choreographer calls it whichever window the view will
+     * show in (the surface's or a dialog's), and nothing runs per frame
+     * when no request waits.
+     */
+    private final android.view.Choreographer.FrameCallback pendingFocusFrame = frameTime -> {
+        retryFocus();
+        int id = pendingFocus.id();
+        if (id != 0 && !(views.get(id) instanceof InputBox)) {
+            android.view.Choreographer.getInstance().postFrameCallback(this.pendingFocusFrame);
+        }
+    };
+
+    /**
+     * What held the focus of the pending view's window outside NSH's own
+     * views when the request was made (`foreignFocus`), so the request
+     * still takes the focus from it, as it would from a shown view.
+     */
+    private View pendingForeign;
+
+    /** `Command::Focus`: the latest request wins over one still waiting. */
+    private void focus(int id, View v) {
+        focusAsked = true;
+        dropPendingFocus();
+        // A field not shown yet waits on its own and reports that wait
+        // (`inputFocusWaits`), so a newer request or a blur ends it.
+        if (v instanceof InputBox) ((InputBox) v).focus();
+        else focusManaged(id);
+    }
+
+    /**
+     * `ref.focus()` on a managed stop: makes it focusable and focuses it,
+     * at once when it is shown, else once it is (`PendingFocus`). The
+     * request is explicit, so it opts into touch-mode focus as an
+     * explicit `focusable` does; `updateFocusable` keeps that while the
+     * view holds the focus. On a shown view that is not a stop it does
+     * nothing; a request dropped without effect (no such view, a view
+     * neither shown nor a stop) logs a warning. Called only by `focus`,
+     * which ends the request before it.
+     */
+    private void focusManaged(int id) {
         View v = views.get(id);
-        if (v == null || !v.isShown() || !focusStop(id)) return;
+        if (v == null) {
+            android.util.Log.w("nsh", "focus(): no view " + id);
+            return;
+        }
+        boolean stop = focusStop(id);
+        if (v.isShown()) {
+            if (stop) takeFocus(v);
+            return;
+        }
+        if (!stop) {
+            android.util.Log.w("nsh", "focus(): view " + id + " is neither shown nor a focus stop"
+                    + " (focusable false, disabled, or no press handler); the request is dropped");
+            return;
+        }
+        pendingFocus.start(id, android.os.SystemClock.uptimeMillis());
+        pendingForeign = foreignFocus(v.getRootView());
+        android.view.Choreographer.getInstance().postFrameCallback(pendingFocusFrame);
+    }
+
+    /** Focuses `v`; whether Android gave it the focus. */
+    private boolean takeFocus(View v) {
         if (!v.isFocusable()) v.setFocusable(true);
         if (!v.isFocusableInTouchMode()) v.setFocusableInTouchMode(true);
-        v.requestFocus();
+        return v.requestFocus();
+    }
+
+    /** Focuses the view a pending request waits for once it is shown; gives the request up after its bound. */
+    private void retryFocus() {
+        int id = pendingFocus.id();
+        View v = views.get(id);
+        // A field waits on its own (`InputBox.focus`).
+        if (id == 0 || v instanceof InputBox) return;
+        switch (pendingFocus.retry(v != null && v.isShown(), android.os.SystemClock.uptimeMillis())) {
+            case PendingFocus.FOCUS: {
+                android.view.Choreographer.getInstance().removeFrameCallback(pendingFocusFrame);
+                View before = pendingForeign;
+                pendingForeign = null;
+                View foreign = foreignFocus(v.getRootView());
+                if (foreign != null && foreign != before) {
+                    // Hosted native content, a web view or the embedding
+                    // app's own view took the focus meanwhile (the user's
+                    // tap or Tab), which `focusChange` does not see: the
+                    // latest focus wins, as a node's would.
+                    break;
+                }
+                // Its props may have changed while it waited.
+                if (!focusStop(id)) {
+                    android.util.Log.w("nsh", "focus(): view " + id
+                            + " stopped being a focus stop before it was shown; the request is dropped");
+                } else if (!takeFocus(v)) {
+                    android.util.Log.w("nsh", "focus(): view " + id + " was shown but did not take the focus");
+                }
+                break;
+            }
+            case PendingFocus.EXPIRED:
+                android.view.Choreographer.getInstance().removeFrameCallback(pendingFocusFrame);
+                pendingForeign = null;
+                android.util.Log.w("nsh", "focus(): view " + id + " was not shown within "
+                        + PendingFocus.TIMEOUT_MS + " ms; the request is dropped");
+                break;
+            default:
+                break;
+        }
+    }
+
+    /**
+     * The view holding `window`'s focus when it is not NSH's own: in
+     * hosted native content (a `WidgetBox`, a web view's included, or a
+     * `ComponentBox`) or one of the embedding app's views. Null when
+     * nothing, the surface, a dialog's root or a node (an input's field
+     * included) holds it.
+     */
+    private View foreignFocus(View window) {
+        View f = window == null ? null : window.findFocus();
+        for (View cur = f; cur != null; ) {
+            if (cur == host || ModalHost.isRoot(cur)) return null;
+            if (cur instanceof WidgetBox || cur instanceof ComponentBox) return f;
+            if (cur instanceof Node) return null;
+            ViewParent parent = cur.getParent();
+            cur = parent instanceof View ? (View) parent : null;
+        }
+        return f;
+    }
+
+    /** Ends a pending focus request, a field's own wait included. */
+    private void dropPendingFocus() {
+        int id = pendingFocus.clear();
+        if (id == 0) return;
+        pendingForeign = null;
+        View v = views.get(id);
+        if (v instanceof InputBox) ((InputBox) v).cancelPendingFocus();
+        else android.view.Choreographer.getInstance().removeFrameCallback(pendingFocusFrame);
+    }
+
+    /**
+     * An input's `focus()` started waiting for its field (`InputBox.focus`,
+     * whoever asked: `ref.focus()`, `autoFocus`): the latest request, so
+     * one still waiting for another view ends.
+     */
+    void inputFocusWaits(InputBox input) {
+        int id = input.nodeId();
+        if (pendingFocus.id() == id) return;
+        dropPendingFocus();
+        pendingFocus.start(id, android.os.SystemClock.uptimeMillis());
+    }
+
+    /** An input's wait for its field ended, met or not (`InputBox.cancelPendingFocus`). */
+    void inputFocusWaitEnded(InputBox input) {
+        if (pendingFocus.id() == input.nodeId()) pendingFocus.clear();
+    }
+
+    /** `Command::Blur` of `id` (`v`): ends a pending focus of it, of a view it holds, or of any view (`Keyboard.dismiss()`). */
+    private void blurPending(int id, View v) {
+        int waiting = pendingFocus.id();
+        if (PendingFocus.blurs(id, waiting, v != null && waiting != 0 && holds(v, views.get(waiting)))) {
+            dropPendingFocus();
+        }
     }
 
     /**
@@ -3159,16 +3768,37 @@ final class Mounter {
         }
         index = TabOrder.next(index, stops.size(), forward);
         if (index < 0) return false;
-        View next = stops.get(index);
+        return keyFocus(stops.get(index));
+    }
+
+    /**
+     * An arrow key while the window's own root holds the focus
+     * ({@link ArrowEntry}): the first stop in `windowRoot` that is on
+     * screen in the window, or its first stop when none is; false when it
+     * has none.
+     */
+    boolean enterFocus(View windowRoot) {
+        java.util.ArrayList<View> stops = new java.util.ArrayList<>();
+        collectFocusStops(windowRoot, stops);
+        android.graphics.Rect window = new android.graphics.Rect();
+        android.graphics.Rect rect = new android.graphics.Rect();
+        boolean shown = windowRoot.getGlobalVisibleRect(window);
+        int index = ArrowEntry.stop(stops.size(), i -> shown
+                && stops.get(i).getGlobalVisibleRect(rect) && android.graphics.Rect.intersects(window, rect));
+        return index >= 0 && keyFocus(stops.get(index));
+    }
+
+    /** Focuses the stop `moveFocus` or `enterFocus` picked, as a key does. */
+    private boolean keyFocus(View next) {
         if (next instanceof InputBox) {
             ((InputBox) next).focus();
             return true;
         }
-        // A Tab is a keyboard transition: leave touch mode as a hardware
-        // key does, so a default pressable (not focusable in touch mode)
-        // takes the focus from a real or a synthetic Tab alike. The
-        // enclosing scroll view still reveals the stop (ScrollView's
-        // requestChildFocus), as for any keyboard focus.
+        // A Tab (or an arrow into the app) is a keyboard transition: leave
+        // touch mode as a hardware key does, so a default pressable (not
+        // focusable in touch mode) takes the focus from a real or a
+        // synthetic key alike. The enclosing scroll view still reveals the
+        // stop (ScrollView's requestChildFocus), as for any keyboard focus.
         return next.requestFocusFromTouch();
     }
 
@@ -3242,7 +3872,10 @@ final class Mounter {
         Native.touch(handle(), phase, ids, targets, pathLengths, paths, coords, changed, time, activated);
     }
 
-    /** `panActivation` of view {@code id} (points: active x, y, fail x, y; NaN: none), or null. */
+    /**
+     * `panActivation` of view {@code id}, or null: points (active x, y, fail x, y; NaN: none), then the way it
+     * activates in (0 left, 1 right, 2 up, 3 down; -1 any) and its edge (0 left, 1 right, 2 top, 3 bottom; -1 none).
+     */
     float[] panActivation(int id) {
         return panActivations.get(id);
     }
@@ -3323,8 +3956,16 @@ final class Mounter {
     }
 
     /** An event with an object payload. */
-    void paste(int id, String text, byte[][] images, String[] uris) {
-        Native.paste(handle(), id, text, images, uris);
+    void paste(int id, String text, byte[][] images, String[] uris, String[] largeNames, String[] largeTypes,
+               long[] largeLengths) {
+        Native.paste(handle(), id, text, images, uris, largeNames, largeTypes, largeLengths);
+    }
+
+    /** A file drag's enter or drop for {@code id} ({@link FileDrops}); a drop's point in the surface's pixels. */
+    void fileDrop(int id, int kind, String[] uris, float x, float y) {
+        long handle = handle();
+        if (handle == 0) return;
+        Native.fileDrop(handle, id, kind, uris, x / density, y / density);
     }
 
     /**
@@ -3390,11 +4031,21 @@ final class Mounter {
         outputs(Native.scrollEnded(handle, id));
     }
 
-    void pan(int id, int state, float tx, float ty, float vx, float vy) {
+    /**
+     * The pan of {@code id} (view {@code v}) moved ({@code state}: 0 began, 1 moved, 2 ended, 3 cancelled), the
+     * finger having gone down at the screen point ({@code downRawX}, {@code downRawY}) px: its origin in the view's
+     * root view, as presses report theirs.
+     */
+    void pan(int id, int state, float tx, float ty, float vx, float vy, View v, float downRawX, float downRawY) {
         if (state == 0) for (TouchTracker t : touchTrackers) t.cancelFeedback();
         long handle = handle();
         if (handle == 0) return;
-        outputs(Native.pan(handle, id, state, tx, ty, vx, vy));
+        // The surface, or the window of the modal the view is in.
+        View root = v.getRootView() == host.getRootView() ? host : v.getRootView();
+        int[] rootAt = new int[2];
+        root.getLocationOnScreen(rootAt);
+        float d = density;
+        outputs(Native.pan(handle, id, state, tx, ty, vx, vy, (downRawX - rootAt[0]) / d, (downRawY - rootAt[1]) / d));
     }
 
     void transformGesture(int id, boolean rotation, int state, float amount, float velocity) {

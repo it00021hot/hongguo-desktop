@@ -54,6 +54,9 @@ pub(crate) enum Zone {
     Utc,
     /// Minutes east of UTC.
     Offset(i32),
+    /// A zone the app ships (nsh.json `timeZones`), by its index in the
+    /// VM's `Zones`.
+    Named(u16),
 }
 
 /// Resolved options: the fields to write.
@@ -135,10 +138,14 @@ fn num(n: impl Into<i64>, style: Num) -> String {
     }
 }
 
-/// The name of a zone's offset (`UTC`, `GMT+8`, `GMT-5:30`).
-fn zone_name(zone: Zone, offset: i32) -> String {
+/// The name of a zone's offset (`UTC`, `GMT+8`, `GMT-5:30`), or the
+/// abbreviation the locale writes for it (`EST`).
+fn zone_name(zone: Zone, offset: i32, abbr: Option<&str>) -> String {
     if zone == Zone::Utc {
         return "UTC".to_owned();
+    }
+    if let Some(abbr) = abbr.filter(|a| !a.is_empty()) {
+        return abbr.to_owned();
     }
     if offset == 0 {
         return "GMT".to_owned();
@@ -153,12 +160,20 @@ fn zone_name(zone: Zone, offset: i32) -> String {
 }
 
 /// The parts of the time `ms` (milliseconds since the epoch), written
-/// `offset` minutes east of UTC (the zone's offset at that time).
-pub(crate) fn format(ms: f64, offset: i32, zone: Zone, f: &Format, dates: &Dates) -> Vec<Part> {
+/// `offset` minutes east of UTC (the zone's offset at that time), the zone
+/// named by `abbr` where it has one (a named zone's: `EST`).
+pub(crate) fn format(
+    ms: f64,
+    offset: i32,
+    zone: Zone,
+    abbr: Option<&str>,
+    f: &Format,
+    dates: &Dates,
+) -> Vec<Part> {
     let c = civil(ms + f64::from(offset) * 60_000.0);
     let mut parts = Vec::new();
     let date = date_parts(&c, f, dates);
-    let time = time_parts(&c, f, dates, zone, offset);
+    let time = time_parts(&c, f, dates, zone, offset, abbr);
     let has_date = !date.is_empty();
     parts.extend(date);
     if has_date && !time.is_empty() {
@@ -296,7 +311,14 @@ fn date_parts(c: &Civil, f: &Format, dates: &Dates) -> Vec<Part> {
     parts
 }
 
-fn time_parts(c: &Civil, f: &Format, dates: &Dates, zone: Zone, offset: i32) -> Vec<Part> {
+fn time_parts(
+    c: &Civil,
+    f: &Format,
+    dates: &Dates,
+    zone: Zone,
+    offset: i32,
+    abbr: Option<&str>,
+) -> Vec<Part> {
     let mut parts = Vec::new();
     let cycle = f.cycle(dates);
     let twelve = matches!(cycle, HourCycle::H11 | HourCycle::H12);
@@ -353,7 +375,7 @@ fn time_parts(c: &Civil, f: &Format, dates: &Dates, zone: Zone, offset: i32) -> 
     }
     if clock.is_empty() {
         if f.zone_name {
-            field(&mut parts, "timeZoneName", zone_name(zone, offset));
+            field(&mut parts, "timeZoneName", zone_name(zone, offset, abbr));
         }
         return parts;
     }
@@ -383,7 +405,7 @@ fn time_parts(c: &Civil, f: &Format, dates: &Dates, zone: Zone, offset: i32) -> 
     }
     if f.zone_name {
         literal(&mut parts, " ");
-        field(&mut parts, "timeZoneName", zone_name(zone, offset));
+        field(&mut parts, "timeZoneName", zone_name(zone, offset, abbr));
     }
     parts
 }
@@ -398,7 +420,7 @@ mod tests {
 
     fn fmt(tag: &str, f: Format) -> String {
         let locale = resolve(&[tag.to_owned()], "en-US");
-        format(T, 0, Zone::Utc, &f, &locale.dates)
+        format(T, 0, Zone::Utc, None, &f, &locale.dates)
             .into_iter()
             .map(|p| p.value)
             .collect()
@@ -509,6 +531,53 @@ mod tests {
     }
 
     #[test]
+    fn dates_with_names_in_more_languages() {
+        let long = Format {
+            month: Some(Month::Text(Text::Long)),
+            ..DATE
+        };
+        let short = Format {
+            month: Some(Month::Text(Text::Short)),
+            ..DATE
+        };
+        // As browsers format them, but Russian's year without its " г.".
+        for (tag, long_date, short_date) in [
+            ("tr-TR", "16 Ekim 2026", "16 Eki 2026"),
+            ("ru-RU", "16 октября 2026", "16 окт. 2026"),
+            ("pl-PL", "16 października 2026", "16 paź 2026"),
+            ("sv-SE", "16 oktober 2026", "16 okt. 2026"),
+            ("id-ID", "16 Oktober 2026", "16 Okt 2026"),
+            ("vi-VN", "16 tháng 10 2026", "16 thg 10, 2026"),
+            ("hi-IN", "16 अक्टूबर, 2026", "16 अक्टू॰ 2026"),
+            ("th-TH", "16 ตุลาคม 2026", "16 ต.ค. 2026"),
+        ] {
+            assert_eq!(fmt(tag, long), long_date, "{tag}");
+            assert_eq!(fmt(tag, short), short_date, "{tag}");
+        }
+    }
+
+    #[test]
+    fn turkish_weekdays_follow_the_date() {
+        let long = Format {
+            weekday: Some(Text::Long),
+            month: Some(Month::Text(Text::Long)),
+            ..DATE
+        };
+        assert_eq!(fmt("tr-TR", long), "16 Ekim 2026 Cuma");
+        let short = Format {
+            weekday: Some(Text::Short),
+            month: Some(Month::Text(Text::Short)),
+            ..DATE
+        };
+        assert_eq!(fmt("tr-TR", short), "16 Eki 2026 Cum");
+        let numeric = Format {
+            weekday: Some(Text::Long),
+            ..DATE
+        };
+        assert_eq!(fmt("tr-TR", numeric), "16.10.2026 Cuma");
+    }
+
+    #[test]
     fn times_in_12_and_24_hours() {
         assert_eq!(fmt("en-US", TIME), "3:04:05 PM");
         assert_eq!(fmt("en-GB", TIME), "15:04:05");
@@ -565,6 +634,7 @@ mod tests {
             T,
             8 * 60,
             Zone::Offset(480),
+            None,
             &Format {
                 zone_name: true,
                 ..TIME

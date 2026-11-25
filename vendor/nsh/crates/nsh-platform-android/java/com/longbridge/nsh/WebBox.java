@@ -1,13 +1,13 @@
 package com.longbridge.nsh;
 
 import android.annotation.SuppressLint;
-import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.MotionEvent;
+import android.view.View;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -43,12 +43,16 @@ import org.json.JSONTokener;
 @SuppressLint({"ViewConstructor", "SetJavaScriptEnabled"})
 final class WebBox extends WidgetBox {
     private WebView web;
+    /** Captures sharing this page's texture; ordinary WebViews need no extra layer. */
+    private int captureLayers;
     /** Source kind (0 none, 1 uri, 2 html) and fields; null before the first load. */
     private Object[] source;
     private String injected, injectedBefore, userAgent;
+    /** {@code allowOrigin}: the one origin besides the app's hosts (null: none). */
+    private String allowOrigin;
     private boolean scrollable = true;
     // The last props, to set up a WebView made after a renderer ended.
-    private boolean javaScriptEnabled, incognito;
+    private boolean javaScriptEnabled, incognito, zoomable;
     private boolean disposed, processGone;
     private final Handler evaluationHandler = new Handler(Looper.getMainLooper());
     private final HashMap<Integer, Evaluation> evaluations = new HashMap<>();
@@ -76,6 +80,7 @@ final class WebBox extends WidgetBox {
     }
 
     private void attach(WebView web) {
+        if (captureLayers > 0) web.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         web.getSettings().setDomStorageEnabled(true);
         web.addJavascriptInterface(new Bridge(), "nsh");
         web.setWebViewClient(new Client());
@@ -87,6 +92,15 @@ final class WebBox extends WidgetBox {
             }
             return !scrollable && e.getActionMasked() == MotionEvent.ACTION_MOVE;
         });
+    }
+
+    /** Lets captures sample the page without replaying its functor at another viewport size. */
+    void retainCaptureLayer() {
+        if (captureLayers++ == 0) web.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+    }
+
+    void releaseCaptureLayer() {
+        if (--captureLayers == 0) web.setLayerType(View.LAYER_TYPE_NONE, null);
     }
 
     /**
@@ -122,13 +136,16 @@ final class WebBox extends WidgetBox {
     }
 
     private final class Client extends WebViewClient {
-        /** Top-level navigations stay within the app's `webview` capability. */
+        /**
+         * Top-level navigations stay within the app's `webview` capability
+         * and the web view's {@code allowOrigin}.
+         */
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             if (disposed || processGone) return true;
             if (!request.isForMainFrame()) return false;
             String url = request.getUrl().toString();
-            if (mounter.allowsWebview(url)) return false;
+            if (mounter.allowsWebview(url, allowOrigin)) return false;
             android.util.Log.w("nsh", "web view navigation to " + url + " is not granted");
             mounter.eventMap(id, Native.ERROR, new String[] {"message", "code", "url"},
                     new Object[] {"navigation to " + url + " is not granted", "ERR_ACCESS_DENIED", url});
@@ -215,56 +232,19 @@ final class WebBox extends WidgetBox {
             }
             if (missing.isEmpty()) {
                 request.grant(resources);
-            } else if (context instanceof Activity) {
-                MediaPermissions.of((Activity) context).ask(missing.toArray(new String[0]), allowed -> {
+            } else if (SystemUi.activity(context) != null) {
+                boolean asked = Permissions.ask(SystemUi.activity(context), missing.toArray(new String[0]), results -> {
+                    boolean allowed = results != null && results.length > 0;
+                    if (results != null) {
+                        for (int r : results) allowed &= r == PackageManager.PERMISSION_GRANTED;
+                    }
                     if (allowed) request.grant(resources);
                     else request.deny();
                 });
+                if (!asked) request.deny();
             } else {
                 request.deny();
             }
-        }
-    }
-
-    /** Asks the user for the system's media permissions, across configuration changes. */
-    @SuppressWarnings("deprecation")
-    public static final class MediaPermissions extends android.app.Fragment {
-        private static final String TAG = "com.longbridge.nsh.WebBox.MediaPermissions";
-        private static final int CODE = 0x4f01;
-        private final List<java.util.function.Consumer<Boolean>> waiting = new ArrayList<>();
-
-        static MediaPermissions of(Activity activity) {
-            android.app.FragmentManager fragments = activity.getFragmentManager();
-            MediaPermissions found = (MediaPermissions) fragments.findFragmentByTag(TAG);
-            if (found == null) {
-                found = new MediaPermissions();
-                fragments.beginTransaction().add(found, TAG).commitNow();
-            }
-            return found;
-        }
-
-        @Override
-        public void onCreate(android.os.Bundle state) {
-            super.onCreate(state);
-            setRetainInstance(true);
-        }
-
-        void ask(String[] permissions, java.util.function.Consumer<Boolean> answer) {
-            waiting.add(answer);
-            if (waiting.size() == 1) requestPermissions(permissions, CODE);
-        }
-
-        @Override
-        public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
-            if (code != CODE) {
-                super.onRequestPermissionsResult(code, permissions, results);
-                return;
-            }
-            boolean allowed = results.length > 0;
-            for (int r : results) allowed &= r == PackageManager.PERMISSION_GRANTED;
-            List<java.util.function.Consumer<Boolean>> answered = new ArrayList<>(waiting);
-            waiting.clear();
-            for (java.util.function.Consumer<Boolean> a : answered) a.accept(allowed);
         }
     }
 
@@ -279,7 +259,8 @@ final class WebBox extends WidgetBox {
 
     @SuppressWarnings("deprecation") // setSaveFormData: still honored before Android 8.
     void configure(Object[] source, String injected, String injectedBefore, String userAgent,
-            boolean scrollable, boolean javaScriptEnabled, boolean incognito) {
+            boolean scrollable, boolean javaScriptEnabled, boolean incognito, boolean zoomable,
+            String allowOrigin) {
         if (disposed) return;
         boolean revived = processGone;
         if (processGone && !revive()) return;
@@ -290,13 +271,19 @@ final class WebBox extends WidgetBox {
             settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
             settings.setSaveFormData(false);
         }
+        if (this.source == null && zoomable) zoom(web.getSettings());
+        // Before the source loads: a new origin applies to the next navigation.
+        this.allowOrigin = allowOrigin;
         boolean scriptsChanged = !Objects.equals(injected, this.injected)
                 || !Objects.equals(injectedBefore, this.injectedBefore);
         this.injected = injected;
         this.injectedBefore = injectedBefore;
         this.scrollable = scrollable;
         this.javaScriptEnabled = javaScriptEnabled;
-        if (this.source == null) this.incognito = incognito;
+        if (this.source == null) {
+            this.incognito = incognito;
+            this.zoomable = zoomable;
+        }
         web.setVerticalScrollBarEnabled(scrollable);
         web.setHorizontalScrollBarEnabled(scrollable);
         web.getSettings().setJavaScriptEnabled(javaScriptEnabled);
@@ -311,6 +298,17 @@ final class WebBox extends WidgetBox {
             }
             loadSource();
         }
+    }
+
+    /**
+     * {@code zoomable}: pinch zoom with no on-screen buttons. The page's
+     * viewport keeps its say over the layout width (wide viewport and
+     * overview mode stay as they are).
+     */
+    static void zoom(WebSettings settings) {
+        settings.setSupportZoom(true);
+        settings.setBuiltInZoomControls(true);
+        settings.setDisplayZoomControls(false);
     }
 
     private void loadSource() {
@@ -346,6 +344,7 @@ final class WebBox extends WidgetBox {
             settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
             settings.setSaveFormData(false);
         }
+        if (zoomable) zoom(settings);
         settings.setJavaScriptEnabled(javaScriptEnabled);
         if (userAgent != null) settings.setUserAgentString(userAgent);
         fresh.setVerticalScrollBarEnabled(scrollable);

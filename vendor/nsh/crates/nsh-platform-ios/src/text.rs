@@ -1,11 +1,15 @@
 //! CoreText text engine: typesets on the engine thread, draws on the main
 //! thread from finished `CTLine`s, so every text is laid out once.
 
-use std::{cell::RefCell, ffi::c_void, ptr::NonNull};
+use std::{cell::RefCell, ffi::c_void, ptr::NonNull, sync::Arc};
 
 use nsh_core::{
     Affinity, AttributedText, Color, EllipsizeMode, FamilyName, FontFamily, Point, Points,
     ResolvedTextStyle, Size, TextAlign, TextEngine, TextLayout, TextPosition,
+};
+use nsh_platform_apple::core_text::{
+    background_key, decoration_key, ellipsis_key, italic, italic_face, paragraph_is_rtl,
+    slant_fallbacks, strikethrough_key, truncated_line_x, underline_key,
 };
 use objc2::rc::Retained;
 use objc2_core_foundation::{
@@ -14,15 +18,15 @@ use objc2_core_foundation::{
 };
 use objc2_core_graphics::{CGColor, CGPath};
 use objc2_core_text::{
-    CTFont, CTFontDescriptor, CTFontManagerRegisterFontsForURL, CTFontManagerScope,
-    CTFontSymbolicTraits, CTFrame, CTFramesetter, CTLine, CTLineTruncationType, CTParagraphStyle,
-    CTParagraphStyleSetting, CTParagraphStyleSpecifier, CTRun, CTRunDelegate,
-    CTRunDelegateCallbacks, CTRunStatus, CTTextAlignment, CTTypesetter, CTWritingDirection,
-    kCTFontAttributeName, kCTFontCascadeListAttribute, kCTFontFamilyNameAttribute,
-    kCTFontFeatureSettingsAttribute, kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue,
-    kCTFontTraitsAttribute, kCTFontWeightTrait, kCTForegroundColorAttributeName,
-    kCTKernAttributeName, kCTParagraphStyleAttributeName, kCTRunDelegateAttributeName,
-    kCTRunDelegateCurrentVersion, kCTUnderlineColorAttributeName, kCTUnderlineStyleAttributeName,
+    CTFont, CTFontDescriptor, CTFontManagerRegisterFontsForURL, CTFontManagerScope, CTFrame,
+    CTFramesetter, CTLine, CTLineTruncationType, CTParagraphStyle, CTParagraphStyleSetting,
+    CTParagraphStyleSpecifier, CTRun, CTRunDelegate, CTRunDelegateCallbacks, CTRunStatus,
+    CTTextAlignment, CTTypesetter, CTWritingDirection, kCTFontAttributeName,
+    kCTFontCascadeListAttribute, kCTFontFamilyNameAttribute, kCTFontFeatureSettingsAttribute,
+    kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue, kCTFontTraitsAttribute,
+    kCTFontWeightTrait, kCTForegroundColorAttributeName, kCTKernAttributeName,
+    kCTParagraphStyleAttributeName, kCTRunDelegateAttributeName, kCTRunDelegateCurrentVersion,
+    kCTUnderlineColorAttributeName, kCTUnderlineStyleAttributeName,
 };
 use objc2_ui_kit::{
     UIFont, UIFontWeight, UIFontWeightBlack, UIFontWeightBold, UIFontWeightHeavy,
@@ -30,53 +34,6 @@ use objc2_ui_kit::{
     UIFontWeightThin, UIFontWeightUltraLight,
 };
 use rustc_hash::FxHashMap;
-
-/// Attribute carrying the strikethrough color: CoreText draws underlines
-/// but not strikethroughs, so [`crate::text_view::TextView`] draws those.
-pub(crate) fn strikethrough_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshStrikethroughColor")))
-        .0
-}
-
-/// Attribute carrying the color of an underline CoreText cannot draw
-/// (styled, thick or offset): [`crate::text_view::TextView`] draws it.
-pub(crate) fn underline_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshUnderlineColor")))
-        .0
-}
-
-/// Attribute carrying how drawn decoration lines look: a `CFArray` of
-/// [style, thickness (0: the font's), offset (NaN: the font's)].
-pub(crate) fn decoration_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshDecorationStyle")))
-        .0
-}
-
-/// Attribute marking the characters of a span background (the node that
-/// set it, a `CFNumber`): CoreText splits runs where it changes, so
-/// the text view fills each background behind its own runs.
-fn background_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshBackground")))
-        .0
-}
-
-/// Attribute marking the ellipsis token of a truncated line (a `CFNumber`):
-/// its run claims the characters it cut, which are not on screen to select.
-fn ellipsis_key() -> &'static CFString {
-    static KEY: std::sync::OnceLock<CFStringKey> = std::sync::OnceLock::new();
-    &KEY.get_or_init(|| CFStringKey(CFString::from_static_str("NshEllipsis")))
-        .0
-}
-
-struct CFStringKey(CFRetained<CFString>);
-// SAFETY: CFStrings are immutable and thread-safe.
-unsafe impl Send for CFStringKey {}
-// SAFETY: as above.
-unsafe impl Sync for CFStringKey {}
 
 /// Identifies a font: size bits, weight, family, italic, OpenType features.
 type FontKey = (u32, u16, Option<FontFamily>, bool, u8);
@@ -122,15 +79,17 @@ pub(crate) fn make_font(style: &ResolvedTextStyle) -> CFRetained<CTFont> {
         .font_family
         .and_then(|family| listed_fonts(&family.name(), size, style.font_weight))
         .unwrap_or_else(|| (system_font(size, style.font_weight), Vec::new()));
-    let font = if style.italic {
-        let italic = CTFontSymbolicTraits::TraitItalic;
-        // SAFETY: a valid font; size 0 keeps the size, null matrix keeps it.
-        unsafe { font.copy_with_symbolic_traits(0.0, std::ptr::null(), italic, italic) }
-            // No italic face (CJK fonts): keep the upright one, CoreText
-            // synthesizes no oblique (browsers do).
-            .unwrap_or(font)
+    let (font, fallbacks) = if style.italic {
+        // The listed families' italic faces. A family without one leans
+        // ([`italic`]); as a fallback it stays upright here, where CoreText
+        // would ignore the lean, and `slant_fallbacks` leans its runs.
+        let fallbacks = fallbacks
+            .into_iter()
+            .map(|f| italic_face(&f).unwrap_or(f))
+            .collect();
+        (italic(&font), fallbacks)
     } else {
-        font
+        (font, fallbacks)
     };
     with_cascade(with_features(font, style.font_variant), &fallbacks)
 }
@@ -347,6 +306,9 @@ pub struct Prepared {
     max_lines: u32,
     ellipsize: EllipsizeMode,
     align: TextAlign,
+    rtl: bool,
+    writing_direction: Option<bool>,
+    text: Arc<str>,
     /// Attachments: placeholder offset (UTF-16) and how far its top is
     /// above the baseline (`TextAttachment::ascent`).
     attachments: Vec<(CFIndex, CGFloat)>,
@@ -723,33 +685,42 @@ impl CoreTextEngine {
         let (up, down) = alignments.extent(a, font);
         let (up, down) = (up.0 as CGFloat, down.0 as CGFloat);
         // A fixed `lineHeight`: CoreText centers a line's own extent in
-        // it, so a placeholder reaching past the font on one side only
-        // would move its line's baseline (lines unevenly spaced). Its
-        // delegate reserves the font's half-leading box instead (the CSS
-        // strut), and where the attachment reaches past that box, as much
-        // again on the other side: the line grows only when it must,
-        // evenly, its text where other lines' is.
+        // it, so a placeholder smaller than the half-leading box (the CSS
+        // strut) would move its line's baseline. Keep at least the strut
+        // on both sides; a `middle` attachment taller than the strut grows
+        // both sides evenly to stay centered on its text, while other
+        // alignments grow only the side they reach past.
         let line_height = line_height(text);
         if line_height <= 0.0 {
             return (top, up, down);
         }
         let half = (line_height - (ascent + descent + leading)) / 2.0;
         let (strut_up, strut_down) = (ascent + half, descent + half);
-        let grow = (up - strut_up).max(down - strut_down).max(0.0);
-        (top, strut_up + grow, strut_down + grow)
+        if align == nsh_core::VerticalAlign::Middle {
+            let grow = (up - strut_up).max(down - strut_down).max(0.0);
+            (top, strut_up + grow, strut_down + grow)
+        } else {
+            (top, up.max(strut_up), down.max(strut_down))
+        }
     }
 
-    /// The height a line holding the tallest attachment needs: its extent
-    /// around the baseline joined with its placeholder font's. A fixed
-    /// `lineHeight` caps text lines, not these: the view's line grows to
-    /// hold it (as a replaced inline box in CSS) instead of painting over
-    /// its neighbours.
+    /// Upper bound on the height of a line holding attachments when a fixed
+    /// `lineHeight` is set (`0` when every attachment fits in `lineHeight`,
+    /// keeping `MaximumLineHeight` at `lineHeight`). When an attachment
+    /// grows past `lineHeight`, combine the widest extent above and below
+    /// the baseline across attachments and spans so mixed alignments or
+    /// larger text spans on that line are not clamped by `CTParagraphStyle`.
     fn tallest_attachment_line(
         &self,
         text: &AttributedText,
         alignments: &nsh_core::AttachmentAlignments,
     ) -> CGFloat {
-        text.attachments.iter().fold(0.0, |tallest: CGFloat, a| {
+        let line_height = line_height(text);
+        if line_height <= 0.0 || text.attachments.is_empty() {
+            return 0.0;
+        }
+        let (mut fit_up, mut fit_down, mut fit_lead) = (0.0_f64, 0.0_f64, 0.0_f64);
+        for a in &text.attachments {
             let (_, up, down) = self.attachment_metrics(text, a, alignments);
             let style = text
                 .span_at(a.index)
@@ -757,8 +728,32 @@ impl CoreTextEngine {
             let f = self.fonts.get(&style);
             // SAFETY: a valid font.
             let (ascent, descent, leading) = unsafe { (f.ascent(), f.descent(), f.leading()) };
-            tallest.max(up.max(ascent) + down.max(descent) + leading)
-        })
+            fit_up = fit_up.max(up).max(ascent);
+            fit_down = fit_down.max(down).max(descent);
+            fit_lead = fit_lead.max(leading);
+        }
+        let (mut all_up, mut all_down, mut all_lead) = (fit_up, fit_down, fit_lead);
+        for span in &text.spans {
+            if span.start >= span.end {
+                continue;
+            }
+            let f = self.fonts.get(&span.style);
+            // SAFETY: a valid font.
+            let (ascent, descent, leading) = unsafe { (f.ascent(), f.descent(), f.leading()) };
+            if ascent + descent + leading <= line_height + 1e-4 {
+                fit_up = fit_up.max(ascent);
+                fit_down = fit_down.max(descent);
+                fit_lead = fit_lead.max(leading);
+            }
+            all_up = all_up.max(ascent);
+            all_down = all_down.max(descent);
+            all_lead = all_lead.max(leading);
+        }
+        if fit_up + fit_down + fit_lead <= line_height + 1e-4 {
+            0.0
+        } else {
+            all_up + all_down + all_lead
+        }
     }
 
     fn attributed_string(
@@ -895,6 +890,15 @@ impl CoreTextEngine {
             );
         }
         CFMutableAttributedString::end_editing(s);
+        // Italic text CoreText takes from fallback fonts without an italic
+        // face (CJK in the system font) leans like the rest.
+        for span in text.spans.iter().filter(|span| span.style.italic) {
+            let range = CFRange {
+                location: span.start as CFIndex,
+                length: (span.end - span.start) as CFIndex,
+            };
+            slant_fallbacks(&string, range, &self.fonts.get(&span.style));
+        }
         string
     }
 }
@@ -1175,14 +1179,6 @@ impl Prepared {
             rest.truncated_line(width, kind, Some(&token))
         }
     }
-
-    fn flush_factor(&self) -> CGFloat {
-        match self.align {
-            TextAlign::Center => 0.5,
-            TextAlign::Right => 1.0,
-            TextAlign::Auto | TextAlign::Left | TextAlign::Justify => 0.0,
-        }
-    }
 }
 
 impl TextEngine for CoreTextEngine {
@@ -1208,6 +1204,9 @@ impl TextEngine for CoreTextEngine {
             max_lines: text.max_lines,
             ellipsize: text.ellipsize,
             align: text.align,
+            rtl: text.rtl,
+            writing_direction: text.writing_direction,
+            text: Arc::from(text.text.as_str()),
             attachments: text
                 .attachments
                 .iter()
@@ -1333,11 +1332,21 @@ impl TextEngine for CoreTextEngine {
             if range.location + range.length < prepared.length
                 && let Some(truncated) = prepared.truncate(range.location, width)
             {
+                let paragraph_rtl = paragraph_is_rtl(
+                    prepared.writing_direction,
+                    &prepared.text,
+                    range.location.max(0) as usize,
+                );
                 // SAFETY: a valid line.
-                let x = unsafe { truncated.pen_offset_for_flush(prepared.flush_factor(), width) };
-                // A clipped line wider than the box starts at its start edge
-                // and overflows the end (CSS), centered or not.
-                last.origin.x = x.max(0.0);
+                last.origin.x = unsafe {
+                    truncated_line_x(
+                        &truncated,
+                        prepared.align,
+                        prepared.rtl,
+                        paragraph_rtl,
+                        width,
+                    )
+                };
                 last.line = truncated;
                 last.caret_end = prepared.length;
                 last.truncated = true;

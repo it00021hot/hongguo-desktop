@@ -112,6 +112,24 @@ pub enum NumberInputEvent {
     Blur,
 }
 
+/// The methods of a [`NumberInput`]'s ref.
+pub struct NumberInputApi {
+    field: ElementRef,
+    disabled: Prop<bool>,
+}
+
+#[methods]
+impl NumberInputApi {
+    /// Takes the keyboard focus into the field (showing the software
+    /// keyboard), as focusing an `Input` does: a form moving the focus to
+    /// a field it found invalid. A disabled input stays unfocused.
+    pub fn focus(&self) {
+        if !self.disabled.get_untracked() {
+            self.field.focus();
+        }
+    }
+}
+
 /// What a key, a button or a screen reader's action does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Nudge {
@@ -353,7 +371,7 @@ impl Ctl {
 /// the app's `class` and `style` style the input (`focus-within:` for a
 /// ring around it all), `<part>Class` / `<part>Style` the parts, the
 /// `incrementButton` and `decrementButton` slots fill the buttons.
-#[component]
+#[component(methods = NumberInputApi)]
 pub fn NumberInput(props: NumberInputProps, cx: Scope<NumberInputEvent>) -> impl IntoElement {
     let initial = props.value.get_untracked().filter(|v| v.is_finite());
     let controlled = initial.is_some();
@@ -388,6 +406,10 @@ pub fn NumberInput(props: NumberInputProps, cx: Scope<NumberInputEvent>) -> impl
         move |nudge| ctl.nudge(nudge),
     );
     let field = element_ref();
+    cx.methods(NumberInputApi {
+        field,
+        disabled: props.disabled,
+    });
     let action = |name: &str| AccessibilityActionDef {
         name: name.into(),
         label: None,
@@ -438,9 +460,9 @@ pub fn NumberInput(props: NumberInputProps, cx: Scope<NumberInputEvent>) -> impl
         .app_class(props.input_class)
         .inline_style(move || props.input_style.get());
     // The buttons step the field from wherever the focus is and never take
-    // it (the field keeps its caret and its keys); on the desktops a press
-    // moves the focus to the field, as `gpui-base`'s, and on touch screens
-    // it leaves it, so no keyboard comes up. Screen readers step the field
+    // it: a focused field keeps its caret and its keys, and an unfocused one
+    // stays unfocused, so only a click in the field focuses it (and no
+    // software keyboard comes up on a press). Screen readers step the field
     // itself, so the buttons are hidden from them.
     let button = move |nudge: Nudge| {
         let (class, style, content) = match nudge {
@@ -459,12 +481,7 @@ pub fn NumberInput(props: NumberInputProps, cx: Scope<NumberInputEvent>) -> impl
             .focusable(false)
             .accessibility_elements_hidden(true)
             .disabled(move || !ctl.can_step(nudge))
-            .on_press(move || {
-                ctl.nudge(nudge);
-                if is_desktop() && !focused.get_untracked() {
-                    field.focus();
-                }
-            })
+            .on_press(move || ctl.nudge(nudge))
             .app_class(class)
             .inline_style(style)
             .child(content.place(|c| c))

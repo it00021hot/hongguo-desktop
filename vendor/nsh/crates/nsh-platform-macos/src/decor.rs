@@ -590,11 +590,30 @@ impl Decor {
         }
         let covered = covers_shadows && kind != Kind::Text;
         let text = kind == Kind::Text;
+        // The corner mask sits on the view's own layer when there is no
+        // container: the visual masks that layer too, and chains its masks
+        // under this one.
+        let corner: Option<&CALayer> = self
+            .mask
+            .as_deref()
+            .filter(|_| clip_layer.is_some() && container.is_none())
+            .map(|m| &**m);
+        if corner.is_none()
+            && let Some(m) = &self.mask
+            && m.mask().is_some()
+        {
+            // The shape masked the layer with the visual's mask (a gradient
+            // or clip shape) until a container took it over: the visual
+            // would make it the layer's mask too, and a layer is the mask of
+            // one layer only.
+            // SAFETY: clearing the mask of the decoration's own shape.
+            unsafe { m.setMask(None) };
+        }
         match &mut self.visual {
-            Some(visual) => visual.apply(view, layer, style, local, radii, text, covered),
+            Some(visual) => visual.apply(view, layer, style, local, radii, text, covered, corner),
             None => {
                 let mut visual = crate::visual::Visual::default();
-                visual.apply(view, layer, style, local, radii, text, covered);
+                visual.apply(view, layer, style, local, radii, text, covered, corner);
                 if !visual.is_empty() {
                     self.visual = Some(Box::new(visual));
                 }
@@ -766,10 +785,13 @@ pub(crate) fn apply(view: &NshView) {
     };
     let kind = Kind::of(&view.state());
     // A view that clips its children and draws outside its box (a shadow,
-    // an outline) clips them in a container instead.
+    // an outline) clips them in a container instead; so does one with a
+    // clip path, whose mask takes the view's own layer.
     let needs_container = {
         let s = view.state();
-        kind == Kind::View && s.clips() && crate::visual::draws_outside(&s.style)
+        kind == Kind::View
+            && s.clips()
+            && (crate::visual::draws_outside(&s.style) || s.style.clip_path().is_some())
     };
     if needs_container && view.container_view().is_none() {
         view.ensure_container();

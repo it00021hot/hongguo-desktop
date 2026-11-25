@@ -1258,7 +1258,11 @@ impl<'a> Compiler<'a, '_> {
         let cond = self.use_helper("cond");
         // `{(user) => …}`: the child is called with an accessor of `when`'s
         // value, truthy while the branch shows (Solid's `<Show>`); `when`
-        // is read through it, once per read.
+        // is read through it, once per read. Once `when` turns falsy the
+        // branch is disposed, but its `cleanup()`s and its children's prop
+        // getters can still read the accessor: it keeps the branch's last
+        // truthy value (the `NonNullable<T>` it is typed as). Each branch
+        // made keeps its own, so a closed branch holds nothing.
         if lone_function_child(&el.children) {
             let mut render = String::new();
             for child in el.children {
@@ -1268,7 +1272,10 @@ impl<'a> Compiler<'a, '_> {
                     render = g.hole(e);
                 }
             }
-            let then = format!("() => ({render})({HOLE}w)");
+            let then = format!(
+                "() => {{ let {HOLE}l; return ({render})(() => {{ const {HOLE}x = {HOLE}w(); \
+                 return {HOLE}x ? ({HOLE}l = {HOLE}x) : {HOLE}l; }}); }}"
+            );
             let branches = match get("else") {
                 Some(otherwise) => format!("{then}, () => {otherwise}"),
                 None => then,
@@ -1307,7 +1314,7 @@ impl<'a> Compiler<'a, '_> {
         let mut render = None;
         for child in el.children {
             match child {
-                JSXChild::Text(t) if clean_text(&t.value).is_none() => {}
+                blank if is_blank_child(&blank) => {}
                 JSXChild::ExpressionContainer(c) if render.is_none() => {
                     if let Some(e) = self.expression(c.unbox().expression) {
                         render = Some(g.hole(e));
@@ -1337,17 +1344,27 @@ impl<'a> Compiler<'a, '_> {
     }
 }
 
-/// Whether `children` are one function written in place, whitespace aside
-/// (`<If>`'s `{(value) => …}`).
+/// Whether `children` are one function written in place, whitespace and
+/// `{/* comments */}` aside (`<If>`'s `{(value) => …}`).
 fn lone_function_child(children: &[JSXChild<'_>]) -> bool {
-    let mut meaningful = children
-        .iter()
-        .filter(|c| !matches!(c, JSXChild::Text(t) if clean_text(&t.value).is_none()));
+    let mut meaningful = children.iter().filter(|c| !is_blank_child(c));
     match (meaningful.next(), meaningful.next()) {
         (Some(JSXChild::ExpressionContainer(c)), None) => matches!(
             c.expression,
             JSXExpression::ArrowFunctionExpression(_) | JSXExpression::FunctionExpression(_)
         ),
+        _ => false,
+    }
+}
+
+/// Whitespace text or an empty `{/* comment */}`: children that render
+/// nothing, as TypeScript ignores them.
+fn is_blank_child(child: &JSXChild<'_>) -> bool {
+    match child {
+        JSXChild::Text(t) => clean_text(&t.value).is_none(),
+        JSXChild::ExpressionContainer(c) => {
+            matches!(c.expression, JSXExpression::EmptyExpression(_))
+        }
         _ => false,
     }
 }
@@ -1776,12 +1793,61 @@ mod tests {
             .unwrap(),
         );
         assert!(
-            code.contains("((__nsh_hw) => _$cond(__nsh_hw, () => ((u) => (() => {"),
+            code.contains(
+                "((__nsh_hw) => _$cond(__nsh_hw, () => { let __nsh_hl; return ((u) => (() => {"
+            ),
             "{code}"
         );
-        // Called with the accessor; `else` as it was; `when` read through it.
-        assert!(code.contains("})())(__nsh_hw), () => (() => {"), "{code}");
+        // Called with an accessor that reads `when` and, once it turns
+        // falsy, keeps the branch's last truthy value; `else` as it was.
+        assert!(
+            code.contains(
+                "})())(() => { const __nsh_hx = __nsh_hw(); \
+                 return __nsh_hx ? __nsh_hl = __nsh_hx : __nsh_hl; }); }, () => (() => {"
+            ),
+            "{code}"
+        );
         assert!(code.contains("))(() => user());"), "{code}");
+    }
+
+    #[test]
+    fn comments_beside_a_function_child_leave_it_alone() {
+        for children in [
+            "{/* name */}\n{(u) => <Text>{u().name}</Text>}",
+            "{(u) => <Text>{u().name}</Text>}\n{/* name */}",
+            "\n  {/* a */}\n  {(u) => <Text>{u().name}</Text>}\n  {/* b */}\n",
+        ] {
+            let code = flat(
+                &compile(&format!(
+                    r#"import {{ Text }} from "nsh";
+            declare const user: () => {{ name: string }} | null, items: () => {{ name: string }}[];
+            export const a = <If when={{user()}}>{children}</If>;
+            export const b = <Each of={{items()}}>{children}</Each>;"#
+                ))
+                .unwrap(),
+            );
+            assert!(
+                code.contains(
+                    "((__nsh_hw) => _$cond(__nsh_hw, () => { let __nsh_hl; return ((u) => (() => {"
+                ),
+                "{children}: {code}"
+            );
+            assert!(
+                code.contains("_$each(() => items(), (u) => (() => {"),
+                "{children}: {code}"
+            );
+        }
+        // A function beside another real child is still a plain child.
+        let code = flat(
+            &compile(
+                r#"import { Text } from "nsh";
+            declare const on: () => boolean;
+            export const a = <If when={on()}><Text>x</Text>{/* c */}{() => "y"}</If>;"#,
+            )
+            .unwrap(),
+        );
+        assert!(code.contains("_$cond(() => on(), () => ["), "{code}");
+        assert!(!code.contains("__nsh_hw"), "{code}");
     }
 
     #[test]
