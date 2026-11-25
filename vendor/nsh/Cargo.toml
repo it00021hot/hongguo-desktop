@@ -185,6 +185,7 @@ windows = { version = "0.62", features = [
   "UI_Composition_Desktop",
   "UI_Notifications",
   "Win32_Foundation",
+  "Win32_Devices_Display",
   "Win32_Globalization",
   "Win32_Graphics_Direct2D",
   "Win32_Graphics_Direct2D_Common",

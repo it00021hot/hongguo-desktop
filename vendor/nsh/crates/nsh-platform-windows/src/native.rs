@@ -357,6 +357,33 @@ impl std::fmt::Debug for ComponentContext {
 }
 
 impl ComponentContext {
+    /// Current display color information. Call on the component's UI thread.
+    pub fn output_color_info(&self) -> windows::core::Result<crate::OutputColorInfo> {
+        let unavailable = || {
+            windows::core::Error::new(
+                windows::Win32::Foundation::E_INVALIDARG,
+                "output_color_info requires a live component on its UI thread",
+            )
+        };
+        let surface = Surface::by_key(self.surface).ok_or_else(unavailable)?;
+        let view = surface.view(self.id).ok_or_else(unavailable)?;
+        crate::output::info(crate::app_window::hwnd_showing(&surface, &view))
+    }
+
+    /// The actual NSH drawing-device generation on this component's UI thread.
+    /// Stable across component remounts; changes when NSH recreates the device.
+    pub fn drawing_device_generation(&self) -> windows::core::Result<u64> {
+        let unavailable = || {
+            windows::core::Error::new(
+                windows::Win32::Foundation::E_INVALIDARG,
+                "drawing_device_generation requires a live component on its UI thread",
+            )
+        };
+        let surface = Surface::by_key(self.surface).ok_or_else(unavailable)?;
+        surface.view(self.id).ok_or_else(unavailable)?;
+        Ok(crate::gfx::generation())
+    }
+
     /// Emits event `name` with `data`: the handler `on<Name>` gets it.
     pub fn emit(&self, name: &str, data: JsonValue) {
         self.control.dispatch_event(
