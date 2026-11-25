@@ -180,9 +180,11 @@ fn content(
             && window_modes.is_none_or(|modes| modes.can_play())
     });
     display_sleep::bind(move || {
-        play_allowed.get()
-            && !paused.get()
-            && window_modes.is_some_and(|modes| modes.state().fullscreen)
+        let covering_display = window_modes.is_some_and(|modes| {
+            let state = modes.state();
+            state.fullscreen || state.landscape
+        });
+        play_allowed.get() && !paused.get() && covering_display
     });
     let danmaku = interaction::danmaku::observe(
         session,

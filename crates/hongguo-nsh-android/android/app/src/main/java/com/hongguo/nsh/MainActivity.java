@@ -6,20 +6,48 @@ import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.system.ErrnoException;
 import android.system.Os;
+import android.view.Window;
+import android.view.WindowManager;
 import com.longbridge.nsh.NshView;
+import java.lang.ref.WeakReference;
 
 public final class MainActivity extends Activity {
     static {
         System.loadLibrary("nsh");
     }
 
+    private static WeakReference<MainActivity> current;
     private NshView view;
     private FileExportComponent fileExport;
     private static native void initialize(String dataRoot);
 
+    public static void setKeepScreenOn(boolean on) {
+        MainActivity activity = current == null ? null : current.get();
+        if (activity == null) {
+            return;
+        }
+        activity.runOnUiThread(() -> applyKeepScreenOn(activity, on));
+    }
+
+    private static void applyKeepScreenOn(MainActivity activity, boolean on) {
+        if (activity.isDestroyed()) {
+            return;
+        }
+        Window window = activity.getWindow();
+        if (window == null) {
+            return;
+        }
+        if (on) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+    }
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        current = new WeakReference<>(this);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
         try {
             Os.setenv("TMPDIR", getCacheDir().getAbsolutePath(), true);
@@ -63,7 +91,12 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        applyKeepScreenOn(this, false);
         if (view != null) view.destroy();
+        MainActivity attached = current == null ? null : current.get();
+        if (attached == this) {
+            current.clear();
+        }
         super.onDestroy();
     }
 }
