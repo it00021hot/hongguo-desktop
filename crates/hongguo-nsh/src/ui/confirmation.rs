@@ -15,6 +15,16 @@ pub(crate) fn confirmation<E: IntoElement>(
     let title = title.into_reactive();
     let action = action.into_reactive();
     let accept = stored(accept);
+    // Accept must run under this owner, not the dialog's `when` owner: closing
+    // the dialog disposes that owner and would cancel any `spawn` started there.
+    let accepted = signal(false);
+    effect(move || {
+        if !accepted.get() {
+            return;
+        }
+        accepted.set(false);
+        accept.with(|accept| accept());
+    });
     when(open, move || {
         let title = title.clone();
         let action = action.clone();
@@ -84,8 +94,10 @@ pub(crate) fn confirmation<E: IntoElement>(
                                             .h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
                                             .py_0()
                                             .on_press(move || {
-                                                open.set(false);
-                                                accept.with(|accept| accept());
+                                                batch(|| {
+                                                    accepted.set(true);
+                                                    open.set(false);
+                                                });
                                             }),
                                     ),
                             ),
