@@ -386,6 +386,18 @@ pub(crate) fn woke(surface: &Surface) {
     surface.set_environment(env);
 }
 
+/// Whether `hwnd`'s root window is visible, unminimized, and not cloaked.
+fn hwnd_shown(hwnd: HWND) -> bool {
+    if hwnd.is_invalid() {
+        return false;
+    }
+    // SAFETY: plain calls on a window handle.
+    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    // SAFETY: as above.
+    unsafe { IsWindowVisible(root).as_bool() && !IsIconic(root).as_bool() }
+        && !crate::presence::cloaked(root)
+}
+
 /// The app's state as `surface` sees it; `current` before its window
 /// exists.
 fn lifecycle(surface: &Surface, current: Lifecycle) -> Lifecycle {
@@ -393,11 +405,12 @@ fn lifecycle(surface: &Surface, current: Lifecycle) -> Lifecycle {
     if hwnd.is_invalid() {
         return current;
     }
-    // SAFETY: plain calls on a window handle.
-    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
-    // SAFETY: as above.
-    let shown = unsafe { IsWindowVisible(root).as_bool() && !IsIconic(root).as_bool() }
-        && !crate::presence::cloaked(root);
+    // Apps using `app_window()` keep the host's own window hidden and show
+    // their declared windows instead.
+    let shown = hwnd_shown(hwnd)
+        || crate::app_window::hwnds(surface)
+            .into_iter()
+            .any(hwnd_shown);
     // A test's app runs as it does on screen whatever the screen shows (a
     // locked or remote session), so its tests see what they see unlocked.
     let seen = surface.testing() || crate::presence::screen_seen();

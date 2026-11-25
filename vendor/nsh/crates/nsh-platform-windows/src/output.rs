@@ -219,9 +219,7 @@ pub(crate) fn check_device(device: ID3D11Device) -> Result<ID3D11Device> {
         MODE.set(Some(actual));
         FALLBACK.set(reason);
         display::invalidate();
-        if let Some(reason) = reason {
-            log::warn!("automatic color negotiation selected SDR: {reason:?}");
-        }
+        log::info!("windows output color negotiated: mode={actual:?} fallback={reason:?}");
     }
     if mode() == OutputColorMode::ScRgb {
         let required = (D3D11_FORMAT_SUPPORT_BLENDABLE.0

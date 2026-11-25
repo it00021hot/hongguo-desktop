@@ -48,6 +48,13 @@ for interactive user-mode applications, instead of the console monitor's
 follow their own display state when the console display is off. Lock, disconnect,
 minimize and window-cloaking lifecycle handling is retained.
 
+Windows `system::lifecycle` checks open `app_window` HWNDs alongside the hidden
+host `surface.hwnd()`, and `app_window` `WM_WINDOWPOSCHANGED` refreshes both
+monitor color state and app lifecycle. Without this, apps declaring their main
+window via `app_window()` stay permanently in `Lifecycle::Background`. Remove
+this patch when upstream `nsh-platform-windows` derives lifecycle from
+`app_window` visibility.
+
 On Android API 26–29, the bottom safe-area and native tab-bar insets are capped by the stable system-bar
 inset. The legacy system-window inset also includes the IME during `adjustResize`;
 using it as a safe area gives the native tab bar a keyboard-sized bottom padding.

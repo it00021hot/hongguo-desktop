@@ -1825,7 +1825,12 @@ fn window_api(
         }
         WM_WINDOWPOSCHANGED => {
             if let Some(id) = data.window {
+                if crate::output::monitor_changed(hwnd) {
+                    surface.invalidate();
+                    crate::app_window::invalidate_all(surface);
+                }
                 crate::app_window::state_changed(surface, id);
+                crate::system::lifecycle_changed(surface);
             }
             None
         }
