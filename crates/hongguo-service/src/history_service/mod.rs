@@ -2,6 +2,8 @@
 //! [`record`]：播放进度里程碑先落库，再按账号或原设备会话发送。
 //! 账号上报成功回置 reported，上报失败不影响本地行。[`upload_pending`]：把离线期间攒下的 reported=0 行逐条补传。
 
+use std::sync::atomic::{AtomicI64, Ordering};
+
 use hongguo_api::history::{
     GuestPlaybackReport, report_guest_watch_progress, report_watch_progress,
 };
@@ -36,7 +38,13 @@ pub async fn record_playback(
     }
     let env = state.api_env();
     if !logged_in {
-        if let Err(error) = report_guest_watch_progress(item, guest, &env).await {
+        let now_ms = hongguo_common::utils::time::now_ms();
+        if now_ms >= guest_cooldown_until_ms()
+            && let Err(error) = report_guest_watch_progress(item, guest, &env).await
+        {
+            if let Some(secs) = parse_ban_seconds(&error.to_string()) {
+                set_guest_cooldown(now_ms, secs);
+            }
             log::warn!("[History] 匿名历史更新失败（已保存到本地）: {error}");
         }
         return Ok(());
@@ -106,4 +114,35 @@ pub async fn upload_pending(state: &AppState) {
     if done > 0 {
         log::info!("[History] 本地历史补传 {done}/{} 条", pending.len());
     }
+}
+
+/// 匿名上报命中限流时的默认退避秒数（服务端未给出有效 `min_ban_time` 时兜底）。
+const DEFAULT_GUEST_BAN_SECS: i64 = 60;
+const MILLIS_PER_SECOND: i64 = 1000;
+
+/// 匿名历史云端上报冷却截止时间（Unix 毫秒时间戳），避免限流期间重复打接口。
+static GUEST_COOLDOWN_UNTIL_MS: AtomicI64 = AtomicI64::new(0);
+
+fn guest_cooldown_until_ms() -> i64 {
+    GUEST_COOLDOWN_UNTIL_MS.load(Ordering::Relaxed)
+}
+
+fn set_guest_cooldown(now_ms: i64, secs: i64) {
+    let until = now_ms.saturating_add(secs.max(1).saturating_mul(MILLIS_PER_SECOND));
+    GUEST_COOLDOWN_UNTIL_MS.store(until, Ordering::Relaxed);
+}
+
+fn parse_ban_seconds(message: &str) -> Option<i64> {
+    let rest = message.split("\"min_ban_time\"").nth(1)?;
+    let after_colon = rest.trim_start().strip_prefix(':')?.trim_start();
+    let digits: String = after_colon
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if let Ok(secs) = digits.parse::<i64>()
+        && secs > 0
+    {
+        return Some(secs);
+    }
+    Some(DEFAULT_GUEST_BAN_SECS)
 }

@@ -101,13 +101,16 @@ pub(super) fn mount<E: IntoElement>(
     });
     effect(move || {
         let resource = source.with(|source| source.map(VideoSource::from_playback));
-        if resource.is_none()
-            && transport::drop_shown_without_resource(source.loading(), chrome.silent_handoff())
-        {
-            incoming.set(None);
-            shown.set(None);
-            staged.set(None);
-            return;
+        if resource.is_none() {
+            if !source.loading() && source.error().is_some() {
+                chrome.end_handoff();
+            }
+            if transport::drop_shown_without_resource(source.loading(), chrome.silent_handoff()) {
+                incoming.set(None);
+                shown.set(None);
+                staged.set(None);
+                return;
+            }
         }
         let shown_now = shown.get_untracked();
         let shown_url = shown_now.as_ref().map(|shown| shown.url.clone());
@@ -136,6 +139,7 @@ pub(super) fn mount<E: IntoElement>(
             } else {
                 shown.set(Some(next));
                 incoming.set(None);
+                chrome.end_handoff();
             }
             return;
         }
@@ -145,6 +149,7 @@ pub(super) fn mount<E: IntoElement>(
                 .is_some_and(|resource_url| shown_url.as_deref() == Some(resource_url))
         {
             incoming.set(None);
+            chrome.end_handoff();
         }
     });
     effect(move || {
@@ -239,6 +244,13 @@ pub(super) fn mount<E: IntoElement>(
                             .is_some_and(|incoming| incoming.url == source_url.get())
                     })
                 });
+                let incoming_revealing = computed(move || {
+                    is_incoming.get()
+                        && incoming_ready.get()
+                        && source.with(|source| {
+                            source.is_some_and(|source| source.lease.url() == source_url.get())
+                        })
+                });
                 let skip_entrance = is_incoming.get_untracked();
                 let layer_motion = if skip_entrance {
                     let fade = motion();
@@ -249,15 +261,21 @@ pub(super) fn mount<E: IntoElement>(
                 };
                 if skip_entrance {
                     effect(move || {
-                        if !is_incoming.get() || !incoming_ready.get() {
+                        if !incoming_revealing.get() {
                             return;
                         }
                         if incoming_opaque.get_untracked() {
                             return;
                         }
+                        let expected_url = source_url.get();
                         let end = layer_motion.play(super::presentation::video::player_crossfade());
                         spawn(async move {
-                            if end.await {
+                            let _ = end.await;
+                            if incoming.with_untracked(|incoming| {
+                                incoming
+                                    .as_ref()
+                                    .is_some_and(|incoming| incoming.url == expected_url)
+                            }) {
                                 incoming_opaque.set(true);
                             }
                         });
@@ -284,6 +302,7 @@ pub(super) fn mount<E: IntoElement>(
                 } else {
                     None
                 });
+                let item_owner = Owner::current();
                 let loaded = signal(false);
                 let progressed = signal(false);
                 let initial_load = stored(transport::LoadLatch::default());
@@ -370,25 +389,50 @@ pub(super) fn mount<E: IntoElement>(
                             muted.get() || pending_seek.get().is_some() || is_incoming.get()
                         }),
                         opacity: computed(move || {
-                            transport::incoming_opacity(!is_incoming.get() || incoming_ready.get())
+                            transport::incoming_opacity(
+                                !is_incoming.get() || incoming_revealing.get(),
+                            )
                         }),
                         motion: layer_motion,
-                        paused: computed(move || {
-                            if is_incoming.get() {
-                                transport::incoming_paused(incoming_ready.get())
-                            } else {
-                                transport::outgoing_paused(
-                                    chrome.silent_handoff(),
-                                    play_allowed.get(),
-                                    source.with(|source| {
+                        paused: {
+                            let last_native_paused = stored(None::<bool>);
+                            computed(move || {
+                                if is_incoming.get() {
+                                    let ready = incoming_ready.get();
+                                    let revealing = incoming_revealing.get();
+                                    let effective =
+                                        transport::incoming_paused(ready && !revealing);
+                                    if last_native_paused.replace(Some(effective)) != Some(effective)
+                                    {
+                                        log::info!(
+                                            "[Player] nativePaused={effective} role=incoming ready={ready} revealing={revealing}"
+                                        );
+                                    }
+                                    effective
+                                } else {
+                                    let handoff = chrome.silent_handoff();
+                                    let allowed = play_allowed.get();
+                                    let current = source.with(|source| {
                                         source.is_some_and(|source| {
                                             source.lease.url() == source_url.get()
                                         })
-                                    }) && source.error().is_none(),
-                                    paused.get(),
-                                )
-                            }
-                        }),
+                                    }) && source.error().is_none();
+                                    let user_paused = paused.get();
+                                    let effective = transport::outgoing_paused(
+                                        handoff,
+                                        allowed,
+                                        current,
+                                        user_paused,
+                                    );
+                                    if last_native_paused.replace(Some(effective)) != Some(effective) {
+                                        log::info!(
+                                            "[Player] nativePaused={effective} role=outgoing handoff={handoff} playAllowed={allowed} current={current} userPaused={user_paused}"
+                                        );
+                                    }
+                                    effective
+                                }
+                            })
+                        },
                         active: computed(move || {
                             play_allowed.get() && (current_source() || is_incoming.get())
                         }),
@@ -396,12 +440,22 @@ pub(super) fn mount<E: IntoElement>(
                     },
                     super::renderer::Callbacks {
                         load: Box::new(move |info: &VideoInfo| {
-                            if !current_source() && !is_incoming.get_untracked() {
+                            if !item_owner.is_live()
+                                || (!current_source() && !is_incoming.get_untracked())
+                            {
                                 return;
                             }
                             native_position.update(|position| position.1 = info.duration.into());
                             let duration =
                                 effective_duration(mounted.expected_duration, info.duration.into());
+                            log::info!(
+                                "[Player] loaded series={} episode={} duration={duration:.2}s size={}x{} incoming={}",
+                                finished_series.get(),
+                                finished_episode,
+                                info.size.width.0,
+                                info.size.height.0,
+                                is_incoming.get_untracked()
+                            );
                             if is_incoming.get_untracked() {
                                 initial_load.with(|load| {
                                     load.seek(incoming_seek.get(), mounted.resume_at, duration)
@@ -438,7 +492,10 @@ pub(super) fn mount<E: IntoElement>(
                             failure.set(SharedString::default());
                         }),
                         progress: Box::new(move |progress: &VideoProgress| {
-                            if !progress.current_time.is_finite() || progress.current_time < 0.0 {
+                            if !item_owner.is_live()
+                                || !progress.current_time.is_finite()
+                                || progress.current_time < 0.0
+                            {
                                 return;
                             }
                             if is_incoming.get_untracked() {
@@ -501,22 +558,37 @@ pub(super) fn mount<E: IntoElement>(
                             }
                         }),
                         buffer: Box::new(move |value: &bool| {
+                            if !item_owner.is_live() {
+                                return;
+                            }
                             if current_source() && !is_incoming.get_untracked() {
-                                buffering.set(buffer_state.with(|state| {
-                                    state.native_event(
-                                        *value,
-                                        pending_seek.get_untracked().is_some(),
-                                    )
-                                }));
+                                let seeking = pending_seek.get_untracked().is_some();
+                                let next_buffering = buffer_state
+                                    .with(|state| state.native_event(*value, seeking));
+                                if buffering.get_untracked() != next_buffering {
+                                    log::info!(
+                                        "[Player] buffering={next_buffering} native={} seeking={seeking}",
+                                        *value
+                                    );
+                                }
+                                buffering.set(next_buffering);
                             }
                         }),
                         error: Box::new(move |message: &str| {
+                            if !item_owner.is_live() {
+                                return;
+                            }
                             if current_source() || is_incoming.get_untracked() {
-                                if is_incoming.get_untracked() {
+                                let incoming_layer = is_incoming.get_untracked();
+                                log::warn!(
+                                    "[Player] nativeError incoming={incoming_layer} message={message}"
+                                );
+                                if incoming_layer {
                                     incoming.set(None);
                                     staged.set(None);
                                     incoming_ready.set(false);
                                     incoming_opaque.set(false);
+                                    chrome.end_handoff();
                                 }
                                 failure.set(message.to_owned().into());
                                 pending_seek.set(None);
@@ -524,7 +596,7 @@ pub(super) fn mount<E: IntoElement>(
                             }
                         }),
                         end: Box::new(move || {
-                            if is_incoming.get_untracked() {
+                            if !item_owner.is_live() || is_incoming.get_untracked() {
                                 return;
                             }
                             if !current_source() && !chrome.silent_handoff() {
@@ -570,8 +642,6 @@ pub(super) fn mount<E: IntoElement>(
                             {
                                 gestures.enter_binge();
                                 chrome.arm_quiet();
-                                chrome.begin_handoff();
-                                chrome.arm_status_grace();
                                 next();
                             } else {
                                 paused.set(true);

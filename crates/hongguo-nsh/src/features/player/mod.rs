@@ -157,6 +157,11 @@ fn content(
     });
     let retry = move || {
         error_state::retry(source.error().as_ref(), || {
+            if let Some((vid, active_def)) = source.with(|source| {
+                source.map(|playback| (playback.history.vid.clone(), playback.active_definition))
+            }) {
+                hongguo_service::play_service::online::invalidate_stream(&vid, active_def);
+            }
             pending_seek.set(Some(position.get_untracked().0));
             source.refetch();
         });
@@ -178,6 +183,31 @@ fn content(
             window_modes.is_none_or(|modes| modes.exposed()),
         ) && !crate::boss_key::hidden()
             && window_modes.is_none_or(|modes| modes.can_play())
+    });
+    let last_gate = stored(None::<(bool, nsh_core::platform::Lifecycle, bool, bool, bool, bool)>);
+    effect(move || {
+        let snapshot = (
+            play_allowed.get(),
+            lifecycle(),
+            routed.get(),
+            window_modes.is_none_or(|modes| modes.exposed()),
+            window_modes.is_none_or(|modes| modes.can_play()),
+            crate::boss_key::hidden(),
+        );
+        if last_gate.replace(Some(snapshot)) != Some(snapshot) {
+            let (allowed, life, routed, exposed, can_play, boss_hidden) = snapshot;
+            log::info!(
+                "[Player] gate playAllowed={allowed} lifecycle={life:?} routed={routed} exposed={exposed} canPlay={can_play} bossHidden={boss_hidden}"
+            );
+        }
+    });
+    let last_paused = stored(None::<bool>);
+    effect(move || {
+        let now = paused.get();
+        if last_paused.replace(Some(now)) != Some(now) {
+            let (series, episode) = selection.get_untracked();
+            log::info!("[Player] paused={now} series={series} episode={episode}");
+        }
     });
     display_sleep::bind(move || {
         let covering_display = window_modes.is_some_and(|modes| {
@@ -331,6 +361,7 @@ fn content(
         let state = session.with(|session| session.state.clone());
         hongguo_service::play_service::schedule_following_episodes(&state, &series, episode);
     });
+    let player_owner = Owner::current();
     effect(move || {
         if chrome.silent_handoff()
             || source.loading()
@@ -363,24 +394,50 @@ fn content(
         let origin = (series.clone(), episode);
         let definition = definition.get();
         let session = session.with(|session| session.clone());
-        let task = spawn(async move {
-            let prepared = bridge::request(prepare::prepare(
-                session,
-                origin.0.clone(),
-                next_episode,
-                definition,
-                false,
-                None,
-            ))
-            .await;
-            if selection.get_untracked() != origin {
-                return;
-            }
-            let Ok(playback) = prepared else {
-                return;
-            };
-            staged_playback.replace(Some((origin.0, next_episode, playback.clone())));
-            staged_layer.set(Some(native::VideoSource::from_playback(&playback)));
+        log::info!(
+            "[Player] stageNext series={} current={} next={} remaining={remaining:.2}s",
+            origin.0,
+            origin.1,
+            next_episode
+        );
+        let task = player_owner.run(move || {
+            spawn(async move {
+                let prepared = bridge::request(prepare::prepare(
+                    session,
+                    origin.0.clone(),
+                    next_episode,
+                    definition,
+                    false,
+                    None,
+                ))
+                .await;
+                if selection.get_untracked() != origin {
+                    log::info!(
+                        "[Player] stageNext discarded series={} next={} reason=selectionChanged",
+                        origin.0,
+                        next_episode
+                    );
+                    return;
+                }
+                match prepared {
+                    Ok(playback) => {
+                        log::info!(
+                            "[Player] stageNext ready series={} next={}",
+                            origin.0,
+                            next_episode
+                        );
+                        staged_playback.replace(Some((origin.0, next_episode, playback.clone())));
+                        staged_layer.set(Some(native::VideoSource::from_playback(&playback)));
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "[Player] stageNext failed series={} next={}: {error}",
+                            origin.0,
+                            next_episode
+                        );
+                    }
+                }
+            })
         });
         stage_task.replace(Some(task));
     });
@@ -398,6 +455,9 @@ fn content(
         }
         let (at, duration) = position.get();
         if !transport::should_hold_outgoing(duration - at, duration, true) {
+            return;
+        }
+        if staged_layer.with(|layer| layer.is_none()) {
             return;
         }
         if source
@@ -843,7 +903,7 @@ fn content(
                 },
             ))
             .child(when(
-                move || buffering.get() && !chrome.suppress_status(),
+                move || (buffering.get() || chrome.silent_handoff()) && !chrome.suppress_status(),
                 move || ui::status(move || tr("player.bufferingShort")),
             ))
             .child(ui::status(notice))

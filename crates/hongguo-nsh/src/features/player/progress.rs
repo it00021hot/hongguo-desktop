@@ -51,18 +51,18 @@ impl Recorder {
     pub(super) fn record(self, at: f64, duration: f64) {
         if let Some(position) = ProgressPosition::new(at, duration) {
             self.0
-                .with(|sender| sender.send_modify(|update| update.position = Some(position)));
+                .try_with(|sender| sender.send_modify(|update| update.position = Some(position)));
         }
     }
 
     pub(super) fn flush(self) {
-        self.0.with(|sender| {
+        self.0.try_with(|sender| {
             sender.send_modify(|update| update.flush = update.flush.wrapping_add(1))
         });
     }
 
     pub(super) fn complete(self) {
-        self.0.with(|sender| {
+        self.0.try_with(|sender| {
             sender.send_modify(|update| {
                 if let Some(position) = &mut update.position {
                     position.at = position.duration;

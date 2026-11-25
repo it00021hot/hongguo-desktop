@@ -35,6 +35,18 @@ fn prune_codecs(c: &StreamCache) {
         .retain(|(vid, definition), _| c.exists(vid, *definition));
 }
 
+/// 显式重试时清掉停摆/异常的在线流缓存与取流模型缓存，避免继续复用卡死或 403 坏链。
+pub fn invalidate_stream(vid: &str, definition: u32) {
+    let vid = vid.trim();
+    if vid.is_empty() {
+        return;
+    }
+    let c = cache();
+    c.remove(vid, definition);
+    prune_codecs(c);
+    hongguo_api::play_url::invalidate_model(vid);
+}
+
 /// 预取（换剧 + 连播共用）的并发上限：每路要先走「取流表 + 探针链」再排填充门闸，
 /// 多路同时探针会在慢网/弱机上抢当前播放的带宽与 CPU；2 路足够让下一个目标先热。
 const PREFETCH_CONCURRENCY: usize = 2;
@@ -172,6 +184,7 @@ pub async fn prepare(
             log::warn!("[Online] 填充 {owned} 失败: {e}");
             c.remove(&owned, want);
             prune_codecs(c);
+            hongguo_api::play_url::invalidate_model(&owned);
         }
     });
 
@@ -269,6 +282,7 @@ pub async fn prefetch_stream(
             log::warn!("[Online] 预取填充 {owned} 失败: {e}");
             c.remove(&owned, want);
             prune_codecs(c);
+            hongguo_api::play_url::invalidate_model(&owned);
         }
     });
     Ok(())

@@ -116,6 +116,14 @@ pub fn clear_batch_cache() {
     batch_cache().lock().clear();
 }
 
+/// 失效单集的取流缓存（CDN 返回 403/失效或显式重试时清掉，避免继续复用同一条坏链）。
+pub fn invalidate_model(vid: &str) {
+    let vid = vid.trim();
+    if !vid.is_empty() {
+        batch_cache().lock().remove(vid);
+    }
+}
+
 /// vid → content_type 注册表（进程内缓存）：批量取流的 `mixed_video_id_map`
 /// 分组 key 必须与条目 content_type 一致（错配 → 空响应）；未注册的 vid 不猜 key，走单集回落。
 static CONTENT_TYPES: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();

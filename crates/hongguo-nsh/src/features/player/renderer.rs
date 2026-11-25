@@ -164,6 +164,10 @@ fn mount_native(
                 if frame_url.get_untracked().is_some() {
                     return;
                 }
+                if is_network_error(error) {
+                    (callbacks.get().error)(error);
+                    return;
+                }
                 if let Some(extension) = &state.codec_extension {
                     match extension() {
                         Ok(url) => frame_url.set(Some(url)),
@@ -175,4 +179,13 @@ fn mount_native(
             })
             .on_end(move || (callbacks.get().end)()),
     )
+}
+
+fn is_network_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("network")
+        || lower.contains("connection")
+        || lower.contains("offline")
 }

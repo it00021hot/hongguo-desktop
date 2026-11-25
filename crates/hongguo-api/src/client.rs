@@ -499,25 +499,39 @@ fn host_of(url: &str) -> &str {
 const VIDEO_RANGE_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// 等响应头的上限。
-const VIDEO_RANGE_HEADER_TIMEOUT: Duration = Duration::from_secs(15);
+const VIDEO_RANGE_HEADER_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// 读取停滞超时：「卡死」与「慢但仍在传」的分界。
-const VIDEO_RANGE_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+const VIDEO_RANGE_STALL_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// 单次 Range 请求总上限（兜底假活跃连接）。
-const VIDEO_RANGE_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
+/// 单次 Range 请求总上限（兜底假活跃/慢速滴流连接，避免拖垮起播与重试窗口）。
+const VIDEO_RANGE_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// `Range: bytes=0-0` 探测直链总长；CDN 不支持 Range（回 200）即 Err。
+/// `Range: bytes=0-0` 探测直链总长；CDN 不支持 Range（回 200）即 Err，403 补 Referer 重试一次。
 pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u64> {
-    let resp = client
-        .get(url)
-        .timeout(VIDEO_RANGE_PROBE_TIMEOUT)
-        .header("User-Agent", hongguo_signer::video_ua())
-        .header(reqwest::header::ACCEPT_ENCODING, "identity")
-        .header("Range", "bytes=0-0")
+    let send = |referer: bool| {
+        let mut req = client
+            .get(url)
+            .timeout(VIDEO_RANGE_PROBE_TIMEOUT)
+            .header("User-Agent", hongguo_signer::video_ua())
+            .header(reqwest::header::ACCEPT_ENCODING, "identity")
+            .header("Range", "bytes=0-0");
+        if referer {
+            req = req.header("Referer", hongguo_signer::VIDEO_REFERER);
+        }
+        req
+    };
+    let mut resp = send(false)
         .send()
         .await
         .map_err(|e| AppError::Network(e.to_string()))?;
+    if resp.status().as_u16() == 403 {
+        log::info!("[CDN] Range 探测被 403 拒（裸 UA），补 Referer 重试一次");
+        resp = send(true)
+            .send()
+            .await
+            .map_err(|e| AppError::Network(e.to_string()))?;
+    }
     if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
         return Err(AppError::Network(format!(
             "CDN 不支持 Range 请求: HTTP {}",
