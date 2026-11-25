@@ -9,6 +9,21 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.6] - 2026-11-25
+
+### ⚡ 优化
+
+- 切集和首页切剧时保留当前画面，下一集或下一剧首帧就绪后交叉淡入，避免黑场和「加载中」闪烁。
+- 全屏播放时阻止系统休眠。
+
+### 🐛 修复
+
+- 修复确认框关闭后仍执行确认回调的问题。
+
+从 0.7.0 或更早版本升级需手动下载安装。需要迁移旧版数据时，请先备份并参照 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+English: Switching episodes or series on the home feed keeps the current frame and crossfades when the next source is ready, avoiding a black screen or loading flash. Full-screen playback prevents system sleep. Fixed confirmation dialogs still running their confirm action after being dismissed. Install manually when upgrading from 0.7.0 or earlier, and back up your data before following the legacy migration instructions.
+
 ## [0.8.5] - 2026-11-20
 
 ### ⚡ 优化
