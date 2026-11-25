@@ -15,15 +15,16 @@ pub(crate) fn confirmation<E: IntoElement>(
     let title = title.into_reactive();
     let action = action.into_reactive();
     let accept = stored(accept);
-    // Accept must run under this owner, not the dialog's `when` owner: closing
-    // the dialog disposes that owner and would cancel any `spawn` started there.
+    let owner = Owner::current();
+    // Confirm spawns under this component: the effect re-runs after reset,
+    // and the dialog `when` dies on close; both would cancel `spawn`.
     let accepted = signal(false);
     effect(move || {
         if !accepted.get() {
             return;
         }
         accepted.set(false);
-        accept.with(|accept| accept());
+        owner.run(|| accept.with(|accept| accept()));
     });
     when(open, move || {
         let title = title.clone();

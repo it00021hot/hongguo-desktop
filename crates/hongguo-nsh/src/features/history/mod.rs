@@ -46,6 +46,7 @@ fn content(
     nav: Navigation,
     result: Resource<(u64, Vec<model::HistoryItem>), bridge::Failure>,
 ) -> View {
+    let owner = Owner::current();
     let busy = signal(false);
     let deleted = signal(0_u64);
     let feedback = signal(SharedString::default());
@@ -96,7 +97,7 @@ fn content(
         });
     };
     let remove = move |entries: Vec<model::HistoryItem>| {
-        if busy.get_untracked() {
+        if busy.get_untracked() || entries.is_empty() {
             return;
         }
         busy.set(true);
@@ -104,20 +105,22 @@ fn content(
         let identity = session.identity();
         let expected_user = user.get_untracked();
         let state = session.with(|session| session.state.clone());
-        spawn(async move {
-            let outcome =
-                bridge::request(history_data::remove(state, entries, expected_user)).await;
-            if session.identity() == identity {
-                match outcome {
-                    Ok(()) => {
-                        deleted.update(|revision| *revision += 1);
-                        session.notify_library();
-                        result.refetch();
+        owner.run(move || {
+            spawn(async move {
+                let outcome =
+                    bridge::submit(history_data::remove(state, entries, expected_user)).await;
+                if session.identity() == identity {
+                    match outcome {
+                        Ok(()) => {
+                            deleted.update(|revision| *revision += 1);
+                            session.notify_library();
+                            result.refetch();
+                        }
+                        Err(error) => feedback.set(error.text()),
                     }
-                    Err(error) => feedback.set(error.text()),
                 }
-            }
-            busy.set(false);
+                busy.set(false);
+            });
         });
     };
     let has_current = computed(move || {

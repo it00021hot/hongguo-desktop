@@ -128,6 +128,10 @@ pub async fn delete(
 ) -> AppResult<()> {
     let identity = Identity(expected_account);
     identity.check(state)?;
+    if identity.0.is_none() {
+        log::info!("[History] 未登录，仅删除本地历史 {} 条", items.len());
+        return delete_local(state, &identity, items).await;
+    }
     let env = state.api_env();
     identity.check(state)?;
     delete_with(state, identity.0, items, || {
@@ -151,10 +155,20 @@ where
     if items.is_empty() {
         return Ok(());
     }
-    if identity.0.is_some() {
-        let result = cloud().await;
-        identity.check(state)?;
-        result?;
+    let result = cloud().await;
+    identity.check(state)?;
+    result?;
+    delete_local(state, &identity, items).await
+}
+
+async fn delete_local(
+    state: &AppState,
+    identity: &Identity,
+    items: &[(String, String, i64)],
+) -> AppResult<()> {
+    identity.check(state)?;
+    if items.is_empty() {
+        return Ok(());
     }
     let series_ids = items
         .iter()

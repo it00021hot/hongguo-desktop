@@ -55,15 +55,26 @@ where
     Request(hongguo_service::runtime::spawn(future))
 }
 
+/// Mutation that keeps running if the UI future is dropped; [`request`] aborts.
+pub(crate) async fn submit<T, F>(future: F) -> Result<T, Failure>
+where
+    T: Send + 'static,
+    F: Future<Output = AppResult<T>> + Send + 'static,
+{
+    join(hongguo_service::runtime::spawn(future).await)
+}
+
+fn join<T>(result: Result<AppResult<T>, tokio::task::JoinError>) -> Result<T, Failure> {
+    result
+        .unwrap_or_else(|error| Err(AppError::Internal(format!("NSH task: {error}"))))
+        .map_err(Failure::from)
+}
+
 impl<T> Future for Request<T> {
     type Output = Result<T, Failure>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.0).poll(cx).map(|result| {
-            result
-                .unwrap_or_else(|error| Err(AppError::Internal(format!("NSH task: {error}"))))
-                .map_err(Failure::from)
-        })
+        Pin::new(&mut self.0).poll(cx).map(join)
     }
 }
 
