@@ -2,7 +2,7 @@
   "name": "guava",
   "id": "com.guava.app",
   "icon": "../../assets/icons/1024x1024.png",
-  "version": "0.8.8",
+  "version": "0.8.6",
   "build": 12,
   "updater": { "github": "it00021hot/hongguo-desktop" },
   "rust": ".",
