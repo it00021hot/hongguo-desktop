@@ -224,6 +224,47 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         }
     });
     effect(move || {
+        let ready = target.with(|value| {
+            value
+                .filter(|(id, _)| {
+                    selected.with(|item| item.as_ref().is_some_and(|item| item.series_id == *id))
+                })
+                .cloned()
+        });
+        let empty = !result.loading() && result.error().is_none() && selected.get().is_none();
+        let next = if empty {
+            None
+        } else {
+            model::retain_playable(feed_navigation.playable().get_untracked(), ready)
+        };
+        if feed_navigation.playable().get_untracked() != next {
+            feed_navigation.playable().set(next);
+        }
+    });
+    let overlay = computed(move || {
+        let id = feed_navigation
+            .playable()
+            .get()
+            .map(|(id, _)| id)
+            .unwrap_or_default();
+        channels.with(|channels| {
+            channels
+                .get(&channel.get())
+                .and_then(|page| {
+                    page.items
+                        .iter()
+                        .find(|item| item.series_id == id)
+                        .map(|item| crate::features::player::OverlayMeta {
+                            series_id: item.series_id.clone(),
+                            heat: item.heat_text.clone(),
+                            season: item.season_tag.clone(),
+                            badge: item.badge.clone(),
+                        })
+                })
+                .unwrap_or_default()
+        })
+    });
+    effect(move || {
         if !active.get() || result.loading() || result.error().is_some() {
             return;
         }
@@ -267,47 +308,33 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                 .flex_1()
                 .min_h(px(0.0))
                 .relative()
-                .child(each(
+                .child(when(
+                    move || feed_navigation.playable().get().is_some(),
                     move || {
-                        target.with(|target| {
-                            target
-                                .filter(|(id, _)| {
-                                    selected.with(|item| {
-                                        item.as_ref().is_some_and(|item| item.series_id == *id)
-                                    })
-                                })
-                                .cloned()
-                                .into_iter()
-                                .collect::<Vec<_>>()
-                        })
-                    },
-                    |target: &(String, u32)| target.0.clone(),
-                    move |target, _| {
-                        let (id, episode) = target.get_untracked();
+                        let (id, episode) = feed_navigation
+                            .playable()
+                            .get_untracked()
+                            .expect("playable player");
                         crate::features::player::embedded(
                             session,
                             nav,
                             id,
                             episode,
                             Route::Catalog,
-                            computed(move || {
-                                selected.with(|item| {
-                                    item.as_ref()
-                                        .map(|item| crate::features::player::OverlayMeta {
-                                            series_id: item.series_id.clone(),
-                                            heat: item.heat_text.clone(),
-                                            season: item.season_tag.clone(),
-                                            badge: item.badge.clone(),
-                                        })
-                                        .unwrap_or_default()
-                                })
-                            }),
+                            overlay,
                             Some(feed_navigation),
                         )
                     },
                 ))
                 .child(when(
-                    move || target.loading() || (result.loading() && selected.get().is_none()),
+                    move || {
+                        model::cold_loading(
+                            feed_navigation.playable().get().is_some(),
+                            target.loading(),
+                            result.loading(),
+                            selected.get().is_some(),
+                        )
+                    },
                     move || {
                         view()
                             .absolute()

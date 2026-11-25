@@ -105,6 +105,10 @@ pub(super) fn change_episode(current: u32, requested: u32) -> bool {
     current != requested
 }
 
+pub(super) fn change_source(current: &(String, u32), requested: &(String, u32)) -> bool {
+    current != requested
+}
+
 pub(super) fn initial_seek(resume_at: f64) -> Option<f64> {
     (resume_at.is_finite() && resume_at > 0.0).then_some(resume_at)
 }
@@ -236,6 +240,13 @@ mod tests {
         assert!(reuse_staged(Some(("s", 2)), "s", 2));
         assert!(!reuse_staged(Some(("s", 2)), "s", 3));
         assert!(!reuse_staged(None, "s", 2));
+    }
+
+    #[test]
+    fn change_source_treats_series_or_episode_as_a_new_handoff() {
+        assert!(change_source(&("a".into(), 1), &("b".into(), 1)));
+        assert!(change_source(&("a".into(), 1), &("a".into(), 2)));
+        assert!(!change_source(&("a".into(), 1), &("a".into(), 1)));
     }
 
     #[test]

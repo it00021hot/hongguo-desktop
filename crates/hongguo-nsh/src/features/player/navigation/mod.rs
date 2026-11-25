@@ -17,6 +17,7 @@ pub(crate) struct FeedNavigation {
     goto: FeedGoto,
     revision: Signal<u64>,
     quiet_handoff: super::chrome::QuietHandoff,
+    playable: Signal<Option<(String, u32)>>,
     automatic_update: Stored<bool>,
     direction: Signal<i32>,
 }
@@ -31,6 +32,7 @@ impl FeedNavigation {
             goto: stored(None),
             revision: signal(0),
             quiet_handoff: super::chrome::QuietHandoff::new(),
+            playable: signal(None),
             automatic_update: stored(false),
             direction: signal(1),
         }
@@ -65,6 +67,10 @@ impl FeedNavigation {
 
     pub fn quiet_handoff(self) -> super::chrome::QuietHandoff {
         self.quiet_handoff
+    }
+
+    pub fn playable(self) -> Signal<Option<(String, u32)>> {
+        self.playable
     }
 
     pub fn request_goto(self, series: hongguo_common::model::Series, episode: u32) -> bool {

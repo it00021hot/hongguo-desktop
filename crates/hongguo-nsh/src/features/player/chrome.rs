@@ -111,7 +111,7 @@ impl Chrome {
             handoff.clear();
         }
         self.quiet_until.replace(None);
-        // 不 clear_status_grace：控件唤醒不能打断切集 handoff / 状态抑制。
+        // 不 clear_status_grace：控件唤醒不能打断切源 handoff / 状态抑制。
         batch(|| {
             self.quiet.set(false);
             self.visible.set(true);
@@ -175,7 +175,7 @@ impl Chrome {
             .with(|until| until.is_some_and(|until| nsh_core::time::now() < until))
     }
 
-    /// 切集交接中：冻结旧层，新层在旧帧上交叉淡入，淡入完成后再卸旧层。
+    /// 切集/切剧交接中：冻结旧层，新层在旧帧上交叉淡入，淡入完成后再卸旧层。
     pub fn silent_handoff(self) -> bool {
         self.keeping_frame.get()
     }

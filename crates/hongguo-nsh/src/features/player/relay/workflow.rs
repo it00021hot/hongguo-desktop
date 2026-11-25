@@ -126,11 +126,11 @@ pub(super) fn install(
                 );
                 if let Some(feed) = feed {
                     feed.lock_series(series.series_id.clone());
-                    if feed.request_goto(series.clone(), episode) {
-                        return;
-                    }
                 }
-                selected(series, episode);
+                selected(series.clone(), episode);
+                if let Some(feed) = feed {
+                    let _ = feed.request_goto(series, episode);
+                }
             }
             Ok(Transition::Feed) => {
                 if !feed.is_some_and(|feed| feed.advance_feed()) {

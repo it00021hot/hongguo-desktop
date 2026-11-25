@@ -207,6 +207,48 @@ fn content(
     let download_open = signal(false);
     let enhancement = enhancement::Controller::new(preferences.enhancement);
     provide_context(enhancement);
+    let panels_open = computed(move || {
+        menu_open.get().is_some()
+            || download_open.get()
+            || comments_open.get()
+            || enhancement.open.get()
+            || danmaku.settings().open.get()
+            || use_context::<crate::navigation::AccountPrompt>().is_some_and(|prompt| prompt.open())
+    });
+    let chrome = chrome::Chrome::new(chrome::State {
+        active: visible,
+        paused,
+        panel_open: panels_open,
+    })
+    .with_handoff(feed.map(navigation::FeedNavigation::quiet_handoff));
+    provide_context(chrome);
+    let apply_series = move |id: String, episode: u32| {
+        if !transport::change_source(&selection.get_untracked(), &(id.clone(), episode)) {
+            return;
+        }
+        chrome.begin_handoff();
+        chrome.arm_status_grace();
+        adopt_staged_playback(staged_playback, staged_layer, source, &id, episode);
+        batch(|| {
+            selection.set((id, episode));
+            position.set((0.0, 0.0));
+            pending_seek.set(None);
+            reset_definition.set(false);
+            paused.set(false);
+            menu_open.set(None);
+            comments_open.set(false);
+            danmaku.settings().open.set(false);
+            enhancement.open.set(false);
+        });
+    };
+    if let Some(feed) = feed {
+        effect(move || {
+            let Some((id, episode)) = feed.playable().get() else {
+                return;
+            };
+            apply_series(id, episode);
+        });
+    }
     let relay = relay::observe(
         session,
         selection,
@@ -229,48 +271,10 @@ fn content(
         },
         feed,
         relay_notice,
-        move |series, episode| {
-            if let Some(chrome) = chrome::Chrome::current() {
-                chrome.begin_handoff();
-                chrome.arm_status_grace();
-            }
-            adopt_staged_playback(
-                staged_playback,
-                staged_layer,
-                source,
-                &series.series_id,
-                episode,
-            );
-            batch(|| {
-                selection.set((series.series_id, episode));
-                position.set((0.0, 0.0));
-                pending_seek.set(None);
-                reset_definition.set(false);
-                paused.set(false);
-                menu_open.set(None);
-                comments_open.set(false);
-                danmaku.settings().open.set(false);
-                enhancement.open.set(false);
-            });
-        },
+        move |series, episode| apply_series(series.series_id, episode),
     );
     let relay_pending = relay.pending();
     let busy = computed(move || source.loading() || relay_pending.get());
-    let panels_open = computed(move || {
-        menu_open.get().is_some()
-            || download_open.get()
-            || comments_open.get()
-            || enhancement.open.get()
-            || danmaku.settings().open.get()
-            || use_context::<crate::navigation::AccountPrompt>().is_some_and(|prompt| prompt.open())
-    });
-    let chrome = chrome::Chrome::new(chrome::State {
-        active: visible,
-        paused,
-        panel_open: panels_open,
-    })
-    .with_handoff(feed.map(navigation::FeedNavigation::quiet_handoff));
-    provide_context(chrome);
     let next = move || {
         if busy.get() {
             return;
@@ -701,27 +705,11 @@ fn content(
                     }
                     if let Some(feed) = feed {
                         feed.lock_series(series.series_id.clone());
-                        if feed.request_goto(series.clone(), episode) {
-                            return;
-                        }
                     }
-                    chrome.begin_handoff();
-                    chrome.arm_status_grace();
-                    adopt_staged_playback(
-                        staged_playback,
-                        staged_layer,
-                        source,
-                        &series.series_id,
-                        episode,
-                    );
-                    batch(|| {
-                        selection.set((series.series_id, episode));
-                        position.set((0.0, 0.0));
-                        pending_seek.set(None);
-                        reset_definition.set(false);
-                        paused.set(false);
-                        menu_open.set(None);
-                    });
+                    apply_series(series.series_id.clone(), episode);
+                    if let Some(feed) = feed {
+                        let _ = feed.request_goto(series, episode);
+                    }
                 });
             }
             ControlAction::SetVolume(value) => {

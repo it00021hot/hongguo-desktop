@@ -80,3 +80,48 @@ impl Channel {
         changed
     }
 }
+
+pub(super) fn retain_playable(
+    previous: Option<(String, u32)>,
+    ready: Option<(String, u32)>,
+) -> Option<(String, u32)> {
+    ready.or(previous)
+}
+
+pub(super) fn cold_loading(
+    has_playable: bool,
+    target_loading: bool,
+    feed_loading: bool,
+    has_item: bool,
+) -> bool {
+    !has_playable && (target_loading || (feed_loading && !has_item))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retain_playable_keeps_previous_while_next_target_loads() {
+        assert_eq!(
+            retain_playable(Some(("a".into(), 1)), None),
+            Some(("a".into(), 1))
+        );
+        assert_eq!(
+            retain_playable(Some(("a".into(), 1)), Some(("b".into(), 1))),
+            Some(("b".into(), 1))
+        );
+        assert_eq!(
+            retain_playable(None, Some(("b".into(), 2))),
+            Some(("b".into(), 2))
+        );
+    }
+
+    #[test]
+    fn cold_loading_only_before_a_player_surface_exists() {
+        assert!(!cold_loading(true, true, false, true));
+        assert!(cold_loading(false, true, false, true));
+        assert!(cold_loading(false, false, true, false));
+        assert!(!cold_loading(false, false, false, false));
+    }
+}
