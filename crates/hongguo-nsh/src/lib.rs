@@ -7,6 +7,7 @@ mod features;
 mod file_access;
 mod i18n;
 mod image_url;
+mod logging;
 mod media;
 mod native_window;
 mod navigation;
@@ -20,6 +21,7 @@ mod view_memory;
 mod window_modes;
 
 pub use bootstrap::configure_mobile_data_root;
+pub use logging::init as init_logging;
 mod metadata;
 pub use metadata::metadata;
 

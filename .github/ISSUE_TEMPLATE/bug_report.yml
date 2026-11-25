@@ -118,12 +118,11 @@ body:
       label: 诊断信息
       description: |
         排查关键素材，尽量提供（注意先脱敏）：
-        - 崩溃时数据目录下的 crash.log——
+        - 数据目录下的运行日志 `app.log` 与崩溃日志 `crash.log`——
           macOS: ~/Library/Application Support/guava/
           Windows: %APPDATA%\guava\
-        - 开发者工具控制台报错（复现时打开 DevTools）
         - 界面截图 / 录屏（直接拖拽到本框）
-      placeholder: 可附 crash.log 片段、报错截图或录屏链接
+      placeholder: 可附 app.log / crash.log 片段、报错截图或录屏链接
 
   - type: checkboxes
     id: known

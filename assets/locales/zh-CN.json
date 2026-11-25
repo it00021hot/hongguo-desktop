@@ -465,6 +465,19 @@
     "downloadingArchive": "正在下载并校验…",
     "installing": "正在安装并重启…"
   },
+  "feedback": {
+    "title": "问题反馈与诊断",
+    "hint": "遇到播放异常、闪退或界面问题时，可附带脱敏后的运行日志提交 GitHub Issue。",
+    "logPath": "日志位置：{path}",
+    "reportIssue": "提交 Issue（附日志）",
+    "copyLogs": "复制诊断日志",
+    "openLogFolder": "打开日志目录",
+    "copied": "已复制诊断日志到剪贴板。",
+    "copyFailed": "复制诊断日志失败。",
+    "issueOpenedWithLogs": "已复制诊断日志到剪贴板并打开 Issue 页面，请粘贴到「诊断信息」。",
+    "issueOpened": "已打开 Issue 页面（剪贴板复制失败，可手动打开日志目录附带 app.log）。",
+    "issueOpenFailed": "无法打开 GitHub Issue 页面。"
+  },
   "settings": {
     "downloadDir": "下载目录",
     "chooseDownloadDir": "选择下载目录",

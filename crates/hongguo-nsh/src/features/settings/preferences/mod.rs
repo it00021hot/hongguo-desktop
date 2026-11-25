@@ -1,6 +1,7 @@
 mod cache;
 mod controls;
 mod directory;
+mod feedback;
 mod keyboard;
 mod model;
 mod proxy;
@@ -27,22 +28,39 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
         nav.routes()
             .with(|routes| routes.last() == Some(&crate::navigation::Route::Settings))
     });
-    crate::shell::page(nav, move || tr("nav.settings.title")).child(ui::form(
+    crate::shell::page(nav, move || tr("nav.settings.title")).child(
         view()
-            .w_full()
-            .max_w(px(768.0))
-            .self_center()
-            .p_6()
-            .gap_4()
-            .child(sections::download(draft, busy, message))
-            .child(sections::naming(draft, busy))
-            .child(proxy::section(draft, busy, message))
-            .child(crate::features::settings::presentation::form_separator())
-            .child(sections::playback(draft, busy, transcode::section(runtime)))
-            .child(when(is_desktop, move || keyboard::shortcuts(active)))
-            .child(keyboard::boss(draft, busy))
-            .child(cache::section(draft, busy, message, runtime))
-            .child(crate::update::card())
-            .child(ui::status(message)),
-    ))
+            .flex_1()
+            .min_h(px(0.0))
+            .child(when(
+                move || !message.get().is_empty(),
+                move || {
+                    view()
+                        .w_full()
+                        .max_w(px(768.0))
+                        .self_center()
+                        .px_6()
+                        .pt_3()
+                        .child(ui::status(message))
+                },
+            ))
+            .child(ui::form(
+                view()
+                    .w_full()
+                    .max_w(px(768.0))
+                    .self_center()
+                    .p_6()
+                    .gap_4()
+                    .child(sections::download(draft, busy, message))
+                    .child(sections::naming(draft, busy))
+                    .child(proxy::section(draft, busy, message))
+                    .child(crate::features::settings::presentation::form_separator())
+                    .child(sections::playback(draft, busy, transcode::section(runtime)))
+                    .child(when(is_desktop, move || keyboard::shortcuts(active)))
+                    .child(keyboard::boss(draft, busy))
+                    .child(cache::section(draft, busy, message, runtime))
+                    .child(crate::update::card())
+                    .child(feedback::section()),
+            )),
+    )
 }

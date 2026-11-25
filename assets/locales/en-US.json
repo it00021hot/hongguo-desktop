@@ -465,6 +465,19 @@
     "downloadingArchive": "Downloading and verifying…",
     "installing": "Installing and restarting…"
   },
+  "feedback": {
+    "title": "Feedback & Diagnostics",
+    "hint": "If you run into playback issues, crashes, or UI bugs, attach the redacted runtime logs to a GitHub Issue.",
+    "logPath": "Log file: {path}",
+    "reportIssue": "Report Issue (with Logs)",
+    "copyLogs": "Copy Diagnostic Logs",
+    "openLogFolder": "Open Log Folder",
+    "copied": "Diagnostic logs copied to clipboard.",
+    "copyFailed": "Could not copy diagnostic logs.",
+    "issueOpenedWithLogs": "Diagnostic logs copied and GitHub Issue opened — paste them into Diagnostics.",
+    "issueOpened": "GitHub Issue opened (clipboard copy failed; you can attach app.log manually).",
+    "issueOpenFailed": "Could not open the GitHub Issue page."
+  },
   "settings": {
     "downloadDir": "Download folder",
     "chooseDownloadDir": "Choose download folder",
