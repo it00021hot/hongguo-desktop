@@ -387,15 +387,15 @@ pub(crate) fn woke(surface: &Surface) {
 }
 
 /// Whether `hwnd`'s root window is visible, unminimized, and not cloaked.
-fn hwnd_shown(hwnd: HWND) -> bool {
+fn hwnd_shown(hwnd: windows::Win32::Foundation::HWND) -> bool {
     if hwnd.is_invalid() {
         return false;
     }
     // SAFETY: plain calls on a window handle.
     let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
     // SAFETY: as above.
-    unsafe { IsWindowVisible(root).as_bool() && !IsIconic(root).as_bool() }
-        && !crate::presence::cloaked(root)
+    let visible = unsafe { IsWindowVisible(root).as_bool() && !IsIconic(root).as_bool() };
+    visible && !crate::presence::cloaked(root)
 }
 
 /// The app's state as `surface` sees it; `current` before its window
