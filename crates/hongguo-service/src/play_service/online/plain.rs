@@ -24,7 +24,7 @@ pub async fn fetch_plain_with(
     let mut received = 0u64;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AppError::Network(e.to_string()))?;
+        let chunk = chunk.map_err(|e| AppError::Network(e.without_url().to_string()))?;
         received += chunk.len() as u64;
         body.extend_from_slice(&chunk);
         progress(received, total, "downloading");

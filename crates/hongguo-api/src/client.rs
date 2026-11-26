@@ -462,7 +462,7 @@ pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<
     let first = send(false)
         .send()
         .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
+        .map_err(|e| AppError::Network(e.without_url().to_string()))?;
     if first.status().as_u16() != 403 {
         return ensure_stream(url, first);
     }
@@ -471,7 +471,7 @@ pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<
     let second = send(true)
         .send()
         .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
+        .map_err(|e| AppError::Network(e.without_url().to_string()))?;
     ensure_stream(url, second)
 }
 
@@ -524,13 +524,13 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
     let mut resp = send(false)
         .send()
         .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
+        .map_err(|e| AppError::Network(e.without_url().to_string()))?;
     if resp.status().as_u16() == 403 {
         log::info!("[CDN] Range 探测被 403 拒（裸 UA），补 Referer 重试一次");
         resp = send(true)
             .send()
             .await
-            .map_err(|e| AppError::Network(e.to_string()))?;
+            .map_err(|e| AppError::Network(e.without_url().to_string()))?;
     }
     if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
         return Err(AppError::Network(format!(
@@ -623,7 +623,7 @@ async fn get_video_range_once(
         loop {
             match tokio::time::timeout(VIDEO_RANGE_STALL_TIMEOUT, stream.next()).await {
                 Ok(Some(Ok(chunk))) => bytes.extend_from_slice(&chunk),
-                Ok(Some(Err(e))) => return Err(AppError::Network(e.to_string())),
+                Ok(Some(Err(e))) => return Err(AppError::Network(e.without_url().to_string())),
                 Ok(None) => break,
                 Err(_) => return Err(stalled()),
             }
@@ -639,7 +639,7 @@ async fn get_video_range_once(
                         break;
                     }
                 }
-                Ok(Some(Err(e))) => return Err(AppError::Network(e.to_string())),
+                Ok(Some(Err(e))) => return Err(AppError::Network(e.without_url().to_string())),
                 Ok(None) => break,
                 Err(_) => return Err(stalled()),
             }
@@ -656,7 +656,7 @@ async fn send_range_request(
 ) -> AppResult<reqwest::Response> {
     match tokio::time::timeout(VIDEO_RANGE_HEADER_TIMEOUT, request.send()).await {
         Ok(Ok(resp)) => Ok(resp),
-        Ok(Err(e)) => Err(AppError::Network(e.to_string())),
+        Ok(Err(e)) => Err(AppError::Network(e.without_url().to_string())),
         Err(_) => Err(AppError::Network(format!(
             "Range {start}-{end} 等响应头超时（{}s）",
             VIDEO_RANGE_HEADER_TIMEOUT.as_secs()

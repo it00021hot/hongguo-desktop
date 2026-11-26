@@ -78,7 +78,7 @@ pub async fn download_episode(
             let _ = hongguo_common::file_io::remove_file(&temp_path);
             return Err(AppError::Cancelled);
         }
-        let chunk = chunk.map_err(|e| AppError::Network(e.to_string()))?;
+        let chunk = chunk.map_err(|e| AppError::Network(e.without_url().to_string()))?;
         std::io::Write::write_all(&mut file, &chunk).map_err(|e| AppError::Io(e.to_string()))?;
         downloaded += chunk.len() as u64;
         sink.report(&episode.id, downloaded, total);

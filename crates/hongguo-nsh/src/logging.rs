@@ -224,5 +224,41 @@ fn redact_line(line: &str) -> String {
     {
         return "[redacted sensitive log line]".to_owned();
     }
-    line.to_owned()
+    strip_url_queries(line)
+}
+
+fn strip_url_queries(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(pos) = find_http_scheme(rest) {
+        out.push_str(&rest[..pos]);
+        let url_part = &rest[pos..];
+        let end = url_part
+            .find(|ch: char| {
+                ch.is_whitespace()
+                    || matches!(ch, '"' | '\'' | ')' | ']' | '>' | ',' | '，' | '）' | '；')
+            })
+            .unwrap_or(url_part.len());
+        let url = &url_part[..end];
+        if let Some(cut) = url.find(['?', '#']) {
+            out.push_str(&url[..cut]);
+            out.push_str("?[redacted]");
+        } else {
+            out.push_str(url);
+        }
+        rest = &url_part[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn find_http_scheme(text: &str) -> Option<usize> {
+    let http = text.find("http://");
+    let https = text.find("https://");
+    match (http, https) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
 }
