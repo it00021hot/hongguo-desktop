@@ -63,10 +63,12 @@ impl Preferences {
             .gap_2()
             .child(
                 row("settings.appearance", move || {
-                    if dark() {
-                        ui::Icon::Moon
-                    } else {
-                        ui::Icon::Sun
+                    match self.value.get().as_str() {
+                        "auto" => ui::Icon::SunMoon,
+                        "dark" => ui::Icon::Moon,
+                        "light" => ui::Icon::Sun,
+                        _ if dark() => ui::Icon::Moon,
+                        _ => ui::Icon::Sun,
                     }
                 })
                 .child(

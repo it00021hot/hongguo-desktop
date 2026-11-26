@@ -189,6 +189,7 @@ pub(crate) fn shell_with_theme(
     }
     let exit_requested = signal(false);
     tray::install(exit_requested);
+    let theme_mode = computed(theme_value);
     let collapsed = sidebar_preferences::collapsed();
     let pinned = signal(false);
     let is_pinned = move || {
@@ -324,11 +325,17 @@ pub(crate) fn shell_with_theme(
                                             .size(px(28.0))
                                             .p_0()
                                             .child(dynamic(move || {
-                                                icon(if dark() { Icon::Moon } else { Icon::Sun })
+                                                icon(match theme_mode.get().as_str() {
+                                                    "auto" => Icon::SunMoon,
+                                                    "dark" => Icon::Moon,
+                                                    "light" => Icon::Sun,
+                                                    _ if dark() => Icon::Moon,
+                                                    _ => Icon::Sun,
+                                                })
                                             }))
                                             .disabled(move || theme_busy.get()),
                                         crate::ui::toolbar_menu::THEMES,
-                                        theme_value,
+                                        move || theme_mode.get(),
                                         move |value| {
                                             on_theme(match value {
                                                 "light" => nsh_core::platform::Appearance::Light,
