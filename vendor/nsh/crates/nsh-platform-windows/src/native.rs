@@ -384,6 +384,15 @@ impl ComponentContext {
         Ok(crate::gfx::generation())
     }
 
+    /// The native window currently hosting this component's view, if attached.
+    /// Call on the component's UI thread.
+    pub fn window_hwnd(&self) -> Option<HWND> {
+        let surface = Surface::by_key(self.surface)?;
+        let view = surface.view(self.id)?;
+        let hwnd = crate::app_window::hwnd_showing(&surface, &view);
+        (!hwnd.is_invalid()).then_some(hwnd)
+    }
+
     /// Emits event `name` with `data`: the handler `on<Name>` gets it.
     pub fn emit(&self, name: &str, data: JsonValue) {
         self.control.dispatch_event(

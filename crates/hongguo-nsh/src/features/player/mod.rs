@@ -247,8 +247,18 @@ fn content(
             || danmaku.settings().open.get()
             || use_context::<crate::navigation::AccountPrompt>().is_some_and(|prompt| prompt.open())
     });
+    let chrome_active = computed(move || {
+        routed.get()
+            && !crate::boss_key::hidden()
+            && if is_desktop() {
+                lifecycle() != nsh_core::platform::Lifecycle::Background
+                    && window_modes.is_none_or(|modes| modes.exposed() && modes.can_play())
+            } else {
+                lifecycle() == nsh_core::platform::Lifecycle::Active
+            }
+    });
     let chrome = chrome::Chrome::new(chrome::State {
-        active: visible,
+        active: chrome_active,
         paused,
         panel_open: panels_open,
     })

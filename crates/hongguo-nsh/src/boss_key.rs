@@ -19,6 +19,14 @@ pub(crate) fn hidden() -> bool {
     use_context::<BossKey>().is_some_and(|state| state.hidden.get())
 }
 
+pub(crate) fn show() {
+    if let Some(state) = use_context::<BossKey>()
+        && state.hidden.get_untracked()
+    {
+        state.hidden.set(false);
+    }
+}
+
 pub(crate) async fn apply(shortcut: String) -> RegistrationResult {
     let state = use_context::<BossKey>()
         .filter(|_| is_desktop())

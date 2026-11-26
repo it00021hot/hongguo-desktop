@@ -51,9 +51,11 @@ minimize and window-cloaking lifecycle handling is retained.
 Windows `system::lifecycle` checks open `app_window` HWNDs alongside the hidden
 host `surface.hwnd()`, and `app_window` `WM_WINDOWPOSCHANGED` refreshes both
 monitor color state and app lifecycle. Without this, apps declaring their main
-window via `app_window()` stay permanently in `Lifecycle::Background`. Remove
-this patch when upstream `nsh-platform-windows` derives lifecycle from
-`app_window` visibility.
+window via `app_window()` stay permanently in `Lifecycle::Background`. `ComponentContext::window_hwnd`
+also exposes the component's hosting `app_window` HWND directly so non-visual
+components do not depend on `placed()` reparenting. Remove these patches when
+upstream `nsh-platform-windows` derives lifecycle from `app_window` visibility
+and exposes the hosting window handle.
 
 On Android API 26–29, the bottom safe-area and native tab-bar insets are capped by the stable system-bar
 inset. The legacy system-window inset also includes the IME during `adjustResize`;

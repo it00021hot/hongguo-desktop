@@ -1,12 +1,9 @@
 use super::super::{desktop::TICK_SECONDS, wire::Observation};
 use nsh_platform_windows::{
     ComponentContext, Components, NativeComponent,
-    windows::{
-        Win32::{
-            Foundation::{HWND, POINT, RECT},
-            UI::WindowsAndMessaging::*,
-        },
-        core::w,
+    windows::Win32::{
+        Foundation::{HWND, POINT, RECT},
+        UI::WindowsAndMessaging::*,
     },
 };
 use serde_json::Value;
@@ -25,7 +22,6 @@ const VISIBILITY_INTERVAL: Duration = Duration::from_millis(250);
 thread_local! { static OBSERVERS: RefCell<HashMap<usize, Weak<RefCell<Observer>>>> = RefCell::default(); }
 
 struct Observer {
-    child: HWND,
     context: ComponentContext,
     observe_visibility: bool,
     visibility_checked: Option<Instant>,
@@ -34,10 +30,9 @@ struct Observer {
 
 impl Observer {
     fn tick(&mut self) {
-        let root = unsafe { GetAncestor(self.child, GA_ROOT) };
-        if root == self.child || root.0.is_null() {
+        let Some(root) = self.context.window_hwnd() else {
             return;
-        }
+        };
         let mut rect = RECT::default();
         let mut pointer = POINT::default();
         let pointer_inside = unsafe { GetWindowRect(root, &mut rect) }
@@ -58,7 +53,12 @@ impl Observer {
         {
             self.visibility_checked = Some(Instant::now());
             match visibility::exposed(root) {
-                Ok(value) => exposed = Some(value),
+                Ok(value) => {
+                    if self.last.and_then(|last| last.exposed) != Some(value) {
+                        log::debug!("[NSH window] visibility changed: exposed={value}");
+                    }
+                    exposed = Some(value);
+                }
                 Err(error) => self.context.emit("failure", Value::String(error)),
             }
         }
@@ -82,10 +82,6 @@ struct Host {
 }
 
 impl NativeComponent for Host {
-    fn window(&self) -> Option<HWND> {
-        Some(self.observer.borrow().child)
-    }
-
     fn set_prop(&mut self, name: &str, value: Option<&Value>) {
         if name == "observeVisibility"
             && let Some(enabled) = value.and_then(Value::as_bool)
@@ -103,9 +99,6 @@ impl Drop for Host {
         OBSERVERS.with(|observers| observers.borrow_mut().remove(&self.timer));
         unsafe {
             let _ = KillTimer(None, self.timer);
-            if let Err(error) = DestroyWindow(self.observer.borrow().child) {
-                log::warn!("[NSH window] observer cleanup failed: {error}");
-            }
         }
     }
 }
@@ -123,56 +116,25 @@ pub(crate) fn register(components: &Components) {
     components.register(
         "hongguo.window-modes",
         Rc::new(|context: ComponentContext| {
-            let child = unsafe {
-                CreateWindowExW(
-                    WINDOW_EX_STYLE::default(),
-                    w!("STATIC"),
-                    w!(""),
-                    WS_POPUP,
-                    0,
-                    0,
-                    1,
-                    1,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            };
-            match child {
-                Ok(child) => {
-                    let observer = Rc::new(RefCell::new(Observer {
-                        child,
-                        context: context.clone(),
-                        observe_visibility: false,
-                        visibility_checked: None,
-                        last: None,
-                    }));
-                    let timer = unsafe { SetTimer(None, 0, TIMER_MS, Some(tick)) };
-                    if timer == 0 {
-                        context.emit(
-                            "failure",
-                            Value::String("system window observer timer is unavailable".into()),
-                        );
-                    }
-                    OBSERVERS.with(|observers| {
-                        observers
-                            .borrow_mut()
-                            .insert(timer, Rc::downgrade(&observer))
-                    });
-                    Box::new(Host { observer, timer }) as Box<dyn NativeComponent>
-                }
-                Err(error) => Box::new(Failed(context, Some(error.to_string()))),
+            let observer = Rc::new(RefCell::new(Observer {
+                context: context.clone(),
+                observe_visibility: false,
+                visibility_checked: None,
+                last: None,
+            }));
+            let timer = unsafe { SetTimer(None, 0, TIMER_MS, Some(tick)) };
+            if timer == 0 {
+                context.emit(
+                    "failure",
+                    Value::String("system window observer timer is unavailable".into()),
+                );
             }
+            OBSERVERS.with(|observers| {
+                observers
+                    .borrow_mut()
+                    .insert(timer, Rc::downgrade(&observer))
+            });
+            Box::new(Host { observer, timer }) as Box<dyn NativeComponent>
         }),
     );
-}
-
-struct Failed(ComponentContext, Option<String>);
-impl NativeComponent for Failed {
-    fn set_prop(&mut self, _name: &str, _value: Option<&Value>) {
-        if let Some(error) = self.1.take() {
-            self.0.emit("failure", Value::String(error));
-        }
-    }
 }

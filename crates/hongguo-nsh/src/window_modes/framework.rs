@@ -35,12 +35,30 @@ pub(super) fn install(state: super::WindowModes) {
             });
         }
     });
+    let boss_saw_hidden = stored(false);
     effect(move || {
         let hidden = crate::boss_key::hidden();
+        if !hidden {
+            boss_saw_hidden.replace(false);
+        }
         untracked(|| {
             controller.with(|controller| controller.boss(hidden));
             flush();
         });
+    });
+    let observed_window = window.clone();
+    effect(move || {
+        let Some(window_state) = observed_window.state() else {
+            return;
+        };
+        if !crate::boss_key::hidden() {
+            return;
+        }
+        if !window_state.visible {
+            boss_saw_hidden.replace(true);
+        } else if boss_saw_hidden.get() && window_state.visible && window_state.focused {
+            crate::boss_key::show();
+        }
     });
     effect(move || {
         let visible = state.mini_controls_visible.get();
