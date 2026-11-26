@@ -2,9 +2,9 @@
 
 Source: https://github.com/longbridge/nsh
 
-Release: v0.7.0
+Release: v0.7.1
 
-Commit: 3f8ecd8b3c55ad6274c6babbf7ee55c4cd4ae359
+Commit: f78eace7af23a9c1c72605c7ee46204f57f3e8e6
 
 The source snapshot keeps all upstream crates, workspace metadata and licenses,
 compile-time fixtures, and workspace member examples. The website and unrelated
