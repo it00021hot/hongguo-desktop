@@ -1,8 +1,9 @@
 use hongguo_service::contracts::discover::{FeedItem, FeedPage};
 
 pub(super) const DEFAULT_CHANNEL: &str = "16";
+pub(super) const FOLLOWING_CHANNEL: &str = "45";
 pub(super) const CHANNELS: [(&str, &str); 4] = [
-    ("45", "home.tabFollowing"),
+    (FOLLOWING_CHANNEL, "home.tabFollowing"),
     ("36", "home.tabComic"),
     ("39", "home.tabHuman"),
     ("16", "home.tabFeed"),

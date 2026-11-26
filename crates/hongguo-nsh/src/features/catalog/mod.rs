@@ -9,7 +9,7 @@ use crate::{
     ui,
 };
 use hongguo_service::contracts::recommend::FeedTabMeta;
-use model::{CHANNELS, Channel, DEFAULT_CHANNEL, PREFETCH_REMAINING, Query};
+use model::{CHANNELS, Channel, DEFAULT_CHANNEL, FOLLOWING_CHANNEL, PREFETCH_REMAINING, Query};
 use nsh_core::prelude::*;
 use std::collections::HashMap;
 
@@ -33,10 +33,17 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
             return;
         }
         identity.replace(next);
+        let signed_in = session.with(|session| session.state.settings().account.is_some());
+        let next_channel = if !signed_in && channel.get_untracked() == FOLLOWING_CHANNEL {
+            DEFAULT_CHANNEL.to_owned()
+        } else {
+            channel.get_untracked()
+        };
         batch(|| {
+            channel.set(next_channel.clone());
             channels.set(HashMap::new());
             query.set(Some(Query {
-                channel: channel.get_untracked(),
+                channel: next_channel,
                 ..Default::default()
             }));
         });
@@ -55,6 +62,8 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         },
     );
     let available = computed(move || {
+        session.identity();
+        let signed_in = session.with(|session| session.state.settings().account.is_some());
         tabs.with(|tabs| {
             tabs.cloned()
                 .filter(|tabs| !tabs.is_empty())
@@ -69,7 +78,10 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                         .collect()
                 })
                 .into_iter()
-                .filter(|tab| CHANNELS.iter().any(|(id, _)| *id == tab.tab_type))
+                .filter(|tab| {
+                    (tab.tab_type != FOLLOWING_CHANNEL || signed_in)
+                        && CHANNELS.iter().any(|(id, _)| *id == tab.tab_type)
+                })
                 .collect::<Vec<_>>()
         })
     });
