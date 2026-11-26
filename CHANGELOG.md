@@ -9,6 +9,26 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.8.9] - 2026-11-26
+
+### ✨ 新增
+
+- 主题切换「跟随系统」新增专属太阳光芒 `A` 图标，与浅色/深色图标清晰区分。
+
+### ⚡ 优化
+
+- 优化应用失焦后的播放器交互：鼠标移入可见播放器窗口时即可直接唤出播放控件。
+- 未登录状态下隐藏首页/推荐流顶部的「关注」频道，仅登录后显示。
+
+### 🐛 修复
+
+- 修复 Windows 端获取宿主窗口句柄失败导致 `exposed=false`、画面静止无法播放的问题。
+- 修复 macOS 老板键隐藏窗口后，手动从 Dock 或菜单点出窗口仍停留在暂停状态的问题。
+- 修复连播提前预备下一集时，当前在播流偶发被缓存预算逐出导致「视频播放失败，请重试」的问题。
+- 修复 CDN 请求错误与诊断日志导出时可能残留播放直链查询参数的问题。
+
+English: Added a dedicated Sun+A icon for System theme mode. Improved player usability by allowing mouse hover to reveal playback controls even when the window is inactive, and hid the Following feed tab while signed out. Fixed Windows window host lookup causing `exposed=false` playback stalls, synced boss-key unhide state when restoring the window manually on macOS, protected the currently playing stream from budget eviction during next-episode staging, and stripped query parameters from CDN error logs and diagnostic exports.
+
 ## [0.8.8] - 2026-11-25
 
 ### ✨ 新增

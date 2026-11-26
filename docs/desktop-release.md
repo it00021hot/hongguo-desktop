@@ -1,6 +1,6 @@
 # NSH 桌面发版
 
-本流程面向 Windows x64、macOS Apple Silicon 与 Intel。移动端未正式发布，普通 CI 不再打包移动端产物。当前版本为 `0.8.8`、NSH build `14`。
+本流程面向 Windows x64、macOS Apple Silicon 与 Intel。移动端未正式发布，普通 CI 不再打包移动端产物。当前版本为 `0.8.9`、NSH build `15`。
 
 ## 检查与产物
 
