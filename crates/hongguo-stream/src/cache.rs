@@ -64,6 +64,8 @@ pub struct StreamCache {
     entries: Mutex<HashMap<StreamKey, Arc<StreamEntry>>>,
     /// 当前正在看的 vid。prepare 时设置；逐出策略只保它 + 显式预取 + 最近几条。
     current: Mutex<String>,
+    /// 上一任正在看的 vid：stageNext 双槽提前准备下一集时，当前集仍在播最后几秒，必须免于被预算逐出。
+    previous_current: Mutex<String>,
     /// 显式预取的档位（沉浸流「下一部剧」），有界（`MAX_PREFETCH_MARKS`），
     /// 新标记挤掉最老的。逐出策略额外保这些条目；填充礼让也认它。
     prefetch: Mutex<Vec<(String, u32)>>,
@@ -226,6 +228,7 @@ impl StreamCache {
     }
 
     fn retain_with(&self, vid: &str, keep_recent: usize, budget: u64) {
+        let previous = self.previous_current.lock().clone();
         let prefetch = self.prefetch.lock().clone();
         let mut entries = self.entries.lock();
         let is_marked = |k: &StreamKey| {
@@ -236,7 +239,7 @@ impl StreamCache {
 
         let mut others: Vec<(StreamKey, std::time::Instant, u64)> = entries
             .iter()
-            .filter(|(k, _)| k.vid != vid && !is_marked(k))
+            .filter(|(k, _)| k.vid != vid && k.vid != previous && !is_marked(k))
             .map(|(k, e)| {
                 (
                     StreamKey {
@@ -273,7 +276,12 @@ impl StreamCache {
     /// 写入后立刻按预算逐出：系统播放器队列接力不走 `prepare`，若只改 current
     /// 不逐出，旧集会无界堆积（长会话实测可到百条 / GB 级）。
     pub fn set_current(&self, vid: &str) {
-        *self.current.lock() = vid.to_string();
+        let mut current = self.current.lock();
+        if *current != vid && !current.is_empty() {
+            *self.previous_current.lock() = current.clone();
+        }
+        *current = vid.to_string();
+        drop(current);
         self.prefetch.lock().retain(|(v, _)| v != vid);
         self.retain_playing_set(vid);
     }
@@ -357,5 +365,6 @@ impl StreamCache {
     pub fn clear(&self) {
         self.entries.lock().clear();
         self.prefetch.lock().clear();
+        self.previous_current.lock().clear();
     }
 }
