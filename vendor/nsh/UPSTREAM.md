@@ -29,6 +29,12 @@ Refreshing this snapshot must keep the `Win32_Devices_Display` workspace feature
 and the `output::{format, check_device, configure_swap_chain}` hooks in `gfx.rs`;
 upstream 0.7.0 dropped those surfaces. Remove this bridge when
 upstream provides equivalent native-video color management.
+
+Windows image views also convert premultiplied SDR BGRA8 to linear FP16
+on scRGB output via `output::sdr_bitmap`. Their bitmap cache tracks the device,
+mode and SDR white level, and charges the larger GPU format when first used.
+Keep the image conversion when refreshing the Windows renderer.
+
 macOS packaging signs nested `*.dylib` files inside the app bundle before
 signing the bundle itself, because `nativeHost` stage injects unsigned media
 libraries into `Contents/Frameworks`. Remove this when upstream signs nested
