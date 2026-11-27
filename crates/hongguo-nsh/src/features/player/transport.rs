@@ -165,10 +165,12 @@ pub(super) fn skip_target(at: f64, duration: f64, forward: bool) -> Option<f64> 
     ((forward && target > at) || (!forward && target < at)).then_some(target)
 }
 
-pub(super) fn seek_available(target: f64, native_duration: f64) -> bool {
+pub(super) fn tail_seek(target: f64, duration: f64) -> bool {
     target.is_finite()
         && target >= 0.0
-        && (!native_duration.is_finite() || native_duration <= 0.0 || target < native_duration)
+        && duration.is_finite()
+        && duration > HANDOFF_HOLD_REMAINING_SECS
+        && (0.0..=HANDOFF_HOLD_REMAINING_SECS).contains(&(duration - target))
 }
 
 #[derive(Default)]
@@ -244,7 +246,17 @@ mod tests {
         assert_eq!(skip_target(2.0, 40.0, false), Some(0.0));
         assert_eq!(skip_target(f64::NAN, 40.0, true), None);
         assert_eq!(interactive_seek(40.0, 40.0), Some(39.75));
-        assert!(seek_available(skip_target(36.0, 40.0, true).unwrap(), 40.0));
+        assert!(tail_seek(skip_target(36.0, 40.0, true).unwrap(), 40.0));
+    }
+
+    #[test]
+    fn native_duration_may_shrink_between_input_and_dispatch() {
+        let requested = skip_target(58.0, 65.0, true).unwrap();
+        assert_eq!(requested, 63.0);
+        let dispatched = interactive_seek(requested, 61.0).unwrap();
+        assert_eq!(dispatched, 60.75);
+        assert!(tail_seek(dispatched, 61.0));
+        assert!(!tail_seek(6.0, 61.0));
     }
 
     #[test]

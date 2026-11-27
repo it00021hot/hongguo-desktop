@@ -374,6 +374,15 @@ fn content(
             paused.set(true);
         }
     };
+    let auto_next = move || {
+        if let Some(feed) = feed
+            && !is_highlight.get_untracked()
+        {
+            feed.lock_series(selection.get_untracked().0);
+        }
+        chrome.arm_quiet();
+        next();
+    };
     effect(move || {
         if !source.loading()
             && !paused.get()
@@ -534,7 +543,7 @@ fn content(
         {
             return;
         }
-        next();
+        auto_next();
     });
     let seasons = season_menu::observe(
         session,
@@ -737,7 +746,7 @@ fn content(
             staged: staged_layer,
         },
         move || danmaku.overlay(),
-        next,
+        auto_next,
     );
     let information = info::observe(source, overlay);
     let related_drama = computed(move || {
