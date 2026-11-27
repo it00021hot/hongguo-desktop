@@ -40,6 +40,7 @@ pub struct EpisodeDownload<'a> {
     /// 直链（已签名）
     pub video_url: String,
     pub output_path: PathBuf,
+    pub validate_bytevc2: bool,
     /// 是否为 CENC 加密流
     pub encrypted: bool,
     /// 加密流使用的密钥材料（`spade_a` 原始值）
@@ -100,19 +101,38 @@ pub async fn download_episode(
 /// 解密失败时留着它会被下次重试当成「上次下了一半」复用；解密成功时它已没用
 ///（CENC 原地加密，密文明文一样大，不删看着像下了两份）；明流 rename 后删除是 no-op。
 fn finalize(temp: &Path, output: &Path, episode: &EpisodeDownload) -> AppResult<()> {
+    let staged = episode
+        .validate_bytevc2
+        .then(|| output.with_extension("validated.mp4.tmp"));
+    let destination = staged.as_deref().unwrap_or(output);
     let result: AppResult<()> = if episode.encrypted {
         match hongguo_video::crypto::key_derive::derive_key(&episode.key_material) {
             Ok(key) => {
-                hongguo_video::decrypt_file::decrypt_mp4_file(temp, output, &key).map(|_| ())
+                hongguo_video::decrypt_file::decrypt_mp4_file(temp, destination, &key).map(|_| ())
             }
             Err(e) => Err(e),
         }
     } else {
-        hongguo_common::file_io::rename(temp, output)
+        hongguo_common::file_io::rename(temp, destination)
             .map_err(|e| AppError::Io(format!("改名失败: {e}")))
     };
 
     let _ = hongguo_common::file_io::remove_file(temp);
+    let Some(staged) = staged else {
+        return result;
+    };
+    let result = result.and_then(|()| {
+        let path = staged
+            .to_str()
+            .ok_or_else(|| AppError::InvalidArgs("ByteVC2 下载路径无效".into()))?;
+        let codec = crate::play_service::local::local_playback_codec(path)?;
+        if !hongguo_bytevc2::is_bytevc2(&codec) {
+            return Err(AppError::CodecUnsupported(codec));
+        }
+        hongguo_common::file_io::rename(&staged, output)
+            .map_err(|e| AppError::Io(format!("改名失败: {e}")))
+    });
+    let _ = hongguo_common::file_io::remove_file(&staged);
     result
 }
 

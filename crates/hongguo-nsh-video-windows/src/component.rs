@@ -15,7 +15,7 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
-use windows::Win32::Graphics::Direct2D::ID2D1DeviceContext;
+use windows::Win32::Graphics::{Direct2D::ID2D1DeviceContext, Direct3D11::ID3D11Device};
 
 struct PixelVideo {
     shared: Arc<Shared>,
@@ -33,6 +33,27 @@ impl NativeComponent for PixelVideo {
             && props.source.is_some()
             && self.shared.consumer_active.load(Ordering::Acquire)
             && (!props.paused || self.shared.awaiting_presentation.load(Ordering::Acquire))
+    }
+
+    fn prepare_frame(&self, device: &ID3D11Device) -> bool {
+        let result = self.controller.borrow_mut().tick(&self.shared, device);
+        match result {
+            Ok(redraw) => redraw,
+            Err(error) => {
+                self.fail(error);
+                true
+            }
+        }
+    }
+
+    fn wants_presentation_feedback(&self) -> bool {
+        self.controller.borrow().awaiting_window_present()
+    }
+
+    fn did_present(&self, _info: &nsh_platform_windows::NativePresentation) {
+        self.controller
+            .borrow_mut()
+            .window_presented(self.shared.context.window_hwnd());
     }
 
     fn draw(&self, dc: &ID2D1DeviceContext, size: (f32, f32)) {
@@ -66,6 +87,9 @@ impl NativeComponent for PixelVideo {
             let source_changed = current.source != props.source;
             *current = props;
             if source_changed {
+                self.shared
+                    .awaiting_presentation
+                    .store(true, Ordering::Release);
                 self.shared.clear_frames();
             } else {
                 self.shared.invalidate();

@@ -35,6 +35,12 @@ fn codec_of(v: &Value) -> &str {
         .unwrap_or_default()
 }
 
+fn main_url(v: &Value) -> Option<&str> {
+    v.get("main_url")?
+        .as_str()
+        .filter(|url| !url.trim().is_empty())
+}
+
 /// 内置软解器能解的编码：HEVC 系（服务端称 `h265` / `bytevc1`，容器里是 `hvc1` / `hev1`）
 /// 与 ByteVC2。接口的编码名和 MP4 四字码都认——在线选流拿到的是前者，本地文件探到的是后者。
 /// H.264 不在其中：在线播放不回落到系统解码器。
@@ -74,7 +80,7 @@ pub fn refused_codecs(model: &Value, cap: DecoderCapability) -> Option<String> {
     }
     let mut offered: Vec<&str> = Vec::new();
     for stream in model.get("video_list")?.as_array()? {
-        if stream.get("main_url").and_then(Value::as_str).is_none() {
+        if main_url(stream).is_none() {
             continue;
         }
         if is_playable(stream, cap) {
@@ -173,7 +179,7 @@ pub fn list_definitions(model: &Value, cap: DecoderCapability) -> Vec<Definition
     };
     let mut seen: BTreeSet<Definition> = BTreeSet::new();
     for v in list {
-        if v.get("main_url").and_then(Value::as_str).is_none() {
+        if main_url(v).is_none() {
             continue;
         }
         if !is_playable(v, cap) {
@@ -208,7 +214,7 @@ fn best_in(
 ) -> Option<(StreamScore, &Value)> {
     let mut best: Option<(StreamScore, &Value)> = None;
     for v in list {
-        if v.get("main_url").and_then(Value::as_str).is_none() {
+        if main_url(v).is_none() {
             continue;
         }
         if !is_playable(v, cap) {
@@ -241,7 +247,9 @@ pub fn pick_stream_at(
     cap: DecoderCapability,
 ) -> Option<PlayStream> {
     let list = model.get("video_list")?.as_array()?;
-    let chosen = best_in(list, cap, target).or_else(|| best_in(list, cap, None));
+    let choose =
+        |cap| best_in(list, cap, target).or_else(|| target.and_then(|_| best_in(list, cap, None)));
+    let chosen = choose(cap).or_else(|| cap.download_fallback().and_then(choose));
     let (score, v) = chosen?;
     log::debug!(
         target: "hongguo_api::stream_pick",
@@ -252,7 +260,7 @@ pub fn pick_stream_at(
         score.bitrate
     );
     Some(PlayStream {
-        url: v.get("main_url")?.as_str()?.to_string(),
+        url: main_url(v)?.to_string(),
         file_hash: v
             .pointer("/video_meta/file_hash")
             .and_then(Value::as_str)

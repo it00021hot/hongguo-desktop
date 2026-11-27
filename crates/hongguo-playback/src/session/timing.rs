@@ -73,21 +73,64 @@ impl Shared {
                 state.rebuffering = false;
             }
         }
-        let holding =
-            !audio_ready || (expected && (!state.presented || missing || state.rebuffering));
+        let video_holding = expected && (!state.presented || missing || state.rebuffering);
+        let holding = !audio_ready || video_holding;
         let buffering = holding || audio_buffering;
-        let playing = state.control.playing && !buffering && state.position < index.duration_secs;
+        let requested = state.control.playing && state.position < index.duration_secs;
+        let playing = requested && !buffering;
         state.silent.set_running(playing, now);
         if let Some(clock) = &state.clock {
             clock
                 .control(Control {
-                    playing: playing && !state.audio_tail,
+                    playing: native_audio_playing(
+                        cfg!(target_os = "windows"),
+                        requested,
+                        video_holding,
+                        buffering,
+                        state.audio_tail,
+                    ),
                     ..state.control
                 })
                 .map_err(AppError::Media)?;
         }
+        if (holding, buffering) != (state.holding, state.buffering) {
+            log::debug!(
+                target: "hongguo_playback::timing",
+                "buffering={buffering} holding={holding} at={:.3} audioReady={audio_ready} audioBuffering={audio_buffering} expectedFrame={expected} presented={} missingFrame={missing} rebuffering={} queuedFrames={} queuedPts={:?}..{:?} skippedLate={}",
+                state.position, state.presented, state.rebuffering, state.queue.len(),
+                state.queue.front().map(|f| f.pts_secs), state.queue.back().map(|f| f.pts_secs), state.skipped_late
+            );
+        }
         state.holding = holding;
         state.buffering = buffering;
         Ok(())
+    }
+}
+
+/// Windows MediaEngine already stops advancing while its own stream buffers.
+/// Sending Pause for that notification makes the engine wait for Play again,
+/// which can prevent it from leaving buffering. Only the video's own gate
+/// (first frame, seek, or decoder starvation) should pause native audio.
+fn native_audio_playing(
+    windows: bool,
+    requested: bool,
+    video_holding: bool,
+    buffering: bool,
+    audio_tail: bool,
+) -> bool {
+    requested && !audio_tail && !(if windows { video_holding } else { buffering })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::native_audio_playing;
+
+    #[test]
+    fn windows_native_audio_can_recover_its_own_buffering() {
+        assert!(native_audio_playing(true, true, false, true, false));
+        assert!(!native_audio_playing(true, true, true, true, false));
+        assert!(!native_audio_playing(true, false, false, true, false));
+        assert!(!native_audio_playing(true, true, false, true, true));
+        assert!(!native_audio_playing(false, true, false, true, false));
     }
 }

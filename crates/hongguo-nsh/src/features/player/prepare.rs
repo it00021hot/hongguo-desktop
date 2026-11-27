@@ -17,6 +17,7 @@ pub(super) struct Playback {
     pub(super) expected_duration: Option<f64>,
     pub(super) active_definition: u32,
     pub(super) automatic_definition: bool,
+    pub(super) online: bool,
     pub(super) previous_episode: Option<u32>,
     pub(super) episode_indices: Vec<u32>,
 }
@@ -107,6 +108,13 @@ pub(super) async fn prepare(
     lease
         .prepare_codec_extension(resume_at)
         .map_err(AppError::Media)?;
+    log::info!(
+        "[Player] source series={} episode={} origin={} customRenderer={}",
+        history.series_id,
+        episode,
+        if response.online { "online" } else { "local" },
+        lease.frame_source().is_some()
+    );
     Ok(Playback {
         lease: Arc::new(lease),
         resume_at,
@@ -117,6 +125,7 @@ pub(super) async fn prepare(
         expected_duration,
         active_definition: response.definition,
         automatic_definition: response.automatic_definition,
+        online: response.online,
         previous_episode,
         episode_indices,
     })

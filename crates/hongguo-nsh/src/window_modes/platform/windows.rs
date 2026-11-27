@@ -1,4 +1,7 @@
-use super::super::{desktop::TICK_SECONDS, wire::Observation};
+use super::{
+    super::{desktop::TICK_SECONDS, wire::Observation},
+    exposure::ExposureRefresh,
+};
 use nsh_platform_windows::{
     ComponentContext, Components, NativeComponent,
     windows::Win32::{
@@ -11,20 +14,18 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     rc::{Rc, Weak},
-    time::{Duration, Instant},
 };
 
 #[path = "windows_visibility.rs"]
 mod visibility;
 
 const TIMER_MS: u32 = (TICK_SECONDS * 1000.0) as u32;
-const VISIBILITY_INTERVAL: Duration = Duration::from_millis(250);
 thread_local! { static OBSERVERS: RefCell<HashMap<usize, Weak<RefCell<Observer>>>> = RefCell::default(); }
 
 struct Observer {
     context: ComponentContext,
     observe_visibility: bool,
-    visibility_checked: Option<Instant>,
+    exposure_refresh: ExposureRefresh,
     last: Option<Observation>,
 }
 
@@ -47,11 +48,13 @@ impl Observer {
         let mut exposed = self.last.and_then(|last| last.exposed);
         if !self.observe_visibility {
             exposed = Some(true);
+        } else if unsafe { !IsWindowVisible(root).as_bool() || IsIconic(root).as_bool() } {
+            self.exposure_refresh.reset();
+            exposed = Some(false);
         } else if self
-            .visibility_checked
-            .is_none_or(|at| at.elapsed() >= VISIBILITY_INTERVAL)
+            .exposure_refresh
+            .should_scan(unsafe { GetForegroundWindow() == root })
         {
-            self.visibility_checked = Some(Instant::now());
             match visibility::exposed(root) {
                 Ok(value) => {
                     if self.last.and_then(|last| last.exposed) != Some(value) {
@@ -88,7 +91,7 @@ impl NativeComponent for Host {
         {
             let mut observer = self.observer.borrow_mut();
             observer.observe_visibility = enabled;
-            observer.visibility_checked = None;
+            observer.exposure_refresh.reset();
             observer.tick();
         }
     }
@@ -119,7 +122,7 @@ pub(crate) fn register(components: &Components) {
             let observer = Rc::new(RefCell::new(Observer {
                 context: context.clone(),
                 observe_visibility: false,
-                visibility_checked: None,
+                exposure_refresh: ExposureRefresh::default(),
                 last: None,
             }));
             let timer = unsafe { SetTimer(None, 0, TIMER_MS, Some(tick)) };

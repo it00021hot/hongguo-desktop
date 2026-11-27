@@ -15,9 +15,12 @@ Windows native components can request compositor-paced drawing through
 `ComponentContext::request_frames` and report continued demand with
 `NativeComponent::needs_frames`. The component host uses the same surface
 `on_draw_frame` client as native Video, with a weak host reference and one
-pump per component. This bridges the custom-component scheduling gap without
-adding a second display clock. Remove it when upstream provides equivalent
-native-component frame scheduling.
+pump per component. The mounted root supplies both the owning HWND and the
+invalidation callback; detached components do not fall back to the host.
+The optional `NativeComponent::prepare_frame` hook advances native content
+outside paint. Its return value requests a repaint of its actual window,
+not all windows. No independent display clock is introduced. Remove this
+bridge when upstream provides equivalent scheduling and window routing.
 
 Local changes include the Windows backend's same-canvas high-precision display
 composition. Native MediaEngine video maps its SDR BGRA8 frames from sRGB to
@@ -29,6 +32,12 @@ Refreshing this snapshot must keep the `Win32_Devices_Display` workspace feature
 and the `output::{format, check_device, configure_swap_chain}` hooks in `gfx.rs`;
 upstream 0.7.0 dropped those surfaces. Remove this bridge when
 upstream provides equivalent native-video color management.
+
+Windows image views also convert premultiplied SDR BGRA8 to linear FP16
+on scRGB output via `output::sdr_bitmap`. Their bitmap cache tracks the device,
+mode and SDR white level, and charges the larger GPU format when first used.
+Keep the image conversion when refreshing the Windows renderer.
+
 macOS packaging signs nested `*.dylib` files inside the app bundle before
 signing the bundle itself, because `nativeHost` stage injects unsigned media
 libraries into `Contents/Frameworks`. Remove this when upstream signs nested
