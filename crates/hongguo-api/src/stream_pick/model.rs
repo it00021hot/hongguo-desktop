@@ -11,6 +11,7 @@ pub struct DecoderCapability {
     /// 只让内置软解器能解的编码参赛（HEVC 系与 ByteVC2）。开着时 H.264、没标编码、
     /// 认不出的编码一律不选——播放不靠系统解码器，也不转码，选了就是播不出来。
     pub builtin_only: bool,
+    download_bytevc2_fallback: bool,
 }
 
 impl DecoderCapability {
@@ -19,6 +20,15 @@ impl DecoderCapability {
         Self {
             bytevc2: false,
             builtin_only: false,
+            download_bytevc2_fallback: false,
+        }
+    }
+
+    /// 优先保持原有下载选流；仅在没有普通候选时归档可离线播放的 ByteVC2 原流。
+    pub const fn download(bytevc2_available: bool) -> Self {
+        Self {
+            download_bytevc2_fallback: bytevc2_available,
+            ..Self::full()
         }
     }
 
@@ -27,12 +37,18 @@ impl DecoderCapability {
         Self {
             bytevc2: true,
             builtin_only: true,
+            download_bytevc2_fallback: false,
         }
     }
 
     pub fn with_bytevc2(mut self, ok: bool) -> Self {
         self.bytevc2 = ok;
         self
+    }
+
+    pub(super) fn download_fallback(self) -> Option<Self> {
+        self.download_bytevc2_fallback
+            .then_some(Self::full().with_bytevc2(true))
     }
 }
 
