@@ -108,6 +108,13 @@ pub(super) async fn prepare(
     lease
         .prepare_codec_extension(resume_at)
         .map_err(AppError::Media)?;
+    log::info!(
+        "[Player] source series={} episode={} origin={} customRenderer={}",
+        history.series_id,
+        episode,
+        if response.online { "online" } else { "local" },
+        lease.frame_source().is_some()
+    );
     Ok(Playback {
         lease: Arc::new(lease),
         resume_at,

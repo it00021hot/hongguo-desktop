@@ -38,6 +38,12 @@ pub(super) fn can_finish_handoff(
     faded && can_promote_incoming(incoming_url, resource_url, picture_ready)
 }
 
+/// Windows skips fully transparent subtrees, and custom video only decodes
+/// and acknowledges the first frame from its visible draw callback.
+pub(super) fn overlap_picture(windows: bool, frame_source: bool, enhancement: bool) -> bool {
+    !windows || (!frame_source && !enhancement)
+}
+
 pub(super) fn incoming_opacity(revealing: bool) -> f32 {
     if revealing { 1.0 } else { 0.0 }
 }
@@ -117,6 +123,30 @@ pub(super) fn source_current(loading: bool, failed: bool, same_lease: bool) -> b
     !loading && !failed && same_lease
 }
 
+/// The exact end is not seekable. Land on the final playable frames and let
+/// the normal end event decide whether to pause or advance to the next episode.
+pub(super) fn interactive_seek(at: f64, duration: f64) -> Option<f64> {
+    const END_MARGIN: f64 = 0.25;
+    if !at.is_finite() || at < 0.0 {
+        return None;
+    }
+    Some(if duration.is_finite() && duration > 0.0 {
+        at.min((duration - END_MARGIN).max(0.0))
+    } else {
+        at
+    })
+}
+
+pub(super) fn skip_target(at: f64, duration: f64, forward: bool) -> Option<f64> {
+    const STEP: f64 = 5.0;
+    if !at.is_finite() || at < 0.0 {
+        return None;
+    }
+    let target = interactive_seek((at + if forward { STEP } else { -STEP }).max(0.0), duration)?;
+    // In the last fraction of a second, fast forward must not rewind.
+    ((forward && target > at) || (!forward && target < at)).then_some(target)
+}
+
 pub(super) fn seek_available(target: f64, native_duration: f64) -> bool {
     target.is_finite()
         && target >= 0.0
@@ -178,6 +208,26 @@ impl LoadLatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_custom_video_needs_a_visible_surface() {
+        assert!(!overlap_picture(true, true, false));
+        assert!(!overlap_picture(true, false, true));
+        assert!(overlap_picture(true, false, false));
+        assert!(overlap_picture(false, true, true));
+    }
+
+    #[test]
+    fn keyboard_skip_never_seeks_to_end_or_rewinds_on_forward() {
+        assert_eq!(skip_target(20.0, 40.0, true), Some(25.0));
+        assert_eq!(skip_target(36.0, 40.0, true), Some(39.75));
+        assert_eq!(skip_target(39.9, 40.0, true), None);
+        assert_eq!(skip_target(7.0, 40.0, false), Some(2.0));
+        assert_eq!(skip_target(2.0, 40.0, false), Some(0.0));
+        assert_eq!(skip_target(f64::NAN, 40.0, true), None);
+        assert_eq!(interactive_seek(40.0, 40.0), Some(39.75));
+        assert!(seek_available(skip_target(36.0, 40.0, true).unwrap(), 40.0));
+    }
 
     #[test]
     fn cold_status_loading_only_without_surface_or_playback() {

@@ -3,14 +3,15 @@ use hongguo_common::{AppError, AppResult, model::LocalHistoryItem};
 use hongguo_service::AppState;
 use nsh_core::prelude::*;
 use std::{
+    collections::HashMap,
     future::Future,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
-use tokio::sync::watch;
+use tokio::sync::{Mutex as AsyncMutex, watch};
 
 const SAVE_INTERVAL: Duration = Duration::from_secs(5);
 const CLOUD_INTERVAL: Duration = Duration::from_secs(30);
@@ -44,28 +45,125 @@ struct Update {
     flush: u64,
 }
 
+/// Synchronous handoff between mounted players, independent of the DB/cloud
+/// writer cadence. Scope by login and exact episode, never by series alone.
 #[derive(Clone, Copy)]
-pub(super) struct Recorder(Stored<watch::Sender<Update>>);
+pub(crate) struct ProgressMemory(Stored<HashMap<EpisodeKey, Arc<EpisodeProgress>>>);
+
+type EpisodeKey = (Option<i64>, String, u32);
+
+impl ProgressMemory {
+    pub(crate) fn new() -> Self {
+        Self(stored(HashMap::new()))
+    }
+
+    fn episode(self, key: EpisodeKey) -> Arc<EpisodeProgress> {
+        self.0
+            .with(|episodes| episodes.entry(key).or_default().clone())
+    }
+}
+
+#[derive(Default)]
+struct EpisodeProgress {
+    latest: Mutex<Option<Checkpoint>>,
+    local_write: AsyncMutex<()>,
+    cloud_write: AsyncMutex<()>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Checkpoint {
+    owner: uuid::Uuid,
+    position: ProgressPosition,
+    completed: bool,
+}
+
+impl Checkpoint {
+    fn handoff_to(self, owner: uuid::Uuid, seen: Option<Self>) -> Option<f64> {
+        (self.owner != owner && seen != Some(self)).then_some(if self.completed {
+            0.0
+        } else {
+            self.position.at
+        })
+    }
+}
+
+impl EpisodeProgress {
+    fn latest(&self) -> Option<Checkpoint> {
+        *self
+            .latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn record(&self, checkpoint: Checkpoint) {
+        *self
+            .latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(checkpoint);
+    }
+
+    fn owns_latest(&self, owner: uuid::Uuid) -> bool {
+        self.latest().is_some_and(|latest| latest.owner == owner)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct Recorder {
+    sender: Stored<watch::Sender<Update>>,
+    episode: Stored<Arc<EpisodeProgress>>,
+    owner: uuid::Uuid,
+    seen: Stored<Option<Checkpoint>>,
+}
 
 impl Recorder {
     pub(super) fn record(self, at: f64, duration: f64) {
         if let Some(position) = ProgressPosition::new(at, duration) {
-            self.0
-                .try_with(|sender| sender.send_modify(|update| update.position = Some(position)));
+            self.episode.with(|episode| {
+                let latest = episode.latest();
+                // Ignore a queued native callback until this mount has adopted
+                // a newer checkpoint from the other player.
+                if latest.is_some_and(|latest| {
+                    latest.owner != self.owner && self.seen.get() != Some(latest)
+                }) {
+                    return;
+                }
+                episode.record(Checkpoint {
+                    owner: self.owner,
+                    position,
+                    completed: false,
+                });
+                self.sender.try_with(|sender| {
+                    sender.send_modify(|update| update.position = Some(position))
+                });
+            });
         }
     }
 
+    pub(super) fn take_handoff(self) -> Option<f64> {
+        let checkpoint = self.episode.with(|episode| episode.latest())?;
+        checkpoint.handoff_to(self.owner, self.seen.replace(Some(checkpoint)))
+    }
+
     pub(super) fn flush(self) {
-        self.0.try_with(|sender| {
+        self.sender.try_with(|sender| {
             sender.send_modify(|update| update.flush = update.flush.wrapping_add(1))
         });
     }
 
     pub(super) fn complete(self) {
-        self.0.try_with(|sender| {
+        self.sender.try_with(|sender| {
             sender.send_modify(|update| {
                 if let Some(position) = &mut update.position {
                     position.at = position.duration;
+                    self.episode.with(|episode| {
+                        if episode.owns_latest(self.owner) {
+                            episode.record(Checkpoint {
+                                owner: self.owner,
+                                position: *position,
+                                completed: true,
+                            });
+                        }
+                    });
                 }
                 update.flush = update.flush.wrapping_add(1);
             })
@@ -76,13 +174,22 @@ impl Recorder {
 pub(super) fn observe(
     session: SessionHandle,
     history: LocalHistoryItem,
-    visible: Memo<bool>,
+    routed: Memo<bool>,
 ) -> Recorder {
     let state = session.with(|session| session.state.clone());
     let revision = Arc::new(AtomicU64::new(0));
-    let recorder = start_writer(state, history, revision.clone());
+    let login = state
+        .settings()
+        .account
+        .as_ref()
+        .map(|account| account.login_at);
+    let episode =
+        session
+            .playback_progress()
+            .episode((login, history.series_id.clone(), history.vid_index));
+    let recorder = start_writer(state, history, revision.clone(), episode);
     effect(move || {
-        if !visible.get() {
+        if !routed.get() {
             recorder.flush();
         }
     });
@@ -100,10 +207,22 @@ pub(super) fn observe(
     recorder
 }
 
-fn start_writer(state: AppState, history: LocalHistoryItem, revision: Arc<AtomicU64>) -> Recorder {
+fn start_writer(
+    state: AppState,
+    history: LocalHistoryItem,
+    revision: Arc<AtomicU64>,
+    episode: Arc<EpisodeProgress>,
+) -> Recorder {
     let (sender, receiver) = watch::channel(Update::default());
+    let owner = uuid::Uuid::new_v4();
     // The source owner holds the only sender; its disposal flushes and ends the writer.
-    let recorder = Recorder(stored(sender));
+    let recorder = Recorder {
+        sender: stored(sender),
+        episode: stored(episode.clone()),
+        owner,
+        seen: stored(None),
+    };
+    let cloud_episode = episode.clone();
     let cloud_receiver = receiver.clone();
     let cloud_state = state.clone();
     let cloud_history = history.clone();
@@ -117,7 +236,12 @@ fn start_writer(state: AppState, history: LocalHistoryItem, revision: Arc<Atomic
             let state = cloud_state.clone();
             let item = position.history(cloud_history.clone());
             let revision = cloud_revision.clone();
+            let episode = cloud_episode.clone();
             async move {
+                let _ordered = episode.cloud_write.lock().await;
+                if !episode.owns_latest(owner) {
+                    return Ok(());
+                }
                 let result = hongguo_service::history_service::record(&state, &item).await;
                 if result.is_ok() {
                     revision.fetch_add(1, Ordering::Release);
@@ -137,7 +261,12 @@ fn start_writer(state: AppState, history: LocalHistoryItem, revision: Arc<Atomic
         let state = state.clone();
         let revision = revision.clone();
         let history = position.history(history.clone());
+        let episode = episode.clone();
         async move {
+            let _ordered = episode.local_write.lock().await;
+            if !episode.owns_latest(owner) {
+                return Ok(());
+            }
             let result = persist_local(state, history, position).await;
             if result.is_ok() {
                 revision.fetch_add(1, Ordering::Release);
@@ -215,5 +344,37 @@ async fn run_interval_writer<F, Fut>(
         if closed {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn another_route_can_seek_backward_and_finished_episode_restarts() {
+        let home = uuid::Uuid::new_v4();
+        let history = uuid::Uuid::new_v4();
+        let a = Checkpoint {
+            owner: history,
+            position: ProgressPosition::new(52.0, 80.0).unwrap(),
+            completed: false,
+        };
+        let b = Checkpoint {
+            position: ProgressPosition::new(10.0, 80.0).unwrap(),
+            ..a
+        };
+        assert_eq!(a.handoff_to(home, None), Some(52.0));
+        assert_eq!(a.handoff_to(home, Some(a)), None);
+        assert_eq!(b.handoff_to(home, Some(a)), Some(10.0));
+        assert_eq!(b.handoff_to(history, None), None);
+        assert_eq!(
+            Checkpoint {
+                completed: true,
+                ..b
+            }
+            .handoff_to(home, Some(b)),
+            Some(0.0)
+        );
     }
 }

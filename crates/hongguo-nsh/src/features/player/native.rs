@@ -22,6 +22,14 @@ impl PartialEq for VideoSource {
 }
 
 impl VideoSource {
+    pub(super) fn can_overlap_picture(&self, enhancement: bool) -> bool {
+        transport::overlap_picture(
+            cfg!(target_os = "windows"),
+            self.frame_source.is_some(),
+            enhancement,
+        )
+    }
+
     pub(super) fn from_playback(source: &prepare::Playback) -> Self {
         Self {
             url: source.lease.url().to_owned(),
@@ -38,7 +46,7 @@ impl VideoSource {
 pub(super) struct State {
     pub session: SessionHandle,
     pub source: Resource<prepare::Playback, bridge::Failure>,
-    pub visible: Memo<bool>,
+    pub routed: Memo<bool>,
     pub play_allowed: Memo<bool>,
     pub paused: Signal<bool>,
     pub rate: Signal<f32>,
@@ -67,7 +75,7 @@ pub(super) fn mount<E: IntoElement>(
     let State {
         session,
         source,
-        visible,
+        routed,
         play_allowed,
         paused,
         rate,
@@ -87,6 +95,7 @@ pub(super) fn mount<E: IntoElement>(
         has_surface,
         staged,
     } = state;
+    let enhancement = super::enhancement::Controller::current();
     let shown = signal(None::<VideoSource>);
     let incoming = signal(None::<VideoSource>);
     let incoming_ready = signal(false);
@@ -128,7 +137,12 @@ pub(super) fn mount<E: IntoElement>(
             None => None,
         };
         if let Some(next) = next {
-            if shown_now.is_some() {
+            let enhanced = enhancement.is_some_and(|controller| {
+                let settings = controller.settings.get();
+                settings.anime4k_on || settings.sharpen_on
+            });
+            let overlap = next.can_overlap_picture(enhanced);
+            if shown_now.is_some() && overlap {
                 if incoming
                     .get_untracked()
                     .as_ref()
@@ -136,7 +150,9 @@ pub(super) fn mount<E: IntoElement>(
                 {
                     incoming.set(Some(next));
                 }
-            } else {
+            } else if resource_url.as_deref() == Some(next.url.as_str()) {
+                // Preparation may finish before a switch, but Windows needs
+                // a visible custom surface before it can emit its first frame.
                 shown.set(Some(next));
                 incoming.set(None);
                 chrome.end_handoff();
@@ -321,7 +337,21 @@ pub(super) fn mount<E: IntoElement>(
                 };
                 let finished_series = stored(mounted.history.series_id.clone());
                 let finished_episode = mounted.history.vid_index;
-                let recorder = progress::observe(session, mounted.history, visible);
+                let recorder = progress::observe(session, mounted.history, routed);
+                effect(move || {
+                    if routed.get()
+                        && !is_incoming.get()
+                        && current_source()
+                        && let Some(target) = recorder.take_handoff()
+                    {
+                        log::debug!("[Player] resume from other route at {target:.3}s");
+                        if (native_position.get_untracked().0 - target).abs() > 0.3
+                            || pending_seek.get_untracked().is_some()
+                        {
+                            pending_seek.set(Some(target));
+                        }
+                    }
+                });
                 effect(move || {
                     if paused.get() || !play_allowed.get() {
                         recorder.flush();
@@ -553,7 +583,9 @@ pub(super) fn mount<E: IntoElement>(
                                         relay_notice.set(SharedString::default());
                                     }
                                     position.set((progress.current_time.into(), duration));
-                                    recorder.record(progress.current_time.into(), duration);
+                                    if routed.get_untracked() {
+                                        recorder.record(progress.current_time.into(), duration);
+                                    }
                                 }
                             }
                         }),
@@ -596,7 +628,7 @@ pub(super) fn mount<E: IntoElement>(
                             }
                         }),
                         end: Box::new(move || {
-                            if !item_owner.is_live() || is_incoming.get_untracked() {
+                            if !item_owner.is_live() || is_incoming.get_untracked() || !routed.get_untracked() {
                                 return;
                             }
                             if !current_source() && !chrome.silent_handoff() {

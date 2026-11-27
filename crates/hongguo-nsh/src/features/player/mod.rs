@@ -22,6 +22,7 @@ mod preferences;
 mod prepare;
 pub(crate) use preferences::PreferenceSignals;
 mod progress;
+pub(crate) use progress::ProgressMemory;
 mod relay;
 mod renderer;
 mod season_menu;
@@ -437,7 +438,13 @@ fn content(
                             next_episode
                         );
                         staged_playback.replace(Some((origin.0, next_episode, playback.clone())));
-                        staged_layer.set(Some(native::VideoSource::from_playback(&playback)));
+                        let layer = native::VideoSource::from_playback(&playback);
+                        let settings = enhancement.settings.get_untracked();
+                        staged_layer.set(
+                            layer
+                                .can_overlap_picture(settings.anime4k_on || settings.sharpen_on)
+                                .then_some(layer),
+                        );
                     }
                     Err(error) => {
                         log::warn!(
@@ -626,20 +633,11 @@ fn content(
                     if pending_seek.get_untracked().is_some() {
                         return;
                     }
-                    const SEEK_SECONDS: f64 = 5.0;
-                    let (position, duration) = position.get_untracked();
-                    let at = (position
-                        + if action == crate::shortcuts::Action::SeekBack {
-                            -SEEK_SECONDS
-                        } else {
-                            SEEK_SECONDS
-                        })
-                    .max(0.0);
-                    pending_seek.set(Some(if duration.is_finite() && duration > 0.0 {
-                        at.min(duration)
-                    } else {
-                        at
-                    }));
+                    let (at, duration) = position.get_untracked();
+                    let forward = action == crate::shortcuts::Action::SeekForward;
+                    if let Some(target) = transport::skip_target(at, duration, forward) {
+                        pending_seek.set(Some(target));
+                    }
                 }
                 crate::shortcuts::Action::StepNext => gestures.step_keyboard(1),
                 crate::shortcuts::Action::StepPrev => gestures.step_keyboard(-1),
@@ -649,8 +647,8 @@ fn content(
     let video = native::mount(
         native::State {
             session,
+            routed,
             source,
-            visible,
             play_allowed,
             paused,
             rate,
@@ -738,12 +736,9 @@ fn content(
             ControlAction::Seek(at) => {
                 if !busy.get() && at.is_finite() && at >= 0.0 {
                     let duration = position.get_untracked().1;
-                    let target = if duration.is_finite() && duration > 0.0 {
-                        at.min(duration)
-                    } else {
-                        at
-                    };
-                    pending_seek.set(Some(target));
+                    if let Some(target) = transport::interactive_seek(at, duration) {
+                        pending_seek.set(Some(target));
+                    }
                 }
             }
             ControlAction::SetRate(value) => {

@@ -884,7 +884,9 @@ impl ComponentItem {
                 item.pumping.set(false);
                 return false;
             };
-            surface.invalidate_view(&view);
+            if !crate::app_window::invalidate_component_window(surface, &view) {
+                surface.invalidate_view(&view);
+            }
             true
         });
     }

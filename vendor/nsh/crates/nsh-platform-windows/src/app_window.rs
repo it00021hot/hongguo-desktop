@@ -486,6 +486,17 @@ fn invalidate(window: &AppWindow) {
     }
 }
 
+/// Repaints the declared app window containing a native component. The
+/// surface's own paint queue belongs to the host HWND, not to this window.
+pub(crate) fn invalidate_component_window(surface: &Surface, view: &NshView) -> bool {
+    let id = window_of(surface, view);
+    let Some(window) = get(surface, id) else {
+        return false;
+    };
+    invalidate(&window);
+    true
+}
+
 /// Asks for every window of the app's own to be drawn again (the theme
 /// changed, the device was lost, ...).
 pub(crate) fn invalidate_all(surface: &Surface) {

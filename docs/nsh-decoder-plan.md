@@ -94,7 +94,8 @@ libde265 与 VVdeC 各自遵守对应许可证及分发要求；不能直接沿�
 ### 扩展帧路径的队列与交互
 
 Windows 扩展组件通过固定 NSH 的 `request_frames` / `needs_frames` 补丁接入原生
-`Surface::on_draw_frame`；刷新跟随 DWM 和当前显示环境，不再由项目线程每 16ms 请求重绘。
+`Surface::on_draw_frame`；重绘发往实际承载组件的应用窗口，嵌入式视图才走宿主窗口。
+刷新跟随 DWM 和当前显示环境，不再由项目线程每 16ms 请求重绘。
 暂停且首帧确认完成、失去消费权或销毁后停止请求；后台线程仅负责硬解帧租约的 GPU 退役。
 普通 NSH Video 本来就使用同一帧调度器。补丁归属与移除条件见 `vendor/nsh/UPSTREAM.md`。
 

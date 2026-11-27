@@ -32,11 +32,7 @@ pub(super) fn row(
         )
         .child(
             crate::features::player::presentation::player_landscape_label(move || {
-                if state.menus.selected_definition.get().is_none() {
-                    tr("player.definitionAuto")
-                } else {
-                    state.quality.get()
-                }
+                state.quality.get()
             })
             .accessibility_label(move || Some(tr("player.definition")))
             .disabled(move || state.busy.get() || state.menus.definitions.with(Vec::is_empty))
