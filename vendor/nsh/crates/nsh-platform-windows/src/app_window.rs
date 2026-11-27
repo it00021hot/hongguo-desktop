@@ -190,6 +190,38 @@ pub(crate) fn window_of(surface: &Surface, view: &NshView) -> NodeId {
     }
 }
 
+/// The render target of a mounted native component. Detached trees never
+/// fall back to the surface host.
+pub(crate) enum ComponentTarget {
+    Host(HWND),
+    Window(HWND),
+}
+
+impl ComponentTarget {
+    pub(crate) fn resolve(surface: &Surface, view: &NshView) -> Option<Self> {
+        let mut root = view.clone();
+        while let Some(parent) = root.parent_view() {
+            root = parent;
+        }
+        if root == surface.root {
+            let hwnd = surface.hwnd();
+            return (!hwnd.is_invalid()).then_some(Self::Host(hwnd));
+        }
+        let window = get(surface, root.id())?;
+        (!window.closed.get()).then_some(Self::Window(window.hwnd))
+    }
+
+    pub(crate) fn hwnd(&self) -> HWND {
+        match *self {
+            Self::Host(hwnd) | Self::Window(hwnd) => hwnd,
+        }
+    }
+
+    pub(crate) fn content_changed(&self, view: &NshView) {
+        view.native_content_changed(matches!(self, Self::Window(_)));
+    }
+}
+
 /// The native window `view` shows in (the main window's when it is in
 /// none of the app's own).
 pub(crate) fn hwnd_showing(surface: &Surface, view: &NshView) -> HWND {

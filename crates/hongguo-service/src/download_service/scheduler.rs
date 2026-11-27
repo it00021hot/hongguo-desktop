@@ -213,16 +213,17 @@ async fn run_one(
     let settings = state.settings();
 
     // 下载固定取最高档：清晰度切换是播放时的交互，下载侧没有这个概念；
-    // 选流模式保持 Full（下载件不做解码能力翻转），下载件的播放走既有 compat 兜底。
+    // 保持普通下载偏好，仅在没有普通候选、内置解码器可用时封存 ByteVC2。
     crate::cold_start::wait(state).await?;
     let play = hongguo_api::play_url::fetch_play_url(
         &task.vid,
         None,
-        hongguo_api::stream_pick::DecoderCapability::full(),
+        hongguo_api::stream_pick::DecoderCapability::download(
+            hongguo_media_platform::capability::bytevc2_decode_available(),
+        ),
         &state.api_env(),
     )
-    .await
-    .map_err(|e| AppError::Network(e.to_string()))?;
+    .await?;
 
     let series_title = state
         .store
@@ -240,6 +241,7 @@ async fn run_one(
         id: task.id.clone(),
         video_url: play.url,
         output_path: output.clone(),
+        validate_bytevc2: hongguo_bytevc2::is_bytevc2(&play.codec),
         encrypted: play.encrypted,
         key_material: play.key_material,
         settings,

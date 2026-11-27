@@ -152,9 +152,13 @@ fn decode(shared: &Shared, job: &Job) -> Result<(), Failure> {
             if job.cancel.load(Ordering::Acquire) {
                 return Err(AppError::Cancelled.into());
             }
+            let read_started = Instant::now();
             shared
                 .source
                 .read_at(offset, count, &job.cancel, &mut bytes)?;
+            if read_started.elapsed().as_millis() > 35 {
+                log::debug!(target: "hongguo_playback::timing", "compressedReadMs={} sample={sample_index}", read_started.elapsed().as_millis());
+            }
             if bytes.len() as u64 != count {
                 return Err(AppError::Media("short compressed video sample".into()).into());
             }
@@ -189,11 +193,15 @@ fn decode(shared: &Shared, job: &Job) -> Result<(), Failure> {
                     }
                 }
             }
-            for frame in decoder
+            let decode_started = Instant::now();
+            let decoded = decoder
                 .as_mut()
                 .expect("decoder initialized from first access unit")
-                .decode(&packet, time, first)?
-            {
+                .decode(&packet, time, first)?;
+            if decode_started.elapsed().as_millis() > 35 {
+                log::debug!(target: "hongguo_playback::timing", "decodeMs={} sample={sample_index}", decode_started.elapsed().as_millis());
+            }
+            for frame in decoded {
                 if !publish(shared, job, track, segment, frame)? {
                     complete = true;
                     break;
@@ -266,10 +274,20 @@ fn publish(
         return Err(AppError::Media("video frame exceeds memory budget".into()));
     }
     let mut state = shared.state.lock();
+    let mut waited_at: Option<Instant> = None;
     loop {
         state.check()?;
         if state.epoch != job.epoch || job.cancel.load(Ordering::Acquire) {
             return Err(AppError::Cancelled);
+        }
+        shared.refresh(&mut state)?;
+        // A delayed render tick may leave the decoder several frames behind
+        // the audio clock. Do not refill the queue with expired frames: that
+        // looks like successful rebuffering but its next draw drains it again.
+        // Keep seek/startup preroll until the first frame is actually presented.
+        if state.presented && expired(pts, duration, state.position, state.control.rate) {
+            state.skipped_late += 1;
+            return Ok(true);
         }
         let frames = if matches!(&image, hongguo_media_types::FrameImage::Hardware(_)) {
             shared.config.video_queue_frames.min(HARDWARE_QUEUE_FRAMES)
@@ -283,12 +301,24 @@ fn publish(
                 .is_some_and(|total| total <= shared.config.video_queue_bytes)
             && (state.queue.is_empty()
                 || pts - state.position <= shared.config.video_ahead_secs * state.control.rate);
-        state.queue_full = !room;
-        shared.refresh(&mut state)?;
+        if state.queue_full == room {
+            state.queue_full = !room;
+            shared.refresh(&mut state)?;
+        }
         if room {
             break;
         }
+        if !state.control.playing || state.buffering {
+            waited_at.get_or_insert_with(Instant::now);
+        }
         shared.changed.wait(&mut state);
+    }
+    if let Some(since) = waited_at
+        && since.elapsed().as_millis() > 100
+    {
+        log::debug!(target: "hongguo_playback::timing",
+            "producerWaitMs={} pts={pts:.3} position={:.3} queuedFrames={}",
+            since.elapsed().as_millis(), state.position, state.queue.len());
     }
     let serial = state.next_serial;
     state.next_serial = serial
@@ -304,4 +334,24 @@ fn publish(
     }));
     shared.changed.notify_all();
     Ok(segment.media_rate != 0.0)
+}
+
+fn expired(pts: f64, duration: f64, position: f64, rate: f64) -> bool {
+    pts + duration + PRESENTATION_LAG_SECS * rate < position
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expired;
+
+    #[test]
+    fn producer_discards_old_frames_but_keeps_current_and_future_frames() {
+        let expired_count = (0..48)
+            .filter(|frame| expired(10.0 + f64::from(*frame) / 30.0, 1.0 / 30.0, 12.0, 1.0))
+            .count();
+        assert_eq!(expired_count, 48);
+        assert!(!expired(11.95, 1.0 / 30.0, 12.0, 1.0));
+        assert!(!expired(12.03, 1.0 / 30.0, 12.0, 1.0));
+        assert!(!expired(11.89, 1.0 / 30.0, 12.0, 2.0));
+    }
 }

@@ -51,6 +51,7 @@ struct State {
     buffering: bool,
     rebuffering: bool,
     queue_full: bool,
+    skipped_late: u64,
     recoveries: u32,
     stalled_at: Option<Instant>,
 }
@@ -130,6 +131,7 @@ impl PlaybackSession {
                 buffering: true,
                 rebuffering: false,
                 queue_full: false,
+                skipped_late: 0,
                 recoveries: 0,
                 stalled_at: None,
             }),
@@ -246,6 +248,7 @@ impl PlaybackSession {
                 state.current = state.pop();
             }
         } else {
+            let queued_before = state.queue.len();
             while state
                 .queue
                 .front()
@@ -259,6 +262,12 @@ impl PlaybackSession {
                 }) {
                     break;
                 }
+            }
+            let consumed = queued_before - state.queue.len();
+            if consumed > 3 {
+                log::debug!(target: "hongguo_playback::timing",
+                    "renderCatchupFrames={consumed} requested={position:.3} position={:.3} selectedPts={:?} queuedFrames={}",
+                    state.position, state.current.as_ref().map(|frame| frame.pts_secs), state.queue.len());
             }
         }
         let frame = state.current.clone();

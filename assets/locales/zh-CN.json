@@ -218,6 +218,7 @@
     "playbackRate": "倍速",
     "definition": "清晰度",
     "definitionAuto": "自动",
+    "definitionLocal": "本地",
     "definitionLocalOnly": "已下载的集只有本地这一版清晰度",
     "episodes": "选集",
     "intro": "简介",

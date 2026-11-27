@@ -19,9 +19,9 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
-    /// 调度器是否应当挑起这个任务。
+    /// 只有显式排队的任务可由调度器领取；失败项等待手动重试。
     pub fn is_runnable(&self) -> bool {
-        matches!(self, TaskStatus::Pending | TaskStatus::Failed)
+        *self == TaskStatus::Pending
     }
 }
 

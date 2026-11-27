@@ -10,3 +10,6 @@ pub(crate) use ios::register;
 pub(crate) use macos::register;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::register;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod exposure;

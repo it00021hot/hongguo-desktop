@@ -1,4 +1,7 @@
-use super::super::{desktop::TICK_SECONDS, wire::Observation};
+use super::{
+    super::{desktop::TICK_SECONDS, wire::Observation},
+    exposure::ExposureRefresh,
+};
 use nsh_platform_macos::{
     ComponentContext, Components, NativeComponent,
     objc2::{MainThreadMarker, rc::Retained},
@@ -6,21 +9,15 @@ use nsh_platform_macos::{
     objc2_foundation::{NSRunLoop, NSRunLoopCommonModes, NSTimer},
 };
 use serde_json::Value;
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, rc::Rc};
 
 #[path = "macos_visibility.rs"]
 mod visibility;
-const VISIBILITY_INTERVAL: Duration = Duration::from_millis(250);
-
 struct Observer {
     view: Retained<NSView>,
     context: ComponentContext,
     observe_visibility: bool,
-    visibility_checked: Option<Instant>,
+    exposure_refresh: ExposureRefresh,
     controls_hidden: bool,
     applied_controls_hidden: Option<bool>,
     last: Option<Observation>,
@@ -58,31 +55,17 @@ impl Observer {
         let mut exposed = self.last.and_then(|last| last.exposed);
         if !self.observe_visibility {
             exposed = Some(true);
-        } else if self
-            .visibility_checked
-            .is_none_or(|at| at.elapsed() >= VISIBILITY_INTERVAL)
-        {
-            self.visibility_checked = Some(Instant::now());
-            let visible = window.isVisible();
-            let miniaturized = window.isMiniaturized();
-            let occlusion_visible = window
+        } else if !window.isVisible()
+            || window.isMiniaturized()
+            || !window
                 .occlusionState()
-                .contains(NSWindowOcclusionState::Visible);
-            let shown = visible && !miniaturized && occlusion_visible;
-            match if shown {
-                visibility::exposed(&window)
-            } else {
-                Ok(false)
-            } {
-                Ok(value) => {
-                    if self.last.and_then(|last| last.exposed) != Some(value) {
-                        log::debug!(
-                            "[NSH window] visibility changed: exposed={value} visible={visible} miniaturized={miniaturized} occlusionVisible={occlusion_visible} level={}",
-                            window.level()
-                        );
-                    }
-                    exposed = Some(value);
-                }
+                .contains(NSWindowOcclusionState::Visible)
+        {
+            self.exposure_refresh.reset();
+            exposed = Some(false);
+        } else if self.exposure_refresh.should_scan(window.isKeyWindow()) {
+            match visibility::exposed(&window) {
+                Ok(value) => exposed = Some(value),
                 Err(error) => self.context.emit("failure", Value::String(error)),
             }
         }
@@ -91,6 +74,9 @@ impl Observer {
             exposed,
         };
         if self.last != Some(observation) {
+            if self.last.and_then(|last| last.exposed) != exposed {
+                log::debug!("[NSH window] visibility changed: exposed={exposed:?}");
+            }
             self.last = Some(observation);
             self.context.emit(
                 "observation",
@@ -118,7 +104,7 @@ impl NativeComponent for Host {
         match name {
             "observeVisibility" => {
                 observer.observe_visibility = value;
-                observer.visibility_checked = None;
+                observer.exposure_refresh.reset();
                 observer.tick();
             }
             "controlsHidden" => observer.controls(value),
@@ -143,7 +129,7 @@ pub(crate) fn register(components: &Components) {
                 view,
                 context,
                 observe_visibility: false,
-                visibility_checked: None,
+                exposure_refresh: ExposureRefresh::default(),
                 controls_hidden: false,
                 applied_controls_hidden: None,
                 last: None,

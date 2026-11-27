@@ -377,13 +377,7 @@ pub(crate) fn controls<E: IntoElement>(
                                     .child(menus::quality(
                                         state.menus,
                                         state.busy,
-                                        labelled(Icon::Quality, move || {
-                                            if state.menus.selected_definition.get().is_none() {
-                                                tr("player.definitionAuto")
-                                            } else {
-                                                state.quality.get()
-                                            }
-                                        })
+                                        labelled(Icon::Quality, move || state.quality.get())
                                         .accessibility_label(move || tr("player.definition")),
                                         move |intent| action.with(|action| action(intent.into())),
                                     ))

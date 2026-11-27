@@ -54,7 +54,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, LazyLock, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -202,10 +202,16 @@ fn premultiply_bgra(data: &mut [u8]) {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct BitmapPaintKey {
+    device_and_white: (u64, u32),
+    mode: crate::OutputColorMode,
+}
+
 thread_local! {
-    /// This UI thread's Direct2D bitmaps by frame, with the device
-    /// generation each was made in.
-    static BITMAPS: RefCell<FxHashMap<u64, (u64, ID2D1Bitmap1)>> = RefCell::default();
+    /// This UI thread's Direct2D bitmaps by frame, with the output state
+    /// used to create their pixels.
+    static BITMAPS: RefCell<FxHashMap<u64, (BitmapPaintKey, ID2D1Bitmap1)>> = RefCell::default();
 }
 
 /// One decoded image (or frame): its pixels, and its Direct2D bitmap on
@@ -223,8 +229,8 @@ pub(crate) struct Frame {
     /// process, so frames may be drawn on several threads, each with its
     /// own [`BITMAPS`].
     bitmap_threads: Mutex<Vec<UiThread>>,
-    /// Its bitmap's bytes were added to its entry's cost.
-    counted: AtomicBool,
+    /// Largest GPU copy already charged, across devices and output modes.
+    counted_bitmap_bytes: AtomicUsize,
 }
 
 impl Frame {
@@ -236,7 +242,7 @@ impl Frame {
             key: OnceLock::new(),
             drawn: AtomicBool::new(false),
             bitmap_threads: Mutex::new(Vec::new()),
-            counted: AtomicBool::new(false),
+            counted_bitmap_bytes: AtomicUsize::new(0),
         })
     }
 
@@ -260,39 +266,45 @@ impl Frame {
         &self.pixels.data
     }
 
-    /// Its bitmap on `dc`'s device, made on first use and again after a
-    /// device loss (UI thread).
+    /// Its bitmap on `dc`'s device, rebuilt when the device or output
+    /// color state changes (UI thread).
     pub(crate) fn bitmap(&self, dc: &ID2D1DeviceContext) -> Option<ID2D1Bitmap1> {
-        let generation = crate::gfx::generation();
+        let paint = BitmapPaintKey {
+            device_and_white: crate::output::paint_key(),
+            mode: crate::output::mode(),
+        };
         let made = BITMAPS.with_borrow(|b| {
             b.get(&self.id)
-                .filter(|(g, _)| *g == generation)
+                .filter(|(key, _)| *key == paint)
                 .map(|(_, b)| b.clone())
         });
         if made.is_some() {
             return made;
         }
         let p = &self.pixels;
-        let props = D2D1_BITMAP_PROPERTIES1 {
-            pixelFormat: D2D1_PIXEL_FORMAT {
-                format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-            },
-            dpiX: 96.0,
-            dpiY: 96.0,
-            bitmapOptions: D2D1_BITMAP_OPTIONS_NONE,
-            colorContext: std::mem::ManuallyDrop::new(None),
+        let made = if paint.mode == crate::OutputColorMode::ScRgb {
+            crate::output::sdr_bitmap(dc, &p.data, p.width, p.height, p.width * 4)
+        } else {
+            let props = D2D1_BITMAP_PROPERTIES1 {
+                pixelFormat: D2D1_PIXEL_FORMAT {
+                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                },
+                dpiX: 96.0,
+                dpiY: 96.0,
+                bitmapOptions: D2D1_BITMAP_OPTIONS_NONE,
+                colorContext: std::mem::ManuallyDrop::new(None),
+            };
+            let size = D2D_SIZE_U {
+                width: p.width,
+                height: p.height,
+            };
+            // SAFETY: `data` holds `height` rows of `width * 4` bytes.
+            unsafe { dc.CreateBitmap(size, Some(p.data.as_ptr().cast()), p.width * 4, &props) }
         };
-        let size = D2D_SIZE_U {
-            width: p.width,
-            height: p.height,
-        };
-        // SAFETY: `data` holds `height` rows of `width * 4` bytes.
-        let made =
-            unsafe { dc.CreateBitmap(size, Some(p.data.as_ptr().cast()), p.width * 4, &props) };
         match made {
             Ok(b) => {
-                BITMAPS.with_borrow_mut(|m| m.insert(self.id, (generation, b.clone())));
+                BITMAPS.with_borrow_mut(|m| m.insert(self.id, (paint, b.clone())));
                 {
                     let ui = UiThread::current();
                     let mut threads = self
@@ -304,12 +316,17 @@ impl Frame {
                     }
                 }
                 self.drawn.store(true, Ordering::Relaxed);
-                // The GPU copy counts in the budget, once: one made again
-                // after a device loss replaces the lost one.
-                if let Some(key) = self.key.get()
-                    && !self.counted.swap(true, Ordering::Relaxed)
-                {
-                    images().memory().add_cost(key, p.data.len() as isize);
+                // One shared charge per frame; a switch to a wider format
+                // adds only the difference, not a second bitmap.
+                if let Some(key) = self.key.get() {
+                    let bytes =
+                        p.width as usize * p.height as usize * crate::output::bytes_per_pixel();
+                    let previous = self
+                        .counted_bitmap_bytes
+                        .fetch_max(bytes, Ordering::Relaxed);
+                    if bytes > previous {
+                        images().memory().add_cost(key, (bytes - previous) as isize);
+                    }
                 }
                 Some(b)
             }

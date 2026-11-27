@@ -17,6 +17,7 @@ pub(crate) struct SessionHandle {
     notifications: crate::notifications::Notifications,
     login_notice: Signal<SharedString>,
     playback: crate::features::player::PreferenceSignals,
+    progress: crate::features::player::ProgressMemory,
     social: crate::features::player::SocialMemory,
     emoji_collections: crate::features::emoji::CollectionMemory,
     danmaku: crate::features::player::DanmakuPreferences,
@@ -37,6 +38,7 @@ impl SessionHandle {
             notifications: crate::notifications::Notifications::current(),
             login_notice: signal(SharedString::default()),
             playback: crate::features::player::PreferenceSignals::new(),
+            progress: crate::features::player::ProgressMemory::new(),
             social: crate::features::player::SocialMemory::new(),
             emoji_collections: crate::features::emoji::CollectionMemory::new(),
             danmaku: crate::features::player::DanmakuPreferences::new(),
@@ -131,6 +133,9 @@ impl SessionHandle {
     }
     pub(crate) fn playback_preferences(self) -> crate::features::player::PreferenceSignals {
         self.playback
+    }
+    pub(crate) fn playback_progress(self) -> crate::features::player::ProgressMemory {
+        self.progress
     }
     pub(crate) fn social_memory(self) -> crate::features::player::SocialMemory {
         self.social
