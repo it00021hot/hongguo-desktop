@@ -1,8 +1,6 @@
 name: NSH Desktop Release
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
@@ -10,7 +8,7 @@ on:
         type: string
         required: true
       publish:
-        description: Publish after all artifact checks pass (tag pushes publish automatically)
+        description: Publish after all artifact checks pass
         type: boolean
         default: false
 
@@ -18,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  group: desktop-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -30,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ format('refs/tags/{0}', inputs.tag) }}
           fetch-depth: 0
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.99.1
@@ -40,7 +38,7 @@ jobs:
       - id: metadata
         name: Validate tag, workspace versions and changelog
         env:
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: cargo build-tool release-preflight --tag "$RELEASE_TAG"
 
   ci:
@@ -95,9 +93,9 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" artifacts/* --repo "$GH_REPO" --verify-tag --draft --title "番果 $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
       - name: Publish the verified release
-        if: github.event_name == 'push' || inputs.publish
+        if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --draft=false --latest

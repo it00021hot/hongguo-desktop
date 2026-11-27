@@ -1,16 +1,28 @@
 # NSH 桌面发版
 
-本流程面向 Windows x64、macOS Apple Silicon 与 Intel。移动端未正式发布，普通 CI 不再打包移动端产物。当前版本为 `0.8.9`、NSH build `15`。
+桌面发版涵盖 Windows x64、macOS Apple Silicon 和 macOS Intel。
 
-## 检查与产物
+## 本机发版
 
-共享检查、发版预检与发布使用 `ubuntu-24.04`。Windows x64 和两种 macOS 架构分别在对应平台的 runner 上构建、运行严格 Clippy 和打包。
+将发版提交合入 `main`。提交中同步工作区 `Cargo.toml`、`Cargo.lock` 和 `crates/hongguo-nsh/nsh.json` 的版本，递增 NSH build，并在 `CHANGELOG.md` 写好该版本的说明。在 macOS 仓库根执行以下命令。
 
-每轮先通过格式、资源、主题、版本和文件规模门禁，再并行执行三个桌面目标（最多三个 runner）。每个目标在同一 runner 上完成工作区构建、严格 Clippy 和发版打包，复用工具链、SDK 与 Cargo 缓存；不再等全部目标检查结束后启动第二批打包任务。发布仍须等三个目标全部成功并通过产物校验。
+```sh
+scripts/release.sh 0.8.9
+```
 
-普通 CI 由 `main` push、目标为 `main` 的 PR 或手动操作触发。发版流程会传入 `package: true`。手动运行 `CI` 时也可以勾选 `package`，从所选分支的同一提交并行构建三份桌面产物，完成后上传到该次运行的 Artifacts。`chore(release):` 提交由版本 tag 工作流执行完整检查与打包，以减少重复的 `main` push 检查。检查和打包使用不同的并发组。
+脚本拉取 `origin/main`，在 `target/local-release/source` 的独立工作树中构建。Rust 和 NSH 编译缓存随工作树保留，每次产物写入 `target/local-release/v<版本>.<随机后缀>/assets`。检查通过后创建并推送 tag，上传到 GitHub Release 草稿，最后公开为 Latest。上传中断后用同一版本命令继续，脚本会核对 tag 和草稿的提交来源。使用 `scripts/release.sh 0.8.9 --build-only` 可完成同样的本地构建和产物校验。
 
-共享检查与发版元数据步骤复用构建工具缓存。桌面检查与打包共用按目标划分的 Cargo 缓存。归档产物上传时关闭额外压缩。实际耗时取决于 runner 排队、缓存命中和最慢的目标。
+首次运行需要完整 Xcode、Rust/Cargo 和 rustfmt、`gh`、`jq`、LLVM、三个 Rust target，以及固定版本的 `cargo-xwin`。LLVM 通过 PATH 或 `HONGGUO_LLVM_BIN` 定位。Apple Silicon 需安装 Rosetta 来运行 Inno Setup 的 Wine 编译环境。脚本会下载并校验固定版本的 Wine、Inno Setup 和官方简体中文翻译，工具和 Wine prefix 缓存在 `target/local-release/tools`。也可通过 `HONGGUO_WINE` 指定已有的 Wine 可执行文件。
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc
+cargo install --locked cargo-xwin --version 0.23.1
+gh auth login
+```
+
+## CI 与手动发版
+
+普通 CI 检查推送到 `main` 的提交和目标为 `main` 的 PR，运行格式、资源、主题、版本、文件规模及三个目标的工作区构建和严格 Clippy。手动运行 `CI` 时可勾选 `package` 上传三个目标的包。需要从 GitHub Actions 发版时，手动运行 `NSH Desktop Release`，填写已存在的 tag。默认生成草稿，勾选 `publish` 后公开。
 
 | 目标 | Runner | 构建与打包 |
 | --- | --- | --- |
@@ -41,13 +53,7 @@ Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未
 
 旧 Tauri 客户端使用 `/releases/latest/download/latest.json`。新 Release 附带从 `v0.6.6` 获取并核验固定 SHA-256 的原始清单，冻结旧更新通道于 0.6.6，保留原包地址和签名，避免 Latest 切换后旧入口返回 404。该清单不提供 0.7.0 自动升级；旧用户须手动安装新版。不要将 Inno 安装器伪装成旧 NSIS 更新包，也不要伪造更新签名。
 
-## 发布流程
-
-1. 确认 `Cargo.toml` 工作区版本、`Cargo.lock` 所有工作区成员版本与 `crates/hongguo-nsh/nsh.json` 一致；NSH build 单调增加，更新 `CHANGELOG.md` 对应段落。
-2. 在本机执行 `cargo build-tool release-preflight`，通过构建、严格检查和实际安装/播放验收后合入发版提交。
-3. 获得发布授权后推送合入 `main` 的提交和对应 `v0.8.8` tag。tag push 触发 `NSH Desktop Release`，所有门禁通过后自动公开为最新正式版本。
-4. 流程验证 tag、版本、更新日志及实际包元数据，使用同一提交完成全部桌面检查和打包，校验来源与 SHA-256 并保留旧版更新清单，再创建草稿并正式公开。检查失败时不会公开 Release；重复运行发现已有 Release 会失败，不覆盖现有附件。
-5. 手动运行 workflow 时填写已存在的 tag，默认只生成草稿；勾选 `publish` 才正式公开。跨平台安装与播放的真实验收状态须如实说明。
+## 安装与播放验收
 
 0.7.0 默认不迁移旧版数据。手动复制桌面旧数据库的默认路径、重命名及旁路日志处理见 [README 迁移说明](../README.md#旧版数据)；发布说明必须保留这一升级提示。
 
@@ -55,8 +61,8 @@ Windows Authenticode 按当前约定不接入；macOS 仍为 ad hoc 签名，未
 
 ## English
 
-After shared gates pass, the three desktop targets run in parallel. Each target builds, lints and packages release artifacts on the same runner, reusing its toolchain and Cargo cache. Publication waits for all targets and artifact verification. Regular CI runs on pushes to `main`, pull requests targeting `main`, and manual dispatch. Select `package` when manually running `CI` to build and upload all three desktop packages from the same commit. Version tags trigger packaging and replace duplicate checks on release commits. Archived artifacts are uploaded without extra compression. Runner queues and cache hits affect elapsed time.
+On macOS, run `scripts/release.sh <version>` after merging the version metadata and changelog into `main`. It builds all three desktop targets from the fetched commit in a dedicated worktree, verifies the archives and update manifest, pushes the version tag, uploads a draft and publishes it as Latest. Use `--build-only` to verify the local build without publishing. Build tools and outputs are kept under `target/local-release`.
 
 Shared checks, release preflight and publication run on `ubuntu-24.04`. The `windows-2025` runner builds Windows x64 with its native MSVC toolchain and Windows SDK. For releases, the workflow verifies SHA-256 for Inno Setup 6.7.4 and the official Simplified Chinese translation, then NSH calls `ISCC.exe` to build the installer. The Windows build uses the static CRT, baseline x86-64 instructions, an 8 MiB stack and PE auditing. Apple Silicon and Intel macOS packages use their respective native runners and Apple signing and DMG tools.
 
-A version tag runs the shared CI and publishes the release only after all target artifacts, provenance and SHA-256 manifests pass verification. Assets are staged in a draft before publication; failed checks do not publish a release. Manual runs keep a draft unless `publish` is selected. Windows remains unsigned; macOS uses ad hoc signing without notarization. Real-device installation/playback acceptance remains manual. Mobile is unreleased, so CI no longer packages mobile artifacts.
+Regular CI runs on pushes to `main` and pull requests targeting `main`. Select `package` in a manual CI run to upload the desktop packages. The desktop release workflow is available by manual dispatch with an existing version tag. It keeps a draft unless `publish` is selected. Windows remains unsigned. macOS uses ad hoc signing without notarization. Installation and playback acceptance requires real devices.
