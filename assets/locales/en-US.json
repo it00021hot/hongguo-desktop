@@ -218,6 +218,7 @@
     "playbackRate": "Playback speed",
     "definition": "Quality",
     "definitionAuto": "Auto",
+    "definitionLocal": "Local",
     "definitionLocalOnly": "Downloaded episodes have only the local quality",
     "episodes": "Episodes",
     "intro": "Synopsis",

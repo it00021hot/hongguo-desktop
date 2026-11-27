@@ -30,6 +30,26 @@ pub(crate) async fn resolve_start(
     Ok((id, episode))
 }
 
+/// Keep an explicitly selected history episode without recording a feed resume point.
+pub(crate) async fn resolve_history_start(
+    session: Arc<crate::bootstrap::Session>,
+    id: String,
+    episode: u32,
+) -> AppResult<String> {
+    let series = resolve_archive(session.clone(), id).await?;
+    let state = session.state.clone();
+    runtime::spawn_blocking(move || {
+        if !series.episodes.iter().any(|item| item.vid_index == episode) {
+            return Err(AppError::NotFound(format!("历史记录中的第 {episode} 集")));
+        }
+        let id = series.series_id.clone();
+        registry::upsert_and_persist(&state, series)?;
+        Ok(id)
+    })
+    .await
+    .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
 /// Resolve the archive without applying a history starting point. Explicit
 /// season relay consumes the same archive and chooses its first real episode.
 pub(super) async fn resolve_archive(

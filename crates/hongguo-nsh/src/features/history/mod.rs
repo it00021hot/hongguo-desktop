@@ -73,15 +73,25 @@ fn content(
         );
         let identity = session.identity();
         spawn(async move {
-            let outcome =
-                bridge::request(crate::features::player::resolve_start(state.clone(), id)).await;
+            let outcome = bridge::request(crate::features::player::resolve_history_start(
+                state.clone(),
+                id,
+                episode,
+            ))
+            .await;
+            if resolving.try_get().is_none() {
+                return;
+            }
+            resolving.set(false);
+            if session.identity() != identity
+                || !nav
+                    .routes()
+                    .with(|routes| routes.last() == Some(&Route::History))
+            {
+                return;
+            }
             match outcome {
-                Ok((id, _))
-                    if session.identity() == identity
-                        && nav
-                            .routes()
-                            .with(|routes| routes.last() == Some(&Route::History)) =>
-                {
+                Ok(id) => {
                     match state
                         .personal
                         .remember_position(&state.state, id.clone(), episode, at)
@@ -90,10 +100,8 @@ fn content(
                         Err(error) => feedback.set(bridge::Failure::from(error).text()),
                     }
                 }
-                Ok(_) => {}
                 Err(error) => feedback.set(error.text()),
             }
-            resolving.set(false);
         });
     };
     let remove = move |entries: Vec<model::HistoryItem>| {

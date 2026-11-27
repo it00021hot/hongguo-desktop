@@ -31,8 +31,8 @@ mod start_action;
 pub(crate) use start_action::{StartAction, start_action};
 mod transport;
 mod window_controls;
-pub(crate) use start::resolve_start;
 pub(crate) use start::start_episode;
+pub(crate) use start::{resolve_history_start, resolve_start};
 
 use crate::{
     bridge,
@@ -499,7 +499,8 @@ fn content(
         selected_definition: computed(move || {
             source.with(|source| {
                 source.and_then(|source| {
-                    (!source.automatic_definition).then_some(source.active_definition)
+                    (source.online && !source.automatic_definition && source.active_definition > 0)
+                        .then_some(source.active_definition)
                 })
             })
         }),
@@ -684,7 +685,12 @@ fn content(
                 source.map_or_else(
                     || tr("player.definitionAuto"),
                     |source| {
-                        if source.automatic_definition {
+                        if !source.online {
+                            source.lease.video_short_edge.map_or_else(
+                                || tr("player.definitionLocal"),
+                                |height| format!("{height}P").into(),
+                            )
+                        } else if source.automatic_definition || source.active_definition == 0 {
                             tr("player.definitionAuto")
                         } else {
                             format!("{}P", source.active_definition).into()

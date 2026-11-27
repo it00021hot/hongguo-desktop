@@ -101,6 +101,7 @@ impl MediaServer {
         source: Source,
         frames: Option<hongguo_nsh_video_api::frames::FrameRegistration>,
     ) -> Result<MediaLease, String> {
+        let video_short_edge = source.video_short_edge;
         self.routes
             .sources
             .lock()
@@ -110,6 +111,7 @@ impl MediaServer {
         Ok(MediaLease {
             url,
             id,
+            video_short_edge,
             sources: self.routes.sources.clone(),
             frames: Mutex::new(frames),
         })
@@ -131,6 +133,7 @@ impl Drop for MediaServer {
 pub(crate) struct MediaLease {
     id: String,
     url: String,
+    pub(crate) video_short_edge: Option<u32>,
     sources: Arc<Mutex<HashMap<String, Source>>>,
     frames: Mutex<Option<hongguo_nsh_video_api::frames::FrameRegistration>>,
 }

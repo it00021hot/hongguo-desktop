@@ -15,6 +15,7 @@ pub(super) struct Source {
     audio_view: Option<Arc<hongguo_video::audio_view::AudioView>>,
     only_audio: bool,
     pub(super) codec: Option<String>,
+    pub(super) video_short_edge: Option<u32>,
     pub(super) precision_extension: bool,
     buffering: Arc<Vec<super::buffering::BufferingTrack>>,
     rate: Arc<AtomicU64>,
@@ -74,6 +75,8 @@ impl Source {
             self.precision_extension = configuration.get(17).is_some_and(|depth| depth & 7 != 0)
                 || matches!(color.transfer, Some(16 | 18));
         }
+        let short_edge = track.width.min(track.height);
+        self.video_short_edge = (short_edge > 0).then_some(short_edge);
         let codec = track.codec;
         self.codec = Some(codec.clone());
         Ok((self, codec))
@@ -116,6 +119,7 @@ impl Source {
             audio_view: None,
             only_audio: false,
             codec: None,
+            video_short_edge: None,
             precision_extension: false,
             buffering: Arc::default(),
             rate: Arc::new(AtomicU64::new(1.0_f64.to_bits())),
