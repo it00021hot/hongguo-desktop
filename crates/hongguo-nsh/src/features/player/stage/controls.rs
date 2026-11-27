@@ -26,10 +26,16 @@ pub(crate) struct ControlState {
     pub(crate) position: Signal<(f64, f64)>,
     pub(crate) quality: Memo<SharedString>,
     pub(crate) busy: Memo<bool>,
+    pub(crate) episode_busy: Memo<bool>,
     pub(crate) seek_pending: Memo<bool>,
     pub(crate) has_previous: Memo<bool>,
     pub(crate) has_next: Memo<bool>,
     pub(crate) episode_count: Memo<u32>,
+    pub(crate) is_highlight: Memo<bool>,
+    pub(crate) playlist: bool,
+    pub(crate) related_drama: Memo<Option<hongguo_common::model::RelatedDrama>>,
+    pub(crate) linked_pending: Memo<bool>,
+    pub(crate) linked_notice: Memo<SharedString>,
     pub(crate) can_binge: bool,
     pub(crate) in_binge: Memo<bool>,
     pub(crate) advanced: AdvancedState,
@@ -40,10 +46,12 @@ pub(crate) struct ControlState {
 
 impl ControlState {
     pub(crate) fn binge_bar_visible(self) -> bool {
-        self.can_binge
-            && self.episode_count.get() > 0
-            && !self.in_binge.get()
-            && !super::landscape::active()
+        !super::landscape::active()
+            && if self.is_highlight.get() {
+                self.related_drama.with(Option::is_some)
+            } else {
+                self.can_binge && self.episode_count.get() > 0 && !self.in_binge.get()
+            }
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -73,6 +81,7 @@ pub(crate) enum ControlAction {
     ReserveSeason(String),
     RetrySeasons,
     EnterBinge,
+    OpenRelatedDrama,
     ExitBinge,
 }
 
@@ -116,6 +125,20 @@ pub(crate) fn controls<E: IntoElement>(
     let binge = move || {
         dynamic(move || {
             let trigger = crate::features::player::presentation::player_binge(move || {
+                if let Some(related) = state.related_drama.get() {
+                    let label = tr(if state.linked_pending.get() {
+                        "player.switching"
+                    } else if related.kind == hongguo_common::model::RelatedKind::Album {
+                        "player.playHighlightAlbum"
+                    } else {
+                        "player.linkedDrama"
+                    });
+                    return if related.label.is_empty() {
+                        format!("{label}  ›")
+                    } else {
+                        format!("{label} · {}  ›", related.label)
+                    };
+                }
                 if is_desktop() {
                     format!(
                         "{} · {}  ›",
@@ -132,13 +155,34 @@ pub(crate) fn controls<E: IntoElement>(
                     )
                 }
             })
-            .disabled(state.busy)
-            .on_press(move || action.with(|action| action(ControlAction::EnterBinge)));
+            .disabled(move || state.busy.get() || state.linked_pending.get())
+            .on_press(move || {
+                action.with(|action| {
+                    action(if state.is_highlight.get_untracked() {
+                        ControlAction::OpenRelatedDrama
+                    } else {
+                        ControlAction::EnterBinge
+                    })
+                })
+            });
             view()
                 .on_layout(move |bounds: &Bounds<Points>| {
                     state.geometry.binge_height.set(bounds.size.height.0);
                 })
                 .child(trigger)
+                .child(when(
+                    move || !state.linked_notice.get().is_empty(),
+                    move || {
+                        text(move || state.linked_notice.get())
+                            .text_xs()
+                            .pt_1()
+                            .text_color(move || {
+                                nsh_base::theme()
+                                    .color("video-controls")
+                                    .expect("video controls")
+                            })
+                    },
+                ))
         })
     };
     effect(move || {
@@ -320,20 +364,22 @@ pub(crate) fn controls<E: IntoElement>(
                             )
                             .child(
                                 crate::features::player::presentation::player_icon_button(Icon::Previous, move || {
-                                    tr("player.prevEpisode")
+                                    tr(if state.playlist { "player.prevClip" } else { "player.prevEpisode" })
                                 })
                                 .element_ref(&previous_stop)
-                                .disabled(move || state.busy.get() || !state.has_previous.get())
+                                .style_when(move || state.is_highlight.get() && !state.playlist, |style| style.hidden())
+                                .disabled(move || state.episode_busy.get() || !state.has_previous.get())
                                 .on_press(move || {
                                     action.with(|action| action(ControlAction::Previous))
                                 }),
                             )
                             .child(
                                 crate::features::player::presentation::player_icon_button(Icon::Next, move || {
-                                    tr("player.nextEpisode")
+                                    tr(if state.playlist { "player.nextClip" } else { "player.nextEpisode" })
                                 })
                                 .element_ref(&next_stop)
-                                .disabled(move || state.busy.get() || !state.has_next.get())
+                                .style_when(move || state.is_highlight.get() && !state.playlist, |style| style.hidden())
+                                .disabled(move || state.episode_busy.get() || !state.has_next.get())
                                 .on_press(move || {
                                     action.with(|action| action(ControlAction::Next))
                                 }),
@@ -382,9 +428,9 @@ pub(crate) fn controls<E: IntoElement>(
                                         move |intent| action.with(|action| action(intent.into())),
                                     ))
                                     .child(enhancement_control(state.advanced.enhancement))
-                                    .child(menus::episodes(
+                                    .child(when(move || !state.is_highlight.get(), move || menus::episodes(
                                         state.menus,
-                                        state.busy,
+                                        state.episode_busy,
                                         labelled(Icon::Episodes, move || {
                                             if tight.get() {
                                                 return tr("player.episodes").to_string();
@@ -399,7 +445,7 @@ pub(crate) fn controls<E: IntoElement>(
                                             )
                                         }),
                                         move |intent| action.with(|action| action(intent.into())),
-                                    ))
+                                    )))
                                     .child(
                                         labelled(Icon::Download, move || {
                                             if tight.get() {
@@ -409,6 +455,7 @@ pub(crate) fn controls<E: IntoElement>(
                                             }
                                         })
                                         .accessibility_label(move || tr("player.download"))
+                                        .style_when(state.is_highlight, |style| style.hidden())
                                         .on_press(
                                             move || {
                                                 action
@@ -525,8 +572,8 @@ pub(crate) fn controls<E: IntoElement>(
                 )
                 .child(when(move || state.binge_bar_visible(), binge)),
         )
-        .child(when(compact, move || {
-            menus::episode_sheet(state.menus, state.busy, more_stop, move |intent| {
+        .child(when(move || compact() && !state.is_highlight.get(), move || {
+            menus::episode_sheet(state.menus, state.episode_busy, more_stop, move |intent| {
                 action.with(|action| action(intent.into()))
             })
         }))

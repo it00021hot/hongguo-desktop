@@ -179,6 +179,9 @@ pub(crate) fn player_landscape_header(
         .child(
             text(move || {
                 let caption = caption.get();
+                if caption.highlight.is_some() {
+                    return super::super::info::clip_caption(&caption.title, caption.episode);
+                }
                 format!(
                     "{} {}",
                     caption.title,

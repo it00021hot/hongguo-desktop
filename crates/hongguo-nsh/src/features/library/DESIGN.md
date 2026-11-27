@@ -77,3 +77,35 @@ NSH 会话先订阅服务事件，再仅启动一次共享服务的首轮检查�
 原生测试必须用 Tab 离开搜索框后触发 fake 登录热键，不能假设按普通按钮会让 TextInput 退出 firstResponder。
 JUnit 为 `reservations-keyboard-native-results.xml`；旧热键过滤失败日志保留，没有调整生产快捷键策略。
 旧播放器帧文件缺失导致过滤卡封面占位，本次不声称该影视封面验证通过。
+
+## 收藏无法打开的条目（#34）
+
+没有可用剧名或分集信息的条目仍留在「全部」，不单设入口。保留原始剧集 ID（可按完整 ID 搜索），不假定作品已永久下架。详情接口暂时失败时也可能出现这些条目，
+接口错误仍显示在页面中。可用卡片打开详情，不直接进入播放；不可用卡片禁用详情但始终显示取消收藏按钮。
+管理模式同样支持单选、多选与批量取消，切换入口清空选中项；远端取消成功后才移除卡片。
+
+「收藏夹」与「全部」「真人剧」「漫剧」同列，入口不随账号收藏夹数量隐藏；空账号显示「暂无收藏夹」，
+加载失败显示错误和重试。
+收藏夹卡片从官方列表响应展示封面预览、内容数量与公开状态；点击卡片进入夹内列表。
+「添加」从账号已有收藏中选择；「管理」既可移出本夹，也可取消账号收藏，二者不是同一个操作。
+分页响应不能跨账号或跨收藏夹写入列表。新建使用官方接口并提供公开开关；
+收藏夹是收藏页内的筛选项，不进入独立工作区。切换到此项直接显示收藏夹预览卡；
+点卡片在同一内容区打开夹内短剧，并保留顶部筛选和返回。桌面预览按可用宽度排 1–3 列，
+移动端保持单列。标题栏与批量操作随宽度换行。
+「收藏夹设置」统一编辑名称与公开／私密状态；危险操作区单独提供删除。
+删除前明确确认，且不调用账号取消收藏接口。
+「管理」选中短剧后可移到其他收藏夹，目标列表不包含来源夹。
+
+成员增删使用 `POST /reading/distribution/bookshelf_folder/item/update/v1/` 的
+`operators` 列表（APK `UpdateBookShelfFolderItemRequest`）。每项 `item_id`
+为字符串，`folder_id` 为整数，Add=1、Delete=2、Move=3。移动一条请求同时携带来源和目标，
+不以添加再删除模拟。移出用收藏夹条目 ID，
+真正取消账号收藏仍走书架接口并使用剧集 ID。
+
+红果 7.4.3.32 APK 静态核对：`classes9.dex` 的 `DistributionApiService` 描述
+`POST /reading/distribution/bookshelf_folder/{list,detail}/v1/`，两者明确使用 JSON；
+与仓库已接入的 category/landpage 属于同一 RPC 服务。`classes18.dex` 的序列化描述
+确认 `offset/count/preview_items_limit/has_detail`（列表）与
+`folder_id/offset/limit/has_detail`（详情），按 `has_more/next_offset` 翻页。
+`classes7.dex` 的详情展示优先取 `video_detail.video_data.series_id`；短剧书架
+条目缺少详情时保留 `book_type=2` 的 `item_id`。这里未使用账号实流量或执行实际取消。

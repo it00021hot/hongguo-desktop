@@ -8,7 +8,10 @@ pub(super) type Panel = Resource<Vec<SelectorRow>, bridge::Failure>;
 pub(super) fn content(panel: Panel, query: Signal<Query>) -> View {
     view()
         .gap_1p5()
-        .child(when(move || panel.loading(), crate::features::browse::presentation::browse_panel_loading))
+        .child(when(
+            move || panel.loading() && panel.with(|rows| rows.is_none()),
+            move || crate::ui::loading::indicator("common.loading"),
+        ))
         .child(when(
             move || panel.error().is_some(),
             move || {
@@ -23,7 +26,7 @@ pub(super) fn content(panel: Panel, query: Signal<Query>) -> View {
             },
         ))
         .child(when(
-            move || !panel.loading() && panel.error().is_none(),
+            move || panel.error().is_none() && (!panel.loading() || panel.with(|rows| rows.is_some())),
             move || {
                 each(
                     move || {

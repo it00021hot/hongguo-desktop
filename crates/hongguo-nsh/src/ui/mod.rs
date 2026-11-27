@@ -2,6 +2,8 @@ pub(crate) mod batch;
 pub(crate) mod confirmation;
 pub(crate) use confirmation::confirmation;
 pub(crate) mod controls;
+mod copy;
+pub(crate) use copy::copy_button;
 pub(crate) mod loading;
 pub(crate) mod palette;
 pub(crate) use batch::{batch_bar, batch_delete, batch_select};

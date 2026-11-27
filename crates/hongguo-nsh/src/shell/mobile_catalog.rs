@@ -57,11 +57,14 @@ pub(crate) fn mobile_catalog_header(nav: Navigation, channels: impl IntoElement)
 pub(crate) fn mobile_channel_tab(
     label: impl IntoReactive<SharedString>,
     selected: impl IntoReactive<bool>,
+    pending: impl IntoReactive<bool>,
 ) -> nsh_base::ButtonElement {
     let label = label.into_reactive();
     let label = computed(move || label.get());
     let selected = selected.into_reactive();
     let selected = computed(move || selected.get());
+    let pending = pending.into_reactive();
+    let pending = computed(move || pending.get());
     nsh_base::button()
         .accessibility_label(move || label.get())
         .min_w(control_height())
@@ -110,6 +113,8 @@ pub(crate) fn mobile_channel_tab(
                 .h(px(2.0))
                 .rounded_full()
                 .bg(move || theme().primary)
+                .style_when(pending, |style| style.animate_pulse())
+                .style_when(reduce_motion, |style| style.animate_none())
                 .style_when(move || !selected.get(), |style| style.hidden()),
         )
 }

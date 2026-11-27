@@ -55,7 +55,7 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         }
     }
 
-    warm_episode_window(state, &request.series_id, request.vid_index).await;
+    super::start_play_strategy_poller(state);
 
     // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
     let progress_key = format!("{}:{}", request.series_id, request.vid_index);
@@ -64,8 +64,7 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         &request.series_id,
         request.definition,
         request.reset_definition,
-    )
-    .await?;
+    )?;
     match online::prepare(state, &vid, &progress_key, request.definition).await {
         Ok(prepared) => {
             crate::play_service::schedule_following_episodes(
@@ -163,12 +162,6 @@ pub fn local_playback_codec(path: &str) -> AppResult<String> {
 }
 
 /// 首集预热只取该集模型。
-pub async fn warm_episode_window(state: &AppState, series_id: &str, vid_index: u32) {
-    if vid_index == 1 {
-        prefetch_episode_models(state, series_id, 1..=1, PlayerModelScene::Preload).await;
-    }
-}
-
 pub(super) async fn prefetch_episode_models(
     state: &AppState,
     series_id: &str,

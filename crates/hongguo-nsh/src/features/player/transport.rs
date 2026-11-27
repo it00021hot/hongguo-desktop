@@ -17,6 +17,24 @@ pub(super) fn cold_status_loading(has_surface: bool, has_playback: bool) -> bool
     !has_surface && !has_playback
 }
 
+pub(super) fn adjacent_episode(indices: &[u32], current: u32, delta: i32) -> Option<u32> {
+    if delta > 0 {
+        indices
+            .iter()
+            .copied()
+            .filter(|episode| *episode > current)
+            .min()
+    } else if delta < 0 {
+        indices
+            .iter()
+            .copied()
+            .filter(|episode| *episode < current)
+            .max()
+    } else {
+        None
+    }
+}
+
 pub(super) fn incoming_picture_ready(loaded: bool, seeking: bool, progressed: bool) -> bool {
     loaded && !seeking && progressed
 }
@@ -235,6 +253,16 @@ mod tests {
         assert!(!cold_status_loading(true, false));
         assert!(!cold_status_loading(false, true));
         assert!(!cold_status_loading(true, true));
+    }
+
+    #[test]
+    fn successive_episode_inputs_advance_from_the_target_not_the_old_frame() {
+        let indices = [1, 7, 3, 9];
+        let target = adjacent_episode(&indices, 1, 1).unwrap();
+        assert_eq!(target, 3);
+        assert_eq!(adjacent_episode(&indices, target, 1), Some(7));
+        assert_eq!(adjacent_episode(&indices, 7, -1), Some(3));
+        assert_eq!(adjacent_episode(&indices, 9, 1), None);
     }
 
     #[test]

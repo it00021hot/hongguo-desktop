@@ -49,8 +49,8 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
         view()
             .flex_1()
             .child(when(
-                move || result.loading(),
-                move || ui::status(move || tr("common.loading")),
+                move || result.loading() && result.with(|data| data.is_none()),
+                queue_loading,
             ))
             .child(ui::status(feedback))
             .child(when(
@@ -87,4 +87,20 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
                 },
             )),
     )
+}
+
+fn queue_loading() -> View {
+    use ui::loading::skeleton;
+
+    view()
+        .role(AccessibilityRole::Group)
+        .label(move || tr("common.loading"))
+        .gap_2()
+        .child(skeleton().h(px(34.0)).w(percentage(0.52)))
+        .child(
+            view()
+                .gap_2()
+                .child(skeleton().h(px(36.0)).w_full())
+                .children((0..4).map(|_| skeleton().h(px(53.0)).w_full())),
+        )
 }

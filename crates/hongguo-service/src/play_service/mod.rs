@@ -54,23 +54,23 @@ pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vi
     });
 }
 
-/// 首次选档等首包策略；之后按 query_gap 更新同一控制器，失败保留上次有效值。
-pub async fn ensure_play_strategy_poller(state: &AppState) {
-    state
+/// 首次播放使用当前规则或内置默认值，策略请求不阻塞切换。
+pub fn start_play_strategy_poller(state: &AppState) {
+    if state
         .playback_resolution
         .poller
-        .get_or_init(|| async {
-            let gap = refresh_play_strategy(state).await;
-            let state = state.clone();
-            crate::runtime::spawn(async move {
-                let mut gap = gap;
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(gap)).await;
-                    gap = refresh_play_strategy(&state).await;
-                }
-            });
-        })
-        .await;
+        .swap(true, std::sync::atomic::Ordering::AcqRel)
+    {
+        return;
+    }
+    let state = state.clone();
+    crate::runtime::spawn(async move {
+        let (_, mut gap) = tokio::join!(prefetch::policy(&state), refresh_play_strategy(&state));
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(gap)).await;
+            gap = refresh_play_strategy(&state).await;
+        }
+    });
 }
 
 async fn refresh_play_strategy(state: &AppState) -> u64 {

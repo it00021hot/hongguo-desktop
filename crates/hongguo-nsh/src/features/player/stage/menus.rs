@@ -41,6 +41,7 @@ pub(crate) struct SeasonState {
     pub(crate) loading: Memo<bool>,
     pub(crate) error: Memo<SharedString>,
     pub(crate) reserving: Memo<bool>,
+    pub(crate) switching: Memo<Option<String>>,
     pub(crate) downloaded: Memo<Vec<u32>>,
 }
 

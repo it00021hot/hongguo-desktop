@@ -16,8 +16,8 @@ pub(crate) fn settings_key(
     let capturing = capturing.into_reactive();
     let capturing = computed(move || capturing.get());
     nsh_base::button()
-        .min_h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
-        .h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
+        .min_h(crate::ui::controls::control_height)
+        .h(crate::ui::controls::control_height)
         .min_w(px(match kind {
             KeyBindingKind::Player => 96.0,
             KeyBindingKind::Boss => 128.0,

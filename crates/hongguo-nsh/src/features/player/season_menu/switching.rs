@@ -38,6 +38,10 @@ pub(super) struct Controller {
 }
 
 impl Controller {
+    pub fn target(self) -> Option<String> {
+        self.request
+            .with(|request| request.as_ref().map(|request| request.id.clone()))
+    }
     pub fn new(
         origin: Memo<Origin>,
         pending: Signal<bool>,
@@ -118,7 +122,11 @@ impl Controller {
     pub fn start(self, id: String, selected: impl Fn(Series, u32) + 'static) {
         self.reconcile();
         let origin = self.origin.get_untracked();
-        if origin.source.is_none() || self.pending.get_untracked() {
+        let previous = self.request.get_untracked();
+        if origin.source.is_none()
+            || (self.pending.get_untracked() && previous.is_none())
+            || previous.is_some_and(|request| request.id == id)
+        {
             return;
         }
         let serial = self.serial.with(|serial| {
@@ -138,7 +146,8 @@ pub(super) fn loader(session: SessionHandle) -> Loader {
     Rc::new(move |id| {
         let state = session.with(|session| session.clone());
         Box::pin(bridge::request(async move {
-            let (id, episode) = super::super::resolve_start(state.clone(), id).await?;
+            let (id, episode) =
+                super::super::resolve_feed_start(state.clone(), id, None, None).await?;
             let store = state.state.store.clone();
             let key = id.clone();
             let series = hongguo_service::runtime::spawn_blocking(move || store.series_by_id(&key))

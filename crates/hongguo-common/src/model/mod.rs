@@ -14,6 +14,6 @@ pub use history::LocalHistoryItem;
 pub use merge::{MergeCandidate, MergeMode, MergePreflight, MergeStatus, MergeTask};
 pub use playback::{PlayRequest, PlayResponse, PlaybackPosition, VideoDefinition};
 // 浏览/搜索的卡片、分类、分页元数据归 sniff 模块所有：只是嗅探结果的传输结构，不是持久化领域模型（不进 data.json）。
-pub use series::{Episode, Series};
+pub use series::{Episode, Highlight, RelatedDrama, RelatedKind, Series};
 pub use settings::{AccountState, ProxyConfig, ProxyTestResult, Settings};
 pub use task::{DownloadTask, QueueStatus, TaskStatus};

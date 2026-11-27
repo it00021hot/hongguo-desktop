@@ -17,6 +17,7 @@ pub(crate) struct WindowCaption {
     pub title: String,
     pub episode: u32,
     pub total: u32,
+    pub highlight: Option<String>,
 }
 
 #[derive(Clone, Copy)]

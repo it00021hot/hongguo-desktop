@@ -8,7 +8,6 @@ use crate::{
     events::SessionHandle,
     i18n::tr,
     navigation::{Navigation, Route},
-    ui,
 };
 use hongguo_common::{AppError, AppResult, model::FollowNotice};
 use hongguo_service::follow_service;
@@ -170,10 +169,6 @@ pub(super) fn build(session: SessionHandle, nav: Navigation, logged_in: Memo<boo
                 .flex_1()
                 .min_h(px(0.0))
                 .child(when(
-                    move || list.loading(),
-                    move || ui::status(move || tr("common.loading")),
-                ))
-                .child(when(
                     move || !list.loading() && list.error().is_some(),
                     move || {
                         crate::features::error_state(
@@ -188,6 +183,7 @@ pub(super) fn build(session: SessionHandle, nav: Navigation, logged_in: Memo<boo
                 .child(crate::features::library::presentation::follow_notices(
                     crate::features::library::presentation::FollowNoticesState {
                         items,
+                        loading: computed(move || list.loading()),
                         busy: computed(move || request.loading()),
                         checking: computed(move || {
                             request.loading()

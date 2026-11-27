@@ -1,4 +1,7 @@
-use hongguo_common::{AppError, AppResult, model::Series};
+use hongguo_common::{
+    AppError, AppResult,
+    model::{Highlight, Series},
+};
 use hongguo_service::{runtime, series_service::registry};
 use std::sync::Arc;
 
@@ -7,8 +10,35 @@ pub(crate) async fn resolve_start(
     id: String,
 ) -> AppResult<(String, u32)> {
     let state = session.state.clone();
-    let archive = resolve_archive(session.clone(), id);
-    let (series, sources) = tokio::try_join!(archive, session.personal.read(&state))?;
+    let (series, sources) = tokio::try_join!(
+        resolve_archive(session.clone(), id),
+        session.personal.read(&state),
+    )?;
+    resolve_entry(session, series, sources, None).await
+}
+
+/// 关注卡片指定作品视频，不用剧集历史覆盖它。
+pub(crate) async fn resolve_feed_start(
+    session: Arc<crate::bootstrap::Session>,
+    id: String,
+    vid: Option<String>,
+    highlight: Option<Highlight>,
+) -> AppResult<(String, u32)> {
+    let sources = session.personal.recent(&session.state)?;
+    let mut series = resolve_archive(session.clone(), id).await?;
+    if let Some(highlight) = highlight {
+        series.highlight = Some(Box::new(highlight));
+    }
+    resolve_entry(session, series, sources, vid).await
+}
+
+async fn resolve_entry(
+    session: Arc<crate::bootstrap::Session>,
+    series: Series,
+    sources: Arc<hongguo_service::personal_service::Sources>,
+    vid: Option<String>,
+) -> AppResult<(String, u32)> {
+    let state = session.state.clone();
     let snapshot = sources.clone();
     let working = state.clone();
     let (id, episode, at) = runtime::spawn_blocking(move || {
@@ -17,7 +47,15 @@ pub(crate) async fn resolve_start(
             &series.series_id,
             &snapshot.history,
         )?;
-        let episode = start_episode(&series, Some(preferred))?;
+        let episode = match vid {
+            Some(vid) => series
+                .episodes
+                .iter()
+                .find(|item| item.vid == vid)
+                .map(|item| item.vid_index)
+                .ok_or_else(|| AppError::NotFound("作品暂无可播放视频".into()))?,
+            None => start_episode(&series, Some(preferred))?,
+        };
         let id = series.series_id.clone();
         registry::upsert_and_persist(&working, series)?;
         Ok::<_, AppError>((id, episode, if episode == preferred { at } else { 0.0 }))

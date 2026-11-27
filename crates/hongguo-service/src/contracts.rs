@@ -1,5 +1,8 @@
 pub mod calendar {
-    pub use hongguo_api::calendar::{CalendarItem, CalendarPage};
+    pub use hongguo_api::calendar::{
+        CalendarCursor, CalendarFilteredPage, CalendarItem, CalendarPage, CalendarPanel,
+        SelectorId, SelectorRow, SelectorSelection,
+    };
 }
 
 pub mod danmaku {
@@ -36,4 +39,7 @@ pub mod recommend {
 
 pub mod search {
     pub use hongguo_api::search::SuggestItem;
+}
+pub mod highlight {
+    pub use hongguo_api::highlight::album::AlbumMember;
 }

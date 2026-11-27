@@ -8,6 +8,7 @@ pub mod danmaku;
 pub mod detail;
 pub mod discover;
 pub mod emoticon;
+pub mod highlight;
 pub mod history;
 pub mod interact;
 pub mod login;

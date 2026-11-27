@@ -80,7 +80,10 @@ pub(super) fn content(
     let pending = computed(move || feed.loading() && cards.with(Vec::is_empty));
     let fetching_more = computed(move || feed.loading() && query.with(|query| query.offset > 0));
     let resubmitting = computed(move || {
-        feed.loading() && query.with(|query| !query.term.is_empty() && query.term == search.term())
+        feed.loading()
+            && query.with(|query| {
+                query.offset == 0 && !query.term.is_empty() && query.term == search.term()
+            })
     });
     effect(move || {
         if query.with(|query| !query.term.is_empty())
@@ -222,7 +225,12 @@ pub(super) fn content(
                     },
                 ))
                 .child(when(
-                    move || !pending.get() && cards.with(Vec::is_empty),
+                    move || {
+                        !pending.get()
+                            && feed.error().is_none()
+                            && feed.with(|page| page.is_some())
+                            && cards.with(Vec::is_empty)
+                    },
                     move || {
                         crate::features::browse::presentation::browse_empty(move || {
                             tr(if query.with(|query| query.term.is_empty()) {
@@ -234,7 +242,7 @@ pub(super) fn content(
                     },
                 ))
                 .child(when(
-                    move || !cards.with(Vec::is_empty),
+                    move || feed.error().is_none() && !cards.with(Vec::is_empty),
                     move || {
                         ui::refresh_shade(move || feed.loading() && !fetching_more.get()).child(
                             crate::features::browse::presentation::browse_grid(
@@ -255,25 +263,30 @@ pub(super) fn content(
                     },
                 ))
                 .child(when(
-                    move || query.with(|query| query.term.is_empty()) && fetching_more.get(),
-                    crate::features::browse::presentation::browse_loading_more,
-                ))
-                .child(when(
+                    move || feed.error().is_none() && !cards.with(Vec::is_empty),
                     move || {
-                        query.with(|query| query.term.is_empty())
-                            && !feed.loading()
-                            && feed.with(|page| {
-                                page.is_some_and(|loaded| {
-                                    !loaded.page.has_more && !cards.with(Vec::is_empty)
-                                })
-                            })
-                    },
-                    move || {
-                        text(move || tr("feed.end"))
-                            .text_center()
-                            .py_2()
-                            .text_sm()
-                            .text_color(move || nsh_base::theme().muted_foreground)
+                        view()
+                            .min_h(px(36.0))
+                            .child(when(
+                                fetching_more,
+                                crate::features::browse::presentation::browse_loading_more,
+                            ))
+                            .child(when(
+                                move || {
+                                    !feed.loading()
+                                        && query.with(|query| query.term.is_empty())
+                                        && feed.with(|page| {
+                                            page.is_some_and(|loaded| !loaded.page.has_more)
+                                        })
+                                },
+                                move || {
+                                    text(move || tr("feed.end"))
+                                        .text_center()
+                                        .py_2()
+                                        .text_sm()
+                                        .text_color(move || nsh_base::theme().muted_foreground)
+                                },
+                            ))
                     },
                 )),
             crate::view_memory::remember_scroll(
@@ -291,9 +304,7 @@ pub(crate) use browse::{
 };
 
 pub(crate) mod browse_loading;
-pub(crate) use browse_loading::{
-    browse_empty, browse_loading, browse_loading_more, browse_panel_loading,
-};
+pub(crate) use browse_loading::{browse_empty, browse_loading, browse_loading_more};
 
 pub(crate) mod search_suggestions;
 pub(crate) use search_suggestions::{

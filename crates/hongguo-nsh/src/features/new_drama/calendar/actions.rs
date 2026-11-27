@@ -9,14 +9,14 @@ use nsh_core::prelude::*;
 use std::collections::HashSet;
 
 #[derive(Clone, Copy)]
-pub(super) struct Reservations {
-    pub(super) reserved: Signal<HashSet<String>>,
-    pub(super) pending: Signal<HashSet<String>>,
-    pub(super) message: Signal<SharedString>,
+pub(in crate::features::new_drama) struct Reservations {
+    pub(in crate::features::new_drama) reserved: Signal<HashSet<String>>,
+    pub(in crate::features::new_drama) pending: Signal<HashSet<String>>,
+    pub(in crate::features::new_drama) message: Signal<SharedString>,
 }
 
 impl Reservations {
-    pub(super) fn observe(session: SessionHandle) -> Self {
+    pub(in crate::features::new_drama) fn observe(session: SessionHandle) -> Self {
         let state = Self {
             reserved: signal(HashSet::new()),
             pending: signal(HashSet::new()),
@@ -33,7 +33,12 @@ impl Reservations {
         state
     }
 
-    pub(super) fn reserve(self, session: SessionHandle, nav: Navigation, item: CalendarItem) {
+    pub(in crate::features::new_drama) fn reserve(
+        self,
+        session: SessionHandle,
+        nav: Navigation,
+        item: CalendarItem,
+    ) {
         let state = session.with(|session| session.state.clone());
         if state.settings().account.is_none() {
             nav.push(Route::Account);

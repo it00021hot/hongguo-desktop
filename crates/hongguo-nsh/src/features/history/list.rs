@@ -69,6 +69,8 @@ pub(super) fn content(
                         .gap_2()
                         .children(HistoryTab::ALL.into_iter().map(move |value| {
                             crate::features::library::presentation::history_filter(move || value.label(), computed(move || tab.get() == value))
+                                .min_h(ui::controls::control_height)
+                                .h(ui::controls::control_height)
                                 .on_press(move || tab.set(value))
                         }))),
                 )

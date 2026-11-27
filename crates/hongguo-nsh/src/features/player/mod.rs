@@ -33,7 +33,7 @@ pub(crate) use start_action::{StartAction, start_action};
 mod transport;
 mod window_controls;
 pub(crate) use start::start_episode;
-pub(crate) use start::{resolve_history_start, resolve_start};
+pub(crate) use start::{resolve_feed_start, resolve_history_start, resolve_start};
 
 use crate::{
     bridge,
@@ -85,6 +85,19 @@ fn content(
     feed: Option<navigation::FeedNavigation>,
 ) -> impl IntoElement {
     let selection = signal((id, episode));
+    let playlist = feed.and_then(navigation::FeedNavigation::playlist);
+    let own_album = stored(match &page_route {
+        Route::AlbumPlayer(id, _) => Some(id.clone()),
+        _ => None,
+    });
+    let open_linked = start_action::start_action_for(session, nav, Some(page_route.clone()));
+    let previous_clip = stored(selection.get_untracked());
+    effect(move || {
+        let next = selection.get();
+        if previous_clip.replace(next.clone()) != next {
+            open_linked.cancel();
+        }
+    });
     let direction = feed.map_or_else(|| signal(1), navigation::FeedNavigation::direction);
     let definition = signal(None::<u32>);
     let reset_definition = signal(false);
@@ -159,11 +172,18 @@ fn content(
     let retry = move || {
         error_state::retry(source.error().as_ref(), || {
             if let Some((vid, active_def)) = source.with(|source| {
-                source.map(|playback| (playback.history.vid.clone(), playback.active_definition))
+                let (id, episode) = selection.get_untracked();
+                source
+                    .filter(|playback| {
+                        playback.history.series_id == id && playback.history.vid_index == episode
+                    })
+                    .map(|playback| (playback.history.vid.clone(), playback.active_definition))
             }) {
                 hongguo_service::play_service::online::invalidate_stream(&vid, active_def);
+                pending_seek.set(Some(position.get_untracked().0));
+            } else {
+                pending_seek.set(None);
             }
-            pending_seek.set(Some(position.get_untracked().0));
             source.refetch();
         });
     };
@@ -265,16 +285,24 @@ fn content(
     })
     .with_handoff(feed.map(navigation::FeedNavigation::quiet_handoff));
     provide_context(chrome);
-    let apply_series = move |id: String, episode: u32| {
+    let is_highlight = computed(move || {
+        source.with(|source| source.is_some_and(|source| source.highlight.is_some()))
+    });
+    let manual_label = signal(None::<SharedString>);
+    let apply_series = move |id: String, episode: u32, label: Option<SharedString>| {
         if !transport::change_source(&selection.get_untracked(), &(id.clone(), episode)) {
             return;
         }
         chrome.begin_handoff();
         chrome.arm_status_grace();
         adopt_staged_playback(staged_playback, staged_layer, source, &id, episode);
+        let reset_position = label.is_none();
         batch(|| {
+            manual_label.set(label);
             selection.set((id, episode));
-            position.set((0.0, 0.0));
+            if reset_position {
+                position.set((0.0, 0.0));
+            }
             pending_seek.set(None);
             reset_definition.set(false);
             paused.set(false);
@@ -289,14 +317,14 @@ fn content(
             let Some((id, episode)) = feed.playable().get() else {
                 return;
             };
-            apply_series(id, episode);
+            apply_series(id, episode, feed.take_switch_label());
         });
     }
     let relay = relay::observe(
         session,
         selection,
         relay::State {
-            active: play_allowed,
+            active: computed(move || play_allowed.get() && !is_highlight.get()),
             downloading: computed(move || download_open.get()),
             source: computed(move || {
                 if source.loading() || source.error().is_some() {
@@ -314,7 +342,7 @@ fn content(
         },
         feed,
         relay_notice,
-        move |series, episode| apply_series(series.series_id, episode),
+        move |series, episode| apply_series(series.series_id, episode, None),
     );
     let relay_pending = relay.pending();
     let busy = computed(move || source.loading() || relay_pending.get());
@@ -323,12 +351,19 @@ fn content(
             return;
         }
         direction.set(1);
+        if is_highlight.get_untracked() {
+            if !feed.is_some_and(navigation::FeedNavigation::advance_feed) {
+                paused.set(true);
+            }
+            return;
+        }
         if let Some(next) = source.with(|source| source.and_then(|source| source.next_episode)) {
             chrome.begin_handoff();
             chrome.arm_status_grace();
             let series = selection.get_untracked().0;
             adopt_staged_playback(staged_playback, staged_layer, source, &series, next);
             batch(|| {
+                manual_label.set(None);
                 selection.update(|(_, episode)| *episode = next);
                 position.set((0.0, 0.0));
                 pending_seek.set(None);
@@ -346,6 +381,22 @@ fn content(
             && position.get().0 > 0.0
         {
             chrome.mark_played();
+        }
+    });
+    effect(move || {
+        if manual_label.get().is_some()
+            && !chrome.silent_handoff()
+            && !source.loading()
+            && source.error().is_none()
+            && source.with(|source| {
+                source.is_some_and(|source| {
+                    selection.with(|(id, episode)| {
+                        id == &source.history.series_id && episode == &source.history.vid_index
+                    })
+                })
+            })
+        {
+            manual_label.set(None);
         }
     });
     let prefetch_armed = stored(None::<(String, u32)>);
@@ -494,6 +545,20 @@ fn content(
     );
     let muted = preferences.muted;
     let volume = preferences.volume;
+    let episode_indices = computed(move || {
+        source.with(|source| {
+            source
+                .filter(|source| {
+                    source.highlight.is_none() && source.history.series_id == selection.get().0
+                })
+                .map(|source| source.episode_indices.clone())
+                .unwrap_or_default()
+        })
+    });
+    let adjacent_episode = move |delta: i32| {
+        episode_indices
+            .with(|episodes| transport::adjacent_episode(episodes, selection.get().1, delta))
+    };
     let menus = stage::MenuState {
         open: menu_open,
         definitions: computed(move || {
@@ -512,19 +577,16 @@ fn content(
             })
         }),
         seasons: seasons.state,
-        episodes: computed(move || {
-            source.with(|source| {
-                source
-                    .map(|source| source.episode_indices.clone())
-                    .unwrap_or_default()
-            })
-        }),
+        episodes: episode_indices,
         current_episode: computed(move || selection.get().1),
         volume,
         muted,
     };
     let select_episode = move |episode| {
-        if busy.get() || !transport::change_episode(selection.get_untracked().1, episode) {
+        if relay_pending.get()
+            || !episode_indices.with(|indices| indices.contains(&episode))
+            || !transport::change_episode(selection.get_untracked().1, episode)
+        {
             return;
         }
         chrome.begin_handoff();
@@ -532,35 +594,38 @@ fn content(
         let series = selection.get_untracked().0;
         adopt_staged_playback(staged_playback, staged_layer, source, &series, episode);
         batch(|| {
+            manual_label.set(Some(
+                tr("player.episodeNo")
+                    .replace("{index}", &episode.to_string())
+                    .into(),
+            ));
             direction.set(if episode < selection.get_untracked().1 {
                 -1
             } else {
                 1
             });
             selection.update(|(_, selected)| *selected = episode);
-            position.set((0.0, 0.0));
             pending_seek.set(None);
             reset_definition.set(false);
             paused.set(false);
         })
     };
+    let step_episode = move |delta| {
+        if let Some(target) = adjacent_episode(delta) {
+            select_episode(target);
+        } else if delta > 0 && !busy.get() {
+            next();
+        }
+    };
     let gestures = navigation::Controller::new(
         navigation::State {
-            active: computed(move || visible.get() && !busy.get()),
+            active: computed(move || visible.get() && !relay_pending.get()),
             blocked: panels_open,
             series: computed(move || selection.get().0),
             direction,
         },
         feed,
-        move |direction| {
-            if direction > 0 {
-                next();
-            } else if let Some(previous) =
-                source.with(|source| source.and_then(|source| source.previous_episode))
-            {
-                select_episode(previous);
-            }
-        },
+        step_episode,
     )
     .on_activity(move || chrome.wake());
     let in_binge = gestures.in_binge();
@@ -618,7 +683,7 @@ fn content(
         &crate::shortcuts::Action::ALL,
         computed(move || {
             visible.get()
-                && !busy.get()
+                && !relay_pending.get()
                 && menu_open.get().is_none()
                 && !danmaku.settings().open.get()
                 && !download_open.get()
@@ -628,9 +693,12 @@ fn content(
         move |action| {
             chrome.wake();
             match action {
-                crate::shortcuts::Action::PlayPause => paused.update(|paused| *paused = !*paused),
+                crate::shortcuts::Action::PlayPause if !busy.get() => {
+                    paused.update(|paused| *paused = !*paused);
+                }
+                crate::shortcuts::Action::PlayPause => {}
                 crate::shortcuts::Action::SeekBack | crate::shortcuts::Action::SeekForward => {
-                    if pending_seek.get_untracked().is_some() {
+                    if busy.get() || pending_seek.get_untracked().is_some() {
                         return;
                     }
                     let (at, duration) = position.get_untracked();
@@ -672,6 +740,16 @@ fn content(
         next,
     );
     let information = info::observe(source, overlay);
+    let related_drama = computed(move || {
+        source.with(|source| {
+            source
+                .and_then(|source| source.highlight.as_ref()?.related.clone())
+                .filter(|related| {
+                    related.kind != hongguo_common::model::RelatedKind::Album
+                        || own_album.with(|own| own.as_ref() != Some(&related.series_id))
+                })
+        })
+    });
     let controls_state = stage::ControlState {
         geometry,
         caption: computed(move || information.get().into()),
@@ -700,13 +778,31 @@ fn content(
         busy,
         seek_pending: computed(move || pending_seek.get().is_some()),
         has_previous: computed(move || {
-            source.with(|source| source.is_some_and(|source| source.previous_episode.is_some()))
+            playlist.map_or_else(|| adjacent_episode(-1).is_some(), |items| items.get().0)
         }),
         has_next: computed(move || {
-            source.with(|source| source.is_some_and(|source| source.next_episode.is_some()))
+            playlist.map_or_else(|| adjacent_episode(1).is_some(), |items| items.get().1)
+        }),
+        episode_busy: computed(move || {
+            relay_pending.get() || (playlist.is_none() && episode_indices.with(Vec::is_empty))
         }),
         episode_count: computed(move || {
-            source.with(|source| source.map_or(0, |source| source.history.episode_cnt))
+            source.with(|source| {
+                source
+                    .filter(|source| source.highlight.is_none())
+                    .map_or(0, |source| source.history.episode_cnt)
+            })
+        }),
+        is_highlight,
+        playlist: playlist.is_some(),
+        related_drama,
+        linked_notice: computed(move || open_linked.notice()),
+        linked_pending: computed(move || {
+            related_drama.with(|related| {
+                related
+                    .as_ref()
+                    .is_some_and(|related| open_linked.pending(&related.series_id))
+            })
         }),
         can_binge: gestures.can_binge(),
         in_binge,
@@ -725,14 +821,10 @@ fn content(
         chrome.wake();
         use stage::ControlAction;
         match action {
-            ControlAction::Next => next(),
-            ControlAction::Previous => {
-                if let Some(previous) =
-                    source.with(|source| source.and_then(|source| source.previous_episode))
-                {
-                    select_episode(previous);
-                }
-            }
+            ControlAction::Next if playlist.is_some() => gestures.step_keyboard(1),
+            ControlAction::Previous if playlist.is_some() => gestures.step_keyboard(-1),
+            ControlAction::Next => step_episode(1),
+            ControlAction::Previous => step_episode(-1),
             ControlAction::Seek(at) => {
                 if !busy.get() && at.is_finite() && at >= 0.0 {
                     let duration = position.get_untracked().1;
@@ -765,6 +857,35 @@ fn content(
             }
             ControlAction::SelectEpisode(episode) => select_episode(episode),
             ControlAction::EnterBinge => gestures.enter_binge(),
+            ControlAction::OpenRelatedDrama => {
+                if let Some(related) = controls_state.related_drama.get_untracked()
+                    && related.series_id != selection.get_untracked().0
+                {
+                    match related.kind {
+                        hongguo_common::model::RelatedKind::Drama => {
+                            open_linked.start_linked(related.series_id)
+                        }
+                        hongguo_common::model::RelatedKind::Album => {
+                            if let Some(entry) = source.with(|source| {
+                                source.map(|source| crate::navigation::AlbumEntry {
+                                    series_id: source.history.series_id.clone(),
+                                    vid: source.history.vid.clone(),
+                                    episode: source
+                                        .highlight
+                                        .as_ref()
+                                        .and_then(|clip| clip.episode_number)
+                                        .or_else(|| {
+                                            (source.history.vid_index > 1)
+                                                .then_some(source.history.vid_index)
+                                        }),
+                                })
+                            }) {
+                                nav.push(Route::AlbumPlayer(related.series_id, entry));
+                            }
+                        }
+                    }
+                }
+            }
             ControlAction::ExitBinge => gestures.exit_binge(),
             ControlAction::RetrySeasons => seasons.retry(),
             ControlAction::ReserveSeason(id) => seasons.reserve(session, nav, id),
@@ -779,7 +900,8 @@ fn content(
                     if let Some(feed) = feed {
                         feed.lock_series(series.series_id.clone());
                     }
-                    apply_series(series.series_id.clone(), episode);
+                    let label = Some(SharedString::from(series.title.clone()));
+                    apply_series(series.series_id.clone(), episode, label);
                     if let Some(feed) = feed {
                         let _ = feed.request_goto(series, episode);
                     }
@@ -794,7 +916,11 @@ fn content(
                     });
                 }
             }
-            ControlAction::Download => download_open.set(true),
+            ControlAction::Download => {
+                if !is_highlight.get_untracked() {
+                    download_open.set(true);
+                }
+            }
             ControlAction::ToggleMute => muted.update(|muted| *muted = !*muted),
             ControlAction::Fullscreen => {
                 menu_open.set(None);
@@ -901,10 +1027,10 @@ fn content(
                             source.with(|source| source.is_some()),
                         )
                 },
-                move || ui::status(move || tr("common.loading")),
+                move || ui::loading::indicator("common.loading"),
             ))
             .child(when(
-                move || source.error().is_some() || !failure.get().is_empty(),
+                move || source.state() == ResourceState::Errored || !failure.get().is_empty(),
                 move || {
                     view().child(error_state::panel(
                         computed(move || source.error()),
@@ -914,7 +1040,11 @@ fn content(
                 },
             ))
             .child(when(
-                move || (buffering.get() || chrome.silent_handoff()) && !chrome.suppress_status(),
+                move || {
+                    (buffering.get() || chrome.silent_handoff())
+                        && (manual_label.get().is_none() || !chrome.silent_handoff())
+                        && !chrome.suppress_status()
+                },
                 move || ui::status(move || tr("player.bufferingShort")),
             ))
             .child(ui::status(notice))
@@ -925,6 +1055,13 @@ fn content(
             .child(ui::status(move || danmaku.notice())),
         computed(move || controls_state.binge_bar_visible()),
     )
+    .child(ui::loading::switch_cue(computed(move || {
+        let label = manual_label.get()?;
+        ((source.loading() || chrome.silent_handoff())
+            && source.state() != ResourceState::Errored
+            && failure.get().is_empty())
+        .then_some(label)
+    })))
     .child(download::sheet(session, nav, download_open, source))
 }
 

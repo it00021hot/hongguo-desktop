@@ -2,11 +2,19 @@ pub(crate) use crate::features::DetailPrefill;
 use nsh_core::prelude::*;
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AlbumEntry {
+    pub(crate) series_id: String,
+    pub(crate) vid: String,
+    pub(crate) episode: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Route {
     Catalog,
     Detail(String),
     DetailWithPrefill(DetailPrefill),
     Creator(String),
+    AlbumPlayer(String, AlbumEntry),
     Player(String, u32),
     History,
     Settings,
@@ -100,7 +108,10 @@ impl Navigation {
     }
     pub(crate) fn section(self) -> Route {
         self.0.with(|routes| {
-            if matches!(routes.last(), Some(Route::Player(_, _))) {
+            if matches!(
+                routes.last(),
+                Some(Route::Player(_, _) | Route::AlbumPlayer(_, _))
+            ) {
                 return Route::Catalog;
             }
             routes
@@ -114,7 +125,7 @@ impl Navigation {
     pub(crate) fn is_selected(self, section: &Route) -> bool {
         self.0.with(|routes| match routes.last() {
             Some(Route::Detail(_) | Route::DetailWithPrefill(_) | Route::Creator(_)) => false,
-            Some(Route::Player(_, _)) => *section == Route::Catalog,
+            Some(Route::Player(_, _) | Route::AlbumPlayer(_, _)) => *section == Route::Catalog,
             _ => self.section() == *section,
         })
     }

@@ -39,7 +39,8 @@ pub(crate) fn personal_login_required(
 
 pub(crate) fn personal_tab(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
     surface(ButtonVariant::Quiet)
-        .min_h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
+        .min_h(crate::ui::controls::control_height)
+        .h(crate::ui::controls::control_height)
         .px_4()
         .py_1p5()
         .rounded_full()

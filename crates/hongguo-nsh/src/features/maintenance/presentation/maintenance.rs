@@ -99,8 +99,8 @@ pub(crate) fn maintenance_icon_action(
     let label = label.into_reactive();
     surface(ButtonVariant::Quiet)
         .accessibility_label(move || Some(label.get()))
-        .min_h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
-        .size(move || px(if is_desktop() { 36.0 } else { 48.0 }))
+        .min_h(crate::ui::controls::control_height)
+        .size(crate::ui::controls::control_height)
         .p_0()
         .child(maintenance_icon(glyph))
 }
@@ -112,6 +112,9 @@ pub(crate) fn maintenance_action(
     surface(ButtonVariant::Primary)
         .flex_row()
         .gap_2()
+        .min_h(crate::ui::controls::control_height)
+        .h(crate::ui::controls::control_height)
+        .py_0()
         .px_3()
         .child(maintenance_icon(glyph))
         .child(text(label).text_sm().font_weight(FontWeight::MEDIUM))
@@ -122,8 +125,8 @@ pub(crate) fn maintenance_destructive(
 ) -> nsh_base::ButtonElement {
     maintenance_action(label, MaintenanceIcon::Delete)
         .px_2p5()
-        .min_h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
-        .h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
+        .min_h(crate::ui::controls::control_height)
+        .h(crate::ui::controls::control_height)
         .py_1p5()
         .bg(move || theme().destructive)
         .text_color(move || {

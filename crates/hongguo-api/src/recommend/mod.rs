@@ -3,6 +3,7 @@
 mod cache;
 mod model;
 mod parse;
+pub(crate) use parse::recommend_feed_entry;
 mod session;
 
 use serde_json::Value;
@@ -20,7 +21,7 @@ use cache::{
     TAB_CONFIG_TTL, cache_feed_tabs_insert, cache_tab_config_insert, cached_feed_tabs,
     cached_tab_config, flex_str, known_tab_config, parse_feed_tabs,
 };
-use parse::{parse_recommend_feed, recommend_feed_entry};
+use parse::{is_follow_video_cell, parse_feed_cell_items, parse_recommend_feed};
 use session::{
     FEED_IMAGE_SHRINK, NPS_INSERT_RANK_JSON, RECOMMEND_EXTRA, rec_filter_info_list,
     recent_impressions, session_runtime_pairs, session_uuid,
@@ -37,12 +38,17 @@ pub async fn fetch_recommend_feed(
         let (cfg, mut page) = fetch_tab_first_page(tab, env).await?;
         // 首批偶发空批：带着首页下发的会话直接走 cell/change 补拉
         if page.items.is_empty()
+            && page.has_more
             && !page.session_id.is_empty()
-            && let Ok(fill) = recommend_cell_change(tab, &cfg, &page.session_id, 0, &[], env).await
+            && let Ok(fill) =
+                recommend_cell_change(tab, &cfg, &page.session_id, page.next_offset, &[], env).await
         {
             page.items = fill.items;
             page.has_more = fill.has_more;
             page.next_offset = fill.next_offset;
+            if !fill.session_id.is_empty() {
+                page.session_id = fill.session_id;
+            }
         }
         cache_tab_config_insert(tab, cfg);
         page
@@ -60,6 +66,29 @@ pub async fn fetch_recommend_feed(
 /// 推荐 tab 在顶栏里的 tab_type：顶栏列表请求的源 tab（其响应 `tab_item[]`
 /// 即完整顶栏），也是种子语义的归属 tab（「你的内容」只进推荐 tab——壳侧口径）。
 const RECOMMEND_TAB_TYPE: &str = "16";
+const FOLLOW_TAB_TYPE: &str = "45";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FirstPageMode {
+    ColdPreload,
+    ChannelSwitch,
+}
+
+impl FirstPageMode {
+    fn for_tab(tab: &str) -> Self {
+        match tab {
+            RECOMMEND_TAB_TYPE | FOLLOW_TAB_TYPE | "36" | "39" => Self::ChannelSwitch,
+            _ => Self::ColdPreload,
+        }
+    }
+
+    fn origin(self) -> &'static str {
+        match self {
+            Self::ColdPreload => SINFONLINEC_API_ORIGIN,
+            Self::ChannelSwitch => LQ_API_ORIGIN,
+        }
+    }
+}
 
 /// 顶栏 tab 列表（服务端下发，一次 cr=4 请求的 `tab_item[]` 即完整顶栏）。
 /// 单 tab 结果视为身份未就绪：不缓存、返回空表由调用方回落；复验失败沿用旧值。
@@ -124,15 +153,14 @@ async fn resolve_tab_config(tab: &str, env: &ApiEnv) -> AppResult<RecommendTabCo
             None
         }
     };
-    let value = fetched.or_else(|| known_tab_config(tab)).ok_or_else(|| {
-        AppError::Media(format!("未知推荐 tab 且配置不可用: {tab}（应为 16/36/39）"))
-    })?;
+    let value = fetched
+        .or_else(|| known_tab_config(tab))
+        .ok_or_else(|| AppError::Media(format!("推荐 tab 配置不可用: {tab}")))?;
     cache_tab_config_insert(tab, value.clone());
     Ok(value)
 }
 
-/// `GET bookmall/tab/v?client_req_type=4`（lq 域）——顶栏塌缩表专用；
-/// cr=1028（书城形态）返回的是书城九 tab，不是本仓首页要的表。
+/// `GET bookmall/tab/v?client_req_type=4`（lq 域）：顶栏列表和切频道共用。
 async fn request_bookstore_tab(tab: &str, env: &ApiEnv) -> AppResult<Value> {
     let q: Vec<(String, String)> = [
         ("auth_aweme", "true"),
@@ -256,7 +284,18 @@ async fn fetch_tab_first_page(
     tab: &str,
     env: &ApiEnv,
 ) -> AppResult<(RecommendTabConfig, super::discover::FeedPage)> {
-    let value = request_feed_tab_first_page(tab, env).await?;
+    let value = match FirstPageMode::for_tab(tab) {
+        // APK 中 1028 是预载刷新，可能只回频道元数据；进入指定频道用切换请求。
+        FirstPageMode::ChannelSwitch => request_bookstore_tab(tab, env).await?,
+        FirstPageMode::ColdPreload => request_feed_tab_first_page(tab, env).await?,
+    };
+    parse_tab_first_page(tab, &value)
+}
+
+fn parse_tab_first_page(
+    tab: &str,
+    value: &Value,
+) -> AppResult<(RecommendTabConfig, super::discover::FeedPage)> {
     let tabs = value
         .pointer("/data/tab_item")
         .and_then(Value::as_array)
@@ -265,63 +304,65 @@ async fn fetch_tab_first_page(
         .iter()
         .find(|t| flex_str(t.get("tab_type")).as_deref() == Some(tab))
         .ok_or_else(|| AppError::Media(format!("推荐 tab 响应无 tab={tab}")))?;
-    // 多个 cell 里按内容取推荐流（嵌套 video_data 非空的那个），不能按位置
-    // 取——[0] 可能是空的金刚位运营卡。
-    let mut cell_id = String::new();
-    let mut items = Vec::new();
     let cells = item
         .get("cell_data")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    for cell in cells {
-        let mut cell_items = Vec::new();
-        for inner in cell
-            .get("cell_data")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
-            for raw in inner
-                .get("video_data")
-                .and_then(Value::as_array)
-                .map(Vec::as_slice)
-                .unwrap_or_default()
-            {
-                if let Some(it) = recommend_feed_entry(raw) {
-                    cell_items.push(it);
-                }
-            }
-        }
-        if cell_items.is_empty() {
-            continue;
-        }
-        if cell_id.is_empty() {
-            cell_id = flex_str(cell.get("cell_id_str"))
-                .or_else(|| flex_str(cell.get("cell_id")))
-                .unwrap_or_default();
-            items = cell_items;
-        }
-    }
+    let following = tab == FOLLOW_TAB_TYPE;
+    // 关注只消费作品 cell，不把同页的推荐关注卡片视为关注作品。
+    let (feed_cell, items) = if following {
+        let cell = cells.iter().find(|cell| is_follow_video_cell(cell));
+        (
+            cell,
+            parse_feed_cell_items(cell.and_then(|cell| cell.get("cell_data")), true),
+        )
+    } else {
+        cells
+            .iter()
+            .find_map(|cell| {
+                let items = parse_feed_cell_items(cell.get("cell_data"), false);
+                (!items.is_empty()).then_some((Some(cell), items))
+            })
+            .unwrap_or_else(|| (cells.first(), Vec::new()))
+    };
     let bookstore_id = flex_str(item.get("bookstore_id"))
         .filter(|s| !s.is_empty())
         .ok_or_else(|| AppError::Media(format!("推荐 tab 配置缺 bookstore_id: tab={tab}")))?;
-    if cell_id.is_empty() {
-        // 无带条目的 cell（空金刚位场景）：退回 [0] 的 id，空首批由调用方补拉兜底
-        cell_id = flex_str(item.pointer("/cell_data/0/cell_id_str"))
-            .or_else(|| flex_str(item.pointer("/cell_data/0/cell_id")))
-            .unwrap_or_default();
-    }
     let cfg = RecommendTabConfig {
-        cell_id,
+        cell_id: feed_cell
+            .and_then(|cell| {
+                flex_str(cell.get("cell_id_str")).or_else(|| flex_str(cell.get("cell_id")))
+            })
+            .unwrap_or_default(),
         bookstore_id,
     };
-    // 流的分页真值由翻页 cell/change 给，这里乐观置 true，翻到空页自然停；
-    // 首批无 offset，首次翻页 offset=0，之后按响应 next_offset 递进
+    // 首页未带 has_more 时，仅在同时有正式定位和会话时才可用 cell/change 继续。
+    let session_id = flex_str(item.get("session_id")).unwrap_or_default();
+    let has_more = !cfg.cell_id.is_empty()
+        && !session_id.is_empty()
+        && (if following {
+            feed_cell
+                .and_then(|cell| cell.get("has_more"))
+                .and_then(Value::as_bool)
+        } else {
+            None
+        })
+        .or_else(|| item.get("has_more").and_then(Value::as_bool))
+        .unwrap_or(true);
+    let offset = item.get("next_offset").and_then(Value::as_i64).unwrap_or(0);
+    let next_offset = if following {
+        feed_cell
+            .and_then(|cell| cell.get("next_offset"))
+            .and_then(Value::as_i64)
+            .unwrap_or(offset)
+    } else {
+        offset
+    };
     let page = super::discover::FeedPage {
-        session_id: flex_str(item.get("session_id")).unwrap_or_default(),
-        has_more: true,
-        next_offset: 0,
+        session_id,
+        has_more,
+        next_offset,
         items,
     };
     Ok((cfg, page))
@@ -417,11 +458,108 @@ async fn recommend_cell_change(
             .map(|(k, v)| (k.to_string(), v)),
     )
     .collect();
-    // 翻页与 tab 首页同族同源（SINFONLINEC_API_ORIGIN）：会话是首页响应下发的，
+    // 翻页与 tab 首页同源：会话是首页响应下发的，
     // 跨域复用同一会话有被拒风险
-    let bytes = api_call_reading(SINFONLINEC_API_ORIGIN, RANK_CELL_PATH, None, &q, env).await?;
+    let bytes = api_call_reading(
+        FirstPageMode::for_tab(tab).origin(),
+        RANK_CELL_PATH,
+        None,
+        &q,
+        env,
+    )
+    .await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析推荐流失败: {e}")))?;
     check_code(&value)?;
-    parse_recommend_feed(value.get("data"))
+    parse_recommend_feed(value.get("data"), tab == FOLLOW_TAB_TYPE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn channel_entry_and_cold_start_keep_distinct_routes() {
+        for tab in ["16", "45", "36", "39"] {
+            assert_eq!(FirstPageMode::for_tab(tab), FirstPageMode::ChannelSwitch);
+            assert_eq!(FirstPageMode::for_tab(tab).origin(), LQ_API_ORIGIN);
+        }
+        assert_eq!(FirstPageMode::for_tab("other"), FirstPageMode::ColdPreload);
+        assert_eq!(
+            FirstPageMode::for_tab("other").origin(),
+            SINFONLINEC_API_ORIGIN
+        );
+    }
+
+    #[test]
+    fn channel_parser_picks_requested_feed_and_excludes_banners() {
+        let value = json!({"data": {"tab_item": [
+            {"tab_type": 16, "bookstore_id": "8", "cell_data": []},
+            {"tab_type": 36, "bookstore_id": "2", "session_id": "mock-session", "cell_data": [
+                {"cell_id": "5", "cell_data": []},
+                {"cell_id": "6", "cell_data": [{"video_data": [
+                    {"series_id": "9", "video_detail": {"series_title": "Comic only", "content_type": 1}}
+                ]}]}
+            ]}
+        ]}});
+        let (cfg, page) = parse_tab_first_page("36", &value).unwrap();
+        assert_eq!(cfg.cell_id, "6");
+        assert_eq!(cfg.bookstore_id, "2");
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].title, "Comic only");
+        assert_eq!(page.session_id, "mock-session");
+        assert!(page.has_more);
+    }
+
+    #[test]
+    fn following_uses_the_work_video_not_its_related_album() {
+        let post = json!({"series_id": "98", "vid": "99", "cell_extra_data": {
+            "rec_filter_info": {"filter_id_map": {"pugc_id": "23", "album_id": "98"}}
+        }, "video_detail": {
+            "series_title": "Creator's post",
+            "related_album_id": 98,
+            "ugc_user_info": {"base_info": {"user_name": "Creator"}},
+            "bottom_bar": {"text": ["Drama", "10 episodes"]},
+            "video_list": [{"series_id": "23", "vid": "24", "content_type": 1004, "cover": "post-cover"}]
+        }});
+        let value = json!({"data": {"tab_item": [
+            {"tab_type": "45", "bookstore_id": 2, "session_id": "fake-session", "has_more": true,
+             "next_offset": 300, "cell_data": [
+                {"show_type": 647, "cell_id": 6, "cell_data": [{"video_data": [post.clone()]}]},
+                {"show_type": 648, "cell_id": 7, "next_offset": 3, "has_more": true, "cell_data": [post.clone()]}
+            ]}
+        ]}});
+        let (cfg, page) = parse_tab_first_page(FOLLOW_TAB_TYPE, &value).unwrap();
+        assert_eq!(cfg.cell_id, "7");
+        assert!(page.has_more);
+        assert_eq!(page.next_offset, 3);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].series_id, "23");
+        assert_eq!(page.items[0].vid, "24");
+        assert_eq!(page.items[0].content_type, 1004);
+        assert_eq!(page.items[0].cover, "post-cover");
+        let highlight = page.items[0].highlight.as_ref().unwrap();
+        assert_eq!(highlight.author, "Creator");
+        let related = highlight.related.as_ref().unwrap();
+        assert_eq!(related.series_id, "98");
+        assert_eq!(related.kind, hongguo_common::model::RelatedKind::Drama);
+        assert_eq!(related.label, "Drama · 10 episodes");
+
+        let more = json!({"cell_view": {"cell_data": [{"show_type": 648, "cell_data": [post]}]},
+                          "session_id": "fake-session", "has_more": false, "next_offset": 6});
+        let more = parse_recommend_feed(Some(&more), true).unwrap();
+        assert_eq!(more.items, page.items);
+        assert!(!more.has_more);
+    }
+
+    #[test]
+    fn an_empty_channel_without_a_feed_cell_has_no_continuation() {
+        let value = json!({"data": {"tab_item": [
+            {"tab_type": "45", "bookstore_id": 2, "session_id": "mock-session", "cell_data": []}
+        ]}});
+        let (_, page) = parse_tab_first_page("45", &value).unwrap();
+        assert!(page.items.is_empty());
+        assert!(!page.has_more);
+    }
 }

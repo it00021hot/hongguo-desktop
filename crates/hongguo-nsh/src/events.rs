@@ -9,6 +9,7 @@ use tokio::sync::broadcast::error::RecvError;
 pub(crate) struct SessionHandle {
     session: Stored<Arc<Session>>,
     identity: Signal<u64>,
+    account_profile: Signal<u64>,
     downloads: Signal<u64>,
     merges: Signal<u64>,
     library: Signal<u64>,
@@ -30,6 +31,7 @@ impl SessionHandle {
         let handle = Self {
             session: stored(session),
             identity: signal(0),
+            account_profile: signal(0),
             downloads: signal(0),
             merges: signal(0),
             library: signal(0),
@@ -48,6 +50,9 @@ impl SessionHandle {
                 match events.recv().await {
                     Ok(ServiceEvent::DeviceRegistered(_)) => {
                         handle.identity.update(|version| *version += 1)
+                    }
+                    Ok(ServiceEvent::AccountProfileChanged) => {
+                        handle.account_profile.update(|version| *version += 1)
                     }
                     Ok(ServiceEvent::LoginMfa(event)) => {
                         handle.login_notice.set(match event {
@@ -113,6 +118,7 @@ impl SessionHandle {
                             "[NSH events] subscriber lagged by {count}; refreshing snapshots"
                         );
                         handle.notify_identity();
+                        handle.account_profile.update(|version| *version += 1);
                         handle.notify_downloads();
                         handle.notify_merges();
                         handle.notify_library();
@@ -130,6 +136,9 @@ impl SessionHandle {
     }
     pub(crate) fn identity(self) -> u64 {
         self.identity.get()
+    }
+    pub(crate) fn account_profile(self) -> u64 {
+        self.account_profile.get()
     }
     pub(crate) fn playback_preferences(self) -> crate::features::player::PreferenceSignals {
         self.playback

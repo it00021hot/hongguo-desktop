@@ -89,6 +89,7 @@ pub(super) fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
             heat_text,
             badge,
             content_type: int_field(raw, "content_type"),
+            highlight: None,
         });
     }
     Ok(FeedPage {

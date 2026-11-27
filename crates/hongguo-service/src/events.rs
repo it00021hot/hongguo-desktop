@@ -42,6 +42,8 @@ pub enum ServiceEvent {
     OnlineProgress(OnlineProgressEvent),
     /// 登录 MFA 后台状态（`login-mfa-state`）。
     LoginMfa(LoginMfaStateEvent),
+    /// 当前登录会话的展示资料已刷新；不代表账号或设备身份变化。
+    AccountProfileChanged,
     /// 更新提醒有新条目（`follow-notices`，载荷 = 本次新增的通知）。
     FollowNotices(FollowNoticesEvent),
     /// 设备注册完成（载荷 = 新 iid），

@@ -48,3 +48,21 @@ pub async fn toggle(id: &str, selected: bool, state: &AppState) -> AppResult<()>
     require_account(state)?;
     reservation::reserve_series(id, selected, &state.api_env()).await
 }
+
+pub use reservation::{
+    SelectorId, SelectorOption, SelectorRow, SelectorSelection, UpcomingAudience, UpcomingFilters,
+    UpcomingItem, UpcomingPage,
+};
+
+pub async fn upcoming(
+    filters: &UpcomingFilters,
+    offset: i64,
+    session_id: Option<&str>,
+    state: &AppState,
+) -> AppResult<UpcomingPage> {
+    reservation::fetch_upcoming(filters, offset, session_id, &state.api_env()).await
+}
+
+pub async fn upcoming_panel(state: &AppState) -> AppResult<Vec<SelectorRow>> {
+    reservation::fetch_upcoming_panel(&state.api_env()).await
+}

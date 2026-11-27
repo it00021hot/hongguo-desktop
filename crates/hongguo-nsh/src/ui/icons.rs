@@ -54,6 +54,7 @@ pub(crate) enum Icon {
     ImagePlus,
     Bell,
     Check,
+    Copy,
     CheckCheck,
     StarOff,
     HeartOff,
@@ -70,6 +71,7 @@ pub(crate) enum Icon {
 
 pub(crate) fn icon(name: Icon) -> Svg {
     let markup = match name {
+        Icon::Copy => include_str!("icons/copy.svg"),
         Icon::ChevronLeft => include_str!("icons/chevron-left.svg"),
         Icon::MonitorPlay => include_str!("icons/monitor-play.svg"),
         Icon::VideoPlay => include_str!("icons/video-play.svg"),

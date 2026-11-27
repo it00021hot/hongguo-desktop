@@ -45,6 +45,7 @@ pub struct EpisodeList {
     /// 剧的条目类型（video_data.content_type：漫剧 1004 / 真人剧 1 / 书城条目 1001…）；
     /// 真播批量分组 key 与单集请求 content_type 的持久来源；0 = 响应未带（取流走单集占位值）。
     pub content_type: i64,
+    pub highlight: Option<hongguo_common::model::Highlight>,
 }
 
 /// 详情页头部的剧集元信息。

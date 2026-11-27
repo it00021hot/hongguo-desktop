@@ -42,11 +42,7 @@ pub(crate) fn comment_more(
         .disabled(move || pending.get())
         .child(when(
             move || pending.get(),
-            move || {
-                crate::features::browse::presentation::browse_loading::browse_spinner()
-                    .size(px(14.0))
-                    .mr_1()
-            },
+            move || crate::ui::loading::spinner().size(px(14.0)).mr_1(),
         ))
         .child(text(label).text_sm().font_weight(FontWeight::MEDIUM))
 }

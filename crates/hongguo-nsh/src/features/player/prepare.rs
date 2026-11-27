@@ -18,8 +18,8 @@ pub(super) struct Playback {
     pub(super) active_definition: u32,
     pub(super) automatic_definition: bool,
     pub(super) online: bool,
-    pub(super) previous_episode: Option<u32>,
     pub(super) episode_indices: Vec<u32>,
+    pub(super) highlight: Option<hongguo_common::model::Highlight>,
 }
 
 pub(super) async fn prepare(
@@ -75,14 +75,9 @@ pub(super) async fn prepare(
         .iter()
         .filter(|item| item.vid_index > episode)
         .map(|item| item.vid_index)
-        .min();
+        .min()
+        .filter(|_| series.highlight.is_none());
     let social = super::interaction::Target::from_episode(&series, current);
-    let previous_episode = series
-        .episodes
-        .iter()
-        .filter(|item| item.vid_index < episode)
-        .map(|item| item.vid_index)
-        .max();
     let episode_indices = series.episodes.iter().map(|item| item.vid_index).collect();
     let expected_duration = (current.duration > 0).then_some(current.duration as f64);
     let history = LocalHistoryItem {
@@ -126,8 +121,8 @@ pub(super) async fn prepare(
         active_definition: response.definition,
         automatic_definition: response.automatic_definition,
         online: response.online,
-        previous_episode,
         episode_indices,
+        highlight: series.highlight.map(|highlight| *highlight),
     })
 }
 

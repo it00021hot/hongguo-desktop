@@ -42,6 +42,8 @@ pub struct FeedItem {
     /// 内容类型：1=真人剧，1004=漫剧（推荐流「按类型刷」的过滤键）
     #[serde(default)]
     pub content_type: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<hongguo_common::model::Highlight>,
 }
 
 /// 一页信息流。

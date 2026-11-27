@@ -210,14 +210,38 @@ pub(crate) struct Info {
     pub(crate) heat: String,
     pub(crate) season: String,
     pub(crate) badge: String,
+    pub(crate) highlight: Option<hongguo_common::model::Highlight>,
+}
+
+impl Info {
+    fn clip_episode(&self) -> u32 {
+        self.highlight.as_ref().map_or(0, |clip| {
+            clip.episode_number.unwrap_or_else(|| {
+                if clip.related.as_ref().is_some_and(|related| {
+                    related.kind == hongguo_common::model::RelatedKind::Album
+                }) && self.episode > 1
+                {
+                    self.episode
+                } else {
+                    0
+                }
+            })
+        })
+    }
 }
 
 impl From<Info> for crate::features::player::presentation::WindowCaption {
     fn from(info: Info) -> Self {
+        let is_clip = info.highlight.is_some();
         Self {
+            episode: if is_clip {
+                info.clip_episode()
+            } else {
+                info.episode
+            },
             title: info.title,
-            episode: info.episode,
-            total: info.total,
+            total: if is_clip { 0 } else { info.total },
+            highlight: info.highlight.map(|highlight| highlight.author),
         }
     }
 }
@@ -234,7 +258,10 @@ pub(crate) fn info(
         .font_weight(FontWeight::NORMAL)
         .style_when(
             move || {
-                model.with(|info| info.title.is_empty() || info.episode == 0 || info.total == 0)
+                model.with(|info| {
+                    info.highlight.is_none()
+                        && (info.title.is_empty() || info.episode == 0 || info.total == 0)
+                })
             },
             |style| style.hidden(),
         )
@@ -244,7 +271,7 @@ pub(crate) fn info(
                 .items_center()
                 .gap_1()
                 .child(when(
-                    move || !model.get().badge.is_empty(),
+                    move || model.with(|info| info.highlight.is_none() && !info.badge.is_empty()),
                     move || {
                         crate::features::player::presentation::player_campaign_badge(move || {
                             model.get().badge
@@ -252,31 +279,74 @@ pub(crate) fn info(
                     },
                 ))
                 .child(when(
-                    move || !model.get().season.is_empty(),
+                    move || model.with(|info| info.highlight.is_none() && !info.season.is_empty()),
                     move || {
                         crate::features::player::presentation::player_badge(move || {
                             model.get().season
                         })
                     },
                 ))
-                .child(
-                    crate::features::player::presentation::player_title(move || model.get().title)
-                        .on_press(open_detail),
-                ),
+                .child(when(
+                    move || model.with(|info| info.highlight.is_none()),
+                    move || {
+                        crate::features::player::presentation::player_title(move || {
+                            model.get().title
+                        })
+                        .on_press(open_detail)
+                    },
+                ))
+                .child(when(
+                    move || {
+                        model.with(|info| {
+                            info.highlight
+                                .as_ref()
+                                .is_some_and(|clip| !clip.author.is_empty())
+                        })
+                    },
+                    move || {
+                        view().flex_row().items_center().gap_2().child(
+                            crate::features::player::presentation::player_episode_label(
+                                move || {
+                                    model.with(|info| {
+                                        info.highlight
+                                            .as_ref()
+                                            .map(|clip| clip.author.as_str())
+                                            .filter(|author| !author.is_empty())
+                                            .map(|author| format!("@{author}"))
+                                            .unwrap_or_default()
+                                    })
+                                },
+                            )
+                            .number_of_lines(1),
+                        )
+                    },
+                )),
         )
-        .child(
-            crate::features::player::presentation::player_episode_label(move || {
-                model.with(|info| {
-                    let episode =
-                        tr("player.epShort").replace("{index}", &info.episode.to_string());
-                    if !is_desktop() {
-                        return episode;
-                    }
-                    let total =
-                        tr("player.totalEpisodes").replace("{count}", &info.total.to_string());
-                    format!("{episode} · {total}")
+        .child(when(
+            move || model.with(|info| info.highlight.is_none()),
+            move || {
+                crate::features::player::presentation::player_episode_label(move || {
+                    model.with(|info| {
+                        let episode =
+                            tr("player.epShort").replace("{index}", &info.episode.to_string());
+                        if !is_desktop() {
+                            return episode;
+                        }
+                        let total =
+                            tr("player.totalEpisodes").replace("{count}", &info.total.to_string());
+                        format!("{episode} · {total}")
+                    })
                 })
-            })
-            .number_of_lines(1),
-        )
+                .number_of_lines(1)
+            },
+        ))
+        .child(when(
+            move || model.with(|info| info.highlight.is_some()),
+            move || {
+                crate::features::player::presentation::player_episode_label(move || {
+                    model.with(|info| super::info::clip_caption(&info.title, info.clip_episode()))
+                })
+                .number_of_lines(2)
+            },
+        ))
 }

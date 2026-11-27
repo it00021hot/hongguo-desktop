@@ -2,6 +2,7 @@
 //! `need_calendar_schema=true`；与预约列表共用同一端点，响应解析也在本域，
 //! 详见 docs/hongguo-api-endpoints.md）。
 
+mod filtered;
 mod model;
 
 use serde_json::Value;
@@ -12,6 +13,11 @@ use hongguo_common::utils::json::{check_code, int_field, num_field, str_field};
 use hongguo_common::utils::time::beijing_date;
 use hongguo_common::{AppError, AppResult};
 
+pub use crate::reservation::selectors::{SelectorId, SelectorRow, SelectorSelection};
+pub use filtered::{
+    CalendarCursor, CalendarFilteredPage, CalendarPanel, fetch_calendar_panel,
+    fetch_filtered_calendar,
+};
 pub use model::{CalendarItem, CalendarPage};
 
 /// 预约列表与上新日历共用。

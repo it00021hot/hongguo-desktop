@@ -1,4 +1,6 @@
 use hongguo_service::contracts::discover::{FeedItem, FeedPage};
+use hongguo_service::contracts::history::WatchHistoryItem;
+use std::collections::HashSet;
 
 pub(super) const DEFAULT_CHANNEL: &str = "16";
 pub(super) const FOLLOWING_CHANNEL: &str = "45";
@@ -28,6 +30,33 @@ pub(super) struct Channel {
 }
 
 impl Channel {
+    pub(super) fn append_personal(
+        &mut self,
+        history: &[WatchHistoryItem],
+        saved: impl Iterator<Item = String>,
+    ) {
+        let mut seen: HashSet<_> = self
+            .items
+            .iter()
+            .map(|item| item.series_id.clone())
+            .collect();
+        self.items.extend(
+            history
+                .iter()
+                .map(|item| FeedItem {
+                    series_id: item.series_id.clone(),
+                    title: item.title.clone(),
+                    cover: item.cover.clone(),
+                    episode_cnt: u32::try_from(item.episode_cnt).unwrap_or(0),
+                    ..Default::default()
+                })
+                .chain(saved.map(|series_id| FeedItem {
+                    series_id,
+                    ..Default::default()
+                }))
+                .filter(|item| !item.series_id.is_empty() && seen.insert(item.series_id.clone())),
+        );
+    }
     pub(super) fn goto(&mut self, series: hongguo_common::model::Series) {
         if let Some(index) = self
             .items
@@ -51,7 +80,13 @@ impl Channel {
         }
     }
 
+    pub(super) fn has_items(&self) -> bool {
+        !self.items.is_empty()
+    }
+
     pub(super) fn merge(&mut self, page: FeedPage) {
+        let previous_len = self.items.len();
+        let cursor_advanced = self.offset != page.next_offset || self.session != page.session_id;
         for item in page.items {
             if let Some(existing) = self
                 .items
@@ -65,7 +100,9 @@ impl Channel {
         }
         self.offset = page.next_offset;
         self.session = page.session_id;
-        self.has_more = page.has_more;
+        // The response may claim more even when it returns the same batch
+        // and cursor. Stop instead of spinning on the identical request.
+        self.has_more = page.has_more && (cursor_advanced || self.items.len() > previous_len);
         self.index = self.index.min(self.items.len().saturating_sub(1));
     }
     pub(super) fn step(&mut self, direction: i32) -> bool {
@@ -103,6 +140,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn personal_fallback_cannot_replace_the_playing_recommendation() {
+        let mut channel = Channel::default();
+        channel.merge(FeedPage {
+            items: vec![FeedItem {
+                series_id: "official".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        channel.append_personal(
+            &[],
+            ["saved".into(), "official".into(), "saved".into()].into_iter(),
+        );
+        assert_eq!(channel.items.len(), 2);
+        assert_eq!(channel.items[channel.index].series_id, "official");
+        assert!(channel.step(1));
+        assert_eq!(channel.items[channel.index].series_id, "saved");
+    }
+
+    #[test]
     fn retain_playable_keeps_previous_while_next_target_loads() {
         assert_eq!(
             retain_playable(Some(("a".into(), 1)), None),
@@ -116,6 +173,32 @@ mod tests {
             retain_playable(None, Some(("b".into(), 2))),
             Some(("b".into(), 2))
         );
+    }
+
+    #[test]
+    fn empty_batches_are_not_warm_cache_and_do_not_erase_an_existing_selection() {
+        let mut channel = Channel::default();
+        let empty = FeedPage {
+            session_id: "session".into(),
+            has_more: true,
+            next_offset: 0,
+            items: vec![],
+        };
+        channel.merge(empty.clone());
+        assert!(!channel.has_items());
+        channel.merge(FeedPage {
+            items: vec![FeedItem {
+                series_id: "visible".into(),
+                ..Default::default()
+            }],
+            ..empty.clone()
+        });
+        assert!(channel.has_items());
+        assert!(channel.has_more);
+        channel.merge(empty);
+        assert!(channel.has_items());
+        assert_eq!(channel.items[channel.index].series_id, "visible");
+        assert!(!channel.has_more);
     }
 
     #[test]

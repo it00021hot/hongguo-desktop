@@ -35,6 +35,7 @@ pub fn series_from_list(list: hongguo_api::detail::EpisodeList) -> Series {
         episode_count: list.episodes.len() as u32,
         followed_cnt: list.followed_cnt,
         content_type: list.content_type,
+        highlight: list.highlight.map(Box::new),
         episodes: list.episodes,
         tags: Vec::new(),
         dismissed: false,

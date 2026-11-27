@@ -1,6 +1,23 @@
 use crate::bridge;
 use nsh_core::prelude::*;
 
+pub(super) fn clip_caption(title: &str, episode: u32) -> String {
+    let numbered = title
+        .trim_start()
+        .strip_prefix('第')
+        .and_then(|rest| rest.split_once('集'))
+        .is_some_and(|(number, _)| number.trim().parse::<u32>().is_ok());
+    if episode == 0 || numbered {
+        return title.to_owned();
+    }
+    let number = crate::i18n::tr("player.episodeNo").replace("{index}", &episode.to_string());
+    if title.is_empty() {
+        number
+    } else {
+        format!("{number} · {title}")
+    }
+}
+
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct OverlayMeta {
     pub series_id: String,
@@ -31,6 +48,7 @@ pub(super) fn observe(
                 heat: tags.heat,
                 season: tags.season,
                 badge: tags.badge,
+                highlight: source.highlight.clone(),
             }
         })
     })

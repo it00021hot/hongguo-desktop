@@ -18,16 +18,19 @@ pub(crate) struct NewDramaCard {
 pub(crate) fn new_drama_grid(
     items: impl IntoReactive<Vec<NewDramaCard>>,
     finished: impl IntoReactive<bool>,
+    fetching_more: impl IntoReactive<bool>,
     open: impl Fn(String) + 'static,
     load_more: impl Fn() + 'static,
     audience: impl IntoReactive<i64>,
 ) -> impl IntoElement {
     let items = items.into_reactive();
     let finished = finished.into_reactive();
+    let fetching_more = fetching_more.into_reactive();
     let audience = audience.into_reactive();
     new_drama_grid_surface()
         .items(move || items.get())
         .finished(move || finished.get())
+        .fetching_more(move || fetching_more.get())
         .audience(move || audience.get())
         .on_open(move |id: &String| open(id.clone()))
         .on_load_more(load_more)
@@ -37,6 +40,7 @@ pub(crate) fn new_drama_grid(
 struct NewDramaGridSurfaceProps {
     items: Prop<Vec<NewDramaCard>>,
     finished: Prop<bool>,
+    fetching_more: Prop<bool>,
     audience: Prop<i64>,
 }
 
@@ -99,15 +103,28 @@ fn NewDramaGridSurface(
                     let card_width = (width.get() - 32.0 - (columns - 1.0) * 16.0) / columns;
                     px((card_width - 2.0).max(0.0) * 4.0 / 3.0 + 44.0)
                 })
-                .footer(view().pt_8().pb_2().items_center().child(when(
-                    move || finished.get(),
-                    move || {
-                        text(move || tr("feed.end"))
-                            .text_sm()
-                            .line_height(px(20.0))
-                            .text_color(move || theme().muted_foreground)
-                    },
-                ))),
+                .footer(
+                    view().pt_8().pb_2().items_center().child(
+                        text(move || {
+                            tr(if props.fetching_more.get() {
+                                "feed.loadingMore"
+                            } else {
+                                "feed.end"
+                            })
+                        })
+                        .text_sm()
+                        .line_height(px(20.0))
+                        .text_color(move || theme().muted_foreground)
+                        .opacity(move || {
+                            if props.fetching_more.get() || finished.get() {
+                                1.0
+                            } else {
+                                0.0_f32
+                            }
+                        })
+                        .accessible(move || props.fetching_more.get() || finished.get()),
+                    ),
+                ),
                 key,
                 computed(move || audience),
             )
@@ -134,7 +151,7 @@ fn card(item: Memo<NewDramaCard>) -> nsh_base::ButtonElement {
         .transition()
         .duration(move || {
             if reduce_motion() {
-                0.0
+                0.0_f32
             } else {
                 crate::ui::motion::FAST_MS
             }

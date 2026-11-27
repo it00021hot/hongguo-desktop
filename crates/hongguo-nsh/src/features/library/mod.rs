@@ -2,7 +2,14 @@ mod actions;
 mod data;
 mod date;
 mod feed;
+mod folder_card;
+mod folder_creation;
+mod folder_membership;
+mod folder_move;
+mod folder_settings;
+mod folders;
 use hongguo_service::library_service::model;
+mod loading;
 mod notices;
 mod posters;
 pub(crate) mod presentation;
@@ -16,6 +23,7 @@ use crate::{
     navigation::{Navigation, Route},
     ui::{self, ButtonVariant},
 };
+use hongguo_service::library_service::{BookshelfFolder, FolderMembership};
 use model::{Entry, Query};
 pub(crate) use notices::NoticePreferences;
 use nsh_core::prelude::*;
@@ -26,6 +34,24 @@ pub(crate) enum Kind {
     Collections,
     Liked,
     Reservations,
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+enum CollectionFolder {
+    #[default]
+    All,
+    Index,
+    Official(i64),
+}
+
+impl CollectionFolder {
+    fn includes(self, entry: &Entry, category: i64) -> bool {
+        match self {
+            Self::All => category == 0 || entry.content_type == category,
+            Self::Index => false,
+            Self::Official(_) => true,
+        }
+    }
 }
 
 impl From<Kind> for hongguo_service::library_service::Kind {
@@ -135,21 +161,49 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
         result,
     } = data::load(session, nav, kind);
     let category = memory.signal("category", 0_i64);
+    let folder_index = memory.signal("folder-index", false);
+    let folder_detail = memory.signal("folder-detail", None::<BookshelfFolder>);
+    let collection_folder = computed(move || {
+        let identity = context.identity.get();
+        if let Some(id) = query.with(|query| {
+            (query.identity == Some(identity))
+                .then_some(query.folder_id)
+                .flatten()
+        }) {
+            CollectionFolder::Official(id)
+        } else if folder_index.get() {
+            CollectionFolder::Index
+        } else {
+            CollectionFolder::All
+        }
+    });
     let busy = signal(false);
     let managing = signal(false);
     let selected = signal(Vec::<String>::new());
     let feedback = signal(SharedString::default());
+    let membership = folder_membership::Membership {
+        session,
+        context,
+        busy,
+        feedback,
+    };
     let items = feed::current_items(result, query, context);
     let visible = computed(move || {
         let filter = search.get().trim().to_lowercase();
+        let category = category.get();
+        let folder = collection_folder.get();
         items.with(|items| {
             items
                 .iter()
                 .filter(|item| {
                     (filter.is_empty()
                         || item.title.to_lowercase().contains(&filter)
-                        || item.series_id.to_lowercase().contains(&filter))
-                        && (category.get() == 0 || item.content_type == category.get())
+                        || item.series_id.to_lowercase().contains(&filter)
+                        || item
+                            .collection_item_id
+                            .as_ref()
+                            .is_some_and(|id| id.to_lowercase().contains(&filter)))
+                        && (kind != Kind::Collections || folder.includes(item, category))
                 })
                 .cloned()
                 .collect::<Vec<_>>()
@@ -168,7 +222,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
         selected.update(|selected| selected.retain(|key| keys.contains(key)));
     });
     let remove = move |entries: Vec<Entry>| {
-        if busy.get_untracked() || entries.is_empty() {
+        if busy.get_untracked() || result.loading() || entries.is_empty() {
             return;
         }
         busy.set(true);
@@ -232,9 +286,13 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
         });
     };
     let reset = move || {
-        let online = query.get_untracked().online;
+        let current = query
+            .get_untracked()
+            .for_identity(context.identity.get_untracked());
         query.set(Query {
-            online,
+            identity: current.identity,
+            folder_id: current.folder_id,
+            online: current.online,
             ..Default::default()
         });
         selected.set(Vec::new());
@@ -264,6 +322,17 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
             busy.set(false);
         });
     };
+    let loading_more = computed(move || {
+        result.loading()
+            && query.with(|query| {
+                !query.previous.is_empty()
+                    && result.with(|page| {
+                        page.is_some_and(|page| {
+                            page.source.as_ref() != Some(&query.source(context.identity.get()))
+                        })
+                    })
+            })
+    });
     let rows = rows::Rows {
         kind,
         nav,
@@ -272,20 +341,64 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
         managing,
         selected,
         has_more: computed(move || result.with(|page| page.is_some_and(|page| page.has_more))),
+        loading_more,
         scroll_scope: computed(move || {
             (
                 session.identity(),
                 query.get().online,
                 search.get(),
                 category.get(),
+                collection_folder.get(),
             )
         }),
     };
-    let toolbar = toolbar::build(toolbar::Toolbar {
+    let choose_folder = move |folder| {
+        if busy.get_untracked() || collection_folder.get_untracked() == folder {
+            return;
+        }
+        let current = query
+            .get_untracked()
+            .for_identity(context.identity.get_untracked());
+        let folder_id = match folder {
+            CollectionFolder::Official(id) => Some(id),
+            _ => None,
+        };
+        folder_index.set(folder == CollectionFolder::Index);
+        search.set(String::new());
+        managing.set(false);
+        feedback.set(SharedString::default());
+        if current.folder_id != folder_id {
+            query.set(Query {
+                identity: current.identity,
+                folder_id,
+                online: current.online,
+                ..Default::default()
+            });
+        }
+        selected.set(Vec::new());
+    };
+    if kind == Kind::Collections {
+        nav.on_back(
+            computed(move || {
+                context.active.get()
+                    && matches!(collection_folder.get(), CollectionFolder::Official(_))
+            }),
+            move || choose_folder(CollectionFolder::Index),
+        );
+    }
+    let open_folder = move |folder: BookshelfFolder| {
+        if !busy.get_untracked() {
+            let id = folder.id;
+            folder_detail.set(Some(folder));
+            choose_folder(CollectionFolder::Official(id));
+        }
+    };
+    let toolbar_state = toolbar::Toolbar {
         kind,
         query,
         search,
         category,
+        collection_folder,
         online,
         busy,
         managing,
@@ -300,85 +413,329 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
             })
         }),
         logged_in: context.logged_in,
-    });
+    };
+    let toolbar = toolbar::build(toolbar_state, choose_folder);
     presentation::frame(kind, toolbar, context.logged_in, nav, move || {
+        let body = move || {
+            view()
+                .flex_1()
+                .min_h_0()
+                .gap(move || {
+                    px(if matches!(kind, Kind::Collections | Kind::Liked) {
+                        12.0
+                    } else {
+                        16.0
+                    })
+                })
+                .child(dynamic(move || {
+                    let CollectionFolder::Official(id) = collection_folder.get() else {
+                        return view();
+                    };
+                    let Some(folder) = folder_detail.get().filter(|folder| folder.id == id) else {
+                        return view();
+                    };
+                    let options = folder_settings::action(
+                        membership,
+                        folder.clone(),
+                        move |name, published| {
+                            folder_detail.update(|value| {
+                                if let Some(folder) =
+                                    value.as_mut().filter(|folder| folder.id == id)
+                                {
+                                    folder.name = name;
+                                    folder.published = Some(published);
+                                }
+                            });
+                            reset();
+                        },
+                        move || choose_folder(CollectionFolder::Index),
+                    );
+                    let folder = stored(folder);
+                    view()
+                        .gap_2()
+                        .child(when(
+                            || !is_desktop(),
+                            move || {
+                                ui::button(move || tr("nav.back"), ButtonVariant::Secondary)
+                                    .self_start()
+                                    .disabled(busy)
+                                    .on_press(move || nav.back())
+                            },
+                        ))
+                        .child(
+                            view()
+                                .flex_row()
+                                .flex_wrap()
+                                .items_center()
+                                .justify_between()
+                                .gap_3()
+                                .px_3()
+                                .py_3()
+                                .max_w(px(760.0))
+                                .rounded(ui::radii::card)
+                                .bg(move || nsh_base::theme().card)
+                                .style_when(is_desktop, |style| {
+                                    style
+                                        .max_w(percentage(1.0))
+                                        .px_0()
+                                        .pt_1()
+                                        .pb_3()
+                                        .rounded(px(0.0))
+                                        .bg(move || nsh_base::theme().background)
+                                        .border_b_1()
+                                        .border_color(move || nsh_base::theme().border)
+                                })
+                                .child(
+                                    view()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap_3()
+                                        .min_w(px(0.0))
+                                        .child(
+                                            view()
+                                                .size(px(40.0))
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded(ui::radii::control)
+                                                .bg(move || nsh_base::theme().muted)
+                                                .child(
+                                                    ui::icon(ui::Icon::Folder)
+                                                        .size(px(20.0))
+                                                        .text_color(move || {
+                                                            nsh_base::theme().primary
+                                                        }),
+                                                ),
+                                        )
+                                        .child(
+                                            view()
+                                                .min_w(px(0.0))
+                                                .gap_1()
+                                                .child(
+                                                    text(move || {
+                                                        folder.with(|folder| folder.name.clone())
+                                                    })
+                                                    .text_lg()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .number_of_lines(1),
+                                                )
+                                                .child(
+                                                    text(move || {
+                                                        result.with(|page| {
+                                                            page.filter(|page| {
+                                                                page.belongs_to(
+                                                                    &query.get(),
+                                                                    context.identity.get(),
+                                                                )
+                                                            })
+                                                            .and_then(|page| page.folder.as_ref())
+                                                            .map_or_else(
+                                                                || {
+                                                                    folder.with(|folder| {
+                                                                        folder_card::summary(folder)
+                                                                    })
+                                                                },
+                                                                folder_card::summary,
+                                                            )
+                                                        })
+                                                    })
+                                                    .text_xs()
+                                                    .text_color(move || {
+                                                        nsh_base::theme().muted_foreground
+                                                    }),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    view()
+                                        .flex_row()
+                                        .flex_wrap()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(when(
+                                            move || is_desktop() && !managing.get(),
+                                            move || {
+                                                presentation::library_search(search, move || {
+                                                    tr("collections.searchInFolder")
+                                                })
+                                                .w(px(190.0))
+                                            },
+                                        ))
+                                        .child(when(
+                                            move || !managing.get(),
+                                            move || {
+                                                folder_membership::add(membership, id, items, reset)
+                                            },
+                                        ))
+                                        .child(
+                                            ui::button(
+                                                move || {
+                                                    tr(if managing.get() {
+                                                        "batch.exitManage"
+                                                    } else {
+                                                        "batch.manage"
+                                                    })
+                                                },
+                                                ButtonVariant::Secondary,
+                                            )
+                                            .disabled(busy)
+                                            .on_press(
+                                                move || {
+                                                    managing
+                                                        .update(|managing| *managing = !*managing);
+                                                    selected.set(Vec::new());
+                                                },
+                                            ),
+                                        )
+                                        .child(options),
+                                ),
+                        )
+                }))
+                .child(ui::status(feedback))
+                .child(when(
+                    move || result.loading() && items.with(Vec::is_empty),
+                    move || loading::entries(kind),
+                ))
+                .child(when(
+                    move || result.error().is_some(),
+                    move || {
+                        crate::features::error_state(
+                            move || {
+                                result
+                                    .error()
+                                    .map_or_else(SharedString::default, |error| error.text())
+                            },
+                            reset,
+                        )
+                    },
+                ))
+                .child(when(
+                    move || result.with(|page| page.is_some_and(|page| page.warning.is_some())),
+                    move || {
+                        ui::status(move || {
+                            result.with(|page| {
+                                page.and_then(|page| page.warning.as_ref())
+                                    .map_or_else(SharedString::default, |error| {
+                                        bridge::Failure::from(error.clone()).text()
+                                    })
+                            })
+                        })
+                    },
+                ))
+                .child(when(
+                    move || {
+                        !result.loading() && result.error().is_none() && visible.with(Vec::is_empty)
+                    },
+                    move || {
+                        ui::status(move || {
+                            if !search.with(|value| value.trim().is_empty()) {
+                                tr("common.searchNoMatch")
+                            } else {
+                                tr(kind.empty())
+                            }
+                        })
+                    },
+                ))
+                .child(rows::build(rows, remove, play, move || {
+                    feed::advance(result, query, context)
+                }))
+                .child(when(
+                    move || {
+                        matches!(collection_folder.get(), CollectionFolder::Official(_))
+                            && rows.has_more.get()
+                            && result.error().is_none()
+                    },
+                    move || {
+                        ui::button(
+                            move || {
+                                tr(if loading_more.get() {
+                                    "feed.loadingMore"
+                                } else {
+                                    "follow.loadMore"
+                                })
+                            },
+                            ButtonVariant::Secondary,
+                        )
+                        .disabled(move || result.loading() || busy.get())
+                        .on_press(move || feed::advance(result, query, context))
+                    },
+                ))
+                .child(toolbar::batch(
+                    rows,
+                    remove,
+                    move |error| feedback.set(error),
+                    move || {
+                        let CollectionFolder::Official(id) = collection_folder.get_untracked()
+                        else {
+                            return view();
+                        };
+                        let picked = computed(move || {
+                            let keys = selected.get();
+                            visible.with(|entries| {
+                                entries
+                                    .iter()
+                                    .filter(|entry| keys.contains(&entry.key))
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                            })
+                        });
+                        let done = move || {
+                            managing.set(false);
+                            reset();
+                        };
+                        view()
+                            .flex_row()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_2()
+                            .child(folder_move::action(membership, id, picked, done))
+                            .child(
+                                ui::controls::compact_button(
+                                    move || tr("collections.folderRemove"),
+                                    ButtonVariant::Secondary,
+                                )
+                                .disabled(move || busy.get() || picked.with(Vec::is_empty))
+                                .on_press(move || {
+                                    membership.change(
+                                        id,
+                                        FolderMembership::Remove,
+                                        picked.get_untracked(),
+                                        done,
+                                    )
+                                }),
+                            )
+                    },
+                ))
+                .child(when(
+                    move || {
+                        kind == Kind::Follows
+                            && result.with(|page| page.is_some_and(|page| page.has_more))
+                    },
+                    move || {
+                        ui::button(
+                            move || {
+                                tr(if loading_more.get() {
+                                    "feed.loadingMore"
+                                } else {
+                                    "follow.loadMore"
+                                })
+                            },
+                            ButtonVariant::Secondary,
+                        )
+                        .disabled(move || result.loading() || busy.get())
+                        .on_press(move || feed::advance(result, query, context))
+                    },
+                ))
+        };
         view()
             .flex_1()
             .min_h_0()
-            .gap(move || {
-                px(if matches!(kind, Kind::Collections | Kind::Liked) {
-                    12.0
-                } else {
-                    16.0
-                })
-            })
-            .child(ui::status(feedback))
             .child(when(
-                move || result.loading() && items.with(Vec::is_empty),
-                move || ui::status(move || tr("common.loading")),
+                move || collection_folder.get() == CollectionFolder::Index,
+                move || folders::index(session, context, busy, open_folder),
             ))
             .child(when(
-                move || result.error().is_some(),
-                move || {
-                    crate::features::error_state(
-                        move || {
-                            result
-                                .error()
-                                .map_or_else(SharedString::default, |error| error.text())
-                        },
-                        reset,
-                    )
-                },
-            ))
-            .child(when(
-                move || result.with(|page| page.is_some_and(|page| page.warning.is_some())),
-                move || {
-                    ui::status(move || {
-                        result.with(|page| {
-                            page.and_then(|page| page.warning.as_ref())
-                                .map_or_else(SharedString::default, |error| {
-                                    bridge::Failure::from(error.clone()).text()
-                                })
-                        })
-                    })
-                },
-            ))
-            .child(when(
-                move || {
-                    !result.loading() && result.error().is_none() && visible.with(Vec::is_empty)
-                },
-                move || {
-                    ui::status(move || {
-                        if search.with(String::is_empty) {
-                            tr(kind.empty())
-                        } else {
-                            tr("common.searchNoMatch")
-                        }
-                    })
-                },
-            ))
-            .child(rows::build(rows, remove, play, move || {
-                feed::advance(result, query, context)
-            }))
-            .child(toolbar::batch(rows, remove, move |error| {
-                feedback.set(error)
-            }))
-            .child(when(
-                move || {
-                    kind == Kind::Follows
-                        && result.with(|page| page.is_some_and(|page| page.has_more))
-                },
-                move || {
-                    ui::button(move || tr("follow.loadMore"), ButtonVariant::Secondary)
-                        .disabled(move || result.loading() || busy.get())
-                        .on_press(move || feed::advance(result, query, context))
-                },
-            ))
-            .child(when(
-                move || {
-                    kind == Kind::Reservations && result.loading() && !items.with(Vec::is_empty)
-                },
-                move || ui::status(move || tr("feed.loadingMore")),
+                move || collection_folder.get() != CollectionFolder::Index,
+                body,
             ))
     })
 }

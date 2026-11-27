@@ -109,17 +109,20 @@ pub(super) fn mount<E: IntoElement>(
         incoming_opaque.set(false);
     });
     effect(move || {
+        if source.state() == ResourceState::Errored {
+            incoming.set(None);
+            staged.set(None);
+            chrome.end_handoff();
+            return;
+        }
         let resource = source.with(|source| source.map(VideoSource::from_playback));
-        if resource.is_none() {
-            if !source.loading() && source.error().is_some() {
-                chrome.end_handoff();
-            }
-            if transport::drop_shown_without_resource(source.loading(), chrome.silent_handoff()) {
-                incoming.set(None);
-                shown.set(None);
-                staged.set(None);
-                return;
-            }
+        if resource.is_none()
+            && transport::drop_shown_without_resource(source.loading(), chrome.silent_handoff())
+        {
+            incoming.set(None);
+            shown.set(None);
+            staged.set(None);
+            return;
         }
         let shown_now = shown.get_untracked();
         let shown_url = shown_now.as_ref().map(|shown| shown.url.clone());

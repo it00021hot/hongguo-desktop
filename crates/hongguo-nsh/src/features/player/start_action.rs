@@ -5,6 +5,11 @@ use crate::{
 };
 use nsh_core::prelude::*;
 
+enum Entry {
+    Regular,
+    Linked,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct StartAction {
     session: SessionHandle,
@@ -16,10 +21,19 @@ pub(crate) struct StartAction {
 }
 
 pub(crate) fn start_action(session: SessionHandle, nav: Navigation) -> StartAction {
+    let origin = nav.routes().get_untracked().last().cloned();
+    start_action_for(session, nav, origin)
+}
+
+pub(super) fn start_action_for(
+    session: SessionHandle,
+    nav: Navigation,
+    origin: Option<Route>,
+) -> StartAction {
     let action = StartAction {
         session,
         nav,
-        origin: stored(nav.routes().get_untracked().last().cloned()),
+        origin: stored(origin),
         pending: signal(None),
         notice: signal(SharedString::default()),
         task: stored(None),
@@ -44,6 +58,12 @@ impl StartAction {
         self.notice.get()
     }
     pub fn start(self, id: String) {
+        self.request(id, Entry::Regular);
+    }
+    pub(super) fn start_linked(self, id: String) {
+        self.request(id, Entry::Linked);
+    }
+    fn request(self, id: String, entry: Entry) {
         if self.pending.get_untracked().as_ref() == Some(&id) {
             return;
         }
@@ -52,8 +72,15 @@ impl StartAction {
         self.pending.set(Some(id.clone()));
         let state = self.session.with(|session| session.clone());
         let identity = self.session.identity();
+        let contextual = !matches!(&entry, Entry::Regular);
         let task = spawn(async move {
-            let outcome = bridge::request(super::resolve_start(state, id)).await;
+            let outcome = bridge::request(async move {
+                match entry {
+                    Entry::Regular => super::resolve_start(state, id).await,
+                    Entry::Linked => super::resolve_feed_start(state, id, None, None).await,
+                }
+            })
+            .await;
             self.pending.set(None);
             if self.session.identity() != identity
                 || self
@@ -66,15 +93,17 @@ impl StartAction {
             }
             match outcome {
                 Ok((id, episode)) => self.nav.push(Route::Player(id, episode)),
+                Err(_) if contextual => self.notice.set(crate::i18n::tr("player.linkedLoadFailed")),
                 Err(error) => self.notice.set(error.text()),
             }
         });
         self.task.with(|slot| *slot = Some(task));
     }
-    fn cancel(self) {
+    pub(super) fn cancel(self) {
         if let Some(task) = self.task.with(Option::take) {
             task.cancel();
         }
         self.pending.set(None);
+        self.notice.set(SharedString::default());
     }
 }

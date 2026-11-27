@@ -26,6 +26,7 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         ..Default::default()
     }));
     let channels = signal(HashMap::<String, Channel>::new());
+    let manual = signal(false);
     let identity = stored(session.identity());
     effect(move || {
         let next = session.identity();
@@ -40,6 +41,7 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
             channel.get_untracked()
         };
         batch(|| {
+            manual.set(false);
             channel.set(next_channel.clone());
             channels.set(HashMap::new());
             query.set(Some(Query {
@@ -52,6 +54,20 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         nav.routes()
             .with(|routes| routes.last() == Some(&Route::Catalog))
     });
+    // Resume snapshots are refreshed independently of feed/target requests.
+    let personal = resource(
+        move || Some(session.identity()),
+        move |identity, _| {
+            let session = session.with(|session| session.clone());
+            bridge::request(async move {
+                session
+                    .personal
+                    .read(&session.state)
+                    .await
+                    .map(|sources| (identity, sources))
+            })
+        },
+    );
     let tabs = resource(
         move || Some(session.identity()),
         move |_, _| {
@@ -85,49 +101,108 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                 .collect::<Vec<_>>()
         })
     });
+    let cached = move |id: &str| {
+        channels.with_untracked(|channels| channels.get(id).is_some_and(Channel::has_items))
+    };
     let select_channel = move |id: String| {
-        if channel.get_untracked() == id {
-            return;
-        }
-        if !active.get_untracked() {
-            nav.push(Route::Catalog);
-        }
-        let cached = channels.with(|channels| channels.contains_key(&id));
         batch(|| {
-            channel.set(id.clone());
-            query.set((!cached).then_some(Query {
-                channel: id,
-                ..Default::default()
-            }));
+            if channel.get_untracked() != id || (!cached(&id) && query.get_untracked().is_none()) {
+                let cached = cached(&id);
+                manual.set(true);
+                channel.set(id.clone());
+                query.set((!cached).then_some(Query {
+                    channel: id,
+                    ..Default::default()
+                }));
+            }
+            if !active.get_untracked() {
+                nav.push(Route::Catalog);
+            }
         });
     };
+    let tab_pending = computed(move || manual.get() && result_pending(query.get(), &channel.get()));
     let toolbar_active = computed(move || {
         nav.routes()
             .with(|routes| matches!(routes.last(), Some(Route::Catalog | Route::Player(_, _))))
     });
     ui::toolbar_slot(toolbar_active, move || {
-        channel_tabs(available, channel, select_channel)
+        channel_tabs(available, channel, tab_pending, select_channel)
     });
+    // A tab switch may finish an in-flight batch behind the covering page.
+    // It must not cancel or replay a finished batch when 首页 is shown again.
     let result = resource(
-        move || {
-            active
-                .get()
-                .then(|| query.get())
-                .flatten()
-                .map(|query| (query, session.identity()))
-        },
-        move |(query, _), _| {
+        move || query.get().map(|query| (query, session.identity())),
+        move |(query, identity), _| {
             let state = session.with(|session| session.clone());
-            let id = query.channel.clone();
-            bridge::request(async move { load::feed(state, query).await.map(|page| (id, page)) })
+            let request = query.clone();
+            bridge::request(async move {
+                load::feed(state, query)
+                    .await
+                    .map(|page| (request, identity, page))
+            })
         },
     );
     effect(move || {
-        if result.loading() {
+        if result.state() != ResourceState::Ready {
             return;
         }
-        if let Some((id, page)) = result.get() {
-            channels.update(|channels| channels.entry(id).or_default().merge(page));
+        let Some((request, identity, page)) = result.get() else {
+            return;
+        };
+        if query.get_untracked().as_ref() != Some(&request) || session.identity() != identity {
+            return;
+        }
+        log::info!(
+            "[Catalog] page channel={} offset={} items={} hasMore={}",
+            request.channel,
+            request.offset,
+            page.items.len(),
+            page.has_more,
+        );
+        batch(|| {
+            query.set(None);
+            channels.update(|channels| channels.entry(request.channel).or_default().merge(page));
+        });
+    });
+    // 推荐先展示服务端内容，个人内容只在推荐结束后补到尾部，不抢首屏。
+    let seeded = stored(None::<u64>);
+    let recommendation_ended = computed(move || {
+        channels.with(|channels| {
+            channels
+                .get(DEFAULT_CHANNEL)
+                .is_some_and(|page| !page.has_more)
+        })
+    });
+    effect(move || {
+        let current = session.identity();
+        let Some((_, sources)) = personal.get().filter(|(identity, _)| *identity == current) else {
+            return;
+        };
+        if !recommendation_ended.get() || seeded.get() == Some(current) {
+            return;
+        }
+        seeded.replace(Some(current));
+        channels.update(|channels| {
+            if let Some(page) = channels.get_mut(DEFAULT_CHANNEL) {
+                page.append_personal(
+                    &sources.history,
+                    sources.bookshelf.iter().map(|item| item.series_id.clone()),
+                );
+            }
+        });
+    });
+    effect(move || {
+        if !active.get() || query.get_untracked().is_some() {
+            return;
+        }
+        let id = channel.get_untracked();
+        if !cached(&id) {
+            // One new attempt when returning to a channel that had no content;
+            // a successful empty response is not a warm cache hit.
+            query.set(Some(Query {
+                channel: id,
+                ..Default::default()
+            }));
         }
     });
     let selected = computed(move || {
@@ -164,7 +239,7 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         move |(ids, _), _| {
             let session = session.with(|session| session.clone());
             bridge::request(async move {
-                let personal = session.personal.read(&session.state).await?;
+                let personal = session.personal.recent(&session.state)?;
                 hongguo_service::play_service::feed::prefetch(
                     &session.state,
                     ids,
@@ -182,36 +257,55 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
             explicit.set(None);
         }
     });
+    let target_key = computed(move || {
+        selected.get().map(|item| {
+            let episode = explicit
+                .get()
+                .filter(|(id, _)| *id == item.series_id)
+                .map(|(_, episode)| episode);
+            let vid = ((channel.get() == FOLLOWING_CHANNEL || item.highlight.is_some())
+                && !item.vid.is_empty())
+            .then_some(item.vid);
+            (
+                channel.get(),
+                item.series_id,
+                episode,
+                vid,
+                item.highlight,
+                session.identity(),
+            )
+        })
+    });
     let target = resource(
-        move || {
-            selected.get().map(|item| {
-                let episode = explicit
-                    .get()
-                    .filter(|(id, _)| *id == item.series_id)
-                    .map(|(_, episode)| episode);
-                (item.series_id, episode)
-            })
-        },
-        move |(id, episode), _| {
+        move || target_key.get(),
+        move |key, _| {
             let state = session.with(|session| session.clone());
             bridge::request(async move {
+                let (_, id, episode, vid, highlight, _) = key.clone();
                 if let Some(episode) = episode {
-                    Ok((id, episode))
+                    Ok((key, (id, episode)))
                 } else {
-                    load::target(state, id).await
+                    load::target(state, id, vid, highlight)
+                        .await
+                        .map(|target| (key, target))
                 }
             })
         },
     );
-    let step = move |direction| {
+    let step = move |direction, is_manual| {
         if !active.get_untracked() {
             return false;
         }
         let id = channel.get_untracked();
         let mut changed = false;
-        channels.update(|channels| {
-            if let Some(page) = channels.get_mut(&id) {
-                changed = page.step(direction);
+        batch(|| {
+            channels.update(|channels| {
+                if let Some(page) = channels.get_mut(&id) {
+                    changed = page.step(direction);
+                }
+            });
+            if changed {
+                manual.set(is_manual);
             }
         });
         changed
@@ -235,21 +329,68 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
             feed_navigation.invalidate();
         }
     });
+    let feed_error = move || {
+        if query.get().is_some() && result.state() == ResourceState::Errored {
+            result.error()
+        } else {
+            None
+        }
+    };
+    let target_error = move || {
+        if selected.get().is_some() && target.state() == ResourceState::Errored {
+            target.error()
+        } else {
+            None
+        }
+    };
+    let cue = computed(move || {
+        if !manual.get() || feed_error().is_some() || target_error().is_some() {
+            return None;
+        }
+        let old = feed_navigation.playable().get();
+        if tab_pending.get() {
+            let current = channel.get();
+            return available.with(|tabs| {
+                tabs.iter()
+                    .find(|tab| tab.tab_type == current)
+                    .map(|tab| SharedString::from(tab.title.clone()))
+            });
+        }
+        selected.with(|item| {
+            let item = item.as_ref()?;
+            (old.as_ref().is_none_or(|(id, _)| id != &item.series_id))
+                .then(|| SharedString::from(item.title.clone()))
+        })
+    });
+    let channel_empty = move || {
+        query.get().is_none()
+            && channels.with(|channels| {
+                channels
+                    .get(&channel.get())
+                    .is_some_and(|page| !page.has_items())
+            })
+    };
     effect(move || {
         let ready = target.with(|value| {
             value
-                .filter(|(id, _)| {
-                    selected.with(|item| item.as_ref().is_some_and(|item| item.series_id == *id))
-                })
-                .cloned()
+                .filter(|(key, _)| target_key.with(|current| current.as_ref() == Some(key)))
+                .map(|(_, playable)| playable.clone())
         });
-        let empty = !result.loading() && result.error().is_none() && selected.get().is_none();
-        let next = if empty {
+        let next = if channel_empty() {
             None
         } else {
             model::retain_playable(feed_navigation.playable().get_untracked(), ready)
         };
         if feed_navigation.playable().get_untracked() != next {
+            let label = (manual.get_untracked() && next.is_some())
+                .then(|| {
+                    selected.with(|item| {
+                        item.as_ref()
+                            .map(|item| SharedString::from(item.title.clone()))
+                    })
+                })
+                .flatten();
+            feed_navigation.set_switch_label(label);
             feed_navigation.playable().set(next);
         }
     });
@@ -277,7 +418,7 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         })
     });
     effect(move || {
-        if !active.get() || result.loading() || result.error().is_some() {
+        if !active.get() || query.get().is_some() {
             return;
         }
         let id = channel.get();
@@ -286,6 +427,7 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                 .get(&id)
                 .filter(|page| {
                     page.has_more
+                        && page.has_items()
                         && page.items.len().saturating_sub(page.index + 1) <= PREFETCH_REMAINING
                 })
                 .map(|page| Query {
@@ -311,7 +453,7 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
             move || {
                 crate::shell::mobile_catalog_header(
                     nav,
-                    channel_tabs(available, channel, select_channel),
+                    channel_tabs(available, channel, tab_pending, select_channel),
                 )
             },
         ))
@@ -340,12 +482,13 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                 ))
                 .child(when(
                     move || {
-                        model::cold_loading(
-                            feed_navigation.playable().get().is_some(),
-                            target.loading(),
-                            result.loading(),
-                            selected.get().is_some(),
-                        )
+                        cue.get().is_none()
+                            && model::cold_loading(
+                                feed_navigation.playable().get().is_some(),
+                                target.loading(),
+                                result.loading(),
+                                selected.get().is_some(),
+                            )
                     },
                     move || {
                         view()
@@ -354,11 +497,12 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                             .items_center()
                             .justify_center()
                             .pointer_events(PointerEvents::None)
-                            .child(ui::status(move || tr("common.loading")))
+                            .child(ui::loading::indicator("common.loading").size_6())
                     },
                 ))
+                .child(ui::loading::switch_cue(cue))
                 .child(when(
-                    move || result.error().is_some() || target.error().is_some(),
+                    move || feed_error().is_some() || target_error().is_some(),
                     move || {
                         view()
                             .absolute()
@@ -367,13 +511,12 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                             .justify_center()
                             .child(super::error_state(
                                 move || {
-                                    target
-                                        .error()
-                                        .or_else(|| result.error())
+                                    target_error()
+                                        .or_else(feed_error)
                                         .map_or_else(SharedString::default, |error| error.text())
                                 },
                                 move || {
-                                    if target.error().is_some() {
+                                    if target_error().is_some() {
                                         target.refetch();
                                     } else {
                                         result.refetch();
@@ -382,25 +525,35 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
                             ))
                     },
                 ))
-                .child(when(
-                    move || {
-                        !result.loading() && result.error().is_none() && selected.get().is_none()
-                    },
-                    move || {
-                        view()
-                            .absolute()
-                            .inset_0()
-                            .items_center()
-                            .justify_center()
-                            .child(ui::status(move || tr("common.empty")))
-                    },
-                )),
+                .child(when(channel_empty, move || {
+                    view()
+                        .absolute()
+                        .inset_0()
+                        .items_center()
+                        .justify_center()
+                        .gap_3()
+                        .child(ui::status(move || {
+                            tr(if channel.with(|id| id == FOLLOWING_CHANNEL) {
+                                "feed.followEmpty"
+                            } else {
+                                "common.empty"
+                            })
+                        }))
+                        .child(
+                            ui::controls::button(
+                                move || tr("common.retry"),
+                                ui::controls::ButtonVariant::Secondary,
+                            )
+                            .on_press(move || select_channel(channel.get_untracked())),
+                        )
+                })),
         )
 }
 
 fn channel_tabs(
     available: Memo<Vec<FeedTabMeta>>,
     selected: Signal<String>,
+    pending: Memo<bool>,
     on_select: impl Fn(String) + Copy + 'static,
 ) -> View {
     view()
@@ -423,8 +576,14 @@ fn channel_tabs(
                         .map_or_else(|| tab.tab_type.into(), |(_, key)| tr(key))
                 };
                 let is_selected = move || selected.get() == tab.with(|tab| tab.tab_type.clone());
-                let button = crate::shell::mobile_channel_tab(label, is_selected);
+                let button = crate::shell::mobile_channel_tab(label, is_selected, move || {
+                    is_selected() && pending.get()
+                });
                 button.on_press(move || on_select(tab.get_untracked().tab_type))
             },
         ))
+}
+
+fn result_pending(query: Option<Query>, channel: &str) -> bool {
+    query.is_some_and(|query| query.channel == channel && query.session.is_empty())
 }

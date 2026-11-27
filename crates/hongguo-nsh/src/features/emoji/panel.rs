@@ -110,7 +110,7 @@ pub(super) fn panel(
                         },
                     ))
                     .child(
-                        virtual_list(
+                        view().relative().h_52().child(virtual_list(
                             move || count.get().div_ceil(columns.get()),
                             move |at| {
                                 view()
@@ -189,12 +189,13 @@ pub(super) fn panel(
                             },
                         )
                         .h_52()
-                        .gap(move || px(crate::features::emoji::presentation::emoji_metrics(small.get()).2)),
+                        .gap(move || px(crate::features::emoji::presentation::emoji_metrics(small.get()).2)))
+                        .child(when(
+                            move || state.busy.get() && state.feed.with(|feed| feed.items.is_empty()),
+                            move || ui::loading::indicator("common.loading")
+                                .absolute().inset_0().pointer_events(PointerEvents::None),
+                        )),
                     )
-                    .child(when(
-                        move || state.busy.get(),
-                        move || crate::features::emoji::presentation::emoji_hint(move || tr("common.loading")),
-                    ))
                     .child(when(
                         move || state.failed.get(),
                         move || {
@@ -219,6 +220,7 @@ pub(super) fn panel(
                                 ui::ButtonVariant::Quiet,
                             )
                             .disabled(state.busy)
+                            .child(when(state.busy, || ui::loading::spinner().accessible(false)))
                             .on_press(move || action(Intent::More))
                         },
                     ))
