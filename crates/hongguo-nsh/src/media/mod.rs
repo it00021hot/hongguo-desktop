@@ -36,12 +36,18 @@ impl Routes {
         {
             return Err(StatusCode::BAD_REQUEST);
         }
-        self.sources
+        let source = self
+            .sources
             .lock()
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .get(id)
             .cloned()
-            .ok_or(StatusCode::NOT_FOUND)
+            .ok_or(StatusCode::NOT_FOUND)?;
+        if source.is_current() {
+            Ok(source)
+        } else {
+            Err(StatusCode::GONE)
+        }
     }
 }
 
@@ -139,6 +145,14 @@ pub(crate) struct MediaLease {
 }
 
 impl MediaLease {
+    pub(crate) fn is_current(&self) -> bool {
+        self.sources
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&self.id)
+            .is_some_and(Source::is_current)
+    }
+
     pub(crate) fn set_playback_rate(&self, rate: f32) -> Result<(), String> {
         let sources = self
             .sources

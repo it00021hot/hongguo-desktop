@@ -7,8 +7,18 @@ use hongguo_common::model::{PlayRequest, PlayResponse};
 use hongguo_common::{AppError, AppResult};
 use hongguo_store::Store;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PlaybackIntent {
+    Active,
+    StageNext,
+}
+
 /// 显式文件路径优先；`preferOnline` 起播返回在线流及可选档位。
-pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<PlayResponse> {
+pub async fn resolve_play(
+    state: &AppState,
+    request: &PlayRequest,
+    intent: PlaybackIntent,
+) -> AppResult<PlayResponse> {
     let resume_at = position::load(state, &request.series_id, request.vid_index)?;
     if let Some(path) = local_playback_path(state, request) {
         if let Some(response) = prepare_local_response(request, &path, resume_at)? {
@@ -59,19 +69,37 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
 
     // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
     let progress_key = format!("{}:{}", request.series_id, request.vid_index);
-    super::resolution::remember(
-        state,
-        &request.series_id,
-        request.definition,
-        request.reset_definition,
-    )?;
-    match online::prepare(state, &vid, &progress_key, request.definition).await {
-        Ok(prepared) => {
-            crate::play_service::schedule_following_episodes(
+    let prefetch_bytes = match intent {
+        PlaybackIntent::Active => {
+            super::resolution::remember(
                 state,
                 &request.series_id,
-                request.vid_index,
-            );
+                request.definition,
+                request.reset_definition,
+            )?;
+            None
+        }
+        PlaybackIntent::StageNext => {
+            let budget = super::prefetch_budget(state).await;
+            if budget.count == 0 || budget.bytes == 0 {
+                return Err(AppError::Media("下一集预取已关闭".into()));
+            }
+            Some(budget.bytes)
+        }
+    };
+    match online::prepare(
+        state,
+        &vid,
+        &progress_key,
+        request.definition,
+        prefetch_bytes,
+    )
+    .await
+    {
+        Ok(prepared) => {
+            if intent == PlaybackIntent::Active {
+                super::schedule_following_episodes(state, &request.series_id, request.vid_index);
+            }
             let direct = crate::capability_service::plays_direct(&prepared.codec);
             Ok(PlayResponse {
                 url: prepared.url,
@@ -99,6 +127,42 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
             direct: false,
         }),
     }
+}
+
+/// An already warmed stream gains foreground priority only when selected.
+pub fn activate_staged(
+    state: &AppState,
+    vid: &str,
+    definition: u32,
+    series_id: &str,
+    episode: u32,
+) {
+    let cache = hongguo_stream::cache();
+    if cache.current() != vid {
+        cache.set_current(vid);
+        online::resume_fill(state, vid, definition, &format!("{series_id}:{episode}"));
+        super::schedule_following_episodes(state, series_id, episode);
+    }
+}
+
+/// Reclaim a retained stream for foreground playback. Without its cache entry
+/// the caller needs a fresh media lease, not a retry of the old loopback URL.
+pub fn resume_retained_stream(
+    state: &AppState,
+    vid: &str,
+    definition: u32,
+    series_id: &str,
+    episode: u32,
+) -> bool {
+    let cache = hongguo_stream::cache();
+    if !cache.exists(vid, definition) {
+        return false;
+    }
+    if cache.current() != vid {
+        cache.set_current(vid);
+    }
+    online::resume_fill(state, vid, definition, &format!("{series_id}:{episode}"));
+    true
 }
 
 fn local_playback_path(state: &AppState, request: &PlayRequest) -> Option<String> {

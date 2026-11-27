@@ -99,6 +99,7 @@ pub async fn prepare(
     vid: &str,
     progress_key: &str,
     definition: Option<u32>,
+    prefetch_bytes: Option<u64>,
 ) -> AppResult<Prepared> {
     let vid = vid.trim();
     if vid.is_empty() {
@@ -110,8 +111,12 @@ pub async fn prepare(
     // 一次只看一集的**语义下有界保留**：全清的话，信息流切剧目标一弹，
     // 正在被 `<video>` 读的那条流就被逐掉，播放追上缓冲前沿只能超时。
     // set_current 内已跑 retain_playing_set（连播接力同路，不依赖 prepare）。
-    c.set_current(vid);
-    prune_codecs(c);
+    // Staging can mount a video before the episode changes. It must not
+    // cancel the fill of the episode still on screen.
+    if prefetch_bytes.is_none() {
+        c.set_current(vid);
+        prune_codecs(c);
+    }
 
     // 还没有键可查：先做一次很小的接口调用把流表拿回来，解析出的真实档位才是缓存的键；
     // 贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
@@ -129,7 +134,9 @@ pub async fn prepare(
         && let Some(hit) = prepared(c, vid, selection.play.definition, selection.automatic)
     {
         // 只续填选中档：其它档若一并升格会把多路整集灌进内存。
-        resume_fill(state, vid, selection.play.definition, progress_key);
+        if prefetch_bytes.is_none() {
+            resume_fill(state, vid, selection.play.definition, progress_key);
+        }
         return Ok(hit);
     }
     fetch_with_registry(state, vid, progress_key, definition, cap).await?;
@@ -145,7 +152,9 @@ pub async fn prepare(
     let play = selection.play;
     let want = play.definition;
     if let Some(hit) = prepared(c, vid, want, automatic_definition) {
-        resume_fill(state, vid, want, progress_key);
+        if prefetch_bytes.is_none() {
+            resume_fill(state, vid, want, progress_key);
+        }
         return Ok(hit);
     }
     log::info!(
@@ -153,14 +162,19 @@ pub async fn prepare(
         play.definitions.len()
     );
 
-    if !c.begin_fetch(vid, want) {
+    let Some(generation) = c.begin_fetch(vid, want) else {
         // 抢取流权时又被别人插队（窗口极窄），转为等待
         let result = wait_for_fetch(c, vid, want, automatic_definition).await?;
-        resume_fill(state, vid, want, progress_key);
+        if prefetch_bytes.is_none() {
+            resume_fill(state, vid, want, progress_key);
+        }
         return Ok(result);
-    }
-    c.set_definitions(vid, want, &play.definitions);
+    };
+    c.set_definitions(&generation, &play.definitions);
     remember_codec(vid, want, &play.codec);
+    if prefetch_bytes.is_some() {
+        c.mark_prefetch(vid, want);
+    }
     let url = hongguo_common::media_url::stream_url(vid, want);
     // play 整份 move 进后台填充任务，这里先把要回给调用方的字段取出来
     let result = Prepared {
@@ -177,14 +191,27 @@ pub async fn prepare(
     let c = cache();
     let state = state.clone();
     crate::runtime::spawn(async move {
-        let filled = fill(&state, c, &owned, &owned_key, want, &play, &settings, None).await;
+        let filled = fill(
+            &state,
+            c,
+            &generation,
+            &owned,
+            &owned_key,
+            want,
+            &play,
+            &settings,
+            prefetch_bytes,
+        )
+        .await;
         // 取流权一直持有到数据落盘：中途放开会让并发的第二个请求重新下一遍。
-        c.end_fetch(&owned, want);
         if let Err(e) = filled {
             log::warn!("[Online] 填充 {owned} 失败: {e}");
-            c.remove(&owned, want);
-            prune_codecs(c);
-            hongguo_api::play_url::invalidate_model(&owned);
+            if c.remove_generation(&generation) {
+                prune_codecs(c);
+                hongguo_api::play_url::invalidate_model(&owned);
+            }
+        } else {
+            c.end_fetch(&generation);
         }
     });
 
@@ -252,10 +279,10 @@ pub async fn prefetch_stream(
         c.remove(vid, want);
         prune_codecs(c);
     }
-    if !c.begin_fetch(vid, want) {
+    let Some(generation) = c.begin_fetch(vid, want) else {
         return Ok(());
-    }
-    c.set_definitions(vid, want, &play.definitions);
+    };
+    c.set_definitions(&generation, &play.definitions);
     remember_codec(vid, want, &play.codec);
     // 显式标记预取：keep_only 只豁免这一条，别让在途填充占住串行队列
     c.mark_prefetch(vid, want);
@@ -269,6 +296,7 @@ pub async fn prefetch_stream(
         let filled = fill(
             &state,
             c,
+            &generation,
             &owned,
             &owned_key,
             want,
@@ -277,12 +305,14 @@ pub async fn prefetch_stream(
             Some(bytes),
         )
         .await;
-        c.end_fetch(&owned, want);
         if let Err(e) = filled {
             log::warn!("[Online] 预取填充 {owned} 失败: {e}");
-            c.remove(&owned, want);
-            prune_codecs(c);
-            hongguo_api::play_url::invalidate_model(&owned);
+            if c.remove_generation(&generation) {
+                prune_codecs(c);
+                hongguo_api::play_url::invalidate_model(&owned);
+            }
+        } else {
+            c.end_fetch(&generation);
         }
     });
     Ok(())

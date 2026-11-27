@@ -31,6 +31,7 @@ enum SourceKind {
         vid: String,
         definition: u32,
         len: u64,
+        generation: hongguo_stream::StreamGeneration,
     },
 }
 
@@ -102,13 +103,14 @@ impl Source {
     }
 
     pub(super) fn online(vid: String, definition: u32) -> Result<Self, String> {
-        let len = hongguo_stream::total_len(&vid, definition)
-            .filter(|len| *len > 0)
+        let (generation, len) = hongguo_stream::cache()
+            .open_ready_stream(&vid, definition)
             .ok_or("media stream is not ready")?;
         Ok(Self::new(SourceKind::Online {
             vid,
             definition,
             len,
+            generation,
         }))
     }
 
@@ -124,6 +126,16 @@ impl Source {
             buffering: Arc::default(),
             rate: Arc::new(AtomicU64::new(1.0_f64.to_bits())),
         }
+    }
+
+    pub(super) fn is_current(&self) -> bool {
+        !self.revoked.load(Ordering::Acquire)
+            && match &self.kind {
+                SourceKind::File { .. } => true,
+                SourceKind::Online { generation, .. } => {
+                    hongguo_stream::cache().is_current_generation(generation)
+                }
+            }
     }
 
     pub(super) fn revoke(&self) {
@@ -156,9 +168,9 @@ impl Source {
         count: u64,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<u8>, String> {
-        let interrupted = || self.revoked.load(Ordering::Acquire) || cancelled();
+        let interrupted = || !self.is_current() || cancelled();
         if interrupted() {
-            return Err("media read cancelled".into());
+            return Err("media read cancelled or expired".into());
         }
         let mut bytes = match &self.kind {
             SourceKind::File { file, .. } => {
@@ -205,6 +217,9 @@ impl Source {
                 .map_err(|error| error.to_string())
             }
         }?;
+        if interrupted() {
+            return Err("media read cancelled or expired".into());
+        }
         if self.only_audio
             && let Some(view) = &self.audio_view
         {
