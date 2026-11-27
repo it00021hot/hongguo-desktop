@@ -3,6 +3,17 @@ use crate::ui::motion::PRESS_SCALE;
 use nsh_base::theme;
 use nsh_core::prelude::*;
 
+pub(crate) const DESKTOP_CONTROL_HEIGHT: f32 = 36.0;
+pub(crate) const COMPACT_CONTROL_HEIGHT: f32 = 32.0;
+
+pub(crate) fn control_height() -> Points {
+    px(if is_desktop() {
+        DESKTOP_CONTROL_HEIGHT
+    } else {
+        48.0
+    })
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum ButtonVariant {
     Primary,
@@ -14,11 +25,31 @@ pub(crate) fn button(
     label: impl IntoReactive<SharedString>,
     variant: ButtonVariant,
 ) -> nsh_base::ButtonElement {
-    surface(variant).child(text(label).text_sm().font_weight(FontWeight::MEDIUM))
+    surface(variant).h(px(DESKTOP_CONTROL_HEIGHT)).child(
+        text(label)
+            .text_sm()
+            .line_height(px(20.0))
+            .font_weight(FontWeight::MEDIUM),
+    )
+}
+
+pub(crate) fn compact_button(
+    label: impl IntoReactive<SharedString>,
+    variant: ButtonVariant,
+) -> nsh_base::ButtonElement {
+    surface_height(variant, COMPACT_CONTROL_HEIGHT)
+        .h(px(COMPACT_CONTROL_HEIGHT))
+        .py_0()
+        .child(
+            text(label)
+                .text_sm()
+                .line_height(px(20.0))
+                .font_weight(FontWeight::MEDIUM),
+        )
 }
 
 pub(crate) fn surface(variant: ButtonVariant) -> nsh_base::ButtonElement {
-    surface_height(variant, 36.0)
+    surface_height(variant, DESKTOP_CONTROL_HEIGHT)
 }
 
 pub(crate) fn surface_height(variant: ButtonVariant, height: f32) -> nsh_base::ButtonElement {
@@ -73,8 +104,8 @@ pub(crate) fn field(label: impl IntoReactive<SharedString>) -> nsh_base::Input {
         .caret_color(move || color(theme().ring))
         .selection_color(move || color(theme().primary.opacity(0.3)))
         .label(move || name.get())
-        .min_h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
-        .h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
+        .min_h(control_height)
+        .h(control_height)
         .px_3()
         .py_2()
         .text_sm()

@@ -121,6 +121,10 @@ pub async fn fetch_bookshelf(target_user_id: &str, env: &ApiEnv) -> AppResult<Ve
         let msg = value.get("message").and_then(Value::as_str).unwrap_or("?");
         return Err(AppError::Media(format!("书架列表接口返回: {msg}")));
     }
+    Ok(parse_bookshelf(&value))
+}
+
+fn parse_bookshelf(value: &Value) -> Vec<BookshelfEntry> {
     let mut items = Vec::new();
     for raw in value
         .pointer("/data/video_shelf_info")
@@ -128,19 +132,13 @@ pub async fn fetch_bookshelf(target_user_id: &str, env: &ApiEnv) -> AppResult<Ve
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let series_id = ["series_id", "book_id", "item_id"]
-            .iter()
-            .find_map(|k| raw.get(*k).and_then(Value::as_str))
-            .map(str::to_string)
-            .or_else(|| {
-                ["series_id", "book_id", "item_id"]
-                    .iter()
-                    .find_map(|k| raw.get(*k).map(num_to_string))
-            })
-            .unwrap_or_default();
-        if series_id.is_empty() {
+        let Some(series_id) = ["series_id", "book_id", "item_id"]
+            .into_iter()
+            .filter_map(|key| raw.get(key))
+            .find_map(bookshelf_id)
+        else {
             continue;
-        }
+        };
         // 候选字段秒/毫秒形态并存，按值判量级（1e12 ≈ 2001 年起的毫秒戳）：
         // 毫秒原样用，秒形态 ×1000。
         let collect_time_ms = ["collect_time_ms", "collect_time", "create_time"]
@@ -159,16 +157,19 @@ pub async fn fetch_bookshelf(target_user_id: &str, env: &ApiEnv) -> AppResult<Ve
             content_type,
         });
     }
-    Ok(items)
+    items
 }
 
-/// JSON 数字 → 字符串（u64 精度无损）。
-fn num_to_string(v: &Value) -> String {
-    match v {
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => s.clone(),
-        _ => String::new(),
+/// 排除空占位值，再按字段顺序尝试；JSON 整数保留 u64 全精度。
+pub(super) fn bookshelf_id(value: &Value) -> Option<String> {
+    if let Some(id) = value.as_str() {
+        let id = id.trim();
+        return (!id.is_empty() && id != "0").then(|| id.to_owned());
     }
+    value
+        .as_u64()
+        .filter(|&id| id != 0)
+        .map(|id| id.to_string())
 }
 
 /// 拉互动状态列表（`ugc/action/mget`，最近 100 条）——列表接口而非单集查询：

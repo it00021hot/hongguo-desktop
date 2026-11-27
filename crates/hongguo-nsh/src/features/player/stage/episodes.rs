@@ -265,8 +265,8 @@ fn season_list(state: MenuState, action: impl Fn(MenuAction) + Copy + 'static) -
     view()
         .gap_2()
         .child(when(
-            move || state.seasons.loading.get(),
-            move || ui::status(move || tr("common.loading")),
+            move || state.seasons.loading.get() && state.seasons.items.with(Vec::is_empty),
+            move || ui::loading::indicator("common.loading").h(px(78.0)),
         ))
         .child(when(
             move || !state.seasons.error.get().is_empty(),
@@ -407,7 +407,9 @@ fn season_card(
                 )
             })
             .disabled(move || {
-                state.seasons.reserving.get() || stored.with(|season| season.reserved)
+                state.seasons.reserving.get()
+                    || state.seasons.switching.get().is_some()
+                    || stored.with(|season| season.reserved)
             })
             .on_press(move || {
                 action(MenuAction::ReserveSeason(
@@ -417,6 +419,15 @@ fn season_card(
         );
     }
     row.role(nsh_core::AccessibilityRole::Button)
+        .child(when(
+            move || {
+                state
+                    .seasons
+                    .switching
+                    .with(|id| stored.with(|season| id.as_ref() == Some(&season.id)))
+            },
+            || ui::loading::indicator("player.switching"),
+        ))
         .focusable(move || !state.seasons.reserving.get() && !state.seasons.loading.get())
         .accessibility_state(move || nsh_core::AccessibilityState {
             disabled: state.seasons.reserving.get() || state.seasons.loading.get(),

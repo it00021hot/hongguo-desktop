@@ -1,5 +1,6 @@
-mod actions;
+pub(super) mod actions;
 mod date;
+mod page;
 mod view;
 
 use super::SessionHandle;
@@ -7,62 +8,68 @@ use crate::{
     bridge,
     navigation::{DetailPrefill, Navigation, Route},
 };
-use hongguo_common::AppError;
-use hongguo_service::contracts::calendar::CalendarItem;
+use hongguo_service::contracts::calendar::{
+    CalendarCursor, CalendarFilteredPage, CalendarPage, CalendarPanel, SelectorId,
+};
 use nsh_core::prelude::*;
-use std::{collections::HashSet, future::Future};
+use std::future::Future;
 
-#[derive(Clone, Default, PartialEq)]
-pub(super) struct Query {
-    pub(super) date: String,
-    pub(super) offset: i64,
-    pub(super) session: String,
-    pub(super) previous: Vec<CalendarItem>,
-    pub(super) identity: u64,
+#[derive(Clone, PartialEq)]
+struct FilteredPage {
+    page: CalendarPage,
+    cursor: CalendarCursor,
+    filter: Option<SelectorId>,
+    date: String,
+    identity: u64,
 }
 
-pub(super) fn content(session: SessionHandle, nav: Navigation, active: Memo<bool>) -> View {
-    let (selected, query, feed) = data(
-        active,
-        move || session.identity(),
-        move |query| {
+#[derive(Clone, Default, PartialEq)]
+struct Query {
+    date: String,
+    previous: Option<FilteredPage>,
+    identity: u64,
+    filter: Option<SelectorId>,
+}
+
+pub(super) fn content(
+    session: SessionHandle,
+    nav: Navigation,
+    active: Memo<bool>,
+    reservations: actions::Reservations,
+) -> View {
+    let panel = resource(
+        move || active.get().then(|| session.identity()),
+        move |identity, _| {
             let state = session.with(|session| session.state.clone());
-            bridge::request(async move {
-                let date = (!query.date.is_empty()).then_some(query.date.as_str());
-                let mut offset = query.offset;
-                let mut page = hongguo_service::catalog_service::calendar(
-                    date,
-                    (offset > 0).then_some((offset, query.session.as_str())),
-                    &state,
-                )
-                .await?;
-                let dates = page.dates.clone();
-                let default_date = page.default_date.clone();
-                while page.items.is_empty() && page.has_more {
-                    if page.next_offset <= offset {
-                        return Err(AppError::Media("Calendar cursor did not advance".into()));
-                    }
-                    offset = page.next_offset;
-                    page = hongguo_service::catalog_service::calendar(
-                        date,
-                        Some((offset, &page.session_id)),
-                        &state,
-                    )
-                    .await?;
-                }
-                page.dates = dates;
-                page.default_date = default_date;
-                page.items = append(query.previous, page.items);
-                Ok(page)
-            })
+            async move {
+                bridge::request(async move {
+                    hongguo_service::catalog_service::calendar_panel(&state).await
+                })
+                .await
+                .map(|panel| (identity, panel))
+            }
         },
     );
-    let reservations = actions::Reservations::observe(session);
+    let (selected, filter, query, feed) = data(
+        active,
+        move || session.identity(),
+        panel,
+        move |query, panel| {
+            let state = session.with(|session| session.state.clone());
+            bridge::request(async move { page::load(query, panel.as_ref(), &state).await })
+        },
+    );
     let playing = signal(false);
     view::presentation(
         view::State {
             feed,
             selected,
+            filter,
+            panel,
+            identity: computed(move || session.identity()),
+            fetching_more: computed(move || {
+                feed.loading() && query.with(|query| query.previous.is_some())
+            }),
             reservations,
             today: date::today(),
         },
@@ -99,16 +106,21 @@ pub(super) fn content(session: SessionHandle, nav: Navigation, active: Memo<bool
                 if !active.get_untracked() || feed.loading() || feed.error().is_some() {
                     return;
                 }
-                if let Some(page) = feed
-                    .get()
-                    .filter(|page| page.has_more && page.next_offset > 0)
-                {
+                let date = selected.get_untracked();
+                let filter = filter.get_untracked();
+                let identity = session.identity();
+                if let Some(result) = feed.get().filter(|result| {
+                    result.page.has_more
+                        && result.page.next_offset > 0
+                        && result.date == date
+                        && result.filter == filter
+                        && result.identity == identity
+                }) {
                     query.set(Query {
-                        date: selected.get_untracked(),
-                        offset: page.next_offset,
-                        session: page.session_id,
-                        previous: page.items,
-                        identity: session.identity(),
+                        date,
+                        filter,
+                        previous: Some(result),
+                        identity,
                     });
                 }
             }),
@@ -116,59 +128,66 @@ pub(super) fn content(session: SessionHandle, nav: Navigation, active: Memo<bool
     )
 }
 
-pub(super) fn data<
-    Fut: Future<Output = Result<hongguo_service::contracts::calendar::CalendarPage, bridge::Failure>>
-        + 'static,
->(
+fn data<Fut: Future<Output = Result<FilteredPage, bridge::Failure>> + 'static>(
     active: Memo<bool>,
     identity: impl Fn() -> u64 + Copy + 'static,
-    fetch: impl Fn(Query) -> Fut + 'static,
-) -> (Signal<String>, Signal<Query>, view::Feed) {
+    panel: view::Panel,
+    fetch: impl Fn(Query, Option<CalendarPanel>) -> Fut + 'static,
+) -> (
+    Signal<String>,
+    Signal<Option<SelectorId>>,
+    Signal<Query>,
+    view::Feed,
+) {
     crate::view_memory::cached("new-calendar", move || {
         let selected = crate::view_memory::scope("new").signal("date", String::new());
+        let filter = signal(None);
         let query = signal(Query {
             identity: identity(),
             ..Default::default()
         });
         crate::view_memory::track_identity(identity, query, |query, identity| {
             query.identity = identity;
-            query.offset = 0;
-            query.session.clear();
-            query.previous.clear();
+            query.previous = None;
+            query.filter = None;
+        });
+        effect(move || {
+            let _ = identity();
+            filter.set(None);
         });
         effect(move || {
             let date = selected.get();
-            if query.with(|query| query.date != date) {
+            let filter = filter.get();
+            if query.with(|query| query.date != date || query.filter != filter) {
                 query.set(Query {
                     date,
+                    filter,
                     identity: identity(),
                     ..Default::default()
                 });
             }
         });
         let feed = resource(
-            move || active.get().then(|| (query.get(), identity())),
-            move |(mut query, identity), _| {
-                if query.identity != identity {
-                    query.offset = 0;
-                    query.session.clear();
-                    query.previous.clear();
+            move || {
+                if !active.get() {
+                    return None;
                 }
-                fetch(query)
+                let identity = identity();
+                let panel_value = panel.get().filter(|(owner, _)| *owner == identity);
+                if panel_value.is_none() && panel.error().is_none() {
+                    return None;
+                }
+                Some((query.get(), identity, panel_value.map(|(_, panel)| panel)))
+            },
+            move |(mut query, identity, panel), _| {
+                if query.identity != identity {
+                    query.identity = identity;
+                    query.previous = None;
+                    query.filter = None;
+                }
+                fetch(query, panel)
             },
         );
-        (selected, query, feed)
+        (selected, filter, query, feed)
     })
-}
-
-fn append(mut previous: Vec<CalendarItem>, next: Vec<CalendarItem>) -> Vec<CalendarItem> {
-    let mut seen = previous
-        .iter()
-        .map(|item| item.series_id.clone())
-        .collect::<HashSet<_>>();
-    previous.extend(
-        next.into_iter()
-            .filter(|item| seen.insert(item.series_id.clone())),
-    );
-    previous
 }

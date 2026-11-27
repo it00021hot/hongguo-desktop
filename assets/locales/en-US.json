@@ -138,6 +138,7 @@
   "tasks": {
     "emptyHint": "Download episodes from the player to watch offline",
     "queueStatus": "Running {running} · Pending {pending} · Done {completed} · Failed {failed}",
+    "bytevc2PlaybackNote": "Some MP4 downloads use ByteDance’s ByteVC2 video codec. Players without a ByteVC2 decoder may not display video. Play these files in Guava.",
     "concurrency": "Concurrency {active}/{limit}",
     "startAll": "Start all",
     "pauseAll": "Pause all",
@@ -186,6 +187,14 @@
     "buffering": "Buffering {percent}% ({size})…",
     "bufferingShort": "Buffering",
     "switching": "Switching…",
+    "albumEntryMissing": "Couldn’t find this episode in the playlist.",
+    "linkedDrama": "Watch related series",
+    "playHighlightAlbum": "Play creator playlist",
+    "prevClip": "Previous video",
+    "nextClip": "Next video",
+    "highlightAlbum": "Creator playlist",
+    "albumLoadFailed": "Couldn’t load the playlist. Try again.",
+    "linkedLoadFailed": "Couldn’t open the related video. Try again.",
     "preparingShort": "Preparing…",
     "playbackUnavailable": "The player could not start",
     "prepareFailed": "This video could not be prepared. Retry or choose another episode.",
@@ -584,6 +593,7 @@
     "loggedOut": "Signed out",
     "loginRiskNote": "Accounts are bound to this device; switching devices may trigger risk control",
     "hongguoId": "Hongguo ID",
+    "copyHongguoId": "Copy Hongguo ID",
     "moreInLaterPhase": "More settings (appearance, playback, network, shortcuts…) will arrive in a later release."
   },
   "error": {
@@ -620,6 +630,8 @@
     "partialFail": "Some deletions failed: {error}"
   },
   "common": {
+    "copied": "Copied",
+    "copyFailed": "Could not copy",
     "searchNoMatch": "No matching series",
     "confirm": "Confirm",
     "cancel": "Cancel",
@@ -663,6 +675,7 @@
     "loadFailedWith": "Failed to load recommendations: {message}",
     "retry": "Retry",
     "loadingMore": "Loading more…",
+    "followEmpty": "No updates from accounts you follow",
     "end": "No more items"
   },
   "number": {
@@ -688,12 +701,29 @@
   "newDrama": {
     "tabs": {
       "recommend": "New Releases",
-      "calendar": "Air Calendar"
+      "calendar": "Air Calendar",
+      "upcoming": "Upcoming"
     },
     "gender": {
-      "all": "All",
+      "all": "All genders",
       "male": "Male",
       "female": "Female"
+    },
+    "calendarKind": {
+      "all": "All",
+      "liveAction": "Live action",
+      "comic": "Comic dramas",
+      "noMatches": "No matches in the available calendar data"
+    },
+    "upcomingPage": {
+      "genreAll": "All formats",
+      "audienceAll": "All audiences",
+      "audienceMale": "Male audience",
+      "audienceFemale": "Female audience",
+      "mostAnticipated": "Most anticipated",
+      "soonest": "Coming soonest",
+      "latest": "Newly reservable",
+      "empty": "No upcoming shows to reserve"
     },
     "loadFailed": "Failed to load new dramas",
     "empty": "No releases on this day",
@@ -782,6 +812,39 @@
     "episodeCount": "{n} episodes",
     "resolvingHint": "Fetching series info…",
     "remove": "Remove",
+    "officialFolders": "Folders",
+    "officialFoldersEmpty": "No folders yet",
+    "createFolder": "New folder",
+    "folderNamePlaceholder": "Enter a folder name",
+    "publishFolder": "Make this folder public",
+    "folderPublic": "Public",
+    "folderPrivate": "Private",
+    "folderItemCount": "{count} items",
+    "folderAdd": "Add",
+    "folderAddTitle": "Add to folder",
+    "folderAddEmpty": "No favorites to add",
+    "folderRemove": "Remove from folder",
+    "folderOptions": "More",
+    "renameFolder": "Rename",
+    "deleteFolder": "Delete folder",
+    "deleteFolderTitle": "Delete this folder?",
+    "deleteFolderBody": "This deletes the “{name}” folder. The shows inside will stay in Favorites.",
+    "moveFolderItems": "Move to another folder",
+    "moveFolderTitle": "Choose a destination folder",
+    "noMoveDestination": "Create another folder before moving items.",
+    "confirmFolderMove": "Move items",
+    "searchInFolder": "Search this folder",
+    "folderSettings": "Folder settings",
+    "folderNameLabel": "Name",
+    "folderVisibility": "Visibility",
+    "folderPrivateHint": "Only visible to you",
+    "folderPublicHint": "Others can view this folder",
+    "folderSave": "Save changes",
+    "folderDanger": "Danger zone",
+    "folderDeleteHint": "Deletes the folder but keeps its shows in Favorites",
+    "confirmFolderDelete": "Confirm deletion",
+    "folderVisibilityUnavailable": "Visibility is unavailable. Refresh and try again.",
+    "unavailableHint": "This title is unavailable. You can still remove it from favorites.",
     "filterAll": "All",
     "filterReal": "Live action",
     "filterComic": "Animated",
@@ -841,6 +904,7 @@
     "kindOnline": "Now live"
   },
   "detail": {
+    "copyTitle": "Copy series title",
     "back": "Back",
     "followCount": "{count} followers",
     "episodesCount": "{count} episodes",

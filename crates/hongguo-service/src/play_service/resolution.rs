@@ -1,18 +1,17 @@
 //! 官方 rx4.q 选档的有状态部分：手选作用域、模型缓存命中和服务端规则存活期。
-use std::time::Instant;
+use std::{sync::atomic::AtomicBool, time::Instant};
 
 use chrono::{Local, Timelike};
 use hongguo_api::resolution_policy::{HeldStrategy, Purpose, Rules, Selection, Strategy};
 use hongguo_common::{AppError, AppResult};
 use parking_lot::Mutex;
-use tokio::sync::OnceCell;
 
 use crate::app_state::AppState;
 
 #[derive(Default)]
 pub(crate) struct ResolutionState {
     controller: Mutex<Controller>,
-    pub(super) poller: OnceCell<()>,
+    pub(super) poller: AtomicBool,
 }
 
 #[derive(Default)]
@@ -32,7 +31,7 @@ fn scope(rules: &Rules, series: &str) -> String {
 }
 
 /// 只在用户明确选择时更新；自动请求不覆盖其他集/剧留下的记忆。
-pub(super) async fn remember(
+pub(super) fn remember(
     state: &AppState,
     series: &str,
     value: Option<u32>,
@@ -41,7 +40,7 @@ pub(super) async fn remember(
     if value.is_none() && !reset {
         return Ok(());
     }
-    let policy = super::prefetch::policy(state).await;
+    let policy = super::prefetch::current_policy(state);
     remember_with_rules(state, &policy.rules.resolution, series, value)
 }
 
@@ -105,9 +104,9 @@ pub(super) async fn select(
     explicit: Option<u32>,
     purpose: Purpose,
 ) -> AppResult<Selected> {
-    let policy = super::prefetch::policy(state).await;
+    super::start_play_strategy_poller(state);
+    let policy = super::prefetch::current_policy(state);
     let rules = &policy.rules.resolution;
-    super::ensure_play_strategy_poller(state).await;
     let cap = crate::device::stream_cap();
     let (stamp, mut candidates) = hongguo_api::play_url::playback_candidates(vid, cap)
         .ok_or_else(|| AppError::Media("播放选档缺少有效流表".into()))?;

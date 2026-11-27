@@ -86,7 +86,7 @@ pub(crate) fn page(nav: Navigation, title: impl IntoReactive<SharedString> + Clo
         );
     let page = nsh_base::nav_page()
         .title(title)
-        .header(header.style_when(is_desktop, |style| style.hidden()))
+        .header(if is_desktop() { view() } else { header })
         .header_style_with(|style| {
             style
                 .bg(move || theme().background)

@@ -169,17 +169,32 @@ outer_row.items[].background_selector.inner_rows[]`，与 panel_selector
   （直接进沉浸页），抓不到 cr=4 不代表它没发
 - tab 表：**关注 45 / 漫剧 36 / 真人剧 39 / 推荐 16**，`tab_item[T]` 自带
   `bookstore_id`（=cell/change 的 plan_id，**每 tab 不同**）+ 会话 `session_id`
-- ⚠️ **cell 要按内容选，不能按位置取**：`cell_data[]` 里 [0] 可能是空的
-  运营金刚位卡（show_type=583），推荐流是**嵌套
-  `cell_data[].video_data[]` 非空**的那个 cell（cell_name=「猜你喜欢」，
-  show_type=407，其 cell_id 即 cell/change 的 cell_id）
+- **关注 45**：登录后用 `show_type=648 (HgFollowContentCell)` 定位作品流，不能拿
+  `647 (HgRecommendPeopleCard)` 翻页。作品直接是子 cell 的 `video_detail`，而不是
+  `video_data[]`。作品身份和起播取 `video_detail.video_list[0].series_id / vid`；
+  `related_album_id` 是底栏关联剧，不应当作作品播放目标。续页同样按关注 cell 解码。
+  PUGC 卡片按作品单独播放，展示 `ugc_user_info` 的创作者和 `bottom_bar.text`；
+  「观看关联短剧」进入关联剧播放器，走关联剧自己的档案和续播记录，不复用高光的 vid 或集号。
+  当 `bottom_bar.bottom_bar_type=album` 时，该 ID 指向创作者合集而非短剧。
+  合集播放器用 JSON `POST /novel/player/album_detail/v1/`（`album_id`、
+  `need_video_detail_info=true`、`biz_param.source=4`）；作品顺序取
+  `data.album_data.video_detail_list`，用 `data.video_detail_data` 补充缺失详情。
+  从作品打开合集时先对视频 VID，再对合集成员 ID，最后用唯一匹配的服务端集号定位；
+  找不到对应集时提示重试，不默认播开头。作品字幕保留真实集数，不加「高光」角标。
+- **选择服务端推荐 cell**：优先 `show_type=407`（cell_name=「猜你喜欢」），
+  而不是第一个运营卡（例如 `show_type=583`）。旧版响应缺少类型时，才从嵌套
+  `cell_data[].video_data[]` 找有影片条目的 cell；不把任意运营卡作为空批的续页定位。
+- **推荐流和顶栏的分页独立**：外层 tab 的 `has_more=false` 不是短剧推荐流的结束标记。
+  使用有效的推荐 cell、计划和会话启动续页；优先使用推荐 cell 的会话、偏移和显式
+  `has_more`，随后以 `cell/change` 的返回为准。续页未返回新会话时沿用本次会话。
+- NSH 只按服务端返回的剧集顺序展示，不在流尾拼接观看历史或收藏。历史仍用于命中同一剧时续播。
 - 用推荐的 id 打 tab39 服务端回落混合池（全 1004 漫剧）——「真人 tab 全是
   漫剧」的根因；取错 cell 则翻页恒空——「漫剧 tab 空批」的根因
 
 **翻页**：`GET /reading/bookapi/bookmall/cell/change/v`（cell_id + plan_id 用
 目标 tab 自己的）+ 三件套：`session_id`（首页下发）+ `offset`（**上一页响应
-的 next_offset**，0→6→12 递进）+ `filter_ids`（已下发过的 series_id 逗号表，
-服务端排除已见，翻页无重复）
+的 next_offset**，例如 0→6→12）+ `filter_ids`（已下发过的 series_id 逗号表）。
+个别响应仍会重复，NSH 合并时保留已加载的顺序并按 ID 去重。
 
 - 响应 `data`：`cell_view.cell_data[].video_data[]`（条目身份在
   `video_detail`：series_title/series_cover(_uri)/series_id_str/episode_cnt/
@@ -300,6 +315,31 @@ GET /reading/user/subscribe/list/v1/
 
 首页（不带 target_date）返回默认日（今天）条目 + `calendar_schema.date_list`
 （前后各一周）+ `default_date`；条目跨日分布时 `has_more/next_offset` 翻页。
+
+新日历先独立拉面板：`tab_type=5, version=0, req_type=panel_only,
+need_calendar_schema=true, offset=0, session_id=`。读取
+`data.calendar_schema` 及根层 `SelectorRows`（小写别名 `selector_rows`）
+的首行：`type, row_name, items[].{show_name, selector_item_id}`。
+同日列表请求不带 `req_type`，用 `target_date, need_calendar_schema=false`；
+全部不传选择，真人剧/漫剧用服务端下发的选择编码到 `select_items`
+JSON 字符串，比如 `{"genre":["comic_series"]}`。切类重置分页；
+续页分别使用响应的 `next_offset`、`calendar_loc_info.subscribe_offset`
+及 `session_id`，不把两个 offset 当成同一个值。
+
+必须由服务端按选择取数据。官方 APK 7.4.3.32 游客切到「漫剧」有独立内容，
+桌面仅筛「全部」会漏剧。协议来自官方游客页面公开 Lynx 模板，并用 Mac
+游客会话复核了日历面板的 `shortplay`、`comic_series`。旧服务缺少面板时
+仍走原未筛选日历，不猜测剧集形式。
+
+### 新剧预约（发现）
+
+与上新日历同一列表端点，`tab_type=2, version=1, limit=10`，首页
+`offset=0, session_id=`。先发 `req_type=panel_only` 读取根层三组
+服务端选项：`genre`（体裁）、`gender`（受众）、`sort`（排序）。
+按选择发 `select_items` JSON；有任一具体选择时，其余未选组保留空数组。
+读取列表时不传 `req_type`，分页续传响应的 `next_offset/session_id`。
+游客响应已核对体裁、受众、排序及卡片的 `expected_rec_text` 等字段。
+单剧预约动作复用现有账号接口，不是个人「我的预约」的 `tab_type=13` 列表。
 
 ## 4. 找剧（筛选浏览）
 ```
@@ -1111,8 +1151,7 @@ body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序�
 （历史行按剧聚合）；之后每 60s 一拍（暂停不计时）；回跳（以及 >60s
 的前跳）立即补；暂停、切集和退出收尾（仍守 <5 秒不建行的门槛）。Tauri 匿名会话使用上面的 APK 实测口径。两种模式都保留每次播放位置采样，落盘独立节流。
 上报落定后把 `watch-history` / `local-history` 查询标记过期但**不立刻重拉**
-（`refetchType: 'none'`：首页「你的内容」种子吃同一份缓存，播放中重排会把
-游标指到别的剧），历史页下次打开必拉新行。
+（`refetchType: 'none'`），历史页下次打开必拉新行。
 
 > 为什么不能挂在落盘/帧事件上：首报会被 5 秒落盘
 > 窗口量化到 5–10 秒；而「每 60s 一拍」的计数只在真正上报时自增，恒定卡在

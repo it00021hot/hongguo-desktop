@@ -12,13 +12,7 @@ mod row_view;
 mod threads;
 
 use super::Target;
-use crate::{
-    bridge,
-    features::SessionHandle,
-    i18n::tr,
-    navigation::Navigation,
-    ui::{self, ButtonVariant},
-};
+use crate::{bridge, features::SessionHandle, i18n::tr, navigation::Navigation, ui};
 use api::Thread;
 use composer::composer;
 use model::{Feed, Item};
@@ -154,8 +148,8 @@ fn thread_with_header(
         view()
             .gap_2()
             .child(when(
-                move || loaded.loading(),
-                move || ui::status(move || tr("common.loading")),
+                move || loaded.loading() && feed.with(|feed| feed.items.is_empty()),
+                move || comment_skeleton(3),
             ))
             .child(when(
                 move || loaded.error().is_some(),
@@ -174,11 +168,10 @@ fn thread_with_header(
                 move || feed.with(|feed| feed.has_more),
                 move || {
                     let button = if root_review {
-                        ui::button(
+                        crate::features::player::presentation::comment_more(
                             move || tr("player.emoticon.loadMore"),
-                            ButtonVariant::Secondary,
+                            move || loaded.loading(),
                         )
-                        .disabled(move || loaded.loading())
                     } else {
                         more_button(feed, move || loaded.loading())
                     };
@@ -346,8 +339,8 @@ fn reply_footer(thread: threads::ReplyThread) -> View {
         .pl_12()
         .gap_2()
         .child(when(
-            move || thread.loaded.loading(),
-            move || ui::status(move || tr("common.loading")),
+            move || thread.loaded.loading() && thread.feed.with(|feed| feed.items.is_empty()),
+            move || comment_skeleton(1),
         ))
         .child(when(
             move || thread.loaded.error().is_some(),
@@ -366,12 +359,34 @@ fn reply_footer(thread: threads::ReplyThread) -> View {
         .child(when(
             move || thread.feed.with(|feed| feed.has_more),
             move || {
-                crate::features::player::presentation::review_link(move || {
-                    tr("player.emoticon.loadMore")
-                })
-                .disabled(move || thread.loaded.loading())
+                crate::features::player::presentation::review_link(
+                    move || tr("player.emoticon.loadMore"),
+                    move || thread.loaded.loading(),
+                )
                 .on_press(move || thread.cursor.set(thread.feed.get_untracked().cursor))
             },
         ))
         .child(ui::status(thread.message))
+}
+
+fn comment_skeleton(rows: usize) -> View {
+    view()
+        .role(AccessibilityRole::Group)
+        .label(move || tr("common.loading"))
+        .gap_4()
+        .py_3()
+        .children((0..rows).map(|_| {
+            view()
+                .flex_row()
+                .gap_3()
+                .items_start()
+                .child(ui::loading::skeleton().size_8().rounded_full())
+                .child(
+                    view()
+                        .gap_2()
+                        .flex_1()
+                        .child(ui::loading::skeleton().w(px(84.0)).h_3())
+                        .child(ui::loading::skeleton().w(percentage(0.72)).h_3()),
+                )
+        }))
 }

@@ -146,7 +146,7 @@ pub(crate) fn download_range_error() -> Text {
 
 pub(crate) fn download_cancel() -> nsh_base::ButtonElement {
     surface(36.0)
-        .h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
+        .h(crate::ui::controls::control_height)
         .py_0()
         .border_1()
         .border_color(move || nsh_base::theme().border)

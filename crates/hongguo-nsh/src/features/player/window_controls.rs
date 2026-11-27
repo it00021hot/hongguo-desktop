@@ -21,14 +21,7 @@ pub(super) fn controls(
     let controls = crate::features::player::presentation::window_player_controls(
         crate::features::player::presentation::WindowPlayerState {
             portrait: computed(move || modes.state().mode == Mode::Portrait),
-            caption: computed(move || {
-                let info = information.get();
-                crate::features::player::presentation::WindowCaption {
-                    title: info.title,
-                    episode: info.episode,
-                    total: info.total,
-                }
-            }),
+            caption: computed(move || information.get().into()),
             paused: computed(move || state.paused.get()),
             rate: computed(move || state.rate.get()),
             muted: computed(move || state.menus.muted.get()),

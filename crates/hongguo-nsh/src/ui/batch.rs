@@ -1,6 +1,6 @@
 use crate::ui::ButtonVariant;
 use crate::ui::Icon;
-use crate::ui::controls::surface_height;
+use crate::ui::controls::{COMPACT_CONTROL_HEIGHT, surface_height};
 use crate::ui::icon;
 use nsh_base::theme;
 use nsh_core::prelude::*;
@@ -19,7 +19,8 @@ pub(crate) fn batch_bar() -> View {
 }
 
 pub(crate) fn batch_select(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
-    surface_height(ButtonVariant::Quiet, 32.0)
+    surface_height(ButtonVariant::Quiet, COMPACT_CONTROL_HEIGHT)
+        .h(px(COMPACT_CONTROL_HEIGHT))
         .flex_row()
         .gap_2()
         .px_3()
@@ -34,7 +35,8 @@ pub(crate) fn batch_select(label: impl IntoReactive<SharedString>) -> nsh_base::
 }
 
 pub(crate) fn batch_delete(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
-    surface_height(ButtonVariant::Quiet, 32.0)
+    surface_height(ButtonVariant::Quiet, COMPACT_CONTROL_HEIGHT)
+        .h(px(COMPACT_CONTROL_HEIGHT))
         .flex_row()
         .gap_2()
         .px_3()

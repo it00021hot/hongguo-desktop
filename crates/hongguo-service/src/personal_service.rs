@@ -33,14 +33,32 @@ struct ResumeHint {
 #[derive(Default)]
 pub struct PersonalSources {
     snapshot: Mutex<Option<Snapshot>>,
+    recent: Mutex<Option<(HistoryAccount, Arc<Sources>)>>,
     hint: Mutex<Option<ResumeHint>>,
 }
 
 impl PersonalSources {
+    /// 即时读取当前账号已同步的历史；起播不等待云端。
+    pub fn recent(&self, state: &AppState) -> AppResult<Arc<Sources>> {
+        let account = history_service::account(state);
+        let recent = self.recent.lock().map_err(cache_error)?;
+        Ok(recent
+            .as_ref()
+            .filter(|(key, _)| Some(key) == account.as_ref())
+            .map(|(_, sources)| sources.clone())
+            .unwrap_or_else(|| {
+                Arc::new(Sources {
+                    account,
+                    ..Sources::default()
+                })
+            }))
+    }
+
     pub async fn read(&self, state: &AppState) -> AppResult<Arc<Sources>> {
         let key = history_service::account(state);
         if key.is_none() {
             *self.snapshot.lock().map_err(cache_error)? = None;
+            *self.recent.lock().map_err(cache_error)? = None;
             *self.hint.lock().map_err(cache_error)? = None;
         }
         let cached = self
@@ -65,6 +83,7 @@ impl PersonalSources {
             }
         },);
         let cache_bookshelf = refresh_bookshelf && bookshelf.is_ok();
+        let history_ok = history.is_ok();
         let history = match history {
             Ok(page) => page.items,
             Err(error) => {
@@ -87,6 +106,9 @@ impl PersonalSources {
             history,
             bookshelf,
         });
+        if history_ok && let Some(account) = value.account.clone() {
+            *self.recent.lock().map_err(cache_error)? = Some((account, value.clone()));
+        }
         if cache_bookshelf && let Some(account) = value.account.clone() {
             *self.snapshot.lock().map_err(cache_error)? = Some(Snapshot {
                 loaded: Instant::now(),

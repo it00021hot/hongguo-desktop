@@ -53,13 +53,18 @@ pub(super) fn content(session: SessionHandle, nav: Navigation, active: Memo<bool
             .unwrap_or_default()
         })
     });
+    let initial = computed(move || feed.loading() && cards.with(Vec::is_empty));
+    let fetching_more = computed(move || feed.loading() && query.with(|query| query.offset > 0));
     let grid = view()
         .flex_1()
         .min_h(px(0.0))
-        .child(when(
-            move || feed.loading(),
-            move || ui::status(move || tr("common.loading")),
-        ))
+        .child(when(initial, move || {
+            scroll().flex_1().child(
+                view()
+                    .px_4()
+                    .child(crate::features::browse::presentation::browse_loading()),
+            )
+        }))
         .child(when(
             move || feed.error().is_some(),
             move || {
@@ -78,12 +83,18 @@ pub(super) fn content(session: SessionHandle, nav: Navigation, active: Memo<bool
                     && feed.error().is_none()
                     && feed.with(|page| page.is_some_and(|page| page.items.is_empty()))
             },
-            move || ui::status(move || tr("newDrama.emptyRecommend")),
+            move || {
+                crate::features::browse::presentation::browse_empty(move || {
+                    tr("newDrama.emptyRecommend")
+                })
+            },
         ))
-        .child(dynamic(move || {
-            query.with(|query| query.audience);
-            ui::refresh_shade(move || feed.loading() && cards.with(|cards| !cards.is_empty()))
-                .style_when(move || feed.error().is_some(), |style| style.hidden())
+        .child(
+            ui::refresh_shade(move || feed.loading() && !initial.get() && !fetching_more.get())
+                .style_when(
+                    move || feed.error().is_some() || cards.with(Vec::is_empty),
+                    |style| style.hidden(),
+                )
                 .child(crate::features::new_drama::presentation::new_drama_grid(
                     cards,
                     move || {
@@ -91,6 +102,7 @@ pub(super) fn content(session: SessionHandle, nav: Navigation, active: Memo<bool
                             page.is_some_and(|page| !page.has_more && !page.items.is_empty())
                         })
                     },
+                    fetching_more,
                     move |id| {
                         let item = feed.with(|page| {
                             page.and_then(|page| {
@@ -118,8 +130,8 @@ pub(super) fn content(session: SessionHandle, nav: Navigation, active: Memo<bool
                         }
                     },
                     move || query.with(|query| query.audience.value()),
-                ))
-        }));
+                )),
+        );
     presentation(
         move || query.with(|query| query.audience),
         move |audience| {

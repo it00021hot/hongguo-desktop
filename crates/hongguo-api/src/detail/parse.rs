@@ -157,6 +157,9 @@ fn episode_list_of(series_id: &str, node: &Value) -> AppResult<EpisodeList> {
     let cover = str_field_any(&video_data, &["series_cover", "cover_url"]);
     Ok(EpisodeList {
         series_id: series_id.to_string(),
+        highlight: (episodes.len() == 1)
+            .then(|| crate::highlight::parse(&video_data, None, series_id))
+            .flatten(),
         title: str_field_any(&video_data, &["series_title"]),
         cover,
         episodes,

@@ -28,9 +28,6 @@ pub(super) struct Query {
 }
 
 pub(super) fn finish_recommendation(mut page: RankPage, query: Query) -> RankPage {
-    let received = page.items.len() as i64;
-    page.next_offset = query.offset + received;
-    page.has_more = received > 0;
     page.items = super::super::series_feed::append(query.previous, page.items);
     page
 }

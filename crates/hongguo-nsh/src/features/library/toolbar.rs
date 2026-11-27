@@ -1,5 +1,5 @@
 use super::model::Entry;
-use super::{Kind, model::Query};
+use super::{CollectionFolder, Kind, model::Query};
 use crate::{i18n::tr, ui};
 use nsh_base::theme;
 use nsh_core::prelude::*;
@@ -10,6 +10,7 @@ pub(super) struct Toolbar {
     pub query: Signal<Query>,
     pub search: Signal<String>,
     pub category: Signal<i64>,
+    pub(super) collection_folder: Memo<CollectionFolder>,
     pub online: Signal<bool>,
     pub busy: Signal<bool>,
     pub managing: Signal<bool>,
@@ -18,7 +19,10 @@ pub(super) struct Toolbar {
     pub logged_in: Memo<bool>,
 }
 
-pub(super) fn build(state: Toolbar) -> View {
+pub(super) fn build(
+    state: Toolbar,
+    choose_folder: impl Fn(CollectionFolder) + Copy + 'static,
+) -> View {
     let manage = move || {
         crate::features::library::presentation::library_action(
             move || {
@@ -47,27 +51,62 @@ pub(super) fn build(state: Toolbar) -> View {
         Kind::Follows => view().flex_row().child(manage()),
         Kind::Collections => toolbar
             .child(
-                view().flex_row().items_center().gap_2().children(
-                    [
-                        (0, "collections.filterAll"),
-                        (1, "collections.filterReal"),
-                        (1004, "collections.filterComic"),
-                    ]
-                    .into_iter()
-                    .map(move |(value, key)| {
-                        crate::features::library::presentation::history_filter(
-                            move || tr(key),
-                            computed(move || state.category.get() == value),
-                        )
-                        .on_press(move || state.category.set(value))
-                    }),
-                ),
+                view()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        crate::features::library::presentation::personal_tab(move || {
+                            tr("collections.officialFolders")
+                        })
+                        .selected(move || {
+                            matches!(
+                                state.collection_folder.get(),
+                                CollectionFolder::Index | CollectionFolder::Official(_)
+                            )
+                        })
+                        .disabled(state.busy)
+                        .on_press(move || choose_folder(CollectionFolder::Index)),
+                    )
+                    .children(
+                        [
+                            (0, "collections.filterAll"),
+                            (1, "collections.filterReal"),
+                            (1004, "collections.filterComic"),
+                        ]
+                        .into_iter()
+                        .map(move |(value, key)| {
+                            crate::features::library::presentation::personal_tab(move || tr(key))
+                                .selected(move || {
+                                    state.collection_folder.get() == CollectionFolder::All
+                                        && state.category.get() == value
+                                })
+                                .disabled(state.busy)
+                                .on_press(move || {
+                                    if state.category.get_untracked() != value {
+                                        state.category.set(value);
+                                        state.selected.set(Vec::new());
+                                    }
+                                    choose_folder(CollectionFolder::All);
+                                })
+                        }),
+                    ),
             )
-            .child(crate::features::library::presentation::library_search(
-                state.search,
-                move || tr(state.kind.search()),
-            ))
-            .child(manage()),
+            .child(when(
+                move || state.collection_folder.get() == CollectionFolder::All,
+                move || {
+                    view()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(crate::features::library::presentation::library_search(
+                            state.search,
+                            move || tr(state.kind.search()),
+                        ))
+                        .child(manage())
+                },
+            )),
         Kind::Liked => toolbar
             .justify_end()
             .child(crate::features::library::presentation::library_search(
@@ -119,21 +158,25 @@ pub(super) fn batch(
     rows: super::rows::Rows,
     remove: impl Fn(Vec<Entry>) + Copy + 'static,
     report: impl Fn(SharedString) + Copy + 'static,
+    extras: impl Fn() -> View + 'static,
 ) -> impl IntoElement {
     when(rows.managing, move || {
-        let selected_entries = move || {
-            rows.items
-                .get()
-                .into_iter()
-                .filter(|entry| rows.selected.with(|keys| keys.contains(&entry.key)))
-                .collect::<Vec<_>>()
+        let selected_count = move || {
+            rows.selected.with(|keys| {
+                rows.items.with(|items| {
+                    items
+                        .iter()
+                        .filter(|entry| keys.contains(&entry.key))
+                        .count()
+                })
+            })
         };
         ui::batch_bar()
             .child(
                 ui::batch_select(move || {
                     tr(
-                        if rows.items.with(Vec::len) > 0
-                            && rows.selected.with(Vec::len) >= rows.items.with(Vec::len)
+                        if !rows.items.with(Vec::is_empty)
+                            && selected_count() == rows.items.with(Vec::len)
                         {
                             "batch.deselectAll"
                         } else {
@@ -143,7 +186,7 @@ pub(super) fn batch(
                 })
                 .disabled(move || rows.busy.get() || rows.items.with(Vec::is_empty))
                 .on_press(move || {
-                    if rows.selected.with(Vec::len) >= rows.items.with(Vec::len) {
+                    if selected_count() == rows.items.with(Vec::len) {
                         rows.selected.set(Vec::new());
                     } else {
                         rows.selected.set(
@@ -158,14 +201,14 @@ pub(super) fn batch(
             )
             .child(
                 text(move || {
-                    tr("batch.selectedCount")
-                        .replace("{count}", &rows.selected.with(Vec::len).to_string())
+                    tr("batch.selectedCount").replace("{count}", &selected_count().to_string())
                 })
                 .text_xs()
                 .line_height(px(16.0))
                 .text_color(move || theme().muted_foreground),
             )
             .child(view().flex_1())
+            .child(extras())
             .child(
                 ui::batch_delete(move || {
                     tr(if rows.busy.get() {
@@ -174,9 +217,17 @@ pub(super) fn batch(
                         rows.kind.action()
                     })
                 })
-                .disabled(move || rows.busy.get() || selected_entries().is_empty())
+                .disabled(move || rows.busy.get() || selected_count() == 0)
                 .on_press(move || {
-                    let entries = selected_entries();
+                    let entries = rows.selected.with(|keys| {
+                        rows.items.with(|items| {
+                            items
+                                .iter()
+                                .filter(|entry| keys.contains(&entry.key))
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        })
+                    });
                     if entries.is_empty() || rows.busy.get_untracked() {
                         return;
                     }

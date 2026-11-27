@@ -1,7 +1,7 @@
 //! Compact history cards and download tables, matching the shared Tauri surfaces.
 use crate::ui::ButtonVariant;
 use crate::ui::Icon;
-use crate::ui::controls::surface;
+use crate::ui::controls::{control_height, surface};
 use crate::ui::icon;
 use crate::ui::radii;
 use hongguo_common::model::TaskStatus;
@@ -15,7 +15,8 @@ pub(crate) fn library_action(
     surface(ButtonVariant::Quiet)
         .flex_row()
         .gap_1p5()
-        .min_h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
+        .min_h(control_height)
+        .h(control_height)
         .px(move || px(if glyph.is_some() { 10.0 } else { 12.0 }))
         .py_1()
         .flex_shrink_0()
@@ -50,8 +51,8 @@ pub(crate) fn library_icon(
     let label = label.into_reactive();
     surface(ButtonVariant::Quiet)
         .accessibility_label(move || Some(label.get()))
-        .min_h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
-        .size(move || px(if is_desktop() { 36.0 } else { 48.0 }))
+        .min_h(control_height)
+        .size(control_height)
         .p_0()
         .flex_shrink_0()
         .child(icon(glyph))
@@ -147,8 +148,6 @@ pub(crate) fn library_search(
         .max_w(percentage(1.0))
         .child(
             crate::ui::field(placeholder)
-                .min_h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
-                .h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
                 .pl_8()
                 .py_1()
                 .value(value)

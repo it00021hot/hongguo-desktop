@@ -260,6 +260,29 @@ pub(super) fn content(
         .p_6()
         .gap_4()
         .child(toolbar)
+        .child(
+            view()
+                .flex_row()
+                .items_start()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .rounded(ui::radii::control)
+                .bg(move || theme().muted.opacity(0.55))
+                .text_color(move || theme().muted_foreground)
+                .child(
+                    ui::icon(ui::Icon::MonitorPlay)
+                        .size(px(15.0))
+                        .mt(px(1.0))
+                        .flex_shrink_0()
+                        .accessible(false),
+                )
+                .child(
+                    text(move || tr("tasks.bytevc2PlaybackNote"))
+                        .text_xs()
+                        .line_height(px(18.0)),
+                ),
+        )
         .child(when(
             move || ids.get().is_empty(),
             move || {

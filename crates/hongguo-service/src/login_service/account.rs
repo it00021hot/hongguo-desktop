@@ -1,6 +1,7 @@
 //! 账号会话落库与资料刷新。
 
 use crate::app_state::AppState;
+use crate::events::ServiceEvent;
 use hongguo_api::login::{self, PassportUser};
 use hongguo_common::AppResult;
 use hongguo_common::model::AccountState;
@@ -28,13 +29,14 @@ pub fn account_from_login(
     }
 }
 
-/// 账号设置写入（None = 清空登录态）：规范化 → 内存即时替换 → 落库。
+/// 账号设置写入（None = 清空登录态）：规范化 → 落库 → 更新内存。
 pub fn persist_account(state: &AppState, account: Option<AccountState>) -> AppResult<()> {
-    let mut settings = state.settings();
+    let mut current = state.settings.write();
+    let mut settings = current.clone();
     settings.account = account;
     let normalized = crate::settings_service::normalize(settings)?;
-    state.replace_settings(normalized.clone());
     state.store.save_settings(&normalized)?;
+    *current = normalized;
     Ok(())
 }
 
@@ -51,26 +53,46 @@ pub fn complete_login(state: &AppState, account: AccountState) -> AppResult<()> 
 
 /// 登录成功后跟进刷新用户资料（best-effort）：sms_login 响应给的是默认昵称 + 低清头像，
 /// 真昵称/高清头像/raw_profile 都在 user_info；失败只记日志，不让登录报错。
-pub fn refresh_profile_after_login(state: AppState) {
+fn refresh_profile_after_login(state: AppState) {
+    let settings = state.settings();
+    let Some(expected) = settings.account.clone() else {
+        return;
+    };
+    let env = state.api_env_from_settings(settings);
     crate::runtime::spawn(async move {
-        match login::user_info(&state.api_env()).await {
-            Ok(user) => {
-                if let Some(mut acc) = state.settings().account {
-                    if !user.name.is_empty() {
-                        acc.user_name = user.name;
-                    }
-                    if !user.avatar_url.is_empty() {
-                        acc.avatar_url = user.avatar_url;
-                    }
-                    acc.raw_profile = user.raw;
-                    if let Err(e) = persist_account(&state, Some(acc)) {
-                        log::warn!("[Login] 登录后资料刷新落库失败: {e}");
-                    } else {
-                        log::info!("[Login] 登录后资料已刷新（user_info）");
-                    }
-                }
-            }
+        match login::user_info(&env).await {
+            Ok(user) => match apply_profile(&state, &expected, user) {
+                Ok(true) => state.events().publish(ServiceEvent::AccountProfileChanged),
+                Ok(false) => {}
+                Err(e) => log::warn!("[Login] 登录后资料刷新落库失败: {e}"),
+            },
             Err(e) => log::warn!("[Login] 登录后资料刷新失败（不影响登录态）: {e}"),
         }
     });
+}
+
+fn apply_profile(state: &AppState, expected: &AccountState, user: PassportUser) -> AppResult<bool> {
+    let mut current = state.settings.write();
+    let mut settings = current.clone();
+    let Some(account) = settings.account.as_mut().filter(|account| {
+        account.login_at == expected.login_at
+            && account.user_id == expected.user_id
+            && account.cookies == expected.cookies
+    }) else {
+        return Ok(false);
+    };
+    // 请勿从 user_info 复制 user_id：响应返回的不是登录时的数字 uid。
+    if !user.name.is_empty() {
+        account.user_name = user.name;
+    }
+    if !user.avatar_url.is_empty() {
+        account.avatar_url = user.avatar_url;
+    }
+    account.raw_profile = user.raw;
+    if settings.account == current.account {
+        return Ok(false);
+    }
+    state.store.save_settings(&settings)?;
+    *current = settings;
+    Ok(true)
 }

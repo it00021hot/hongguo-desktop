@@ -1,14 +1,26 @@
 use super::{Kind, model::Entry, rows::Rows};
-use crate::i18n::tr;
+use crate::{i18n::tr, navigation::Route};
 use nsh_core::prelude::*;
 
 pub(super) fn build(
     rows: Rows,
     remove: impl Fn(Vec<Entry>) + Copy + 'static,
     play: impl Fn(Entry) + Copy + 'static,
+    more: impl Fn() + Copy + 'static,
 ) -> impl IntoElement {
     let width = crate::view_memory::scope(rows.kind.memory_name()).signal("grid-width", 0.0_f32);
     let columns = computed(move || {
+        if rows
+            .scroll_scope
+            .with(|scope| matches!(scope.4, super::CollectionFolder::Official(_)))
+        {
+            let available = width.get();
+            return if available > 0.0 {
+                ((available + 16.0) / 182.0).ceil().clamp(2.0, 12.0) as u32
+            } else {
+                crate::features::library::presentation::personal_poster_columns(window().width.0)
+            };
+        }
         crate::features::library::presentation::personal_poster_columns(window().width.0)
     });
     let liked = rows.kind == Kind::Liked;
@@ -71,8 +83,12 @@ pub(super) fn build(
                                                 selected.push(item.key);
                                             }
                                         });
-                                    } else {
-                                        play(item);
+                                    } else if item.can_play {
+                                        if liked {
+                                            play(item);
+                                        } else {
+                                            rows.nav.push(Route::Detail(item.series_id));
+                                        }
                                     }
                                 }),
                             )
@@ -85,6 +101,9 @@ pub(super) fn build(
                                     crate::features::library::presentation::personal_poster_remove(
                                         move || tr(rows.kind.action()),
                                         liked,
+                                        move || {
+                                            !liked && item.get().is_some_and(|item| !item.can_play)
+                                        },
                                     )
                                     .disabled(rows.busy)
                                     .on_press(move || {
@@ -101,6 +120,11 @@ pub(super) fn build(
                 rows.scroll_scope,
             )
             .flex_1()
+            .on_load_more(move || {
+                if rows.has_more.get_untracked() {
+                    more();
+                }
+            })
             .columns(columns)
             .column_gap(px(16.0))
             .row_gap(px(16.0))
@@ -117,7 +141,7 @@ pub(super) fn build(
 }
 
 fn title(entry: &Entry) -> SharedString {
-    if entry.title.is_empty() {
+    if entry.title.trim().is_empty() {
         tr("collections.unresolved")
             .replace(
                 "{id}",
@@ -144,11 +168,11 @@ fn summary(entry: &Entry, liked: bool) -> SharedString {
         } else {
             SharedString::default()
         }
-    } else if entry.episode_count > 0 {
+    } else if !entry.can_play {
+        tr("collections.unavailableHint")
+    } else {
         tr("collections.episodeCount")
             .replace("{n}", &entry.episode_count.to_string())
             .into()
-    } else {
-        tr("collections.resolvingHint")
     }
 }

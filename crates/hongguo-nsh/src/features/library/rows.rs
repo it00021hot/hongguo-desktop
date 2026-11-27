@@ -20,7 +20,8 @@ pub(super) struct Rows {
     pub(super) managing: Signal<bool>,
     pub(super) selected: Signal<Vec<String>>,
     pub(super) has_more: Memo<bool>,
-    pub(super) scroll_scope: Memo<(u64, bool, String, i64)>,
+    pub(super) loading_more: Memo<bool>,
+    pub(super) scroll_scope: Memo<(u64, bool, String, i64, super::CollectionFolder)>,
 }
 
 pub(super) fn build(
@@ -30,7 +31,7 @@ pub(super) fn build(
     more: impl Fn() + Copy + 'static,
 ) -> impl IntoElement {
     if matches!(rows.kind, Kind::Collections | Kind::Liked) {
-        return super::posters::build(rows, remove, play).into_element();
+        return super::posters::build(rows, remove, play, more).into_element();
     }
     let footer = move || {
         rows.kind == Kind::Follows && !rows.has_more.get() && !rows.items.with(Vec::is_empty)
@@ -359,10 +360,8 @@ pub(super) fn build(
         let count = rows.items.with(Vec::len);
         let cards = count as f32 * (92.0 * 4.0 / 3.0 + 26.0) + count.saturating_sub(1) as f32 * 8.0;
         px(cards
-            + if footer() {
+            + if footer() || rows.kind == Kind::Reservations {
                 32.0
-            } else if rows.kind == Kind::Reservations {
-                17.0
             } else {
                 0.0
             })
@@ -386,7 +385,9 @@ pub(super) fn build(
             }))
             .child(when(
                 move || rows.kind == Kind::Reservations,
-                move || view().h(px(17.0)),
+                move || view().h(px(32.0)).child(when(rows.loading_more, move || {
+                    ui::loading::indicator("feed.loadingMore").h_full()
+                })),
             )),
     )
     .estimated_item_size(px(92.0 * 4.0 / 3.0 + 34.0))

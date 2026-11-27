@@ -43,17 +43,23 @@ pub async fn fetch_new_drama(
         .map_err(|e| AppError::Media(format!("解析新剧失败: {e}")))?;
     check_code(&value)?;
     let data = value.get("data");
+    let items = parse_rank_items(data)?;
+    let has_more = data
+        .and_then(|data| data.get("has_more"))
+        .and_then(Value::as_bool)
+        .unwrap_or(!items.is_empty());
+    let next_offset = data
+        .and_then(|data| data.get("next_offset"))
+        .and_then(Value::as_i64)
+        .unwrap_or_else(|| offset.saturating_add(items.len() as i64));
+    if has_more && next_offset <= offset {
+        return Err(AppError::Media("新剧推荐分页位置未前进".into()));
+    }
     Ok(RankPage {
-        items: parse_rank_items(data)?,
+        items,
         tabs: parse_cell_selector(data),
-        has_more: data
-            .and_then(|d| d.get("has_more"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        next_offset: data
-            .and_then(|d| d.get("next_offset"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0),
+        has_more,
+        next_offset,
         session_id: data
             .and_then(|d| d.get("session_id"))
             .and_then(Value::as_str)

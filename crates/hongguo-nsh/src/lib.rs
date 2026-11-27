@@ -86,7 +86,7 @@ pub fn App() -> impl IntoElement {
             .text_color(move || theme().foreground)
             .child(when(
                 move || session.loading(),
-                move || ui::status(move || tr("common.loading")),
+                move || ui::loading::indicator("common.loading").flex_1(),
             ))
             .child(when(
                 move || session.error().is_some(),

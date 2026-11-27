@@ -10,7 +10,15 @@ pub(crate) fn caption(model: Memo<WindowCaption>) -> View {
         .pointer_events(PointerEvents::None)
         .child(
             text(move || {
-                let title = model.get().title;
+                let model = model.get();
+                if let Some(author) = model.highlight {
+                    return if author.is_empty() {
+                        String::new()
+                    } else {
+                        format!("@{author}")
+                    };
+                }
+                let title = model.title;
                 format!(
                     "@{}",
                     if title.is_empty() {
@@ -44,6 +52,12 @@ pub(crate) fn caption(model: Memo<WindowCaption>) -> View {
         .child(
             text(move || {
                 let model = model.get();
+                if model.highlight.is_some() {
+                    return crate::features::player::info::clip_caption(
+                        &model.title,
+                        model.episode,
+                    );
+                }
                 let mut line = if model.episode > 0 {
                     tr("player.episodeNo").replace("{index}", &model.episode.to_string())
                 } else {

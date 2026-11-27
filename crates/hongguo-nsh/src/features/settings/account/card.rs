@@ -50,6 +50,7 @@ pub(super) fn provide(session: SessionHandle) -> View {
     let state = Context {
         account: computed(move || {
             session.identity();
+            session.account_profile();
             session.with(|session| session.state.settings().account.map(Profile::from))
         }),
         logout: signal(false),
@@ -149,22 +150,7 @@ pub(super) fn build() -> View {
             .child(crate::features::settings::presentation::account_badge(
                 account.name,
             ))
-            .children((!account.hongguo_id.is_empty()).then(|| {
-                view()
-                    .flex_row()
-                    .gap_1()
-                    .child(
-                        text(move || format!("{}:", tr("settings.hongguoId")))
-                            .text_xs()
-                            .text_color(move || theme().muted_foreground),
-                    )
-                    .child(
-                        text(account.hongguo_id)
-                            .font_family("monospace")
-                            .text_xs()
-                            .text_color(move || theme().muted_foreground),
-                    )
-            }))
+            .children((!account.hongguo_id.is_empty()).then(|| hongguo_id(account.hongguo_id)))
             .child(
                 text(account.mobile)
                     .text_xs()
@@ -231,19 +217,16 @@ pub(super) fn profile() -> View {
                     .text_base()
                     .font_weight(FontWeight::SEMIBOLD),
                 )
-                .child(
-                    text(move || {
-                        state
-                            .account
-                            .get()
-                            .map(|account| {
-                                format!("{}  {}", account.mobile, account.hongguo_id).into()
-                            })
-                            .unwrap_or_else(|| tr("nav.syncHint"))
-                    })
-                    .text_sm()
-                    .text_color(move || theme().muted_foreground),
-                ),
+                .child(dynamic(move || match state.account.get() {
+                    Some(account) if !account.hongguo_id.is_empty() => {
+                        hongguo_id(account.hongguo_id).into_element()
+                    }
+                    Some(_) => view().into_element(),
+                    None => text(move || tr("nav.syncHint"))
+                        .text_sm()
+                        .text_color(move || theme().muted_foreground)
+                        .into_element(),
+                })),
         )
         .child(
             crate::ui::profile_action(move || {
@@ -262,4 +245,16 @@ pub(super) fn profile() -> View {
                 }
             }),
         )
+}
+
+fn hongguo_id(id: String) -> View {
+    let id = stored(id);
+    view()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .text_color(move || theme().muted_foreground)
+        .child(text(move || format!("{}：", tr("settings.hongguoId"))).text_xs())
+        .child(text(move || id.get()).font_family("monospace").text_xs())
+        .child(ui::copy_button("settings.copyHongguoId", move || id.get()))
 }

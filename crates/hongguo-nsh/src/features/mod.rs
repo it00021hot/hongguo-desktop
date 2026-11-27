@@ -5,6 +5,7 @@ pub(crate) mod detail;
 pub(crate) use detail::DetailPrefill;
 pub(crate) mod downloads;
 pub(crate) mod emoji;
+mod highlight_album;
 pub(crate) mod history;
 pub(crate) mod library;
 pub(crate) mod maintenance;
@@ -25,6 +26,7 @@ pub(crate) fn render(route: Route, session: SessionHandle, nav: Navigation) -> S
         Route::Detail(id) => detail::page(session, nav, id),
         Route::DetailWithPrefill(prefill) => detail::seeded_page(session, nav, prefill),
         Route::Creator(id) => creator::page(session, nav, id),
+        Route::AlbumPlayer(id, entry) => highlight_album::page(session, nav, id, entry),
         Route::Player(id, episode) => crate::features::player::page(session, nav, id, episode),
         Route::History => section_page(route, session, nav),
         Route::Settings => settings::page(session, nav),

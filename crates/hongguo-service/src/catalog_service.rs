@@ -2,6 +2,13 @@ use crate::AppState;
 use hongguo_api::{calendar, danmaku, detail, discover, new_drama, rank, recommend, search};
 use hongguo_common::AppResult;
 
+pub async fn highlight_album(
+    album_id: &str,
+    state: &AppState,
+) -> AppResult<hongguo_api::highlight::album::HighlightAlbum> {
+    hongguo_api::highlight::album::fetch(album_id, &state.api_env()).await
+}
+
 pub async fn feed_tabs(state: &AppState) -> AppResult<Vec<recommend::FeedTabMeta>> {
     recommend::fetch_feed_tabs(&state.api_env()).await
 }
@@ -22,6 +29,19 @@ pub async fn calendar(
     state: &AppState,
 ) -> AppResult<calendar::CalendarPage> {
     calendar::fetch_new_calendar(date, cursor, &state.api_env()).await
+}
+
+pub async fn calendar_panel(state: &AppState) -> AppResult<calendar::CalendarPanel> {
+    calendar::fetch_calendar_panel(&state.api_env()).await
+}
+
+pub async fn filtered_calendar(
+    date: &str,
+    selection: &calendar::SelectorSelection,
+    cursor: Option<&calendar::CalendarCursor>,
+    state: &AppState,
+) -> AppResult<calendar::CalendarFilteredPage> {
+    calendar::fetch_filtered_calendar(date, selection, cursor, &state.api_env()).await
 }
 
 pub async fn new_drama(

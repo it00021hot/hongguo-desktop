@@ -51,7 +51,13 @@ impl Channel {
         }
     }
 
+    pub(super) fn has_items(&self) -> bool {
+        !self.items.is_empty()
+    }
+
     pub(super) fn merge(&mut self, page: FeedPage) {
+        let previous_len = self.items.len();
+        let cursor_advanced = self.offset != page.next_offset || self.session != page.session_id;
         for item in page.items {
             if let Some(existing) = self
                 .items
@@ -65,7 +71,9 @@ impl Channel {
         }
         self.offset = page.next_offset;
         self.session = page.session_id;
-        self.has_more = page.has_more;
+        // The response may claim more even when it returns the same batch
+        // and cursor. Stop instead of spinning on the identical request.
+        self.has_more = page.has_more && (cursor_advanced || self.items.len() > previous_len);
         self.index = self.index.min(self.items.len().saturating_sub(1));
     }
     pub(super) fn step(&mut self, direction: i32) -> bool {
@@ -103,6 +111,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exhausted_recommendations_keep_server_order_and_do_not_add_another_item() {
+        let mut channel = Channel::default();
+        channel.merge(FeedPage {
+            items: ["official-first", "official-second"]
+                .into_iter()
+                .map(|id| FeedItem {
+                    series_id: id.into(),
+                    ..Default::default()
+                })
+                .collect(),
+            has_more: false,
+            ..Default::default()
+        });
+        assert!(!channel.has_more);
+        assert_eq!(channel.items[channel.index].series_id, "official-first");
+        assert!(channel.step(1));
+        assert_eq!(channel.items[channel.index].series_id, "official-second");
+        assert!(!channel.step(1));
+    }
+
+    #[test]
     fn retain_playable_keeps_previous_while_next_target_loads() {
         assert_eq!(
             retain_playable(Some(("a".into(), 1)), None),
@@ -116,6 +145,32 @@ mod tests {
             retain_playable(None, Some(("b".into(), 2))),
             Some(("b".into(), 2))
         );
+    }
+
+    #[test]
+    fn empty_batches_are_not_warm_cache_and_do_not_erase_an_existing_selection() {
+        let mut channel = Channel::default();
+        let empty = FeedPage {
+            session_id: "session".into(),
+            has_more: true,
+            next_offset: 0,
+            items: vec![],
+        };
+        channel.merge(empty.clone());
+        assert!(!channel.has_items());
+        channel.merge(FeedPage {
+            items: vec![FeedItem {
+                series_id: "visible".into(),
+                ..Default::default()
+            }],
+            ..empty.clone()
+        });
+        assert!(channel.has_items());
+        assert!(channel.has_more);
+        channel.merge(empty);
+        assert!(channel.has_items());
+        assert_eq!(channel.items[channel.index].series_id, "visible");
+        assert!(!channel.has_more);
     }
 
     #[test]

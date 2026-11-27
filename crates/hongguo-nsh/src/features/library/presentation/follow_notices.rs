@@ -17,6 +17,7 @@ pub(crate) enum NoticeAction {
 #[derive(Clone, Copy)]
 pub(crate) struct FollowNoticesState {
     pub(crate) items: Memo<Vec<FollowNotice>>,
+    pub(crate) loading: Memo<bool>,
     pub(crate) busy: Memo<bool>,
     pub(crate) checking: Memo<bool>,
     pub(crate) popup: Signal<bool>,
@@ -87,7 +88,11 @@ pub(crate) fn follow_notices(
                 )),
         )
         .child(when(
-            move || state.items.with(Vec::is_empty),
+            move || state.loading.get() && state.items.with(Vec::is_empty),
+            move || super::super::loading::rows(4, if is_desktop() { 62.0 } else { 72.0 }),
+        ))
+        .child(when(
+            move || !state.loading.get() && state.items.with(Vec::is_empty),
             move || {
                 view()
                     .py_16()

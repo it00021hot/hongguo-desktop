@@ -90,7 +90,8 @@ pub(super) fn observe(
                     .or_else(|| related.error())
                     .map_or_else(|| message.get(), |error| error.text())
             }),
-            reserving: computed(move || pending.get()),
+            reserving: computed(move || pending.get() && switching.target().is_none()),
+            switching: computed(move || switching.target()),
             downloaded: computed(move || {
                 session.downloads();
                 let id = selection.get().0;

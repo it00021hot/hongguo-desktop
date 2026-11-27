@@ -2,68 +2,85 @@
 
 use serde_json::Value;
 
+use super::cache::flex_str;
 use super::session::{push_impressions, rec_impression_of};
 use hongguo_common::{AppError, AppResult};
 
-pub(super) fn parse_recommend_feed(data: Option<&Value>) -> AppResult<crate::discover::FeedPage> {
+pub(super) fn is_follow_video_cell(cell: &Value) -> bool {
+    // APK ShowType::HgFollowContentCell.
+    cell.get("show_type").and_then(Value::as_i64) == Some(648)
+}
+
+pub(super) fn parse_feed_cell_items(
+    cells: Option<&Value>,
+    following: bool,
+) -> Vec<crate::discover::FeedItem> {
+    let mut items = Vec::new();
+    for cell in cells.and_then(Value::as_array).into_iter().flatten() {
+        if following {
+            if let Some(item) = recommend_feed_entry(cell).filter(|item| !item.vid.is_empty()) {
+                items.push(item);
+            } else if is_follow_video_cell(cell) {
+                items.extend(parse_feed_cell_items(cell.get("cell_data"), true));
+            }
+            continue;
+        }
+        items.extend(
+            cell.get("video_data")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(recommend_feed_entry),
+        );
+    }
+    items
+}
+
+pub(super) fn parse_recommend_feed(
+    data: Option<&Value>,
+    following: bool,
+) -> AppResult<crate::discover::FeedPage> {
     use crate::discover::FeedPage;
     let data = data.ok_or_else(|| AppError::Media("推荐流响应缺少 data".into()))?;
-    let mut items = Vec::new();
-    for cell in data
-        .pointer("/cell_view/cell_data")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        for raw in cell
-            .get("video_data")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
-            if let Some(it) = recommend_feed_entry(raw) {
-                items.push(it);
-            }
-        }
-    }
+    let items = parse_feed_cell_items(data.pointer("/cell_view/cell_data"), following);
     Ok(FeedPage {
         has_more: data
             .get("has_more")
             .and_then(Value::as_bool)
             .unwrap_or(false),
         next_offset: data.get("next_offset").and_then(Value::as_i64).unwrap_or(0),
-        session_id: data
-            .get("session_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        session_id: flex_str(data.get("session_id")).unwrap_or_default(),
         items,
     })
 }
 
 /// 一条推荐流条目（cell/change 与 bookmall/tab 嵌套 cell 共用同一形态）。
-pub(super) fn recommend_feed_entry(raw: &Value) -> Option<crate::discover::FeedItem> {
+pub(crate) fn recommend_feed_entry(raw: &Value) -> Option<crate::discover::FeedItem> {
     let det = raw.get("video_detail");
-    // series_id 双形态：顶层数字/字符串优先，兜 video_detail.series_id_str
-    let series_id = raw
-        .get("series_id")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            raw.get("series_id")
-                .and_then(Value::as_i64)
-                .map(|n| n.to_string())
-        })
-        .or_else(|| {
-            det.and_then(|d| d.get("series_id_str"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_default();
-    if series_id.is_empty() {
-        return None;
-    }
+    let video = raw.pointer("/video_detail/video_list/0");
+    // 关注作品的 ID 在 video_list，related_album_id 则是底栏关联短剧，不是作品本身。
+    let nested_id =
+        flex_str(video.and_then(|v| v.get("series_id"))).filter(|s| !s.is_empty() && s != "0");
+    let regular_id = [
+        raw.get("series_id"),
+        raw.pointer("/video_detail/series_id_str"),
+        video.and_then(|v| v.get("series_id")),
+    ]
+    .into_iter()
+    .find_map(|id| flex_str(id).filter(|s| !s.is_empty() && s != "0"))?;
+    let highlight = det.and_then(|data| {
+        crate::highlight::parse(data, Some(raw), nested_id.as_deref().unwrap_or(&regular_id))
+    });
+    let series_id = if highlight.is_some() {
+        nested_id.unwrap_or(regular_id)
+    } else {
+        regular_id
+    };
+    let vid_candidates = if highlight.is_some() {
+        [video.and_then(|v| v.get("vid")), raw.get("vid")]
+    } else {
+        [raw.get("vid"), video.and_then(|v| v.get("vid"))]
+    };
     // 卡片自带的曝光上下文进最近曝光环（翻页 rec_filter_info_list 的数据源）
     if let Some(impression) = rec_impression_of(raw) {
         push_impressions(std::iter::once(impression));
@@ -84,6 +101,7 @@ pub(super) fn recommend_feed_entry(raw: &Value) -> Option<crate::discover::FeedI
         .unwrap_or_default();
     Some(crate::discover::FeedItem {
         series_id,
+        highlight,
         title: det
             .and_then(|d| d.get("series_title"))
             .and_then(Value::as_str)
@@ -96,31 +114,17 @@ pub(super) fn recommend_feed_entry(raw: &Value) -> Option<crate::discover::FeedI
             .or_else(|| {
                 det.and_then(|d| d.get("series_cover_uri"))
                     .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
             })
+            .or_else(|| video.and_then(|v| v.get("cover")).and_then(Value::as_str))
             .unwrap_or_default()
             .to_string(),
         horiz_cover: String::new(),
         // 推荐位 vid 两个位置都见过：顶层 vid 与 video_detail.video_list[0].vid，
         // 两级回落；批量取流预取的 vid 源就是它
-        vid: raw
-            .get("vid")
-            .map(|v| match v {
-                Value::Number(n) => n.to_string(),
-                Value::String(s) => s.clone(),
-                _ => String::new(),
-            })
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                det.and_then(|d| d.get("video_list"))
-                    .and_then(Value::as_array)
-                    .and_then(|arr| arr.first())
-                    .and_then(|v| v.get("vid"))
-                    .map(|v| match v {
-                        Value::Number(n) => n.to_string(),
-                        Value::String(s) => s.clone(),
-                        _ => String::new(),
-                    })
-            })
+        vid: vid_candidates
+            .into_iter()
+            .find_map(|id| flex_str(id).filter(|s| !s.is_empty() && s != "0"))
             .unwrap_or_default(),
         episode_cnt: det
             .and_then(|d| d.get("episode_cnt"))
@@ -169,6 +173,12 @@ pub(super) fn recommend_feed_entry(raw: &Value) -> Option<crate::discover::FeedI
         content_type: det
             .and_then(|d| d.get("content_type"))
             .and_then(Value::as_i64)
+            .filter(|ct| *ct > 0)
+            .or_else(|| {
+                video
+                    .and_then(|v| v.get("content_type"))
+                    .and_then(Value::as_i64)
+            })
             .unwrap_or(0),
     })
 }

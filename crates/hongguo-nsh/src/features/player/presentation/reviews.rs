@@ -28,8 +28,20 @@ fn action_surface() -> nsh_base::ButtonElement {
         })
 }
 
-pub(crate) fn review_link(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
-    action_surface().child(text(label).text_xs().font_weight(FontWeight::NORMAL))
+pub(crate) fn review_link(
+    label: impl IntoReactive<SharedString>,
+    pending: impl IntoReactive<bool>,
+) -> nsh_base::ButtonElement {
+    let pending = pending.into_reactive();
+    let loading = computed(move || pending.get());
+    action_surface()
+        .disabled(loading)
+        .child(when(loading, || {
+            crate::ui::loading::spinner()
+                .size(px(12.0))
+                .accessible(false)
+        }))
+        .child(text(label).text_xs().font_weight(FontWeight::NORMAL))
 }
 
 pub(crate) fn review_like(

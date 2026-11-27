@@ -36,6 +36,19 @@ impl Default for PrefetchCache {
     }
 }
 
+pub(super) fn current_policy(state: &AppState) -> PrefetchPolicy {
+    static FALLBACK: std::sync::OnceLock<PrefetchPolicy> = std::sync::OnceLock::new();
+    let cached = state.prefetch_policy.0.lock();
+    if cached.generation == state.device_generation()
+        && let Some(policy) = cached.cell.get().or(cached.previous.as_ref())
+    {
+        return policy.clone();
+    }
+    FALLBACK
+        .get_or_init(|| PrefetchPolicy::from_rules(Default::default()))
+        .clone()
+}
+
 pub(super) async fn policy(state: &AppState) -> PrefetchPolicy {
     let generation = state.device_generation();
     let now = Instant::now();

@@ -149,7 +149,11 @@ impl AppStateInner {
     /// 一次调用链内环境不变，避免「签名用 A 设备、请求带 B Cookie」的半新半旧。
     /// Cookie 组成是「账号字段优先、匿名兜底补缺」：reading 系接口按 `install_id` 风控，未登录不能裸奔。
     pub fn api_env(&self) -> hongguo_api::client::ApiEnv {
-        let settings = self.settings();
+        self.api_env_from_settings(self.settings())
+    }
+
+    /// 用调用方已经取得的设置快照绑定请求凭据和提交目标。
+    pub(crate) fn api_env_from_settings(&self, settings: Settings) -> hongguo_api::client::ApiEnv {
         let device = self.device();
         let account_cookie = settings
             .account

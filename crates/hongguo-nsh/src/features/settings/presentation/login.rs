@@ -110,8 +110,8 @@ pub(crate) fn login_input(label: impl IntoReactive<SharedString>) -> nsh_base::I
     nsh_base::input()
         .label(move || label.get())
         .auto_correct(false)
-        .min_h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
-        .h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
+        .min_h(crate::ui::controls::control_height)
+        .h(crate::ui::controls::control_height)
         .px_3()
         .py_2()
         .text_sm()
@@ -127,8 +127,8 @@ pub(crate) fn login_input(label: impl IntoReactive<SharedString>) -> nsh_base::I
 
 pub(crate) fn login_send(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
     nsh_base::button()
-        .min_h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
-        .h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
+        .min_h(crate::ui::controls::control_height)
+        .h(crate::ui::controls::control_height)
         .px_4()
         .py_0()
         .flex_row()

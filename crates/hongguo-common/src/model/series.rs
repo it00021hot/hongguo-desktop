@@ -4,6 +4,34 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Playable creator video, distinct from the drama it may promote.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Highlight {
+    pub author: String,
+    pub related: Option<RelatedDrama>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_number: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelatedDrama {
+    pub series_id: String,
+    /// Official bottom-bar copy, which may contain an episode count or genre.
+    pub label: String,
+    #[serde(default)]
+    pub kind: RelatedKind,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RelatedKind {
+    #[default]
+    Drama,
+    Album,
+}
+
 /// 一部短剧。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +51,8 @@ pub struct Series {
     pub content_type: i64,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<Box<Highlight>>,
     /// 完整分集（拉取后写入）
     #[serde(default)]
     pub episodes: Vec<Episode>,

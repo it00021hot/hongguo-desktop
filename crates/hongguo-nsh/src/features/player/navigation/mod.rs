@@ -5,7 +5,7 @@ use nsh_core::prelude::*;
 
 type StepAction = Stored<Box<dyn Fn(i32)>>;
 type WakeAction = Stored<Option<Box<dyn Fn()>>>;
-type FeedStep = Stored<Box<dyn Fn(i32) -> bool>>;
+type FeedStep = Stored<Box<dyn Fn(i32, bool) -> bool>>;
 type FeedGoto = Stored<Option<Box<dyn Fn(hongguo_common::model::Series, u32)>>>;
 
 #[derive(Clone, Copy)]
@@ -20,10 +20,12 @@ pub(crate) struct FeedNavigation {
     playable: Signal<Option<(String, u32)>>,
     automatic_update: Stored<bool>,
     direction: Signal<i32>,
+    switch_label: Stored<Option<SharedString>>,
+    playlist_neighbours: Option<Memo<(bool, bool)>>,
 }
 
 impl FeedNavigation {
-    pub fn new(step: impl Fn(i32) -> bool + 'static) -> Self {
+    pub fn new(step: impl Fn(i32, bool) -> bool + 'static) -> Self {
         Self {
             locked: signal(None),
             gate: stored(Gate::default()),
@@ -35,11 +37,22 @@ impl FeedNavigation {
             playable: signal(None),
             automatic_update: stored(false),
             direction: signal(1),
+            switch_label: stored(None),
+            playlist_neighbours: None,
         }
     }
 
     pub fn lock_series(self, id: String) {
         self.locked.set(Some(id));
+    }
+
+    pub fn with_playlist(mut self, neighbours: Memo<(bool, bool)>) -> Self {
+        self.playlist_neighbours = Some(neighbours);
+        self
+    }
+
+    pub fn playlist(self) -> Option<Memo<(bool, bool)>> {
+        self.playlist_neighbours
     }
 
     pub fn direction(self) -> Signal<i32> {
@@ -73,6 +86,14 @@ impl FeedNavigation {
         self.playable
     }
 
+    pub fn set_switch_label(self, label: Option<SharedString>) {
+        self.switch_label.replace(label);
+    }
+
+    pub fn take_switch_label(self) -> Option<SharedString> {
+        self.switch_label.replace(None)
+    }
+
     pub fn request_goto(self, series: hongguo_common::model::Series, episode: u32) -> bool {
         self.goto.with(|goto| {
             if let Some(goto) = goto {
@@ -88,7 +109,7 @@ impl FeedNavigation {
     pub fn advance_feed(self) -> bool {
         self.direction.set(1);
         self.automatic_update.replace(true);
-        let advanced = self.step.with(|step| step(1));
+        let advanced = self.step.with(|step| step(1, false));
         if advanced {
             self.clear_lock();
         } else {
@@ -194,7 +215,7 @@ impl Controller {
         if let Some(feed) = self.feed
             && feed.locked.get_untracked().as_ref() != Some(&self.state.series.get_untracked())
         {
-            feed.step.with(|step| step(direction.step()));
+            feed.step.with(|step| step(direction.step(), true));
         } else {
             self.episode.with(|step| step(direction.step()));
         }

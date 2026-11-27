@@ -163,8 +163,10 @@ pub(crate) fn personal_poster(
 pub(crate) fn personal_poster_remove(
     label: impl IntoReactive<SharedString>,
     liked: bool,
+    always_visible: impl IntoReactive<bool>,
 ) -> nsh_base::ButtonElement {
     let label = label.into_reactive();
+    let always_visible = always_visible.into_reactive();
     surface(ButtonVariant::Quiet)
         .accessibility_label(move || Some(label.get()))
         .absolute()
@@ -193,7 +195,10 @@ pub(crate) fn personal_poster_remove(
                     .opacity(0.8)
             })
         })
-        .style_when(is_desktop, |style| style.hidden())
+        .style_when(
+            move || is_desktop() && !always_visible.get(),
+            |style| style.hidden(),
+        )
         .group_hover(|style| style.flex())
         .group_focus_within(|style| style.flex())
         .child(icon(if liked { Icon::HeartOff } else { Icon::StarOff }).size(px(14.0)))

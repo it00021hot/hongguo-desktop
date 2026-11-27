@@ -55,8 +55,8 @@ pub(super) fn content(source: Source, nav: Navigation, session: SessionHandle) -
         .gap_4()
         .mt_2()
         .child(when(
-            move || source.loading(),
-            move || ui::status(move || tr("common.loading")),
+            move || source.loading() && source.with(|source| source.is_none()),
+            related_skeleton,
         ))
         .child(when(
             move || source.error().is_some(),
@@ -100,6 +100,38 @@ pub(super) fn content(source: Source, nav: Navigation, session: SessionHandle) -
             toggle,
             known,
         ))
+}
+
+fn related_skeleton() -> View {
+    let width = signal(0.0_f32);
+    let columns = computed(move || ((width.get() + 12.0) / 140.0).floor().clamp(2.0, 8.0) as u16);
+    view()
+        .role(AccessibilityRole::Group)
+        .label(move || tr("common.loading"))
+        .gap_3()
+        .child(ui::loading::skeleton().w(px(92.0)).h_4())
+        .child(
+            view()
+                .on_layout(move |bounds: &Bounds<Points>| width.set(bounds.size.width.0))
+                .grid()
+                .grid_cols(columns)
+                .gap_3()
+                .child(each(
+                    move || (0..columns.get()).collect::<Vec<_>>(),
+                    |index| *index,
+                    move |_, _| {
+                        view()
+                            .gap_2()
+                            .child(
+                                ui::loading::skeleton()
+                                    .w_full()
+                                    .aspect_ratio(3.0 / 4.0)
+                                    .rounded(ui::radii::card),
+                            )
+                            .child(ui::loading::skeleton().w(percentage(0.7)).h_3())
+                    },
+                )),
+        )
 }
 
 fn section(

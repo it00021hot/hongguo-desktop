@@ -109,17 +109,20 @@ pub(super) fn mount<E: IntoElement>(
         incoming_opaque.set(false);
     });
     effect(move || {
+        if source.state() == ResourceState::Errored {
+            incoming.set(None);
+            staged.set(None);
+            chrome.end_handoff();
+            return;
+        }
         let resource = source.with(|source| source.map(VideoSource::from_playback));
-        if resource.is_none() {
-            if !source.loading() && source.error().is_some() {
-                chrome.end_handoff();
-            }
-            if transport::drop_shown_without_resource(source.loading(), chrome.silent_handoff()) {
-                incoming.set(None);
-                shown.set(None);
-                staged.set(None);
-                return;
-            }
+        if resource.is_none()
+            && transport::drop_shown_without_resource(source.loading(), chrome.silent_handoff())
+        {
+            incoming.set(None);
+            shown.set(None);
+            staged.set(None);
+            return;
         }
         let shown_now = shown.get_untracked();
         let shown_url = shown_now.as_ref().map(|shown| shown.url.clone());
@@ -375,15 +378,18 @@ pub(super) fn mount<E: IntoElement>(
                         && loaded.get()
                         && let Some(target) = pending_seek.get()
                     {
-                        buffering.set(true);
                         let native_duration = native_position.get().1;
-                        if !transport::seek_available(target, native_duration) {
-                            failure.set(crate::i18n::tr("player.seekUnavailable"));
-                            paused.set(true);
+                        let Some(bounded) = transport::interactive_seek(target, native_duration) else {
                             pending_seek.set(None);
                             buffering.set(false);
                             return;
+                        };
+                        if bounded != target {
+                            log::debug!("[Player] seek adjusted requested={target:.3}s dispatched={bounded:.3}s duration={native_duration:.3}s");
+                            pending_seek.set(Some(bounded));
+                            return;
                         }
+                        buffering.set(true);
                         if seek.with(|seek| seek.dispatch(target)) {
                             control.seek(target);
                         }
@@ -487,9 +493,11 @@ pub(super) fn mount<E: IntoElement>(
                                 is_incoming.get_untracked()
                             );
                             if is_incoming.get_untracked() {
-                                initial_load.with(|load| {
+                                if let Some(at) = initial_load.with(|load| {
                                     load.seek(incoming_seek.get(), mounted.resume_at, duration)
-                                });
+                                }) {
+                                    incoming_seek.replace(transport::initial_seek(at));
+                                }
                                 loaded.set(true);
                                 return;
                             }
@@ -634,9 +642,12 @@ pub(super) fn mount<E: IntoElement>(
                             if !current_source() && !chrome.silent_handoff() {
                                 return;
                             }
+                            let pending = pending_seek.get_untracked();
+                            let (_, duration) = native_position.get_untracked();
                             if completion::end_is_blocked(
                                 paused.get_untracked(),
-                                pending_seek.get_untracked().is_some(),
+                                pending,
+                                effective_duration(mounted.expected_duration, duration),
                                 chrome.silent_handoff(),
                             ) {
                                 recorder.flush();
@@ -659,6 +670,12 @@ pub(super) fn mount<E: IntoElement>(
                                 }
                                 completion::End::Complete => {}
                             }
+                            pending_seek.set(None);
+                            let auto_advance = play_allowed.get_untracked()
+                                && !paused.get_untracked()
+                                && !download_open.get_untracked()
+                                && session.with(|session| session.state.settings().auto_next_episode);
+                            log::info!("[Player] finished episode={finished_episode} autoAdvance={auto_advance} pendingTailSeek={}", pending.is_some());
                             recorder.complete();
                             lifecycle::delete_finished(
                                 session,
@@ -666,14 +683,7 @@ pub(super) fn mount<E: IntoElement>(
                                 finished_episode,
                                 notice,
                             );
-                            if play_allowed.get_untracked()
-                                && !paused.get_untracked()
-                                && !download_open.get_untracked()
-                                && session
-                                    .with(|session| session.state.settings().auto_next_episode)
-                            {
-                                gestures.enter_binge();
-                                chrome.arm_quiet();
+                            if auto_advance {
                                 next();
                             } else {
                                 paused.set(true);

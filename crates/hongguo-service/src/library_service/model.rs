@@ -6,6 +6,9 @@ pub struct Entry {
     pub cover: String,
     pub summary: String,
     pub liked_vid: Option<String>,
+    pub collection_item_id: Option<String>,
+    pub collection_folder_id: Option<i64>,
+    pub collection_book_type: Option<i64>,
     pub can_play: bool,
     pub episode_count: i64,
     pub watched_episode: i64,
@@ -19,6 +22,7 @@ pub struct Entry {
 pub struct Query {
     pub identity: Option<u64>,
     pub cursor: String,
+    pub folder_id: Option<i64>,
     pub offset: i64,
     pub session: String,
     pub online: bool,
@@ -29,6 +33,7 @@ pub struct Query {
 pub struct Page {
     pub source: Option<PageSource>,
     pub items: Vec<Entry>,
+    pub folder: Option<hongguo_api::interact::BookshelfFolder>,
     pub cursor: String,
     pub offset: i64,
     pub session: String,
@@ -42,6 +47,7 @@ pub struct PageSource {
     pub identity: u64,
     pub online: bool,
     cursor: String,
+    folder_id: Option<i64>,
     offset: i64,
     session: String,
 }
@@ -65,6 +71,7 @@ impl Query {
             identity,
             online: query.online,
             cursor: query.cursor,
+            folder_id: query.folder_id,
             offset: query.offset,
             session: query.session,
         }
@@ -73,9 +80,16 @@ impl Query {
 
 impl Page {
     pub fn belongs_to(&self, query: &Query, identity: u64) -> bool {
-        self.source
-            .as_ref()
-            .is_some_and(|source| source.identity == identity && source.online == query.online)
+        let folder_id = if query.identity == Some(identity) {
+            query.folder_id
+        } else {
+            None
+        };
+        self.source.as_ref().is_some_and(|source| {
+            source.identity == identity
+                && source.online == query.online
+                && source.folder_id == folder_id
+        })
     }
 
     pub fn next_query(&self, query: &Query, identity: u64) -> Option<Query> {
@@ -87,6 +101,7 @@ impl Page {
             .then(|| Query {
                 identity: Some(identity),
                 cursor: self.cursor.clone(),
+                folder_id: query.folder_id,
                 offset: self.offset,
                 session: self.session.clone(),
                 online: query.online,

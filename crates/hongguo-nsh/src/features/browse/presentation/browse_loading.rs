@@ -54,34 +54,8 @@ pub(crate) fn browse_loading_more() -> View {
         .text_color(move || theme().muted_foreground)
 }
 
-pub(crate) fn browse_panel_loading() -> View {
-    view()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .py_2()
-        .text_color(move || theme().muted_foreground)
-        .child(browse_spinner().size(px(14.0)).accessible(false))
-        .child(
-            text(move || crate::i18n::tr("common.loading"))
-                .text_sm()
-                .font_weight(FontWeight::NORMAL),
-        )
-}
-
 pub(crate) fn browse_spinner() -> nsh_core::element::Svg {
-    svg(nsh_core::element::ImageSrc::svg_markup(include_str!(
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/ui/icons/loader-circle.svg"
-        )
-    )))
-    .size_4()
-    .fill_none()
-    .stroke_current()
-    .stroke_width(px(2.0))
-    .animate_spin()
-    .style_when(reduce_motion, |style| style.animate_none())
+    crate::ui::loading::spinner()
 }
 
 pub(crate) fn browse_empty(label: impl IntoReactive<SharedString>) -> View {

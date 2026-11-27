@@ -18,6 +18,7 @@ pub(super) fn row(
                 tr("player.episodesBar").replace("{count}", &state.episode_count.get().to_string())
             })
             .element_ref(&episodes)
+            .style_when(state.is_highlight, |style| style.hidden())
             .disabled(state.busy)
             .accessibility_label(move || Some(tr("player.episodes")))
             .on_press(move || state.menus.open.set(Some(super::Panel::Episodes))),

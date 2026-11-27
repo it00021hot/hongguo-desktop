@@ -114,7 +114,8 @@ pub(crate) fn form_action(
     variant: ButtonVariant,
 ) -> nsh_base::ButtonElement {
     button(label, variant)
-        .min_h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
+        .min_h(crate::ui::controls::control_height)
+        .h(crate::ui::controls::control_height)
         .px_3()
         .py_1p5()
 }
@@ -158,7 +159,7 @@ pub(crate) fn update_action(
     available: Memo<bool>,
 ) -> nsh_base::ButtonElement {
     form_action(label, ButtonVariant::Quiet)
-        .h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
+        .h(crate::ui::controls::control_height)
         .py_0()
         .border_1()
         .border_color(move || {

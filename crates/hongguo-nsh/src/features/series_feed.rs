@@ -197,7 +197,9 @@ fn rank_rows(
         ))
         .child(when(
             move || {
-                !feed.loading() && feed.with(|page| page.is_some_and(|page| page.items.is_empty()))
+                !feed.loading()
+                    && feed.error().is_none()
+                    && feed.with(|page| page.is_some_and(|page| page.items.is_empty()))
             },
             move || ui::status(move || tr("rank.empty")),
         ))
@@ -207,8 +209,15 @@ fn rank_rows(
             move || ui::status(move || play.map(|play| play.notice()).unwrap_or_default()),
         ))
         .child(
-            ui::refresh_shade(move || feed.loading() && !initial.get())
-                .style_when(initial, |style| style.hidden())
+            ui::refresh_shade(move || feed.loading() && !initial.get() && !paging.loading.get())
+                .style_when(
+                    move || {
+                        initial.get()
+                            || feed.error().is_some()
+                            || feed.with(|page| page.is_none_or(|page| page.items.is_empty()))
+                    },
+                    |style| style.hidden(),
+                )
                 .child(crate::view_memory::remember_scroll(
                     virtual_list(
                         move || feed.with(|page| page.map_or(0, |page| page.items.len())),
@@ -286,7 +295,7 @@ fn rank_rows(
                     )
                     .flex_1()
                     .on_load_more(move || paging.request.with(|request| request()))
-                    .footer(view().child(when(
+                    .footer(view().min_h(px(36.0)).child(when(
                         paging.loading,
                         crate::features::browse::presentation::browse_loading_more,
                     )))

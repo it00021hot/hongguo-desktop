@@ -8,6 +8,14 @@ pub(super) fn hero(
     meta: MetaData,
     upcoming: Memo<bool>,
 ) -> View {
+    let title = move || {
+        series.with(|series| {
+            series
+                .as_ref()
+                .map(|series| series.title.clone())
+                .unwrap_or_default()
+        })
+    };
     view()
         .flex_row()
         .gap(move || {
@@ -45,29 +53,34 @@ pub(super) fn hero(
                 .min_w(px(0.0))
                 .pt_0p5()
                 .child(
-                    text(move || {
-                        series.with(|series| {
-                            series
-                                .as_ref()
-                                .map(|series| series.title.clone())
-                                .unwrap_or_default()
-                        })
-                    })
-                    .text_size(move || {
-                        px(if window().width.0 >= 768.0 {
-                            24.0
-                        } else {
-                            18.0
-                        })
-                    })
-                    .line_height(move || {
-                        px(if window().width.0 >= 768.0 {
-                            33.0
-                        } else {
-                            24.75
-                        })
-                    })
-                    .font_weight(FontWeight::BOLD),
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .min_w_0()
+                        .gap_1()
+                        .child(
+                            text(title)
+                                .min_w_0()
+                                .text_size(move || {
+                                    px(if window().width.0 >= 768.0 {
+                                        24.0
+                                    } else {
+                                        18.0
+                                    })
+                                })
+                                .line_height(move || {
+                                    px(if window().width.0 >= 768.0 {
+                                        33.0
+                                    } else {
+                                        24.75
+                                    })
+                                })
+                                .font_weight(FontWeight::BOLD),
+                        )
+                        .child(when(
+                            move || !title().is_empty(),
+                            move || ui::copy_button("detail.copyTitle", title),
+                        )),
                 )
                 .child(
                     text(move || {
