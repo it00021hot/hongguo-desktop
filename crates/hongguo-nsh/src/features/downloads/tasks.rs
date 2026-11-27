@@ -88,6 +88,7 @@ pub(super) fn content(
             move || !is_desktop() && ids.get().is_empty(),
             |style| style.hidden(),
         )
+        .flex_shrink_0()
         .flex_row()
         .flex_wrap()
         .items_center()
@@ -173,27 +174,35 @@ pub(super) fn content(
                     .on_press(move || send(TaskIntent::Rescan)),
                 ),
         );
-    let viewport = signal(0.0_f32);
-    let compact = computed(move || viewport.get() > 0.0 && viewport.get() < 708.0);
-    let list_height = computed(move || {
-        (items.get().len() as f32 * 53.0).min((window().height.0 - 182.0).max(53.0))
+    let table_viewport = signal((0.0_f32, 0.0_f32));
+    let compact = computed(move || {
+        let (width, _) = table_viewport.get();
+        width > 0.0 && width < 708.0
     });
     let table = move || {
         crate::features::library::presentation::task_table()
+            .flex_1()
+            .min_h_0()
             .on_layout(move |bounds: &Bounds<Points>| {
-                viewport.set((bounds.size.width.0 - 2.0).max(0.0))
+                table_viewport.set((
+                    (bounds.size.width.0 - 2.0).max(0.0),
+                    (bounds.size.height.0 - 2.0).max(0.0),
+                ));
             })
             .child(
                 scroll()
                     .horizontal()
-                    .h(move || px(list_height.get() + 40.0))
+                    .flex_1()
+                    .min_h_0()
                     .child(
                         view()
                             .w(move || {
-                                px(viewport.get().max(crate::features::library::presentation::TaskColumn::minimum_table_width()))
+                                px(table_viewport.get().0.max(crate::features::library::presentation::TaskColumn::minimum_table_width()))
                             })
+                            .h(move || px(table_viewport.get().1))
                             .child(
                                 crate::features::library::presentation::task_table_row(true)
+                                    .flex_shrink_0()
                                     .child(
                                         crate::features::library::presentation::task_cell(crate::features::library::presentation::TaskColumn::Select, compact).child(
                                             crate::features::library::presentation::library_check(
@@ -250,18 +259,21 @@ pub(super) fn content(
                                         .collect::<Vec<_>>()
                                 })
                                 .estimated_item_size(px(53.0))
-                                .h(move || px(list_height.get())),
+                                .flex_1()
+                                .min_h_0(),
                             ),
                     ),
             )
     };
     view()
         .flex_1()
+        .min_h_0()
         .p_6()
         .gap_4()
         .child(toolbar)
         .child(
             view()
+                .flex_shrink_0()
                 .flex_row()
                 .items_start()
                 .gap_2()
@@ -317,6 +329,7 @@ pub(super) fn content(
             move || selected_count.get() > 0,
             move || {
                 crate::features::library::presentation::task_batch_bar()
+                    .flex_shrink_0()
                     .child(text(move || selected_count.get().to_string()).text_sm())
                     .child(when(
                         move || freeable.get() > 0,
