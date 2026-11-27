@@ -74,6 +74,7 @@ use windows::Win32::{
 };
 
 use crate::{
+    app_window::ComponentTarget,
     compose::Composition,
     image::AssetBase,
     render::DrawCx,
@@ -125,6 +126,13 @@ pub trait NativeComponent {
     /// Whether this component needs drawing on the compositor's next frames.
     fn needs_frames(&self) -> bool {
         false
+    }
+
+    /// Advances a mounted component on the compositor tick, outside paint.
+    /// Return true to invalidate its window. This runs on the UI thread;
+    /// expensive media work still belongs on a worker.
+    fn prepare_frame(&self, _device: &windows::Win32::Graphics::Direct3D11::ID3D11Device) -> bool {
+        true
     }
 
     /// Opts into diagnostic feedback after the complete NSH canvas is submitted.
@@ -367,7 +375,8 @@ impl ComponentContext {
         };
         let surface = Surface::by_key(self.surface).ok_or_else(unavailable)?;
         let view = surface.view(self.id).ok_or_else(unavailable)?;
-        crate::output::info(crate::app_window::hwnd_showing(&surface, &view))
+        let target = ComponentTarget::resolve(&surface, &view).ok_or_else(unavailable)?;
+        crate::output::info(target.hwnd())
     }
 
     /// The actual NSH drawing-device generation on this component's UI thread.
@@ -389,8 +398,7 @@ impl ComponentContext {
     pub fn window_hwnd(&self) -> Option<HWND> {
         let surface = Surface::by_key(self.surface)?;
         let view = surface.view(self.id)?;
-        let hwnd = crate::app_window::hwnd_showing(&surface, &view);
-        (!hwnd.is_invalid()).then_some(hwnd)
+        ComponentTarget::resolve(&surface, &view).map(|target| target.hwnd())
     }
 
     /// Emits event `name` with `data`: the handler `on<Name>` gets it.
@@ -416,9 +424,14 @@ impl ComponentContext {
     /// thread).
     pub fn redraw(&self) {
         let key = self.surface;
+        let id = self.id;
         self.ui.invoke(move || {
-            if let Some(surface) = Surface::by_key(key) {
-                surface.invalidate();
+            if let Some(surface) = Surface::by_key(key)
+                && let Some(view) = surface.view(id)
+                && let Some(target) = ComponentTarget::resolve(&surface, &view)
+            {
+                // The mounted root owns invalidation and subtree change stamps.
+                target.content_changed(&view);
             }
         });
     }
@@ -884,8 +897,11 @@ impl ComponentItem {
                 item.pumping.set(false);
                 return false;
             };
-            if !crate::app_window::invalidate_component_window(surface, &view) {
-                surface.invalidate_view(&view);
+            if let Some(target) = ComponentTarget::resolve(surface, &view)
+                && let Ok(gfx) = crate::gfx::get()
+                && item.component.borrow().as_ref().is_some_and(|c| c.prepare_frame(&gfx.d3d))
+            {
+                target.content_changed(&view);
             }
             true
         });

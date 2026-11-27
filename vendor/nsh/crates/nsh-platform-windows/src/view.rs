@@ -508,17 +508,23 @@ impl NshView {
     /// again (if it is in one), and it and the views it is in hold a newer
     /// change ([`Self::changes`]: a shader picturing them takes them again).
     pub(crate) fn changed(&self) {
-        self.changed_in(None);
+        self.changed_in(None, false);
+    }
+
+    /// A declared window coalesces paint on its own HWND. A queued bit from
+    /// the surface host must not suppress the update after a view moves.
+    pub(crate) fn native_content_changed(&self, declared_window: bool) {
+        self.changed_in(None, declared_window);
     }
 
     /// Part of what it draws changed (`rect`, in its own coordinates, y
     /// down): only that is drawn again (a canvas's animated values).
     pub(crate) fn changed_rect(&self, rect: Bounds<Points>) {
-        self.changed_in(Some(rect));
+        self.changed_in(Some(rect), false);
     }
 
     /// It changed in `rect` (all of it without one).
-    fn changed_in(&self, rect: Option<Bounds<Points>>) {
+    fn changed_in(&self, rect: Option<Bounds<Points>>, declared_window: bool) {
         let stamp = next_change_stamp();
         let mut node = self.0.clone();
         loop {
@@ -529,7 +535,7 @@ impl NshView {
                 None => break,
             }
         }
-        if self.0.queued.get() {
+        if !declared_window && self.0.queued.get() {
             return;
         }
         let invalidate = node.invalidate.borrow().clone();

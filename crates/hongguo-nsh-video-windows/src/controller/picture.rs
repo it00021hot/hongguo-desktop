@@ -20,7 +20,7 @@ impl Controller {
         }
         // A held/seek frame must be visible before its completion is acknowledged;
         // an older enhanced picture cannot satisfy this gate.
-        let needs_raw = direct.needs_raw()?;
+        let needs_raw = self.holding;
         let picture = shared
             .picture
             .lock()
@@ -69,8 +69,15 @@ impl Controller {
         }
         if let Some(raw) = &self.raw {
             raw.draw(dc, size, props.resize_mode)?;
-            if raw.metadata().is_some() {
-                direct.submitted(dc, self.device.as_ref().expect("raw frame drawing device"))?;
+            if needs_raw
+                && raw.metadata().is_some()
+                && let Some(window) = shared.context.window_hwnd()
+            {
+                direct.drawn(
+                    dc,
+                    self.device.as_ref().expect("raw frame drawing device"),
+                    window,
+                )?;
             }
         }
         Ok(())

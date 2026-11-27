@@ -8,11 +8,15 @@ use crate::{
     drawing_device,
     state::{RawSnapshot, Shared},
 };
-use hongguo_nsh_video_api::{ErrorCode, Seek, Source, VideoEvent, VideoProps};
+use hongguo_media_types::PresentationFrame;
+use hongguo_nsh_video_api::{
+    ErrorCode, Seek, Source, VideoEvent, VideoProps, frames::PlaybackPosition,
+};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::{
     Direct2D::{ID2D1Bitmap1, ID2D1DeviceContext},
     Direct3D11::ID3D11Device,
@@ -24,6 +28,8 @@ pub(crate) struct Controller {
     device: Option<ID3D11Device>,
     conversion: Option<Conversion>,
     raw: Option<RawFrame>,
+    selected: Option<Arc<PresentationFrame>>,
+    holding: bool,
     loaded: bool,
     notified_size: Option<(u32, u32)>,
     applied: Option<VideoProps>,
@@ -44,6 +50,8 @@ impl Default for Controller {
             device: None,
             conversion: None,
             raw: None,
+            selected: None,
+            holding: true,
             loaded: false,
             notified_size: None,
             applied: None,
@@ -84,6 +92,7 @@ impl Controller {
             if rate_changed && owned {
                 direct.reset_device();
                 self.raw = None;
+                self.selected = None;
                 if let Some((request, _)) = self.pending.take()
                     && direct.seek(request.position_ms)?
                 {
@@ -129,6 +138,7 @@ impl Controller {
         }
         self.bitmap = None;
         self.raw = None;
+        self.selected = None;
         if self.waiting_for_device || !self.loaded || self.source != props.source {
             self.queued = Some(request);
         } else if let Some(direct) = &mut self.direct {
@@ -144,44 +154,37 @@ impl Controller {
         Ok(())
     }
 
-    pub fn draw(
+    pub fn tick(
         &mut self,
         shared: &Arc<Shared>,
-        dc: &ID2D1DeviceContext,
-        size: (f32, f32),
-    ) -> Result<(), VideoError> {
+        device: &ID3D11Device,
+    ) -> Result<bool, VideoError> {
         let props = shared
             .props
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         if !props.active {
-            return Ok(());
+            return Ok(false);
         }
         if !shared
             .consumer_active
             .load(std::sync::atomic::Ordering::Acquire)
         {
-            return Ok(());
+            return Ok(false);
         }
-        let device = match drawing_device(dc) {
-            Ok(device) => device,
-            Err(_) if self.device_removed() => {
-                self.suspend_for_device();
-                return Ok(());
-            }
-            Err(error) => return Err(error),
-        };
         if unsafe { device.GetDeviceRemovedReason() }.is_err() {
             self.suspend_for_device();
-            return Ok(());
+            // NSH detects and replaces the lost drawing device in its paint path.
+            return Ok(true);
         }
-        let device_changed = self.device.as_ref() != Some(&device);
+        let device_changed = self.device.as_ref() != Some(device);
         if device_changed {
             self.waiting_for_device = false;
-            self.conversion = Some(Conversion::new(&device)?);
+            self.conversion = Some(Conversion::new(device)?);
             self.device = Some(device.clone());
             self.raw = None;
+            self.selected = None;
             self.bitmap = None;
             self.applied = None;
             shared.clear_frames();
@@ -189,6 +192,8 @@ impl Controller {
         if self.source != props.source {
             self.direct = None;
             self.raw = None;
+            self.selected = None;
+            self.holding = true;
             self.bitmap = None;
             self.applied = None;
             self.loaded = false;
@@ -199,7 +204,7 @@ impl Controller {
             shared.clear_frames();
             self.source = props.source.clone();
             let Some(source) = &self.source else {
-                return Ok(());
+                return Ok(true);
             };
             shared.emit(VideoEvent::LoadStart {
                 source_id: source.id.clone(),
@@ -213,7 +218,7 @@ impl Controller {
             self.direct = Some(Direct::open(
                 handle,
                 DeviceLease::new(
-                    &device,
+                    device,
                     shared
                         .context
                         .drawing_device_generation()
@@ -226,7 +231,7 @@ impl Controller {
             && (device_changed || !direct.configured())
         {
             let owned = direct.configure(DeviceLease::new(
-                &device,
+                device,
                 shared
                     .context
                     .drawing_device_generation()
@@ -240,13 +245,13 @@ impl Controller {
             }
         }
         let Some(mut direct) = self.direct.take() else {
-            return Ok(());
+            return Ok(false);
         };
-        let result = self.draw_source(shared, &mut direct, &props, dc, size);
+        let result = self.tick_source(shared, &mut direct, &props);
         if result.is_err() && self.device_removed() {
             self.direct = Some(direct);
             self.suspend_for_device();
-            return Ok(());
+            return Ok(true);
         }
         self.direct = Some(direct);
         result
@@ -272,14 +277,12 @@ impl Controller {
         self.applied = None;
     }
 
-    fn draw_source(
+    fn tick_source(
         &mut self,
         shared: &Arc<Shared>,
         direct: &mut Direct,
         props: &VideoProps,
-        dc: &ID2D1DeviceContext,
-        size: (f32, f32),
-    ) -> Result<(), VideoError> {
+    ) -> Result<bool, VideoError> {
         let source_id = self.source.as_ref().expect("opened source").id.clone();
         if !direct.is_owner()? {
             shared
@@ -287,15 +290,16 @@ impl Controller {
                 .store(false, std::sync::atomic::Ordering::Release);
             shared.clear_frames();
             self.raw = None;
+            self.selected = None;
             self.bitmap = None;
             self.pending = None;
             self.queued = None;
-            return Ok(());
+            return Ok(true);
         }
         shared
             .consumer_active
             .store(true, std::sync::atomic::Ordering::Release);
-        direct.poll_presented()?;
+        direct.poll_presented(shared.context.window_hwnd())?;
         if self.applied.as_ref().is_none_or(|old| {
             old.paused != props.paused
                 || old.active != props.active
@@ -337,6 +341,7 @@ impl Controller {
             && direct.seek(request.position_ms)?
         {
             self.raw = None;
+            self.selected = None;
             self.bitmap = None;
             shared.clear_frames();
             self.pending = Some((request, Instant::now()));
@@ -354,6 +359,7 @@ impl Controller {
             ));
         }
         let holding = direct.holding()?;
+        self.holding = holding;
         shared
             .awaiting_presentation
             .store(holding, std::sync::atomic::Ordering::Release);
@@ -372,16 +378,71 @@ impl Controller {
             });
         }
         let gap = position.is_some_and(|position| position.video_gap);
+        let clear_picture = gap && self.selected.is_some();
         shared.set_video_gap(gap);
         if gap {
             direct.video_gap();
             self.raw = None;
             self.bitmap = None;
+            self.selected = None;
+        } else if let Some(frame) = direct.frame(position.map_or(0.0, |p| p.position_secs))? {
+            self.selected = Some(frame);
         }
-        if props.active
-            && !gap
-            && let Some(frame) = direct.frame(position.map_or(0.0, |p| p.position_secs))?
+        self.emit_progress(shared, props, source_id, position)?;
+        Ok(clear_picture
+            || self
+                .selected
+                .as_ref()
+                .is_some_and(|frame| holding || !direct.was_uploaded(frame)))
+    }
+
+    pub fn draw(
+        &mut self,
+        shared: &Arc<Shared>,
+        dc: &ID2D1DeviceContext,
+        size: (f32, f32),
+    ) -> Result<(), VideoError> {
+        let props = shared
+            .props
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if !props.active
+            || self.source != props.source
+            || !shared
+                .consumer_active
+                .load(std::sync::atomic::Ordering::Acquire)
         {
+            return Ok(());
+        }
+        if self.waiting_for_device || self.device.as_ref() != Some(&drawing_device(dc)?) {
+            shared
+                .awaiting_presentation
+                .store(true, std::sync::atomic::Ordering::Release);
+            shared.context.request_frames();
+            return Ok(());
+        }
+        let Some(mut direct) = self.direct.take() else {
+            return Ok(());
+        };
+        let result = self.draw_selected(shared, &mut direct, &props, dc, size);
+        self.direct = Some(direct);
+        if result.is_err() && self.device_removed() {
+            self.suspend_for_device();
+            return Ok(());
+        }
+        result
+    }
+
+    fn draw_selected(
+        &mut self,
+        shared: &Arc<Shared>,
+        direct: &mut Direct,
+        props: &VideoProps,
+        dc: &ID2D1DeviceContext,
+        size: (f32, f32),
+    ) -> Result<(), VideoError> {
+        if let Some(frame) = self.selected.clone() {
             let display = shared.context.output_color_info().map_err(frame_error)?;
             let conversion = self.conversion.as_mut().expect("drawing conversion");
             let enhance = props.enhancement.anime4k_on || props.enhancement.sharpen_on;
@@ -430,6 +491,7 @@ impl Controller {
                         drop(snapshot);
                         let owned = direct.reject_decoder(error.detail())?;
                         self.raw = None;
+                        self.selected = None;
                         self.bitmap = None;
                         shared.clear_frames();
                         if owned && let Some((request, _)) = self.pending.take() {
@@ -456,6 +518,16 @@ impl Controller {
                 direct.uploaded(frame);
             }
         }
+        self.draw_picture_with(shared, props, direct, dc, size)
+    }
+
+    fn emit_progress(
+        &mut self,
+        shared: &Shared,
+        props: &VideoProps,
+        source_id: String,
+        position: Option<PlaybackPosition>,
+    ) -> Result<(), VideoError> {
         if let Some(metadata) = self.raw.as_ref().and_then(RawFrame::metadata) {
             let (numerator, denominator) = metadata.sample_aspect_ratio;
             if numerator == 0 || denominator == 0 {
@@ -493,11 +565,18 @@ impl Controller {
                 shared.emit(VideoEvent::End { source_id });
             }
         }
-        // Keep the consumer available to draw_picture's visible presentation gate.
-        if gap {
-            Ok(())
-        } else {
-            self.draw_picture_with(shared, props, direct, dc, size)
+        Ok(())
+    }
+
+    pub fn awaiting_window_present(&self) -> bool {
+        self.direct
+            .as_ref()
+            .is_some_and(Direct::awaiting_window_present)
+    }
+
+    pub fn window_presented(&mut self, window: Option<HWND>) {
+        if let Some(direct) = &mut self.direct {
+            direct.window_presented(window);
         }
     }
 
@@ -509,6 +588,8 @@ impl Controller {
         self.pending = None;
         self.queued = None;
         self.raw = None;
+        self.selected = None;
+        self.holding = true;
         self.bitmap = None;
     }
 }

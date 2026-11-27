@@ -6,13 +6,22 @@ use hongguo_nsh_video_api::{
     frames::{FrameInfo, FrameLease, PlaybackControl, PlaybackPosition, open_frames},
 };
 use std::sync::Arc;
-use windows::Win32::Graphics::{Direct2D::ID2D1DeviceContext, Direct3D11::ID3D11Device};
+use windows::Win32::{
+    Foundation::HWND,
+    Graphics::{Direct2D::ID2D1DeviceContext, Direct3D11::ID3D11Device},
+};
+
+struct WindowSubmission {
+    window: HWND,
+    gpu: Presentation,
+}
 
 pub(crate) struct Direct {
     lease: FrameLease,
     uploaded: Option<Arc<PresentationFrame>>,
-    presentations: Vec<Presentation>,
-    last_submission: Option<(u64, u64)>,
+    drawn: Option<WindowSubmission>,
+    presentations: Vec<WindowSubmission>,
+    last_submission: Option<(HWND, u64, u64)>,
     gate: SeekGate,
     configured: bool,
 }
@@ -27,6 +36,7 @@ impl Direct {
         let mut direct = Self {
             lease,
             uploaded: None,
+            drawn: None,
             presentations: Vec::new(),
             last_submission: None,
             gate: SeekGate::default(),
@@ -119,6 +129,7 @@ impl Direct {
 
     pub fn video_gap(&mut self) {
         self.uploaded = None;
+        self.drawn = None;
         self.last_submission = None;
         // No media frame exists in this gap. Keep submitted GPU queries
         // alive for retirement; the seek no longer waits for a nonexistent frame.
@@ -140,66 +151,76 @@ impl Direct {
     pub fn uploaded(&mut self, frame: Arc<PresentationFrame>) {
         self.uploaded = Some(frame);
     }
-    pub fn needs_raw(&self) -> Result<bool, VideoError> {
-        self.holding()
-    }
-
     pub fn reset_device(&mut self) {
         self.uploaded = None;
+        self.drawn = None;
         self.presentations.clear();
         self.last_submission = None;
         self.gate.reset();
     }
 
-    pub fn poll_presented(&mut self) -> Result<(), VideoError> {
+    pub fn poll_presented(&mut self, window: Option<HWND>) -> Result<(), VideoError> {
+        if self
+            .last_submission
+            .is_some_and(|(target, _, _)| Some(target) != window)
+        {
+            self.last_submission = None;
+        }
         let mut remaining = Vec::new();
         for pending in self.presentations.drain(..) {
-            if !pending.completed()? {
+            if Some(pending.window) != window {
+                continue;
+            }
+            if !pending.gpu.completed()? {
                 remaining.push(pending);
                 continue;
             }
             if self
                 .lease
-                .presented_if_owner(pending.generation, pending.serial)
+                .presented_if_owner(pending.gpu.generation, pending.gpu.serial)
                 .map_err(error)?
             {
-                self.gate.presented(pending.generation);
+                self.gate.presented(pending.gpu.generation);
             }
         }
         self.presentations = remaining;
         Ok(())
     }
 
-    /// Called only after this exact raw frame's DrawBitmap succeeds.
-    pub fn submitted(
+    /// A DrawBitmap is not evidence that NSH submitted the window.
+    pub fn drawn(
         &mut self,
         dc: &ID2D1DeviceContext,
         device: &ID3D11Device,
+        window: HWND,
     ) -> Result<(), VideoError> {
-        if let Some(frame) = &self.uploaded {
-            self.submitted_frame(dc, device, frame.generation, frame.serial)?;
-        }
-        Ok(())
-    }
-
-    pub fn submitted_frame(
-        &mut self,
-        dc: &ID2D1DeviceContext,
-        device: &ID3D11Device,
-        generation: u64,
-        serial: u64,
-    ) -> Result<(), VideoError> {
-        if self.needs_raw()? && self.last_submission != Some((generation, serial)) {
+        if let Some(frame) = &self.uploaded
+            && self.last_submission != Some((window, frame.generation, frame.serial))
+        {
             if self.presentations.len() >= 64 {
                 return Err(error(
                     "presentation feedback backlog exceeded its bounded audit queue",
                 ));
             }
-            self.presentations
-                .push(Presentation::submit(dc, device, generation, serial)?);
-            self.last_submission = Some((generation, serial));
+            self.drawn = Some(WindowSubmission {
+                window,
+                gpu: Presentation::submit(dc, device, frame.generation, frame.serial)?,
+            });
         }
         Ok(())
+    }
+
+    pub fn awaiting_window_present(&self) -> bool {
+        self.drawn.is_some()
+    }
+
+    pub fn window_presented(&mut self, window: Option<HWND>) {
+        if let Some(drawn) = self.drawn.take()
+            && Some(drawn.window) == window
+        {
+            self.last_submission = Some((drawn.window, drawn.gpu.generation, drawn.gpu.serial));
+            self.presentations.push(drawn);
+        }
     }
 }
 

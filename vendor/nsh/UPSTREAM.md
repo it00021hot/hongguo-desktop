@@ -15,11 +15,12 @@ Windows native components can request compositor-paced drawing through
 `ComponentContext::request_frames` and report continued demand with
 `NativeComponent::needs_frames`. The component host uses the same surface
 `on_draw_frame` client as native Video, with a weak host reference and one
-pump per component. It invalidates the declared window that contains the
-component, or the surface host for embedded views. Invalidating only the
-host leaves video in a declared window waiting for unrelated UI repaints.
-No independent display clock is introduced. Remove this bridge when upstream
-provides equivalent native-component frame scheduling and window routing.
+pump per component. The mounted root supplies both the owning HWND and the
+invalidation callback; detached components do not fall back to the host.
+The optional `NativeComponent::prepare_frame` hook advances native content
+outside paint. Its return value requests a repaint of its actual window,
+not all windows. No independent display clock is introduced. Remove this
+bridge when upstream provides equivalent scheduling and window routing.
 
 Local changes include the Windows backend's same-canvas high-precision display
 composition. Native MediaEngine video maps its SDR BGRA8 frames from sRGB to
