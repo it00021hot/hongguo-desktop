@@ -8,7 +8,7 @@ mod read;
 
 pub mod range;
 
-pub use cache::StreamCache;
+pub use cache::{StreamCache, StreamGeneration};
 pub use progressive::{ProgressiveStream, ReaderDemand};
 pub use read::{
     StreamChunk, StreamReadError, read_range_cancellable, total_len, wait_range_cancellable,

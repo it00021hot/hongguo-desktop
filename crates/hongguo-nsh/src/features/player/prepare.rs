@@ -3,6 +3,7 @@ use hongguo_common::{
     AppError, AppResult,
     model::{LocalHistoryItem, PlayRequest, PlayResponse, VideoDefinition},
 };
+pub(super) use hongguo_service::play_service::local::PlaybackIntent;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -22,6 +23,32 @@ pub(super) struct Playback {
     pub(super) highlight: Option<hongguo_common::model::Highlight>,
 }
 
+impl Playback {
+    pub(super) fn resume_retained_stream(&self, session: &Session) -> bool {
+        self.lease.is_current()
+            && (!self.online
+                || hongguo_service::play_service::local::resume_retained_stream(
+                    &session.state,
+                    &self.history.vid,
+                    self.active_definition,
+                    &self.history.series_id,
+                    self.history.vid_index,
+                ))
+    }
+
+    pub(super) fn activate_staged(&self, session: &Session) {
+        if self.online {
+            hongguo_service::play_service::local::activate_staged(
+                &session.state,
+                &self.history.vid,
+                self.active_definition,
+                &self.history.series_id,
+                self.history.vid_index,
+            );
+        }
+    }
+}
+
 pub(super) async fn prepare(
     session: Arc<Session>,
     id: String,
@@ -29,6 +56,7 @@ pub(super) async fn prepare(
     definition: Option<u32>,
     reset_definition: bool,
     start_position: Option<f64>,
+    intent: PlaybackIntent,
 ) -> AppResult<Playback> {
     let downloaded = session
         .state
@@ -38,6 +66,7 @@ pub(super) async fn prepare(
     let response = hongguo_service::play_service::local::resolve_play(
         &session.state,
         &play_request(&id, episode, downloaded, definition, reset_definition),
+        intent,
     )
     .await?;
     check_response(&response)?;

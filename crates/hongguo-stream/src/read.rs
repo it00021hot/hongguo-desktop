@@ -56,6 +56,10 @@ impl std::error::Error for StreamReadError {}
 /// 调用方应先等本函数返回 `Some`。
 pub fn total_len(vid: &str, definition: u32) -> Option<u64> {
     let entry = crate::cache().get(vid, definition)?;
+    entry_len(&entry)
+}
+
+pub(crate) fn entry_len(entry: &StreamEntry) -> Option<u64> {
     if let Some(progressive) = entry.progressive.lock().as_ref() {
         return Some(progressive.plain_len);
     }

@@ -71,6 +71,7 @@ pub(super) fn mount<E: IntoElement>(
     state: State,
     overlay: impl Fn() -> E + 'static,
     next: impl Fn() + Copy + 'static,
+    reacquire_expired: impl Fn() -> bool + Copy + 'static,
 ) -> impl IntoElement {
     let State {
         session,
@@ -618,22 +619,31 @@ pub(super) fn mount<E: IntoElement>(
                             if !item_owner.is_live() {
                                 return;
                             }
-                            if current_source() || is_incoming.get_untracked() {
-                                let incoming_layer = is_incoming.get_untracked();
-                                log::warn!(
-                                    "[Player] nativeError incoming={incoming_layer} message={message}"
-                                );
-                                if incoming_layer {
-                                    incoming.set(None);
-                                    staged.set(None);
-                                    incoming_ready.set(false);
-                                    incoming_opaque.set(false);
+                            let selected = current_source();
+                            let incoming_layer = is_incoming.get_untracked();
+                            if !selected && !incoming_layer {
+                                return;
+                            }
+                            log::warn!(
+                                "[Player] nativeError incoming={incoming_layer} selected={selected} message={message}"
+                            );
+                            if incoming_layer {
+                                incoming.set(None);
+                                staged.set(None);
+                                incoming_ready.set(false);
+                                incoming_opaque.set(false);
+                                if selected {
                                     chrome.end_handoff();
                                 }
-                                failure.set(message.to_owned().into());
-                                pending_seek.set(None);
-                                buffering.set(false);
                             }
+                            // Failed speculative playback must not fail the
+                            // episode that is still selected and on screen.
+                            if !selected || reacquire_expired() {
+                                return;
+                            }
+                            failure.set(message.to_owned().into());
+                            pending_seek.set(None);
+                            buffering.set(false);
                         }),
                         end: Box::new(move || {
                             if !item_owner.is_live() || is_incoming.get_untracked() || !routed.get_untracked() {

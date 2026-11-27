@@ -7,7 +7,7 @@ use std::time::Duration;
 use hongguo_api::client::{STREAM_RETRY_ATTEMPTS, stream_retry_backoff};
 use hongguo_common::model::Settings;
 use hongguo_common::{AppError, AppResult};
-use hongguo_stream::{ProgressiveStream, StreamCache, cache};
+use hongguo_stream::{ProgressiveStream, StreamCache, StreamGeneration, cache};
 
 use super::disk::MediaCache;
 use super::plain::fetch_plain_with;
@@ -27,6 +27,7 @@ static FILL_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 pub(super) async fn fill(
     state: &AppState,
     c: &StreamCache,
+    generation: &StreamGeneration,
     vid: &str,
     progress_key: &str,
     definition: u32,
@@ -38,7 +39,7 @@ pub(super) async fn fill(
     // 让位规则：用户滚走后条目虽被保留（弹回来秒切），但它的下载必须立即让位——
     // 串行队列只有一路，被切走剧的整集下载拖住队头，当前剧就只能干等。预取（有界头部）除外。
     let cancelled = || {
-        !c.exists(vid, definition)
+        !c.is_current_generation(generation)
             || (!prefetch && c.current() != vid && !c.is_prefetch_marked(vid, definition))
     };
     if cancelled() {
@@ -63,7 +64,7 @@ pub(super) async fn fill(
     .await
     {
         Ok((sparse, prog)) => {
-            if cancelled() || !c.set_progressive(vid, definition, prog.clone()) {
+            if cancelled() || !c.set_progressive(generation, prog.clone()) {
                 log::info!("[Online] {vid} 档位 {definition} 条目已失效，渐进填充取消");
                 reporter.done();
                 return Ok(());
@@ -139,7 +140,7 @@ pub(super) async fn fill(
             if cancelled() {
                 return Ok(());
             }
-            if !c.store(vid, definition, &plain) {
+            if !c.store(generation, &plain) {
                 log::info!(
                     "[Online] {vid} 档位 {definition} 已有数据，丢弃重复的 {} 字节",
                     plain.len()
@@ -196,10 +197,10 @@ fn resume_fill_inner(
     attempts_left: u8,
 ) {
     let c = cache();
-    if !c.needs_resume(vid, definition) {
+    if c.current() != vid || !c.needs_resume(vid, definition) {
         return;
     }
-    if !c.begin_fetch(vid, definition) {
+    let Some(generation) = c.begin_fetch(vid, definition) else {
         // 已有填充方（多半是收尾中的预取）：退避后再试，别让 loader 在填充前沿干等超时。
         if attempts_left == 0 {
             log::warn!("[Online] {vid}@{definition} 续填一直抢不到取流权（退避重试耗尽）");
@@ -213,9 +214,9 @@ fn resume_fill_inner(
             resume_fill_inner(&state, &owned, definition, &owned_key, attempts_left - 1);
         });
         return;
-    }
-    let Some((sparse, prog)) = c.resume_parts(vid, definition) else {
-        c.end_fetch(vid, definition);
+    };
+    let Some((sparse, prog)) = c.resume_parts(&generation) else {
+        c.end_fetch(&generation);
         return;
     };
     let proxy = prog.proxy.clone();
@@ -227,12 +228,12 @@ fn resume_fill_inner(
     // 同步入口，可能被协议/回调线程调用：必须用共用任务运行时（红线）。
     crate::runtime::spawn(async move {
         let reporter = ProgressReporter::new(event_sink(state.events()), owned_key);
-        let cancelled = || !c.exists(&owned, definition) || c.current() != owned;
+        let cancelled = || !c.is_current_generation(&generation) || c.current() != owned;
         let client = match hongguo_api::client::build_client(&proxy) {
             Ok(cl) => cl,
             Err(e) => {
                 log::warn!("[Online] 续填 {owned} 建 client 失败: {e}");
-                c.end_fetch(&owned, definition);
+                c.end_fetch(&generation);
                 return;
             }
         };
@@ -252,7 +253,7 @@ fn resume_fill_inner(
             &client, &sparse, &prog, &source, &reporter, &cancelled, &cap,
         )
         .await;
-        c.end_fetch(&owned, definition);
+        c.end_fetch(&generation);
         match result {
             Ok(()) => log::info!("[Online] {owned} 续填完成"),
             Err(e) => log::warn!("[Online] {owned} 续填中断（条目保留，可播已填部分）: {e}"),

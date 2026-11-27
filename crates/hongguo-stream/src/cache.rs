@@ -1,7 +1,7 @@
 //! 在线流缓存：`StreamCache` 全局 LRU——(vid, 档位) 分条目、保留窗与字节预算逐出。
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
 
@@ -52,10 +52,17 @@ fn entry_weight(e: &StreamEntry) -> u64 {
 }
 
 /// 缓存条目：同一集的不同清晰度各占一条。
-#[derive(PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct StreamKey {
     vid: String,
     definition: u32,
+}
+
+/// The specific cache entry used to derive a media source's byte layout.
+#[derive(Clone)]
+pub struct StreamGeneration {
+    key: StreamKey,
+    entry: Weak<StreamEntry>,
 }
 
 /// 全部在线流的注册表。
@@ -117,6 +124,33 @@ impl StreamCache {
         entry
     }
 
+    /// Capture a ready entry and its size together. A transient lease does not
+    /// keep an evicted payload resident or allow a same-key replacement.
+    pub fn open_ready_stream(&self, vid: &str, definition: u32) -> Option<(StreamGeneration, u64)> {
+        let entry = self.get(vid, definition)?;
+        let len = crate::read::entry_len(&entry)?;
+        let generation = StreamGeneration {
+            key: StreamKey {
+                vid: vid.to_owned(),
+                definition,
+            },
+            entry: Arc::downgrade(&entry),
+        };
+        Some((generation, len))
+    }
+
+    pub fn is_current_generation(&self, generation: &StreamGeneration) -> bool {
+        self.entry_for_generation(generation).is_some()
+    }
+
+    fn entry_for_generation(&self, generation: &StreamGeneration) -> Option<Arc<StreamEntry>> {
+        self.entries
+            .lock()
+            .get(&generation.key)
+            .filter(|entry| std::ptr::eq(generation.entry.as_ptr(), Arc::as_ptr(entry)))
+            .cloned()
+    }
+
     pub fn cached_bytes(&self, vid: &str, definition: u32) -> u64 {
         let Some(entry) = self.get(vid, definition) else {
             return 0;
@@ -147,30 +181,31 @@ impl StreamCache {
     /// 调用方据此停止填充——重建一个没人要的条目只会让它的填充白占串行队列。
     pub fn set_progressive(
         &self,
-        vid: &str,
-        definition: u32,
+        generation: &StreamGeneration,
         stream: Arc<ProgressiveStream>,
     ) -> bool {
-        let Some(entry) = self.get(vid, definition) else {
-            log::info!("[Stream] {vid}@{definition} 已被逐出，渐进注册作废");
+        let Some(entry) = self.entry_for_generation(generation) else {
             return false;
         };
         let filled = entry.filled.lock();
-        if *filled > 0 {
+        let mut progressive = entry.progressive.lock();
+        if *filled > 0 || progressive.is_some() {
             return false;
         }
-        *entry.progressive.lock() = Some(stream);
+        *progressive = Some(stream);
         true
     }
 
     /// 写入整段明文。已有数据时**不覆盖**并返回 `false`（这份数据作废）：
     /// 取流可能重复发生，按 `filled` 追加的话同一份数据写两遍会把 buffer 拼成两段。
-    pub fn store(&self, vid: &str, definition: u32, bytes: &[u8]) -> bool {
-        let entry = self.get_or_create(vid, definition);
+    pub fn store(&self, generation: &StreamGeneration, bytes: &[u8]) -> bool {
+        let Some(entry) = self.entry_for_generation(generation) else {
+            return false;
+        };
         let mut buffer = entry.buffer.lock();
         let mut filled = entry.filled.lock();
         let mut size = entry.size.lock();
-        if *filled > 0 {
+        if *filled > 0 || entry.progressive.lock().is_some() {
             return false;
         }
         buffer.extend_from_slice(bytes);
@@ -180,25 +215,32 @@ impl StreamCache {
     }
 
     /// 记下本集提供的全部档位。
-    pub fn set_definitions(&self, vid: &str, definition: u32, definitions: &[VideoDefinition]) {
-        *self.get_or_create(vid, definition).definitions.lock() = definitions.to_vec();
-    }
-
-    /// 标记「正在取流」。返回 `true` 表示本次调用抢到了取流权。
-    pub fn begin_fetch(&self, vid: &str, definition: u32) -> bool {
-        let entry = self.get_or_create(vid, definition);
-        let mut g = entry.fetching.lock();
-        if *g {
-            false
-        } else {
-            *g = true;
-            true
+    pub fn set_definitions(&self, generation: &StreamGeneration, definitions: &[VideoDefinition]) {
+        if let Some(entry) = self.entry_for_generation(generation) {
+            *entry.definitions.lock() = definitions.to_vec();
         }
     }
 
+    /// Acquire exclusive fill ownership for this exact cache entry.
+    pub fn begin_fetch(&self, vid: &str, definition: u32) -> Option<StreamGeneration> {
+        let entry = self.get_or_create(vid, definition);
+        let mut fetching = entry.fetching.lock();
+        if *fetching {
+            return None;
+        }
+        *fetching = true;
+        Some(StreamGeneration {
+            key: StreamKey {
+                vid: vid.to_owned(),
+                definition,
+            },
+            entry: Arc::downgrade(&entry),
+        })
+    }
+
     /// 取流结束（无论成功失败），放开门。
-    pub fn end_fetch(&self, vid: &str, definition: u32) {
-        if let Some(entry) = self.get(vid, definition) {
+    pub fn end_fetch(&self, generation: &StreamGeneration) {
+        if let Some(entry) = self.entry_for_generation(generation) {
             *entry.fetching.lock() = false;
         }
     }
@@ -209,7 +251,23 @@ impl StreamCache {
             .is_some_and(|e| *e.fetching.lock())
     }
 
-    /// 丢弃一档（取流失败时调用）。
+    /// A failed background writer must never remove a replacement entry.
+    pub fn remove_generation(&self, generation: &StreamGeneration) -> bool {
+        let mut entries = self.entries.lock();
+        if !entries
+            .get(&generation.key)
+            .is_some_and(|entry| std::ptr::eq(generation.entry.as_ptr(), Arc::as_ptr(entry)))
+        {
+            return false;
+        }
+        entries.remove(&generation.key);
+        self.prefetch.lock().retain(|(vid, definition)| {
+            vid != &generation.key.vid || *definition != generation.key.definition
+        });
+        true
+    }
+
+    /// 丢弃一档（用户显式重试或已确认是空条目时调用）。
     pub fn remove(&self, vid: &str, definition: u32) {
         self.entries.lock().remove(&StreamKey {
             vid: vid.to_string(),
@@ -328,14 +386,11 @@ impl StreamCache {
             })
     }
 
-    /// 预取条目是否需要「转正续填」：渐进已注册但远没填满，且没有填充方。
+    /// 是否还有未填的渐进数据。取流权由 begin_fetch 单独判断，避免漏掉正在退出的旧写入方。
     pub fn needs_resume(&self, vid: &str, definition: u32) -> bool {
         let Some(entry) = self.get(vid, definition) else {
             return false;
         };
-        if *entry.fetching.lock() {
-            return false;
-        }
         let Some(prog) = entry.progressive.lock().clone() else {
             return false;
         };
@@ -346,10 +401,9 @@ impl StreamCache {
     /// 为真时有值；续填的编排（取流权/事件上报）在 play_service 侧。
     pub fn resume_parts(
         &self,
-        vid: &str,
-        definition: u32,
+        generation: &StreamGeneration,
     ) -> Option<(Arc<SparseBuffer>, Arc<ProgressiveStream>)> {
-        let entry = self.get(vid, definition)?;
+        let entry = self.entry_for_generation(generation)?;
         let prog = entry.progressive.lock().clone()?;
         Some((prog.sparse.clone(), prog))
     }
@@ -366,5 +420,69 @@ impl StreamCache {
         self.entries.lock().clear();
         self.prefetch.lock().clear();
         self.previous_current.lock().clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn media_generation_rejects_eviction_and_same_key_replacement() {
+        let cache = StreamCache::default();
+        let vid = "episode";
+        let definition = 720;
+        assert!(cache.open_ready_stream(vid, definition).is_none());
+
+        let original_writer = cache.begin_fetch(vid, definition).unwrap();
+        assert!(cache.open_ready_stream(vid, definition).is_none());
+        assert!(cache.store(&original_writer, &[1; 8]));
+        let (original, original_len) = cache.open_ready_stream(vid, definition).unwrap();
+        assert_eq!(original_len, 8);
+        assert!(cache.is_current_generation(&original));
+
+        cache.remove(vid, definition);
+        assert!(!cache.is_current_generation(&original));
+        let new_writer = cache.begin_fetch(vid, definition).unwrap();
+        cache.end_fetch(&original_writer);
+        assert!(cache.is_fetching(vid, definition));
+        assert!(!cache.store(&original_writer, &[3; 24]));
+        assert!(!cache.remove_generation(&original_writer));
+        assert!(cache.store(&new_writer, &[2; 16]));
+        let (replacement, new_len) = cache.open_ready_stream(vid, definition).unwrap();
+        assert_eq!(new_len, 16);
+        assert!(cache.is_current_generation(&replacement));
+        assert!(!cache.is_current_generation(&original));
+        assert!(original.entry.upgrade().is_none());
+    }
+
+    #[test]
+    fn incomplete_stream_still_needs_resume_while_another_writer_exits() {
+        let cache = StreamCache::default();
+        let vid = "outgoing";
+        let definition = 1080;
+        let sparse = SparseBuffer::new(16);
+        sparse.write(0, &[0; 8]);
+        let progress = Arc::new(ProgressiveStream {
+            sparse: sparse.clone(),
+            plan: None,
+            plain_len: sparse.len(),
+            demand: Default::default(),
+            cdn_url: String::new(),
+            media_cache_key: None,
+            proxy: Default::default(),
+        });
+        let writer = cache.begin_fetch(vid, definition).unwrap();
+        assert!(cache.set_progressive(&writer, progress.clone()));
+        assert!(!cache.set_progressive(&writer, progress));
+        assert!(!cache.store(&writer, &[2; 16]));
+
+        assert!(cache.needs_resume(vid, definition));
+        assert!(cache.begin_fetch(vid, definition).is_none());
+
+        cache.end_fetch(&writer);
+        assert!(cache.begin_fetch(vid, definition).is_some());
+        sparse.write(8, &[0; 8]);
+        assert!(!cache.needs_resume(vid, definition));
     }
 }
