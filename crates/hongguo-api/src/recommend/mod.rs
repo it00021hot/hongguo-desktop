@@ -50,7 +50,9 @@ pub async fn fetch_recommend_feed(
                 page.session_id = fill.session_id;
             }
         }
-        cache_tab_config_insert(tab, cfg);
+        if !cfg.cell_id.is_empty() {
+            cache_tab_config_insert(tab, cfg);
+        }
         page
     } else {
         let cfg = resolve_tab_config(tab, env).await?;
@@ -63,8 +65,7 @@ pub async fn fetch_recommend_feed(
     Ok(page)
 }
 
-/// 推荐 tab 在顶栏里的 tab_type：顶栏列表请求的源 tab（其响应 `tab_item[]`
-/// 即完整顶栏），也是种子语义的归属 tab（「你的内容」只进推荐 tab——壳侧口径）。
+/// 推荐 tab 也是获取完整 `tab_item[]` 顶栏列表的入口。
 const RECOMMEND_TAB_TYPE: &str = "16";
 const FOLLOW_TAB_TYPE: &str = "45";
 
@@ -317,48 +318,54 @@ fn parse_tab_first_page(
             cell,
             parse_feed_cell_items(cell.and_then(|cell| cell.get("cell_data")), true),
         )
+    } else if let Some(cell) = cells.iter().find(|cell| {
+        // APK recommendations cell ("猜你喜欢"). An earlier populated
+        // promotion cell is not the stream and its cursor cannot page it.
+        flex_str(cell.get("show_type")).as_deref() == Some("407")
+    }) {
+        (
+            Some(cell),
+            parse_feed_cell_items(cell.get("cell_data"), false),
+        )
     } else {
+        // Older responses may not label the feed cell. Only use a cell
+        // with actual playable feed entries, never an arbitrary banner.
         cells
             .iter()
             .find_map(|cell| {
                 let items = parse_feed_cell_items(cell.get("cell_data"), false);
                 (!items.is_empty()).then_some((Some(cell), items))
             })
-            .unwrap_or_else(|| (cells.first(), Vec::new()))
+            .unwrap_or((None, Vec::new()))
     };
-    let bookstore_id = flex_str(item.get("bookstore_id"))
-        .filter(|s| !s.is_empty())
+    let bookstore_id = config_id(item.get("bookstore_id"))
         .ok_or_else(|| AppError::Media(format!("推荐 tab 配置缺 bookstore_id: tab={tab}")))?;
     let cfg = RecommendTabConfig {
         cell_id: feed_cell
             .and_then(|cell| {
-                flex_str(cell.get("cell_id_str")).or_else(|| flex_str(cell.get("cell_id")))
+                config_id(cell.get("cell_id_str")).or_else(|| config_id(cell.get("cell_id")))
             })
             .unwrap_or_default(),
         bookstore_id,
     };
-    // 首页未带 has_more 时，仅在同时有正式定位和会话时才可用 cell/change 继续。
-    let session_id = flex_str(item.get("session_id")).unwrap_or_default();
+    let session_id = feed_cell
+        .and_then(|cell| config_id(cell.get("session_id")))
+        .or_else(|| config_id(item.get("session_id")))
+        .unwrap_or_default();
+    // The outer tab's has_more concerns tab content, not the recommendation
+    // stream. Its false value must not prevent the first cell/change. A
+    // cell-level false or the actual continuation response does end the feed.
     let has_more = !cfg.cell_id.is_empty()
         && !session_id.is_empty()
-        && (if following {
-            feed_cell
-                .and_then(|cell| cell.get("has_more"))
-                .and_then(Value::as_bool)
-        } else {
-            None
-        })
-        .or_else(|| item.get("has_more").and_then(Value::as_bool))
-        .unwrap_or(true);
+        && feed_cell
+            .and_then(|cell| cell.get("has_more"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
     let offset = item.get("next_offset").and_then(Value::as_i64).unwrap_or(0);
-    let next_offset = if following {
-        feed_cell
-            .and_then(|cell| cell.get("next_offset"))
-            .and_then(Value::as_i64)
-            .unwrap_or(offset)
-    } else {
-        offset
-    };
+    let next_offset = feed_cell
+        .and_then(|cell| cell.get("next_offset"))
+        .and_then(Value::as_i64)
+        .unwrap_or(offset);
     let page = super::discover::FeedPage {
         session_id,
         has_more,
@@ -366,6 +373,24 @@ fn parse_tab_first_page(
         items,
     };
     Ok((cfg, page))
+}
+
+fn config_id(value: Option<&Value>) -> Option<String> {
+    flex_str(value).filter(|value| !matches!(value.trim(), "" | "0"))
+}
+
+fn parse_continuation_page(
+    data: Option<&Value>,
+    tab: &str,
+    session_id: &str,
+) -> AppResult<super::discover::FeedPage> {
+    let mut page = parse_recommend_feed(data, tab == FOLLOW_TAB_TYPE)?;
+    if matches!(page.session_id.trim(), "" | "0") {
+        // Some replies do not rotate the session (nor echo it). Preserve
+        // the request's cursor context instead of starting again at page one.
+        page.session_id = session_id.into();
+    }
+    Ok(page)
 }
 
 /// 官方 cell/change 的图片缩略规格（base64(JSON)：360 中图 / 屏宽大图 / 99 小图）。
@@ -471,7 +496,7 @@ async fn recommend_cell_change(
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析推荐流失败: {e}")))?;
     check_code(&value)?;
-    parse_recommend_feed(value.get("data"), tab == FOLLOW_TAB_TYPE)
+    parse_continuation_page(value.get("data"), tab, session_id)
 }
 
 #[cfg(test)]
@@ -510,6 +535,60 @@ mod tests {
         assert_eq!(page.items[0].title, "Comic only");
         assert_eq!(page.session_id, "mock-session");
         assert!(page.has_more);
+    }
+
+    #[test]
+    fn recommendations_use_the_feed_cell_cursor_even_when_outer_tab_is_finished() {
+        let value = json!({"data": {"tab_item": [{
+            "tab_type": 16,
+            "bookstore_id": "official-plan",
+            "session_id": "outer-session",
+            "has_more": false,
+            "next_offset": 99,
+            "cell_data": [
+                {"show_type": 583, "cell_id": "promo-cell", "cell_data": [
+                    {"video_data": [{"series_id": "901"}]}
+                ]},
+                {"show_type": "407", "cell_id_str": "official-cell", "session_id": "feed-session",
+                 "next_offset": 3, "cell_data": [
+                    {"video_data": [{"series_id": "123", "video_detail": {"series_title": "Official"}}]}
+                ]}
+            ]
+        }]}});
+        let (cfg, page) = parse_tab_first_page(RECOMMEND_TAB_TYPE, &value).unwrap();
+        assert_eq!(cfg.cell_id, "official-cell");
+        assert_eq!(cfg.bookstore_id, "official-plan");
+        assert_eq!(page.session_id, "feed-session");
+        assert_eq!(page.next_offset, 3);
+        assert!(page.has_more);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].series_id, "123");
+
+        let mut value = value;
+        value["data"]["tab_item"][0]["cell_data"][1]["has_more"] = json!(false);
+        assert!(
+            !parse_tab_first_page(RECOMMEND_TAB_TYPE, &value)
+                .unwrap()
+                .1
+                .has_more
+        );
+    }
+
+    #[test]
+    fn continuation_keeps_its_session_unless_server_rotates_it() {
+        let mut value = json!({"cell_view": {"cell_data": [{"video_data": [
+            {"series_id": 42}
+        ]}]}, "next_offset": 9, "has_more": true});
+        let page = parse_continuation_page(Some(&value), RECOMMEND_TAB_TYPE, "in-use").unwrap();
+        assert_eq!(page.session_id, "in-use");
+        assert_eq!(page.next_offset, 9);
+        assert_eq!(page.items[0].series_id, "42");
+
+        value["session_id"] = json!("rotated");
+        value["has_more"] = json!(false);
+        let page = parse_continuation_page(Some(&value), RECOMMEND_TAB_TYPE, "in-use").unwrap();
+        assert_eq!(page.session_id, "rotated");
+        assert!(!page.has_more);
     }
 
     #[test]

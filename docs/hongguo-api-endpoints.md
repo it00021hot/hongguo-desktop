@@ -181,17 +181,20 @@ outer_row.items[].background_selector.inner_rows[]`，与 panel_selector
   `data.album_data.video_detail_list`，用 `data.video_detail_data` 补充缺失详情。
   从作品打开合集时先对视频 VID，再对合集成员 ID，最后用唯一匹配的服务端集号定位；
   找不到对应集时提示重试，不默认播开头。作品字幕保留真实集数，不加「高光」角标。
-- ⚠️ **cell 要按内容选，不能按位置取**：`cell_data[]` 里 [0] 可能是空的
-  运营金刚位卡（show_type=583），推荐流是**嵌套
-  `cell_data[].video_data[]` 非空**的那个 cell（cell_name=「猜你喜欢」，
-  show_type=407，其 cell_id 即 cell/change 的 cell_id）
+- **选择服务端推荐 cell**：优先 `show_type=407`（cell_name=「猜你喜欢」），
+  而不是第一个运营卡（例如 `show_type=583`）。旧版响应缺少类型时，才从嵌套
+  `cell_data[].video_data[]` 找有影片条目的 cell；不把任意运营卡作为空批的续页定位。
+- **推荐流和顶栏的分页独立**：外层 tab 的 `has_more=false` 不是短剧推荐流的结束标记。
+  使用有效的推荐 cell、计划和会话启动续页；优先使用推荐 cell 的会话、偏移和显式
+  `has_more`，随后以 `cell/change` 的返回为准。续页未返回新会话时沿用本次会话。
+- NSH 只按服务端返回的剧集顺序展示，不在流尾拼接观看历史或收藏。历史仍用于命中同一剧时续播。
 - 用推荐的 id 打 tab39 服务端回落混合池（全 1004 漫剧）——「真人 tab 全是
   漫剧」的根因；取错 cell 则翻页恒空——「漫剧 tab 空批」的根因
 
 **翻页**：`GET /reading/bookapi/bookmall/cell/change/v`（cell_id + plan_id 用
 目标 tab 自己的）+ 三件套：`session_id`（首页下发）+ `offset`（**上一页响应
-的 next_offset**，0→6→12 递进）+ `filter_ids`（已下发过的 series_id 逗号表，
-服务端排除已见，翻页无重复）
+的 next_offset**，例如 0→6→12）+ `filter_ids`（已下发过的 series_id 逗号表）。
+个别响应仍会重复，NSH 合并时保留已加载的顺序并按 ID 去重。
 
 - 响应 `data`：`cell_view.cell_data[].video_data[]`（条目身份在
   `video_detail`：series_title/series_cover(_uri)/series_id_str/episode_cnt/
@@ -1148,8 +1151,7 @@ body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序�
 （历史行按剧聚合）；之后每 60s 一拍（暂停不计时）；回跳（以及 >60s
 的前跳）立即补；暂停、切集和退出收尾（仍守 <5 秒不建行的门槛）。Tauri 匿名会话使用上面的 APK 实测口径。两种模式都保留每次播放位置采样，落盘独立节流。
 上报落定后把 `watch-history` / `local-history` 查询标记过期但**不立刻重拉**
-（`refetchType: 'none'`：首页「你的内容」种子吃同一份缓存，播放中重排会把
-游标指到别的剧），历史页下次打开必拉新行。
+（`refetchType: 'none'`），历史页下次打开必拉新行。
 
 > 为什么不能挂在落盘/帧事件上：首报会被 5 秒落盘
 > 窗口量化到 5–10 秒；而「每 60s 一拍」的计数只在真正上报时自增，恒定卡在

@@ -54,18 +54,12 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         nav.routes()
             .with(|routes| routes.last() == Some(&Route::Catalog))
     });
-    // Resume snapshots are refreshed independently of feed/target requests.
-    let personal = resource(
+    // Hydrate account-scoped resume history without adding it to the feed.
+    resource(
         move || Some(session.identity()),
-        move |identity, _| {
+        move |_, _| {
             let session = session.with(|session| session.clone());
-            bridge::request(async move {
-                session
-                    .personal
-                    .read(&session.state)
-                    .await
-                    .map(|sources| (identity, sources))
-            })
+            bridge::request(async move { session.personal.read(&session.state).await.map(|_| ()) })
         },
     );
     let tabs = resource(
@@ -162,33 +156,6 @@ fn content(session: SessionHandle, nav: Navigation) -> View {
         batch(|| {
             query.set(None);
             channels.update(|channels| channels.entry(request.channel).or_default().merge(page));
-        });
-    });
-    // 推荐先展示服务端内容，个人内容只在推荐结束后补到尾部，不抢首屏。
-    let seeded = stored(None::<u64>);
-    let recommendation_ended = computed(move || {
-        channels.with(|channels| {
-            channels
-                .get(DEFAULT_CHANNEL)
-                .is_some_and(|page| !page.has_more)
-        })
-    });
-    effect(move || {
-        let current = session.identity();
-        let Some((_, sources)) = personal.get().filter(|(identity, _)| *identity == current) else {
-            return;
-        };
-        if !recommendation_ended.get() || seeded.get() == Some(current) {
-            return;
-        }
-        seeded.replace(Some(current));
-        channels.update(|channels| {
-            if let Some(page) = channels.get_mut(DEFAULT_CHANNEL) {
-                page.append_personal(
-                    &sources.history,
-                    sources.bookshelf.iter().map(|item| item.series_id.clone()),
-                );
-            }
         });
     });
     effect(move || {

@@ -1,6 +1,4 @@
 use hongguo_service::contracts::discover::{FeedItem, FeedPage};
-use hongguo_service::contracts::history::WatchHistoryItem;
-use std::collections::HashSet;
 
 pub(super) const DEFAULT_CHANNEL: &str = "16";
 pub(super) const FOLLOWING_CHANNEL: &str = "45";
@@ -30,33 +28,6 @@ pub(super) struct Channel {
 }
 
 impl Channel {
-    pub(super) fn append_personal(
-        &mut self,
-        history: &[WatchHistoryItem],
-        saved: impl Iterator<Item = String>,
-    ) {
-        let mut seen: HashSet<_> = self
-            .items
-            .iter()
-            .map(|item| item.series_id.clone())
-            .collect();
-        self.items.extend(
-            history
-                .iter()
-                .map(|item| FeedItem {
-                    series_id: item.series_id.clone(),
-                    title: item.title.clone(),
-                    cover: item.cover.clone(),
-                    episode_cnt: u32::try_from(item.episode_cnt).unwrap_or(0),
-                    ..Default::default()
-                })
-                .chain(saved.map(|series_id| FeedItem {
-                    series_id,
-                    ..Default::default()
-                }))
-                .filter(|item| !item.series_id.is_empty() && seen.insert(item.series_id.clone())),
-        );
-    }
     pub(super) fn goto(&mut self, series: hongguo_common::model::Series) {
         if let Some(index) = self
             .items
@@ -140,23 +111,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn personal_fallback_cannot_replace_the_playing_recommendation() {
+    fn exhausted_recommendations_keep_server_order_and_do_not_add_another_item() {
         let mut channel = Channel::default();
         channel.merge(FeedPage {
-            items: vec![FeedItem {
-                series_id: "official".into(),
-                ..Default::default()
-            }],
+            items: ["official-first", "official-second"]
+                .into_iter()
+                .map(|id| FeedItem {
+                    series_id: id.into(),
+                    ..Default::default()
+                })
+                .collect(),
+            has_more: false,
             ..Default::default()
         });
-        channel.append_personal(
-            &[],
-            ["saved".into(), "official".into(), "saved".into()].into_iter(),
-        );
-        assert_eq!(channel.items.len(), 2);
-        assert_eq!(channel.items[channel.index].series_id, "official");
+        assert!(!channel.has_more);
+        assert_eq!(channel.items[channel.index].series_id, "official-first");
         assert!(channel.step(1));
-        assert_eq!(channel.items[channel.index].series_id, "saved");
+        assert_eq!(channel.items[channel.index].series_id, "official-second");
+        assert!(!channel.step(1));
     }
 
     #[test]
