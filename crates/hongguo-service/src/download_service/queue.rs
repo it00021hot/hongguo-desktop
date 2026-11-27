@@ -153,7 +153,7 @@ impl DownloadQueue {
         let mut guard = self.tasks.write();
         let mut n = 0;
         for t in guard.iter_mut() {
-            if ids.contains(&t.id) {
+            if ids.contains(&t.id) && matches!(t.status, TaskStatus::Failed | TaskStatus::Stopped) {
                 t.reset_for_retry();
                 n += 1;
             }
@@ -192,12 +192,12 @@ impl DownloadQueue {
         n
     }
 
-    /// 一键启动：把未完成任务重新排队。
+    /// 一键启动：恢复已暂停的任务；失败项由「重试」独立处理。
     pub fn resume_all(&self) -> usize {
         let mut guard = self.tasks.write();
         let mut n = 0;
         for t in guard.iter_mut() {
-            if matches!(t.status, TaskStatus::Stopped | TaskStatus::Failed) {
+            if t.status == TaskStatus::Stopped {
                 t.reset_for_retry();
                 n += 1;
             }

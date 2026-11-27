@@ -59,7 +59,7 @@ pub fn pause_all(state: &AppState) -> AppResult<usize> {
     Ok(n)
 }
 
-/// 一键启动：把未完成任务重新排队并触发调度。
+/// 一键启动：把已暂停任务重新排队并触发调度，失败项留待重试。
 pub fn resume_all(state: &AppState) -> AppResult<usize> {
     state.scheduler().resume_all();
     let n = state.queue().resume_all();
