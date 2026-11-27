@@ -9,6 +9,14 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.9.1] - 2026-11-27
+
+### 🐛 修复
+
+- 修复下载任务较多时底部批量操作栏被挤出窗口的问题。任务列表在可用区域内滚动，表头和操作栏保持可见。
+
+English: Fixed long download task lists pushing the bottom batch-action bar out of the window. The list scrolls within the available space, keeping the header and action bar visible.
+
 ## [0.9.0] - 2026-11-27
 
 ### ✨ 新增
