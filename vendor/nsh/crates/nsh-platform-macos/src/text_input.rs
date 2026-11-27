@@ -3791,15 +3791,14 @@ fn commit_marked(view: &NSTextView) {
 
 /// Ends editing and gives the keyboard focus to the root `window` shows.
 /// The window takes it first: the root refuses it while a field edits
-/// during a click (a click elsewhere leaves the focus in the field).
+/// during a click.
 fn to_root(window: &objc2_app_kit::NSWindow, surface: &Surface) {
     window.makeFirstResponder(None);
     window.makeFirstResponder(Some(crate::input::root_in(surface, window).ns()));
 }
 
 /// Whether one of the surface's inputs has the keyboard focus in the window
-/// of the event being handled (a click elsewhere leaves it there, as
-/// desktops do).
+/// of the event being handled.
 pub(crate) fn editing(surface: &Surface) -> bool {
     editing_in(&crate::input::event_root(surface))
 }

@@ -51,7 +51,7 @@ exclude = ["vendor/nsh", "vendor/wgpu-hal"]
 # 各 crate 共享构建版本；应用元数据独立以 crates/hongguo-nsh/nsh.json 为准。
 # 成员用 `xxx.workspace = true` 继承。
 [workspace.package]
-version = "0.8.9"
+version = "0.9.0"
 edition = "2024"
 # MSRV 跟随当前 stable 工具链（1.99.1）。应用不是库，MSRV 只影响依赖解析。
 rust-version = "1.99.1"
@@ -60,7 +60,7 @@ authors = ["hongguo-desktop contributors"]
 
 [workspace.dependencies]
 nsh-core = { path = "vendor/nsh/crates/nsh-core" }
-nsh-base = { path = "vendor/nsh/crates/nsh-base" }
+nsh-base = { path = "vendor/nsh/crates/nsh-base", default-features = false }
 nsh-updater = { path = "vendor/nsh/crates/nsh-updater" }
 nsh-platform-macos = { path = "vendor/nsh/crates/nsh-platform-macos", default-features = false, features = ["svg", "updater"] }
 nsh-platform-windows = { path = "vendor/nsh/crates/nsh-platform-windows", default-features = false, features = ["svg", "net", "media", "updater"] }
@@ -77,9 +77,40 @@ wgpu-hal = { path = "vendor/wgpu-hal" }
 #
 # 保留 unwind：原生播放器工作线程需要捕获失败并完成资源释放。
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = "thin"
 strip = true
+
+# 播放数据面、编解码、原生合成和 GPU 提交保留速度优化。
+[profile.release.package]
+hongguo-bytevc2 = { opt-level = 3 }
+hongguo-hevc = { opt-level = 3 }
+hongguo-media = { opt-level = 3 }
+hongguo-media-platform-android = { opt-level = 3 }
+hongguo-media-platform-windows = { opt-level = 3 }
+hongguo-media-videotoolbox = { opt-level = 3 }
+hongguo-nsh-video-android = { opt-level = 3 }
+hongguo-nsh-video-apple = { opt-level = 3 }
+hongguo-nsh-video-windows = { opt-level = 3 }
+hongguo-playback = { opt-level = 3 }
+hongguo-stream = { opt-level = 3 }
+hongguo-video = { opt-level = 3 }
+hongguo-video-color = { opt-level = 3 }
+hongguo-video-gpu = { opt-level = 3 }
+hongguo-vvdec-sys = { opt-level = 3 }
+nsh-core = { opt-level = 3 }
+nsh-platform-android = { opt-level = 3 }
+nsh-platform-ios = { opt-level = 3 }
+nsh-platform-macos = { opt-level = 3 }
+nsh-platform-windows = { opt-level = 3 }
+oxideav-core = { opt-level = 3 }
+oxideav-h266 = { opt-level = 3 }
+oxideav-pixfmt = { opt-level = 3 }
+rusty_h265 = { opt-level = 3 }
+rusty_h265-accel = { opt-level = 3 }
+wgpu = { opt-level = 3 }
+wgpu-core = { opt-level = 3 }
+wgpu-hal = { opt-level = 3 }
 
 # dev 档只留行号级调试信息。全量 debuginfo（DWARF 生成 + PDB 落盘）是
 # make dev 编译段的大头——release 提交（全 crate 版本号变更）后首次 dev

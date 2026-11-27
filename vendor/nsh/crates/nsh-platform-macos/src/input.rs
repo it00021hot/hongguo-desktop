@@ -1300,6 +1300,31 @@ fn has_key_focus(view: &NshView) -> bool {
         })
 }
 
+/// A pointer press outside the focused view hands its keys back to this
+/// window's root. Hosted editors can keep editing during widget actions
+/// or text selection.
+fn blur_outside_focus(root: &NshView, hit: Option<&NshView>, keep_native_focus: bool) {
+    let Some(window) = root.ns().window() else {
+        return;
+    };
+    let Some(focused) = window
+        .firstResponder()
+        .and_then(|responder| responder.downcast::<NSView>().ok())
+    else {
+        return;
+    };
+    if &*focused == root.ns()
+        || !focused.isDescendantOf(root.ns())
+        || hit.is_some_and(|view| view.ns().isDescendantOf(&focused))
+        || (keep_native_focus && focused.downcast_ref::<ViewObj>().is_none())
+    {
+        return;
+    }
+    if window.makeFirstResponder(None) {
+        window.makeFirstResponder(Some(root.ns()));
+    }
+}
+
 /// Enter or Space addressed to a focused control inside the current modal.
 /// The keymap leaves these keys to the responder, but for the bindings of
 /// the focus itself (`Keymap::find_at`), so a global Enter binding cannot
@@ -1877,7 +1902,8 @@ fn down(
     if let Some(stale) = take(surface) {
         finish(surface, stale, true);
     }
-    let hit = pick(&event_root(surface), x, y);
+    let root = event_root(surface);
+    let hit = pick(&root, x, y);
     // A selectable view around the view selects across its texts; else a
     // selectable text selects alone.
     let selecting = hit.as_ref().filter(|h| h.native.is_none()).and_then(|h| {
@@ -1885,24 +1911,24 @@ fn down(
             .or_else(|| crate::text::selectable(&h.view.state()).then(|| h.view.clone()))
     });
     let Some(hit) = hit else {
+        blur_outside_focus(&root, None, false);
         crate::text::selection_down(surface, None, 0.0, 0.0, clicks, shift, false);
         return;
     };
-    // A press moves the keyboard focus to an explicitly `focusable` view
-    // under it that takes no presses (a chart that takes keys), as the
-    // other desktops' widgets and browsers do. A control, a view that
-    // takes presses (a button, a select's trigger, a slider), takes no
-    // focus from a pointer, as AppKit's and Safari's do, so Return and
-    // Space stay the app's shortcuts. A field that edits keeps the focus
-    // (the root refuses the first responder during a press,
-    // `NshView::acceptsFirstResponder`), and a press on a view that is not
-    // focusable leaves it where it is.
-    if hit.native.is_none()
-        && let Some(window) = hit.view.ns().window()
-        && let Some(target) = chain(&hit.view)
-            .into_iter()
-            .take_while(|view| !view.state().events.contains(EventKind::Press))
-            .find(explicitly_focusable)
+    let native = hit.native.is_some();
+    let views = chain(&hit.view);
+    // Like an AppKit button, a control that takes presses does not take
+    // focus from a pointer. Explicit non-button keyboard stops can take it.
+    let focus_target = (!native)
+        .then(|| {
+            views
+                .iter()
+                .take_while(|view| !view.state().events.contains(EventKind::Press))
+                .find(|view| explicitly_focusable(view))
+        })
+        .flatten();
+    if let Some(target) = focus_target
+        && let Some(window) = target.ns().window()
     {
         window.makeFirstResponder(Some(target.ns()));
     }
@@ -1912,8 +1938,6 @@ fn down(
     // it lands; the press still registers (`catch` below is for the app's
     // own glides on views under the pointer, and swallows it).
     end_momentum(surface);
-    let native = hit.native.is_some();
-    let views = chain(&hit.view);
     // The mouse drags an indicator as a scroll bar: its thumb follows the
     // pointer, where a drag on the content moves the content with it.
     let thumb = (!native)
@@ -1956,7 +1980,7 @@ fn down(
     let mut pressed = Vec::new();
     let mut gate = None;
     // An edge pan's edges are those of the root the pointer is measured in.
-    let root_size = event_root(surface).state().frame.size;
+    let root_size = root.state().frame.size;
     for v in &views {
         let s = v.state();
         if s.events.contains(EventKind::Touch) {
@@ -1996,6 +2020,14 @@ fn down(
         find_press(surface, &hit.view, &views, x, y)
             .map(|p| p.clicked(modifiers(flags), clicks as u32))
     };
+    if focus_target.is_none() {
+        let keep_native_focus = native
+            || hit.view.kind() == ViewKind::Input
+            || selecting.is_some()
+            || press.is_some()
+            || caught;
+        blur_outside_focus(&root, Some(&hit.view), keep_native_focus);
+    }
     match &selecting {
         Some(area) if crate::selectable_view::is_area(area) => {
             crate::selectable_view::down(surface, area, x, y, clicks, shift, press.is_some());

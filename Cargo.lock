@@ -373,15 +373,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "bindgen"
 version = "0.69.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -426,27 +417,12 @@ dependencies = [
 
 [[package]]
 name = "bit-set"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
-dependencies = [
- "bit-vec 0.8.0",
-]
-
-[[package]]
-name = "bit-set"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34ddef2995421ab6a5c779542c81ee77c115206f4ad9d5a8e05f4ff49716a3dd"
 dependencies = [
- "bit-vec 0.9.1",
+ "bit-vec",
 ]
-
-[[package]]
-name = "bit-vec"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bit-vec"
@@ -1197,17 +1173,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
 
 [[package]]
-name = "fancy-regex"
-version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "998b056554fbe42e03ae0e152895cd1a7e1002aec800fdc6635d20270260c46f"
-dependencies = [
- "bit-set 0.8.0",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
 name = "fastbloom"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1271,18 +1236,6 @@ name = "float-cmp"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
-
-[[package]]
-name = "fnv"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
-
-[[package]]
-name = "foldhash"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "foldhash"
@@ -1634,22 +1587,13 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.15.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
-dependencies = [
- "foldhash 0.1.5",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
  "allocator-api2 0.2.21",
  "equivalent",
- "foldhash 0.2.0",
+ "foldhash",
 ]
 
 [[package]]
@@ -1693,7 +1637,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-api"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "aes 0.9.4",
  "chrono",
@@ -1715,7 +1659,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-build"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -1730,7 +1674,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-bytevc2"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media-types",
@@ -1743,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-common"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -1759,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-hevc"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media-types",
@@ -1771,7 +1715,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
@@ -1782,7 +1726,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-bytevc2",
  "hongguo-common",
@@ -1798,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform-android"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -1811,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform-windows"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -1825,11 +1769,11 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-types"
-version = "0.8.9"
+version = "0.9.0"
 
 [[package]]
 name = "hongguo-media-videotoolbox"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -1842,11 +1786,11 @@ dependencies = [
 
 [[package]]
 name = "hongguo-native-clock"
-version = "0.8.9"
+version = "0.9.0"
 
 [[package]]
 name = "hongguo-nsh"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "axum",
  "block2",
@@ -1887,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-android"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-nsh",
  "hongguo-nsh-video-android",
@@ -1897,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-ios"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "env_logger",
  "hongguo-nsh",
@@ -1908,7 +1852,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-android"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "glow",
  "hongguo-media-types",
@@ -1928,7 +1872,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-api"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-media-types",
  "hongguo-native-clock",
@@ -1937,7 +1881,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-apple"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "block2",
  "hongguo-media-types",
@@ -1960,7 +1904,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-ios"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "dispatch2",
  "hongguo-nsh-video-api",
@@ -1977,7 +1921,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-macos"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-nsh-video-api",
  "hongguo-nsh-video-apple",
@@ -1990,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-windows"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-hevc",
  "hongguo-media-types",
@@ -2009,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-playback"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-bytevc2",
  "hongguo-common",
@@ -2023,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-service"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "futures-util",
@@ -2048,7 +1992,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-signer"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "aes 0.9.4",
  "base64 0.23.1",
@@ -2063,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-store"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -2079,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-stream"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
@@ -2089,7 +2033,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-video"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "aes 0.9.4",
  "ctr 0.10.1",
@@ -2100,14 +2044,14 @@ dependencies = [
 
 [[package]]
 name = "hongguo-video-color"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-media-types",
 ]
 
 [[package]]
 name = "hongguo-video-gpu"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-media-types",
  "hongguo-video-color",
@@ -2118,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-vvdec-sys"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "bindgen 0.71.1",
  "cmake",
@@ -2501,16 +2445,6 @@ name = "imagesize"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
-
-[[package]]
-name = "imara-diff"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f01d462f766df78ab820dd06f5eb700233c51f0f4c2e846520eaf4ba6aa5c5c"
-dependencies = [
- "hashbrown 0.15.5",
- "memchr",
-]
 
 [[package]]
 name = "indexmap"
@@ -3106,7 +3040,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2bf919621e7975acb27d881bae2fb993e0d45c8e0446e85e6272971e00dc8df"
 dependencies = [
  "arrayvec",
- "bit-set 0.9.1",
+ "bit-set",
  "bitflags 2.13.2",
  "cfg-if",
  "cfg_aliases",
@@ -3203,21 +3137,16 @@ version = "0.7.1"
 dependencies = [
  "chrono",
  "html5ever",
- "imara-diff",
  "log",
  "markdown",
  "markup5ever_rcdom",
  "nsh-core",
  "regex",
- "ropey",
  "rustc-hash 2.1.3",
  "serde",
  "serde_json",
- "syntect",
- "two-face",
  "unicode-segmentation",
  "unicode-width 0.2.3",
- "vte",
 ]
 
 [[package]]
@@ -3671,28 +3600,6 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
-name = "onig"
-version = "6.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cc3cbf698f9438986c11a880c90a6d04b9de27575afd28bbf45b154b6c709e2"
-dependencies = [
- "bitflags 2.13.2",
- "libc",
- "once_cell",
- "onig_sys",
-]
-
-[[package]]
-name = "onig_sys"
-version = "69.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
-dependencies = [
- "cc",
- "pkg-config",
-]
 
 [[package]]
 name = "opaque-debug"
@@ -4442,16 +4349,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ropey"
-version = "1.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93411e420bcd1a75ddd1dc3caf18c23155eda2c090631a85af21ba19e97093b5"
-dependencies = [
- "smallvec",
- "str_indices",
-]
-
-[[package]]
 name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4502,7 +4399,7 @@ checksum = "e806c2a9701cbd6043992cd935c30cb1fdb128fa15e7b506f3b46f97045737c0"
 dependencies = [
  "arc-swap",
  "base62",
- "foldhash 0.2.0",
+ "foldhash",
  "globwalk",
  "itertools 0.11.0",
  "normpath",
@@ -5046,12 +4943,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "str_indices"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d08889ec5408683408db66ad89e0e1f93dff55c73a4ccc71c427d5b277ee47e6"
-
-[[package]]
 name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5169,25 +5060,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
-]
-
-[[package]]
-name = "syntect"
-version = "5.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "656b45c05d95a5704399aeef6bd0ddec7b2b3531b7c9e900abbf7c4d2190c925"
-dependencies = [
- "bincode",
- "fancy-regex",
- "flate2",
- "fnv",
- "once_cell",
- "onig",
- "regex-syntax",
- "serde",
- "serde_derive",
- "thiserror 2.0.21",
- "walkdir",
 ]
 
 [[package]]
@@ -5860,17 +5732,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "two-face"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39e51b6e60e545cfdae5a4639ff423818f52372211a8d9a3e892b4b0761f76b2"
-dependencies = [
- "serde",
- "serde_derive",
- "syntect",
-]
-
-[[package]]
 name = "twox-hash"
 version = "2.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6132,16 +5993,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "vte"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd"
-dependencies = [
- "arrayvec",
- "memchr",
-]
-
-[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6334,8 +6185,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f519832254e56965a9940c4af57dcb75f702b6f6fa4a0b172f685395843a4d7"
 dependencies = [
  "arrayvec",
- "bit-set 0.9.1",
- "bit-vec 0.9.1",
+ "bit-set",
+ "bit-vec",
  "bitflags 2.13.2",
  "bytemuck",
  "cfg_aliases",
@@ -6392,7 +6243,7 @@ name = "wgpu-hal"
 version = "29.0.4"
 dependencies = [
  "arrayvec",
- "bit-set 0.9.1",
+ "bit-set",
  "bitflags 2.13.2",
  "block2",
  "bytemuck",

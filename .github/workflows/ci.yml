@@ -29,7 +29,6 @@ concurrency:
 
 jobs:
   format:
-    if: inputs.package || github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1

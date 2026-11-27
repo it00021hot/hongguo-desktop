@@ -1715,26 +1715,22 @@ fn down(
     // its nearest focusable ancestor), as a click does on a desktop; a
     // hosted item (a video's controls, a component's window) or a field
     // keeps the keys for itself.
+    let window = crate::app_window::window_of(surface, &hit.view);
     match &item {
         Some(Item::Input(_)) => {}
-        Some(Item::Hosted(..)) => {
-            crate::keyboard::blur_window(surface, crate::app_window::window_of(surface, &hit.view))
-        }
+        Some(Item::Hosted(..)) => crate::keyboard::blur_window(surface, window),
         _ => {
             if let Some(target) = crate::keyboard::focus_target(surface, &hit.view) {
                 crate::keyboard::focus_pointer(surface, &target);
-            } else if !matches!(item, Some(Item::Text(_) | Item::Area(..)))
-                && let Some(field) = crate::text_input::focused(surface)
-                && crate::app_window::window_of(surface, &field)
-                    == crate::app_window::window_of(surface, &hit.view)
-            {
-                // A press on no stop (blank space) leaves the field of its
-                // window, as one on a stop does: the field is drawn here,
-                // not a system control that would lose the focus to the
-                // click itself. A press that starts a text selection keeps
-                // the field focused, so Ctrl+C copies the selection around
-                // a chat's composer (copy-selection-windows.test.tsx).
-                crate::text_input::blur(&field);
+            } else if !matches!(item, Some(Item::Text(_) | Item::Area(..))) {
+                crate::keyboard::blur_window(surface, window);
+                // A press that starts selection keeps the field focused
+                // for Ctrl+C (copy-selection-windows.test.tsx).
+                if let Some(field) = crate::text_input::focused(surface)
+                    && crate::app_window::window_of(surface, &field) == window
+                {
+                    crate::text_input::blur(&field);
+                }
             }
         }
     }

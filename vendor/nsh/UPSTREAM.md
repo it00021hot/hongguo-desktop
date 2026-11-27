@@ -105,6 +105,11 @@ retaining the executable, install directory and AppId. Upgrades check each short
 target before replacing it or removing a legacy shortcut. Shortcuts use a content-addressed
 icon included in both Windows installers and update archives.
 
+Desktop pointer presses release a control's keyboard focus when they land on
+plain content outside it. macOS returns the responder to the current window's
+root, and Windows clears the focus recorded for that window. Text selection and
+hosted editors retain their pointer handling.
+
 On macOS, live text alignment changes apply to the field editor while editing.
 The field's cell takes the new alignment after the edit commits so AppKit cannot
 restore the old cell contents over the active input.

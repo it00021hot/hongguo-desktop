@@ -9,6 +9,29 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.9.0] - 2026-11-27
+
+### ✨ 新增
+
+- 收藏页支持收藏夹管理，可创建收藏夹、设置公开状态，以及批量移入或移出短剧。
+- 新剧日历增加筛选选项，已登录用户可在「关注」流中连续观看所关注的内容。
+
+### ⚡ 优化
+
+- 缩小 Windows 安装器、便携包和两种 macOS 架构的安装包。
+- 推荐流按服务端分页加载，观看记录仍可用于恢复播放进度。
+
+### 🐛 修复
+
+- 修复桌面版点击空白处后控件焦点框滞留的问题，保留 Tab 键导航。
+- 修复片尾快进后不自动切集、从观看历史恢复到错误分集，以及本地播放清晰度显示为 0P 的问题。
+- 在线播放缓存失效后可重新取流并从当前分集进度恢复，避免连播预取干扰正在播放的分集。
+- 修复 Windows 下的播放重绘和部分海报色彩异常。仅提供 ByteVC2 来源的分集也可下载归档。
+
+从 0.7.0 或更早版本升级需手动下载安装。需要迁移旧版数据时，请先备份并参照 [README 迁移说明](https://github.com/it00021hot/hongguo-desktop#旧版数据)。
+
+English: Manage collection folders, filter the new-release calendar, and watch followed content in a continuous feed. Windows and macOS packages are smaller. Recommendations load in pages from the server, and watch history restores playback progress. Fixed lingering focus rings after a background click, end-of-episode seeking and autoplay, wrong-episode resume, and incorrect local resolution labels. Online playback can recover from stale stream cache entries. Fixed Windows redraw and poster color issues and added download support for episodes with only a ByteVC2 source. Upgrading from 0.7.0 or earlier requires a manual install.
+
 ## [0.8.9] - 2026-11-26
 
 ### ✨ 新增
