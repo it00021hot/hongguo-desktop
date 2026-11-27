@@ -742,8 +742,7 @@ define_class!(
 
         #[unsafe(method(acceptsFirstResponder))]
         fn accepts_first_responder(&self) -> bool {
-            // A click outside a field that edits leaves the focus in it, as
-            // desktop apps do (`blur()` and Escape still hand it over).
+            // Let pointer routing decide when a click ends editing.
             let view = NshView(self.retain());
             (view.id() == ROOT_ID || crate::input::is_key_stop(&view))
                 && self.keyboard_surface().is_some_and(|s| {
