@@ -357,9 +357,15 @@ impl Controller {
         shared
             .awaiting_presentation
             .store(holding, std::sync::atomic::Ordering::Release);
-        let buffering = holding || position.is_some_and(|position| position.buffering);
+        let clock_buffering = position.is_some_and(|position| position.buffering);
+        let buffering = holding || clock_buffering;
         if self.buffering != Some(buffering) {
             self.buffering = Some(buffering);
+            log::info!(
+                "[Windows video] buffering={buffering} waitingForPresentation={holding} clockBuffering={clock_buffering} active={} paused={}",
+                props.active,
+                props.paused
+            );
             shared.emit(VideoEvent::Buffer {
                 source_id: source_id.clone(),
                 is_buffering: buffering,
