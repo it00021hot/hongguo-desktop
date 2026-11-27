@@ -1637,7 +1637,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-api"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "aes 0.9.4",
  "chrono",
@@ -1659,7 +1659,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-build"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -1674,7 +1674,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-bytevc2"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media-types",
@@ -1687,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-common"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-hevc"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media-types",
@@ -1715,7 +1715,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
@@ -1726,7 +1726,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-bytevc2",
  "hongguo-common",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform-android"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -1755,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform-windows"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -1769,11 +1769,11 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-types"
-version = "0.8.9"
+version = "0.9.0"
 
 [[package]]
 name = "hongguo-media-videotoolbox"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -1786,11 +1786,11 @@ dependencies = [
 
 [[package]]
 name = "hongguo-native-clock"
-version = "0.8.9"
+version = "0.9.0"
 
 [[package]]
 name = "hongguo-nsh"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "axum",
  "block2",
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-android"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-nsh",
  "hongguo-nsh-video-android",
@@ -1841,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-ios"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "env_logger",
  "hongguo-nsh",
@@ -1852,7 +1852,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-android"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "glow",
  "hongguo-media-types",
@@ -1872,7 +1872,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-api"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-media-types",
  "hongguo-native-clock",
@@ -1881,7 +1881,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-apple"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "block2",
  "hongguo-media-types",
@@ -1904,7 +1904,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-ios"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "dispatch2",
  "hongguo-nsh-video-api",
@@ -1921,7 +1921,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-macos"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-nsh-video-api",
  "hongguo-nsh-video-apple",
@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-nsh-video-windows"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-hevc",
  "hongguo-media-types",
@@ -1953,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-playback"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-bytevc2",
  "hongguo-common",
@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-service"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "futures-util",
@@ -1992,7 +1992,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-signer"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "aes 0.9.4",
  "base64 0.23.1",
@@ -2007,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-store"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -2023,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-stream"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
@@ -2033,7 +2033,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-video"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "aes 0.9.4",
  "ctr 0.10.1",
@@ -2044,14 +2044,14 @@ dependencies = [
 
 [[package]]
 name = "hongguo-video-color"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-media-types",
 ]
 
 [[package]]
 name = "hongguo-video-gpu"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "hongguo-media-types",
  "hongguo-video-color",
@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-vvdec-sys"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "bindgen 0.71.1",
  "cmake",
