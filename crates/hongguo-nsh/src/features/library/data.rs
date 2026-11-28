@@ -32,7 +32,8 @@ pub(super) fn load(session: SessionHandle, nav: Navigation, kind: Kind) -> Model
             }),
             identity: computed(move || session.identity()),
             revision: computed(move || session.library()),
-            search: matches!(kind, Kind::Reservations | Kind::Collections).then_some(search),
+            search: matches!(kind, Kind::Reservations | Kind::Collections | Kind::Liked)
+                .then_some(search),
         };
         let result = feed::load(query, context, move |query| {
             let state = session.with(|session| session.state.clone());

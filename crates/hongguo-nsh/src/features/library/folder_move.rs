@@ -1,37 +1,21 @@
 use super::{folder_membership::Membership, model::Entry};
-use crate::{bridge, i18n::tr, ui};
+use crate::{i18n::tr, ui};
 use hongguo_service::library_service;
 use nsh_core::prelude::*;
 
 pub(super) fn action(
     membership: Membership,
     source: i64,
-    entries: Memo<Vec<Entry>>,
+    entries: impl Fn() -> Vec<Entry> + Copy + 'static,
+    has_selection: Memo<bool>,
     done: impl Fn() + Copy + 'static,
 ) -> View {
     let open = signal(false);
     let target = signal(None::<i64>);
-    let destinations = resource(
-        move || open.get().then(|| membership.context.identity.get()),
-        move |identity, _| {
-            let state = membership.session.with(|session| session.state.clone());
-            async move {
-                bridge::request(library_service::collection_folders(state))
-                    .await
-                    .map(|mut folders| {
-                        folders.retain(|folder| folder.id != source);
-                        (identity, folders)
-                    })
-            }
-        },
-    );
-    let folders = computed(move || {
-        destinations.with(|response| {
-            response
-                .filter(|(owner, _)| *owner == membership.context.identity.get())
-                .map_or_else(Vec::new, |(_, folders)| folders.clone())
-        })
-    });
+    let destinations =
+        super::folders::Folders::load(membership.session, membership.context, move || open.get());
+    let folders =
+        computed(move || destinations.items(membership.context.identity.get(), Some(source)));
     let target_valid = computed(move || {
         target
             .get()
@@ -49,7 +33,7 @@ pub(super) fn action(
         let Some(destination) = target.get_untracked() else {
             return;
         };
-        let entries = entries.get_untracked();
+        let entries = entries();
         if entries.is_empty() {
             return;
         }
@@ -68,7 +52,7 @@ pub(super) fn action(
                 move || tr("collections.moveFolderItems"),
                 ui::ButtonVariant::Secondary,
             )
-            .disabled(move || membership.busy.get() || entries.with(Vec::is_empty))
+            .disabled(move || membership.busy.get() || !has_selection.get())
             .on_press(move || {
                 target.set(None);
                 membership.feedback.set(SharedString::default());
@@ -102,7 +86,7 @@ pub(super) fn action(
                                         .error()
                                         .map_or_else(SharedString::default, |error| error.text())
                                 },
-                                move || destinations.refetch(),
+                                move || destinations.retry(),
                             )
                         },
                     ))
@@ -110,6 +94,7 @@ pub(super) fn action(
                         move || {
                             !destinations.loading()
                                 && destinations.error().is_none()
+                                && !destinations.has_more()
                                 && folders.with(Vec::is_empty)
                         },
                         move || ui::status(move || tr("collections.noMoveDestination")),
@@ -149,6 +134,7 @@ pub(super) fn action(
                             let height = count as f32 * 42.0 + count.saturating_sub(1) as f32 * 6.0;
                             px(height.min((window().height.0 * 0.5).min(288.0)))
                         })
+                        .on_load_more(move || destinations.advance())
                         .row_gap(px(6.0))
                         .estimated_item_size(px(42.0))
                         .keys(move || {
@@ -160,6 +146,28 @@ pub(super) fn action(
                             })
                         }),
                     )
+                    .child(when(
+                        move || destinations.has_more(),
+                        move || {
+                            ui::button(
+                                move || {
+                                    tr(if destinations.loading() {
+                                        "feed.loadingMore"
+                                    } else {
+                                        "follow.loadMore"
+                                    })
+                                },
+                                ui::ButtonVariant::Secondary,
+                            )
+                            .self_end()
+                            .disabled(move || {
+                                membership.busy.get()
+                                    || destinations.loading()
+                                    || destinations.error().is_some()
+                            })
+                            .on_press(move || destinations.advance())
+                        },
+                    ))
                     .child(ui::transient_notice(membership.feedback))
                     .child(
                         view()

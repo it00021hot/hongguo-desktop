@@ -3,6 +3,7 @@ use super::{CollectionFolder, Kind, model::Query};
 use crate::{i18n::tr, ui};
 use nsh_base::theme;
 use nsh_core::prelude::*;
+use std::{collections::HashSet, sync::Arc};
 
 #[derive(Clone, Copy)]
 pub(super) struct Toolbar {
@@ -14,7 +15,7 @@ pub(super) struct Toolbar {
     pub online: Signal<bool>,
     pub busy: Signal<bool>,
     pub managing: Signal<bool>,
-    pub selected: Signal<Vec<String>>,
+    pub selected: Signal<HashSet<String>>,
     pub counts: Memo<Option<(i64, i64)>>,
     pub logged_in: Memo<bool>,
 }
@@ -39,7 +40,7 @@ pub(super) fn build(
         .style_when(move || !state.logged_in.get(), |style| style.hidden())
         .on_press(move || {
             state.managing.update(|value| *value = !*value);
-            state.selected.set(Vec::new());
+            state.selected.update(HashSet::clear);
         })
     };
     let toolbar = view()
@@ -87,7 +88,7 @@ pub(super) fn build(
                                 .on_press(move || {
                                     if state.category.get_untracked() != value {
                                         state.category.set(value);
-                                        state.selected.set(Vec::new());
+                                        state.selected.update(HashSet::clear);
                                     }
                                     choose_folder(CollectionFolder::All);
                                 })
@@ -142,7 +143,7 @@ pub(super) fn build(
                                 online,
                                 ..Default::default()
                             });
-                            state.selected.set(Vec::new());
+                            state.selected.update(HashSet::clear);
                         })
                     }),
                 ),
@@ -170,22 +171,24 @@ pub(super) fn batch(
             Kind::Liked => "liked.batchUndoTitle",
             Kind::Reservations => "reservation.batchCancelTitle",
         };
-        let selected_count = move || {
-            rows.selected.with(|keys| {
-                rows.items.with(|items| {
-                    items
-                        .iter()
-                        .filter(|entry| keys.contains(&entry.key))
-                        .count()
-                })
+        let visible_keys = computed(move || {
+            rows.items.with(|items| {
+                items
+                    .iter()
+                    .map(|entry| entry.key.clone())
+                    .collect::<HashSet<_>>()
             })
-        };
+        });
+        let selected_count = computed(move || {
+            rows.selected
+                .with(|keys| visible_keys.with(|visible| keys.intersection(visible).count()))
+        });
         ui::batch_bar()
             .child(
                 ui::batch_select(move || {
                     tr(
                         if !rows.items.with(Vec::is_empty)
-                            && selected_count() == rows.items.with(Vec::len)
+                            && selected_count.get() == rows.items.with(Vec::len)
                         {
                             "batch.deselectAll"
                         } else {
@@ -195,22 +198,16 @@ pub(super) fn batch(
                 })
                 .disabled(move || rows.busy.get() || rows.items.with(Vec::is_empty))
                 .on_press(move || {
-                    if selected_count() == rows.items.with(Vec::len) {
-                        rows.selected.set(Vec::new());
+                    if selected_count.get_untracked() == rows.items.with(Vec::len) {
+                        rows.selected.update(HashSet::clear);
                     } else {
-                        rows.selected.set(
-                            rows.items
-                                .get_untracked()
-                                .into_iter()
-                                .map(|entry| entry.key)
-                                .collect(),
-                        );
+                        rows.selected.set(visible_keys.get_untracked());
                     }
                 }),
             )
             .child(
                 text(move || {
-                    tr("batch.selectedCount").replace("{count}", &selected_count().to_string())
+                    tr("batch.selectedCount").replace("{count}", &selected_count.get().to_string())
                 })
                 .text_xs()
                 .line_height(px(16.0))
@@ -226,14 +223,14 @@ pub(super) fn batch(
                         rows.kind.action()
                     })
                 })
-                .disabled(move || rows.busy.get() || selected_count() == 0)
+                .disabled(move || rows.busy.get() || selected_count.get() == 0)
                 .on_press(move || {
                     let entries = rows.selected.with(|keys| {
                         rows.items.with(|items| {
                             items
                                 .iter()
                                 .filter(|entry| keys.contains(&entry.key))
-                                .cloned()
+                                .map(|entry| Arc::as_ref(entry).clone())
                                 .collect::<Vec<_>>()
                         })
                     });

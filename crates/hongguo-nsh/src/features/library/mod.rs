@@ -28,6 +28,7 @@ use hongguo_service::library_service::{BookshelfFolder, FolderMembership, Remova
 use model::{Entry, Query};
 pub(crate) use notices::NoticePreferences;
 use nsh_core::prelude::*;
+use std::{collections::HashSet, sync::Arc};
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Kind {
@@ -185,7 +186,7 @@ fn content(
     });
     let busy = signal(false);
     let managing = signal(false);
-    let selected = signal(Vec::<String>::new());
+    let selected = signal(HashSet::<String>::new());
     let feedback = signal(SharedString::default());
     let membership = folder_membership::Membership {
         session,
@@ -200,27 +201,27 @@ fn content(
         let folder = collection_folder.get();
         items.with(|items| {
             items
-                .iter()
+                .shared_iter()
                 .filter(|item| kind != Kind::Collections || folder.includes(item, category))
                 .cloned()
                 .collect::<Vec<_>>()
         })
     });
+    let incomplete_search = computed(move || {
+        matches!(kind, Kind::Collections | Kind::Liked)
+            && !search.with(|query| query.trim().is_empty())
+            && !cards.searching(categorized, search)
+            && cards.search_incomplete(categorized)
+    });
     let visible = computed(move || {
         let filter = search.get().trim().to_lowercase();
-        categorized.with(|items| {
-            items
-                .iter()
-                .filter(|item| filter.is_empty() || cards.matches(item, &filter))
-                .cloned()
-                .collect::<Vec<_>>()
-        })
+        categorized.with(|items| cards.filter(items, &filter))
     });
-    if kind == Kind::Collections {
+    if matches!(kind, Kind::Collections | Kind::Liked) {
         cards.drive(
             session,
             context,
-            move || collection_folder.get() != CollectionFolder::Index,
+            move || kind == Kind::Liked || collection_folder.get() != CollectionFolder::Index,
             visible,
             categorized,
             search,
@@ -235,16 +236,14 @@ fn content(
         });
     }
     effect(move || {
-        let keys = result.with(|page| {
-            page.map(|page| {
-                page.items
-                    .iter()
-                    .map(|item| item.key.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
+        result.with(|page| {
+            if selected.with_untracked(HashSet::is_empty) {
+                return;
+            }
+            selected.update(|selected| {
+                selected.retain(|key| page.is_some_and(|page| page.items.contains_key(key)));
+            });
         });
-        selected.update(|selected| selected.retain(|key| keys.contains(key)));
     });
     let remove = move |entries: Vec<Entry>| {
         if busy.get_untracked() || result.loading() || entries.is_empty() {
@@ -276,14 +275,18 @@ fn content(
             }
             match outcome {
                 Ok(outcome) => {
-                    let reservation_changed =
-                        kind == Kind::Reservations && !outcome.removed.is_empty();
-                    if let Some(mut page) = result.get() {
-                        page.items
-                            .retain(|item| !outcome.removed.contains(&item.key));
-                        result.mutate(page);
+                    let page_offsets_changed = matches!(kind, Kind::Reservations | Kind::Liked)
+                        && !outcome.removed.is_empty();
+                    let removed: HashSet<&str> =
+                        outcome.removed.iter().map(String::as_str).collect();
+                    if !removed.is_empty() {
+                        if let Some(mut page) = result.get() {
+                            page.items
+                                .retain(|item| !removed.contains(item.key.as_str()));
+                            result.mutate(page);
+                        }
+                        selected.update(|keys| keys.retain(|key| !removed.contains(key.as_str())));
                     }
-                    selected.update(|keys| keys.retain(|key| !outcome.removed.contains(key)));
                     if !outcome.errors.is_empty() {
                         let mut messages = Vec::new();
                         for error in &outcome.errors {
@@ -312,7 +315,7 @@ fn content(
                                 .into(),
                         );
                     }
-                    if reservation_changed {
+                    if page_offsets_changed {
                         let online = query.with(|query| query.online);
                         query.set(Query {
                             identity: Some(identity),
@@ -337,7 +340,7 @@ fn content(
             online: current.online,
             ..Default::default()
         });
-        selected.set(Vec::new());
+        selected.update(HashSet::clear);
         result.refetch();
     };
     let play = move |entry| {
@@ -418,7 +421,7 @@ fn content(
                 ..Default::default()
             });
         }
-        selected.set(Vec::new());
+        selected.update(HashSet::clear);
     };
     if kind == Kind::Collections {
         nav.on_back(
@@ -451,8 +454,10 @@ fn content(
                 return None;
             }
             result.with(|page| {
-                page.filter(|page| page.belongs_to(&query.get(), context.identity.get()))
-                    .and_then(|page| page.reservation_counts)
+                page.filter(|page| {
+                    query.with(|query| page.belongs_to(query, context.identity.get()))
+                })
+                .and_then(|page| page.reservation_counts)
             })
         }),
         logged_in: context.logged_in,
@@ -610,7 +615,7 @@ fn content(
                                             },
                                         ))
                                         .child(
-                                            ui::button(
+                                            presentation::library_action(
                                                 move || {
                                                     tr(if managing.get() {
                                                         "batch.exitManage"
@@ -618,14 +623,14 @@ fn content(
                                                         "batch.manage"
                                                     })
                                                 },
-                                                ButtonVariant::Secondary,
+                                                None,
                                             )
                                             .disabled(busy)
                                             .on_press(
                                                 move || {
                                                     managing
                                                         .update(|managing| *managing = !*managing);
-                                                    selected.set(Vec::new());
+                                                    selected.update(HashSet::clear);
                                                 },
                                             ),
                                         )
@@ -634,7 +639,7 @@ fn content(
                         )
                 }))
                 .child(when(
-                    move || result.loading() && items.with(Vec::is_empty),
+                    move || result.loading() && items.with(model::EntryRows::is_empty),
                     move || loading::entries(kind),
                 ))
                 .child(when(
@@ -665,18 +670,24 @@ fn content(
                 ))
                 .child(when(
                     move || {
-                        !result.loading() && result.error().is_none() && visible.with(Vec::is_empty)
+                        !result.loading()
+                            && result.error().is_none()
+                            && visible.with(Vec::is_empty)
+                            && !incomplete_search.get()
                     },
                     move || {
                         ui::status(move || {
                             if !search.with(|value| value.trim().is_empty()) {
-                                if kind == Kind::Collections && cards.searching(categorized, search)
+                                if matches!(kind, Kind::Collections | Kind::Liked)
+                                    && cards.searching(categorized, search)
                                 {
-                                    tr("collections.searchLoading")
-                                } else if kind == Kind::Collections
-                                    && cards.search_incomplete(categorized)
-                                {
-                                    tr("collections.searchIncomplete")
+                                    tr(if kind == Kind::Liked {
+                                        "liked.searchLoading"
+                                    } else {
+                                        "collections.searchLoading"
+                                    })
+                                } else if kind == Kind::Liked && rows.has_more.get() {
+                                    tr("feed.loadingMore")
                                 } else {
                                     tr("common.searchNoMatch")
                                 }
@@ -689,9 +700,18 @@ fn content(
                 .child(rows::build(rows, remove, play, move || {
                     feed::advance(result, query, context)
                 }))
+                .child(when(incomplete_search, move || {
+                    let message = if kind == Kind::Liked {
+                        "liked.searchIncomplete"
+                    } else {
+                        "collections.searchIncomplete"
+                    };
+                    super::error_state(move || tr(message), move || cards.retry_search())
+                }))
                 .child(when(
                     move || {
-                        matches!(collection_folder.get(), CollectionFolder::Official(_))
+                        (kind == Kind::Liked
+                            || matches!(collection_folder.get(), CollectionFolder::Official(_)))
                             && rows.has_more.get()
                             && result.error().is_none()
                     },
@@ -714,16 +734,28 @@ fn content(
                     let CollectionFolder::Official(id) = collection_folder.get_untracked() else {
                         return view();
                     };
-                    let picked = computed(move || {
-                        let keys = selected.get();
-                        visible.with(|entries| {
-                            entries
-                                .iter()
-                                .filter(|entry| keys.contains(&entry.key))
-                                .cloned()
-                                .collect::<Vec<_>>()
+                    let has_selection = computed(move || {
+                        selected.with(|keys| {
+                            !keys.is_empty()
+                                && visible.with(|entries| {
+                                    entries.iter().any(|entry| keys.contains(&entry.key))
+                                })
                         })
                     });
+                    let picked = move || {
+                        selected.with(|keys| {
+                            if keys.is_empty() {
+                                return Vec::new();
+                            }
+                            visible.with(|entries| {
+                                entries
+                                    .iter()
+                                    .filter(|entry| keys.contains(&entry.key))
+                                    .map(|entry| Arc::as_ref(entry).clone())
+                                    .collect::<Vec<_>>()
+                            })
+                        })
+                    };
                     let done = move || {
                         managing.set(false);
                         reset();
@@ -733,20 +765,21 @@ fn content(
                         .flex_wrap()
                         .items_center()
                         .gap_2()
-                        .child(folder_move::action(membership, id, picked, done))
+                        .child(folder_move::action(
+                            membership,
+                            id,
+                            picked,
+                            has_selection,
+                            done,
+                        ))
                         .child(
                             ui::controls::compact_button(
                                 move || tr("collections.folderRemove"),
                                 ButtonVariant::Secondary,
                             )
-                            .disabled(move || busy.get() || picked.with(Vec::is_empty))
+                            .disabled(move || busy.get() || !has_selection.get())
                             .on_press(move || {
-                                membership.change(
-                                    id,
-                                    FolderMembership::Remove,
-                                    picked.get_untracked(),
-                                    done,
-                                )
+                                membership.change(id, FolderMembership::Remove, picked(), done)
                             }),
                         )
                 }))

@@ -1,4 +1,4 @@
-use super::model::{Entry, Page, Query};
+use super::model::{EntryRows, Page, Query};
 use crate::bridge::Failure;
 use nsh_core::prelude::*;
 
@@ -23,7 +23,7 @@ pub(super) fn load<F: Future<Output = Result<Page, Failure>> + 'static>(
             (context.logged_in.get() && context.active.get()).then(|| {
                 let identity = context.identity.get();
                 (
-                    query.get().for_identity(identity),
+                    query.with(|query| query.for_identity(identity)),
                     identity,
                     context.revision.get(),
                 )
@@ -42,7 +42,7 @@ pub(super) fn load<F: Future<Output = Result<Page, Failure>> + 'static>(
     );
     if let Some(search) = context.search {
         effect(move || {
-            if !search.with(String::is_empty) {
+            if !search.with(|text| text.trim().is_empty()) {
                 advance(feed, query, context);
             }
         });
@@ -50,17 +50,13 @@ pub(super) fn load<F: Future<Output = Result<Page, Failure>> + 'static>(
     feed
 }
 
-pub(super) fn current_items(
-    feed: Feed,
-    query: Signal<Query>,
-    context: Context,
-) -> Memo<Vec<Entry>> {
+pub(super) fn current_items(feed: Feed, query: Signal<Query>, context: Context) -> Memo<EntryRows> {
     computed(move || {
         if !context.logged_in.get() {
-            return Vec::new();
+            return EntryRows::default();
         }
         feed.with(|page| {
-            page.filter(|page| page.belongs_to(&query.get(), context.identity.get()))
+            page.filter(|page| query.with(|query| page.belongs_to(query, context.identity.get())))
                 .map(|page| page.items.clone())
                 .unwrap_or_default()
         })
@@ -77,7 +73,7 @@ pub(super) fn advance(feed: Feed, query: Signal<Query>, context: Context) {
     }
     if let Some(next) = feed.with(|page| {
         page.and_then(|page| {
-            page.next_query(&query.get_untracked(), context.identity.get_untracked())
+            query.with_untracked(|query| page.next_query(query, context.identity.get_untracked()))
         })
     }) {
         query.set(next);

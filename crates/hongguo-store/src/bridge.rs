@@ -136,11 +136,6 @@ impl Store {
         self.exec(move |db| Box::pin(async move { entity::save_settings(db, &s).await }))
     }
 
-    pub fn follow_baseline_get(&self, series_id: &str) -> AppResult<Option<i64>> {
-        let id = series_id.to_string();
-        self.exec(move |db| Box::pin(async move { entity::baseline_get(db, &id).await }))
-    }
-
     pub fn follow_baseline_set(&self, series_id: &str, episode_cnt: i64) -> AppResult<()> {
         let id = series_id.to_string();
         self.exec(move |db| {
@@ -153,25 +148,11 @@ impl Store {
         self.exec(move |db| Box::pin(async move { entity::baseline_delete(db, &id).await }))
     }
 
-    pub fn follow_notice_insert(
+    pub fn follow_observe_page(
         &self,
-        kind: &str,
-        series_id: &str,
-        title: &str,
-        detail: &str,
-        at: i64,
-    ) -> AppResult<i64> {
-        let (kind, series_id, title, detail) = (
-            kind.to_string(),
-            series_id.to_string(),
-            title.to_string(),
-            detail.to_string(),
-        );
-        self.exec(move |db| {
-            Box::pin(async move {
-                entity::notice_insert(db, &kind, &series_id, &title, &detail, at).await
-            })
-        })
+        observations: Vec<entity::FollowObservation>,
+    ) -> AppResult<Vec<FollowNotice>> {
+        self.exec(move |db| Box::pin(async move { entity::observe_page(db, observations).await }))
     }
 
     pub fn follow_notices(&self) -> AppResult<Vec<FollowNotice>> {
@@ -229,6 +210,10 @@ impl Store {
     pub fn series_by_id(&self, series_id: &str) -> AppResult<Option<Series>> {
         let id = series_id.to_string();
         self.exec(move |db| Box::pin(async move { entity::series_by_id(db, &id).await }))
+    }
+
+    pub fn series_by_ids(&self, ids: Vec<String>) -> AppResult<Vec<Series>> {
+        self.exec(move |db| Box::pin(async move { entity::series_by_ids(db, &ids).await }))
     }
 
     pub fn upsert_series(&self, series: &Series) -> AppResult<()> {

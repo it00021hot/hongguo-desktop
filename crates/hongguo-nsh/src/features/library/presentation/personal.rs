@@ -38,21 +38,7 @@ pub(crate) fn personal_login_required(
 }
 
 pub(crate) fn personal_tab(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
-    surface(ButtonVariant::Quiet)
-        .min_h(crate::ui::controls::control_height)
-        .h(crate::ui::controls::control_height)
-        .px_4()
-        .py_1p5()
-        .rounded_full()
-        .bg(move || theme().muted)
-        .text_color(move || theme().muted_foreground)
-        .font_weight(FontWeight::NORMAL)
-        .selected_style(|style| {
-            crate::ui::palette::selected(style)
-                .border(px(0.0))
-                .font_weight(FontWeight::MEDIUM)
-        })
-        .child(text(label).text_sm().line_height(px(20.0)))
+    crate::ui::filter_pill(label)
 }
 
 pub(crate) fn personal_card(selected: impl IntoReactive<bool>) -> View {
@@ -112,7 +98,7 @@ pub(crate) fn personal_card_pick(
                 .size(px(14.0))
                 .text_color(move || theme().primary_foreground)
         }))
-        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
+        .focus_visible(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
         .absolute()
         .inset_0()
         .z_index(20)

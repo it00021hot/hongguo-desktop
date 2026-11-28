@@ -53,10 +53,10 @@ impl HistoryTab {
             Self::Unfinished => !finished,
             Self::Finished => finished,
         };
-        let query = query.trim().to_lowercase();
         tab_matches
-            && (item.title.to_lowercase().contains(&query)
-                || item.id.to_lowercase().contains(&query))
+            && (query.is_empty()
+                || item.title.to_lowercase().contains(query)
+                || item.id.to_lowercase().contains(query))
     }
 }
 

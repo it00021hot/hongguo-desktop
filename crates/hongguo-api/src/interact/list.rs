@@ -231,40 +231,37 @@ pub async fn fetch_interaction_state(env: &ApiEnv) -> AppResult<InteractionState
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let Some(video) = entry.get("video_data") else {
-            continue;
-        };
-        let vid = video.get("vid").and_then(Value::as_str).unwrap_or_default();
-        if vid.is_empty() {
-            continue;
+        if let Some(item) = entry.get("video_data").and_then(parse_interaction_item) {
+            state.items.push(item);
         }
-        let item = InteractionItem {
-            vid: vid.to_string(),
-            series_id: video
-                .get("series_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            user_digg: video.get("user_digg").and_then(Value::as_bool) == Some(true),
-            digged_count: video
-                .get("digged_count")
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
-            followed: video
-                .pointer("/video_detail/followed")
-                .and_then(Value::as_bool)
-                == Some(true),
-            followed_cnt: video
-                .pointer("/video_detail/followed_cnt")
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
-            series_title: video
-                .pointer("/video_detail/series_title")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        };
-        state.items.push(item);
     }
     Ok(state)
+}
+
+pub(super) fn parse_interaction_item(video: &Value) -> Option<InteractionItem> {
+    Some(InteractionItem {
+        vid: video.get("vid").and_then(bookshelf_id)?,
+        series_id: video
+            .get("series_id")
+            .and_then(bookshelf_id)
+            .unwrap_or_default(),
+        user_digg: video.get("user_digg").and_then(Value::as_bool) == Some(true),
+        digged_count: video
+            .get("digged_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        followed: video
+            .pointer("/video_detail/followed")
+            .and_then(Value::as_bool)
+            == Some(true),
+        followed_cnt: video
+            .pointer("/video_detail/followed_cnt")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        series_title: video
+            .pointer("/video_detail/series_title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
 }

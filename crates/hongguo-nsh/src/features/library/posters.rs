@@ -1,6 +1,7 @@
 use super::{Kind, model::Entry, rows::Rows};
 use crate::{i18n::tr, navigation::Route};
 use nsh_core::prelude::*;
+use std::sync::Arc;
 
 pub(super) fn build(
     rows: Rows,
@@ -43,14 +44,20 @@ pub(super) fn build(
                     move || rows.items.with(Vec::len),
                     move |at| {
                         let item = computed(move || {
-                            rows.items.with(|items| items.get(at.index()).cloned()).map(
-                                |mut item| {
-                                    if !liked {
-                                        rows.cards.hydrate(&mut item);
+                            rows.items
+                                .with(|items| {
+                                    items
+                                        .get(at.index())
+                                        .map(|entry| Arc::as_ref(entry).clone())
+                                })
+                                .map(|mut item| {
+                                    let can_play = item.can_play;
+                                    rows.cards.hydrate(&mut item);
+                                    if liked {
+                                        item.can_play = can_play;
                                     }
                                     item
-                                },
-                            )
+                                })
                         });
                         let picked = move || {
                             item.get().is_some_and(|item| {
@@ -108,9 +115,10 @@ pub(super) fn build(
                                     move |checked: &bool| {
                                         if let Some(item) = item.get_untracked() {
                                             rows.selected.update(|keys| {
-                                                keys.retain(|key| key != &item.key);
                                                 if *checked {
-                                                    keys.push(item.key);
+                                                    keys.insert(item.key);
+                                                } else {
+                                                    keys.remove(&item.key);
                                                 }
                                             });
                                         }
@@ -153,9 +161,7 @@ pub(super) fn build(
             })
             .minimum_view_time(super::metadata::VIEW_SETTLE_TIME)
             .on_viewable_items_change(move |viewable: &nsh_core::element::ViewableItems| {
-                if !liked {
-                    rows.cards.report(viewable);
-                }
+                rows.cards.report(viewable);
             })
             .columns(columns)
             .column_gap(px(16.0))
@@ -174,12 +180,15 @@ pub(super) fn build(
 
 pub(super) fn title(entry: &Entry) -> SharedString {
     if entry.title.trim().is_empty() {
+        let id = if entry.series_id.is_empty() {
+            entry.key.as_str()
+        } else {
+            entry.series_id.as_str()
+        };
         tr("collections.unresolved")
             .replace(
                 "{id}",
-                &entry
-                    .series_id
-                    .chars()
+                &id.chars()
                     .rev()
                     .take(6)
                     .collect::<Vec<_>>()

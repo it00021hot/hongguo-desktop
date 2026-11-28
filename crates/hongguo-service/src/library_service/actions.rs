@@ -2,6 +2,7 @@ use super::{Kind, model::Entry};
 use crate::AppState;
 use hongguo_api::{client::ApiEnv, interact};
 use hongguo_common::{AppError, AppResult};
+use std::collections::{HashMap, HashSet};
 
 pub struct Removal {
     pub removed: Vec<String>,
@@ -83,7 +84,7 @@ async fn remove_collections(
             errors,
         });
     }
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let requests = targets
         .iter()
         .filter_map(|target| {
@@ -97,14 +98,15 @@ async fn remove_collections(
     interact::collect_series_batch(&requests, env).await?;
     // HTTP/JSON success alone does not prove the shelf changed.
     let after = interact::fetch_bookshelf_strict(user_id, env).await?;
+    let remaining: HashSet<&str> = after
+        .iter()
+        .flat_map(|row| [row.book_id.as_str(), row.series_id.as_str()])
+        .collect();
     let mut removed = Vec::new();
     for target in targets {
-        if after.iter().any(|row| {
-            row.book_id == target.book_id
-                || row.series_id == target.book_id
-                || row.series_id == target.series_id
-                || row.book_id == target.series_id
-        }) {
+        if remaining.contains(target.book_id.as_str())
+            || remaining.contains(target.series_id.as_str())
+        {
             errors.push(AppError::Rejected("服务器未移除此收藏".into()));
         } else {
             removed.push(target.key);
@@ -120,21 +122,38 @@ struct CollectionRemovalTarget {
     book_type: i64,
 }
 
+fn index_id<'a>(
+    index: &mut HashMap<&'a str, Option<&'a interact::BookshelfEntry>>,
+    id: &'a str,
+    row: &'a interact::BookshelfEntry,
+) {
+    index
+        .entry(id)
+        .and_modify(|value| *value = None)
+        .or_insert(Some(row));
+}
+
 fn collection_targets(
     entries: Vec<Entry>,
     shelf: &[interact::BookshelfEntry],
 ) -> (Vec<CollectionRemovalTarget>, Vec<AppError>) {
     let mut targets = Vec::new();
     let mut errors = Vec::new();
+    let mut books = HashMap::with_capacity(shelf.len());
+    let mut aliases = HashMap::with_capacity(shelf.len());
+    for row in shelf {
+        index_id(&mut books, &row.book_id, row);
+        index_id(&mut aliases, &row.book_id, row);
+        if row.series_id != row.book_id {
+            index_id(&mut aliases, &row.series_id, row);
+        }
+    }
     for entry in entries {
-        let mut matches = shelf
-            .iter()
-            .filter(|row| match entry.collection_book_id.as_deref() {
-                Some(id) => row.book_id == id,
-                None => row.book_id == entry.series_id || row.series_id == entry.series_id,
-            });
-        if let Some(row) = matches.next()
-            && matches.next().is_none()
+        let matched = match entry.collection_book_id.as_deref() {
+            Some(id) => books.get(id),
+            None => aliases.get(entry.series_id.as_str()),
+        };
+        if let Some(Some(row)) = matched
             && let Some(kind) = row.book_type
         {
             targets.push(CollectionRemovalTarget {
@@ -207,6 +226,37 @@ mod tests {
             .map(|target| (target.book_id.as_str(), target.book_type))
             .collect::<Vec<_>>();
         assert_eq!(wire, [("book-a", 3), ("book-b", 4)]);
+        assert_eq!(errors.len(), 1);
+    }
+
+    #[test]
+    fn bulk_collection_lookup_keeps_explicit_ids_and_rejects_ambiguous_aliases() {
+        let mut shelf = (0..5_000)
+            .map(|index| interact::BookshelfEntry {
+                book_id: format!("book-{index}"),
+                series_id: format!("series-{index}"),
+                book_type: Some(2),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        shelf[2].series_id = "book-1".into();
+        let mut entries = shelf
+            .iter()
+            .map(|row| Entry {
+                key: row.book_id.clone(),
+                series_id: row.series_id.clone(),
+                collection_book_id: Some(row.book_id.clone()),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        entries.push(Entry {
+            key: "ambiguous".into(),
+            series_id: "book-1".into(),
+            ..Default::default()
+        });
+        let (targets, errors) = collection_targets(entries, &shelf);
+        assert_eq!(targets.len(), 5_000);
+        assert_eq!(targets[1].book_id, "book-1");
         assert_eq!(errors.len(), 1);
     }
 }

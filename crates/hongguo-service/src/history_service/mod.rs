@@ -13,7 +13,7 @@ use hongguo_common::{AppError, AppResult};
 use crate::app_state::AppState;
 
 mod listing;
-pub use listing::{HistoryAccount, account, delete, list};
+pub use listing::{HistoryAccount, account, delete, list, list_local};
 
 /// 单轮补传上限：一次登录补几百条足够，剩下的留给下次触发。
 const UPLOAD_BATCH: usize = 100;

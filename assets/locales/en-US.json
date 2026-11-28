@@ -872,6 +872,8 @@
     "empty": "No likes yet",
     "emptyHint": "Videos you ❤ in the feed will show up here",
     "searchPlaceholder": "Search likes",
+    "searchLoading": "Searching the rest of your likes…",
+    "searchIncomplete": "Some liked video details couldn't load. Results may be incomplete.",
     "undo": "Undo like",
     "batchUndoTitle": "Undo selected likes?"
   },

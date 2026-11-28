@@ -62,44 +62,7 @@ pub(crate) fn history_filter(
     label: impl IntoReactive<SharedString>,
     selected: Memo<bool>,
 ) -> nsh_base::ButtonElement {
-    let label = label.into_reactive();
-    let label = computed(move || label.get());
-    if !is_desktop() {
-        return nsh_base::button()
-            .accessibility_label(move || label.get())
-            .selected(selected)
-            .min_h_12()
-            .min_w_12()
-            .items_center()
-            .justify_center()
-            .active(|style| style.opacity(0.8))
-            .focus_visible(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
-            .child(
-                view()
-                    .h_7()
-                    .px_3()
-                    .rounded_full()
-                    .items_center()
-                    .justify_center()
-                    .text_color(move || theme().muted_foreground)
-                    .style_when(selected, crate::ui::palette::selected)
-                    .child(text(label).text_xs()),
-            );
-    }
-    surface(ButtonVariant::Quiet)
-        .selected(selected)
-        .min_h(move || px(if is_desktop() { 24.0 } else { 48.0 }))
-        .px_3()
-        .py_1()
-        .rounded(radii::control())
-        .text_color(move || theme().muted_foreground)
-        .selected_style(crate::ui::palette::selected)
-        .child(
-            text(label)
-                .text_xs()
-                .line_height(px(16.0))
-                .font_weight(FontWeight::NORMAL),
-        )
+    crate::ui::filter_pill(label).selected(selected)
 }
 
 pub(crate) fn history_card() -> View {

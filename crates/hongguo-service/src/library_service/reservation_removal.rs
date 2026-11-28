@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use hongguo_api::{calendar::CalendarItem, client::ApiEnv, reservation};
+use hongguo_api::{client::ApiEnv, reservation};
 use hongguo_common::{AppError, AppResult};
 
 use super::{Removal, RemovalMode, model::Entry};
@@ -61,9 +61,18 @@ pub(super) async fn remove(
         reservation::fetch_reservations_for_verification(true, env),
     )
     .map_err(|error| AppError::ReservationVerification(error.to_string()))?;
-    let current = offline.iter().chain(online.iter()).collect::<Vec<_>>();
+    let current = offline.iter().chain(&online);
+    let series = current
+        .clone()
+        .map(|item| item.series_id.as_str())
+        .collect::<HashSet<_>>();
+    let records = current
+        .filter_map(|item| item.reservation_item_id.as_deref())
+        .collect::<HashSet<_>>();
     for (entry, error) in candidates {
-        if current.iter().any(|item| still_listed(entry, item)) {
+        if series.contains(entry.series_id.as_str())
+            || record_id(entry).is_some_and(|id| records.contains(id))
+        {
             removal
                 .errors
                 .push(error.unwrap_or(AppError::ReservationStillListed));
@@ -76,9 +85,4 @@ pub(super) async fn remove(
 
 fn record_id(entry: &Entry) -> Option<&str> {
     entry.reservation.as_ref()?.reservation_item_id.as_deref()
-}
-
-fn still_listed(entry: &Entry, item: &CalendarItem) -> bool {
-    item.series_id == entry.series_id
-        || record_id(entry).is_some_and(|id| item.reservation_item_id.as_deref() == Some(id))
 }

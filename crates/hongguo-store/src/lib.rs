@@ -8,3 +8,4 @@ pub mod entity;
 pub mod paths;
 
 pub use bridge::Store;
+pub use entity::FollowObservation;

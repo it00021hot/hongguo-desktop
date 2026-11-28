@@ -8,16 +8,11 @@ pub(super) struct HistoryEvents {
     pub open: Box<dyn Fn(&HistoryItem)>,
     pub remove: Option<Box<dyn Fn(Vec<HistoryItem>)>>,
     pub busy: Memo<bool>,
+    pub can_manage: Memo<bool>,
     pub reset: Memo<(u64, u64)>,
 }
 
-pub(super) fn content(
-    items: impl IntoReactive<Vec<HistoryItem>>,
-    now_ms: i64,
-    events: HistoryEvents,
-) -> View {
-    let items = items.into_reactive();
-    let items = computed(move || items.get());
+pub(super) fn content(items: Memo<Vec<HistoryItem>>, now_ms: i64, events: HistoryEvents) -> View {
     let events = stored(std::rc::Rc::new(events));
     let memory = crate::view_memory::scope("history");
     let tab = memory.signal("tab", HistoryTab::All);
@@ -28,6 +23,9 @@ pub(super) fn content(
     let confirm = signal(false);
     let removing = signal(Vec::<HistoryItem>::new());
     let busy = computed(move || events.with(|events| events.busy.get()));
+    let manage_disabled = computed(move || {
+        busy.get() || events.with(|events| !events.can_manage.get() || events.remove.is_none())
+    });
     let width = signal(0.0_f32);
     let columns = computed(move || ui::poster_grid::columns(window().width.0));
     let card_height = computed(move || {
@@ -43,11 +41,15 @@ pub(super) fn content(
         confirm.set(false);
     });
     let shown = computed(move || {
-        items
-            .get()
-            .into_iter()
-            .filter(|item| tab.get().matches(item, &query.get()))
-            .collect::<Vec<_>>()
+        let tab = tab.get();
+        let query = query.with(|query| query.trim().to_lowercase());
+        items.with(|items| {
+            items
+                .iter()
+                .filter(|item| tab.matches(item, &query))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
     });
     let populated = view()
         .flex_1()
@@ -69,8 +71,6 @@ pub(super) fn content(
                         .gap_2()
                         .children(HistoryTab::ALL.into_iter().map(move |value| {
                             crate::features::library::presentation::history_filter(move || value.label(), computed(move || tab.get() == value))
-                                .min_h(ui::controls::control_height)
-                                .h(ui::controls::control_height)
                                 .on_press(move || tab.set(value))
                         }))),
                 )
@@ -90,10 +90,9 @@ pub(super) fn content(
                         },
                         None,
                     )
-                    .style_when(move || !is_desktop(), |style| style.border(px(0.0)).bg(move || theme().background.opacity(0.0)))
-                    .disabled(move || busy.get() || events.with(|events| events.remove.is_none()))
+                    .disabled(manage_disabled)
                     .on_press(move || {
-                        if events.with(|events| events.remove.is_some()) {
+                        if !manage_disabled.get_untracked() {
                             managing.update(|value| *value = !*value);
                             selected.set(HashSet::new());
                         }
@@ -104,7 +103,7 @@ pub(super) fn content(
             crate::features::library::presentation::library_search(query, move || tr("history.searchPlaceholder")).w_full()
         )))
         .child(when(
-            move || shown.get().is_empty(),
+            move || shown.with(Vec::is_empty),
             move || {
                 view()
                     .py_16()
@@ -129,7 +128,7 @@ pub(super) fn content(
         .child(
             crate::view_memory::remember_scroll(
                 virtual_list(
-                    move || shown.get().len(),
+                    move || shown.with(Vec::len),
                     move |at| {
                         let item =
                             computed(move || shown.with(|items| items.get(at.index()).cloned()));
@@ -266,29 +265,28 @@ pub(super) fn content(
             .content_padding_x(px(16.0))
             .max_h(move || px(shown.with(Vec::len).div_ceil(columns.get() as usize) as f32 * (card_height.get() + 16.0)))
             .keys(move || {
-                shown
-                    .get()
-                    .into_iter()
-                    .map(|item| item.id)
-                    .collect::<Vec<_>>()
+                shown.with(|items| items.iter().map(|item| item.id.clone()).collect::<Vec<_>>())
             })
             .estimated_item_size(move || px(card_height.get())),
         )
         .child(when(managing, move || {
             let selected_items = move || {
-                items
-                    .get()
-                    .into_iter()
-                    .filter(|item| selected.with(|ids| ids.contains(&item.id)))
-                    .collect::<Vec<_>>()
+                items.with(|items| {
+                    selected.with(|ids| items.iter().filter(|item| ids.contains(&item.id)).cloned().collect::<Vec<_>>())
+                })
             };
+            let selection_count = computed(move || selected.with(|ids| {
+                if ids.is_empty() { 0 } else { items.with(|items| items.iter().filter(|item| ids.contains(&item.id)).count()) }
+            }));
+            let all_shown_selected = computed(move || shown.with(|shown| {
+                !shown.is_empty() && selected.with(|ids| ids.len() >= shown.len() && shown.iter().all(|item| ids.contains(&item.id)))
+            }));
             ui::batch_bar()
                 .mx_4()
                 .child(
                     ui::batch_select(move || {
                         tr(
-                            if !shown.get().is_empty()
-                                && selected_items().len() == shown.with(Vec::len)
+                            if all_shown_selected.get()
                             {
                                 "batch.deselectAll"
                             } else {
@@ -298,21 +296,17 @@ pub(super) fn content(
                     })
                     .disabled(busy)
                     .on_press(move || {
-                        selected.set(if selected_items().len() == shown.with(Vec::len) {
+                        selected.set(if all_shown_selected.get_untracked() {
                             HashSet::new()
                         } else {
-                            shown
-                                .get_untracked()
-                                .into_iter()
-                                .map(|item| item.id)
-                                .collect()
+                            shown.with_untracked(|items| items.iter().map(|item| item.id.clone()).collect())
                         });
                     }),
                 )
                 .child(
                     text(move || {
                         tr("batch.selectedCount")
-                            .replace("{count}", &selected_items().len().to_string())
+                            .replace("{count}", &selection_count.get().to_string())
                     })
                     .text_xs(),
                 )
@@ -325,7 +319,7 @@ pub(super) fn content(
                             "batch.deleteSelected"
                         })
                     })
-                    .disabled(move || busy.get() || selected_items().is_empty())
+                    .disabled(move || manage_disabled.get() || selection_count.get() == 0)
                     .on_press(move || {
                         removing.set(selected_items());
                         confirm.set(true);
@@ -345,7 +339,7 @@ pub(super) fn content(
             },
             move || {
                 let events = events.with(|events| events.clone());
-                if let Some(remove) = &events.remove {
+                if events.can_manage.get_untracked() && let Some(remove) = &events.remove {
                     remove(removing.get_untracked());
                 }
             },

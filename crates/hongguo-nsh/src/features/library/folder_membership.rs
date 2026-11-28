@@ -63,7 +63,7 @@ impl Membership {
     }
 }
 
-type Candidates = Resource<(u64, Vec<Entry>), bridge::Failure>;
+type Candidates = Resource<(u64, super::model::EntryRows), bridge::Failure>;
 
 #[derive(Clone, Copy)]
 struct Picker {
@@ -80,7 +80,7 @@ struct Picker {
 pub(super) fn add(
     membership: Membership,
     folder: i64,
-    existing: Memo<Vec<Entry>>,
+    existing: Memo<super::model::EntryRows>,
     refresh: impl Fn() + Copy + 'static,
 ) -> View {
     let picker = Picker::new(membership, existing);
@@ -123,7 +123,7 @@ pub(super) fn add(
 }
 
 impl Picker {
-    fn new(membership: Membership, existing: Memo<Vec<Entry>>) -> Self {
+    fn new(membership: Membership, existing: Memo<super::model::EntryRows>) -> Self {
         let cards = super::metadata::Cards::new(membership.context.identity);
         let owner = signal(None);
         let search = signal(String::new());
@@ -185,13 +185,7 @@ impl Picker {
         });
         let visible = computed(move || {
             let query = search.get().trim().to_lowercase();
-            entries.with(|entries| {
-                entries
-                    .iter()
-                    .filter(|entry| query.is_empty() || cards.matches(entry, &query))
-                    .cloned()
-                    .collect()
-            })
+            entries.with(|entries| cards.filter(entries, &query))
         });
         cards.drive(
             membership.session,

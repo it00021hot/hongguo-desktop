@@ -12,15 +12,13 @@ use crate::{
 };
 use nsh_core::prelude::*;
 
+type HistoryFeed = Resource<(u64, Vec<model::HistoryItem>), bridge::Failure>;
+
 pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
-    let result = data(session, nav);
-    content(session, nav, result)
+    content(session, nav, data(session, nav), local_data(session, nav))
 }
 
-fn data(
-    session: SessionHandle,
-    nav: Navigation,
-) -> Resource<(u64, Vec<model::HistoryItem>), bridge::Failure> {
+fn data(session: SessionHandle, nav: Navigation) -> HistoryFeed {
     crate::view_memory::cached("history", move || {
         let state = session.with(|session| session.state.clone());
         resource(
@@ -41,10 +39,44 @@ fn data(
     })
 }
 
+fn local_data(session: SessionHandle, nav: Navigation) -> HistoryFeed {
+    crate::view_memory::cached("history-local", move || {
+        resource(
+            move || {
+                if !nav
+                    .routes()
+                    .with(|routes| routes.last() == Some(&Route::History))
+                {
+                    return None;
+                }
+                let identity = session.identity();
+                let revision = session.library();
+                session
+                    .with(|session| history_data::identity(&session.state))
+                    .map(|account| (identity, revision, account))
+            },
+            move |(identity, _, account), _| {
+                let state = session.with(|session| session.state.clone());
+                bridge::request(async move {
+                    hongguo_service::history_service::list_local(&state, account)
+                        .await
+                        .map(|items| {
+                            (
+                                identity,
+                                items.into_iter().map(model::HistoryItem::from).collect(),
+                            )
+                        })
+                })
+            },
+        )
+    })
+}
+
 fn content(
     session: SessionHandle,
     nav: Navigation,
-    result: Resource<(u64, Vec<model::HistoryItem>), bridge::Failure>,
+    result: HistoryFeed,
+    local: HistoryFeed,
 ) -> View {
     let owner = Owner::current();
     let busy = signal(false);
@@ -124,6 +156,7 @@ fn content(
                             deleted.update(|revision| *revision += 1);
                             session.notify_library();
                             result.refetch();
+                            local.refetch();
                             feedback.set(
                                 tr("batch.done")
                                     .replace("{count}", &selected_count.to_string())
@@ -133,6 +166,7 @@ fn content(
                         Err(error) => {
                             feedback.set(error.text());
                             result.refetch();
+                            local.refetch();
                         }
                     }
                 }
@@ -143,6 +177,30 @@ fn content(
     let has_current = computed(move || {
         result.with(|items| items.is_some_and(|(identity, _)| *identity == session.identity()))
     });
+    let has_local = computed(move || {
+        local.with(|items| {
+            items.is_some_and(|(identity, items)| {
+                *identity == session.identity() && !items.is_empty()
+            })
+        })
+    });
+    let visible = computed(move || {
+        let identity = session.identity();
+        result
+            .with(|items| {
+                items
+                    .filter(|(owner, _)| *owner == identity)
+                    .map(|(_, items)| items.clone())
+            })
+            .or_else(|| {
+                local.with(|items| {
+                    items
+                        .filter(|(owner, _)| *owner == identity)
+                        .map(|(_, items)| items.clone())
+                })
+            })
+            .unwrap_or_default()
+    });
     crate::shell::content(nav, move || tr("nav.history.title")).child(
         view()
             .relative()
@@ -152,7 +210,7 @@ fn content(
                 move || ui::status(move || tr("common.resolving")),
             ))
             .child(when(
-                move || result.loading() && !has_current.get(),
+                move || result.loading() && !has_current.get() && !has_local.get(),
                 crate::features::history::presentation::history_loading,
             ))
             .child(when(
@@ -169,19 +227,18 @@ fn content(
                 },
             ))
             .child(when(
-                move || has_current.get() && result.error().is_none(),
+                move || (has_current.get() && result.error().is_none()) || has_local.get(),
                 move || {
                     history::content(
-                        move || {
-                            result.with(|items| {
-                                items.map(|(_, items)| items.clone()).unwrap_or_default()
-                            })
-                        },
+                        visible,
                         hongguo_common::utils::time::now_ms(),
                         history::HistoryEvents {
                             open: Box::new(open),
                             remove: Some(Box::new(remove)),
                             busy: computed(move || busy.get() || resolving.get()),
+                            can_manage: computed(move || {
+                                has_current.get() && result.error().is_none()
+                            }),
                             reset: computed(move || (session.identity(), deleted.get())),
                         },
                     )

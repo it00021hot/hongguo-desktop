@@ -47,6 +47,25 @@ pub async fn series_by_id(db: &Db, series_id: &str) -> AppResult<Option<Series>>
     Ok(Some(s))
 }
 
+/// Fetch only the requested series in one indexed query.
+pub async fn series_by_ids(db: &Db, ids: &[String]) -> AppResult<Vec<Series>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(", ");
+    let sql = format!("SELECT json, dismissed FROM series WHERE series_id IN ({placeholders})");
+    let params: Vec<Value> = ids.iter().cloned().map(Value::Text).collect();
+    let mut rows = db.conn().query(&sql, params).await.map_err(map_db_err)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_db_err)? {
+        let mut series: Series = serde_json::from_str(&col_text(&row, 0)?)
+            .map_err(|error| AppError::StoreCorrupt(format!("剧行反序列化失败: {error}")))?;
+        series.dismissed = col_i64(&row, 1)? != 0;
+        out.push(series);
+    }
+    Ok(out)
+}
+
 /// 登记或更新档案。冲突时**保留 dismissed 标记**（历史库里的移除标记
 /// 不能被重新拉取复活；新代码已没有写入入口，列只为兼容旧库保留）。
 pub async fn upsert_series(db: &Db, s: &Series) -> AppResult<()> {

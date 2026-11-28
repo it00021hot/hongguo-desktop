@@ -4,7 +4,7 @@ use crate::ui::Icon;
 use crate::ui::SeriesRowParts;
 use crate::ui::controls::surface;
 use crate::ui::icon;
-use crate::ui::radii;
+
 use crate::ui::series_row;
 use nsh_base::theme;
 use nsh_core::prelude::*;
@@ -266,47 +266,9 @@ pub(crate) fn rank_sub_tab(
 ) -> nsh_base::ToggleElement {
     let selected = selected.into_reactive();
     let selected = computed(move || selected.get());
-    nsh_base::toggle()
+    crate::ui::filter_toggle(label)
         .pressed(selected)
-        .items_center()
-        .justify_center()
-        .min_h(move || px(if is_desktop() { 36.0 } else { 48.0 }))
-        .flex_shrink_0()
         .style_when(move || window().width.0 >= 768.0, |style| style.w_full())
-        .px_3()
-        .py_2()
-        .rounded(radii::control())
-        .bg(move || theme().background.opacity(0.0))
-        .text_color(move || theme().muted_foreground)
-        .hover(crate::ui::palette::highlighted)
-        .pressed_style(crate::ui::palette::selected)
-        .active(|style| {
-            style.opacity(0.8).scale(move || {
-                if reduce_motion() {
-                    1.0
-                } else {
-                    crate::ui::motion::PRESS_SCALE
-                }
-            })
-        })
-        .transition()
-        .duration(move || {
-            if reduce_motion() {
-                0.0
-            } else {
-                crate::ui::motion::FAST_MS
-            }
-        })
-        .ease_out()
-        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
-        .child(
-            text(label)
-                .number_of_lines(1)
-                .text_sm()
-                .line_height(px(20.0))
-                .font_weight(FontWeight::NORMAL)
-                .style_when(selected, |style| style.font_weight(FontWeight::MEDIUM)),
-        )
 }
 
 pub(crate) fn rank_filter(

@@ -81,6 +81,25 @@ where
     } else {
         Vec::new()
     };
+    let local = read_local(state, identity).await?;
+    let items = merge(cloud, local);
+    Ok(WatchHistoryPage {
+        total: items.len() as i64,
+        items,
+        ..Default::default()
+    })
+}
+
+/// Displayable local history for an active account while the cloud snapshot is fetched.
+pub async fn list_local(
+    state: &AppState,
+    expected_account: HistoryAccount,
+) -> AppResult<Vec<WatchHistoryItem>> {
+    let local = read_local(state, Identity(Some(expected_account))).await?;
+    Ok(merge(Vec::new(), local))
+}
+
+async fn read_local(state: &AppState, identity: Identity) -> AppResult<Vec<WatchHistoryItem>> {
     identity.check(state)?;
     let local_state = state.clone();
     let local_identity = identity.clone();
@@ -92,15 +111,7 @@ where
     identity.check(state)?;
     let local =
         local.map_err(|error| AppError::Internal(format!("本地历史读取任务失败: {error}")))??;
-    let items = merge(
-        cloud,
-        local.into_iter().map(WatchHistoryItem::from).collect(),
-    );
-    Ok(WatchHistoryPage {
-        total: items.len() as i64,
-        items,
-        ..Default::default()
-    })
+    Ok(local.into_iter().map(WatchHistoryItem::from).collect())
 }
 
 async fn collect_pages<F, Fut>(mut fetch: F) -> AppResult<Vec<WatchHistoryItem>>

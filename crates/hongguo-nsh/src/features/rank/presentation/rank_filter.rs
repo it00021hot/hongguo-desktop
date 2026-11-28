@@ -91,21 +91,5 @@ pub(crate) fn rank_filter_close() -> nsh_base::ButtonElement {
 pub(crate) fn rank_filter_option(
     label: impl IntoReactive<SharedString>,
 ) -> nsh_base::ButtonElement {
-    crate::ui::controls::surface(ButtonVariant::Quiet)
-        .min_h(px(if is_desktop() { 22.0 } else { 48.0 }))
-        .px_2p5()
-        .py_1()
-        .rounded_full()
-        .border_1()
-        .border_color(move || theme().border)
-        .selected_style(|style| {
-            crate::ui::palette::selected(style)
-                .border_color(crate::ui::palette::selection_background)
-        })
-        .child(
-            text(label)
-                .text_xs()
-                .line_height(px(16.0))
-                .font_weight(FontWeight::NORMAL),
-        )
+    crate::ui::filter_pill(label)
 }

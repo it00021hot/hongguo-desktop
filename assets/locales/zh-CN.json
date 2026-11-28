@@ -872,6 +872,8 @@
     "empty": "还没有点赞",
     "emptyHint": "在推荐页点 ❤ 赞过的视频会出现在这里",
     "searchPlaceholder": "搜索点赞的剧",
+    "searchLoading": "正在搜索其余点赞…",
+    "searchIncomplete": "部分点赞视频的资料未加载，搜索结果可能不完整",
     "undo": "取消赞",
     "batchUndoTitle": "批量取消点赞？"
   },

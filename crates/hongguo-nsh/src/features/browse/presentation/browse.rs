@@ -83,35 +83,7 @@ pub(crate) fn browse_exit_action() -> nsh_base::ButtonElement {
 }
 
 pub(crate) fn browse_chip(label: impl IntoReactive<SharedString>) -> nsh_base::ToggleElement {
-    nsh_base::toggle()
-        .min_h(px(if is_desktop() { 22.0 } else { 28.0 }))
-        .min_w_7()
-        .hit_slop(EdgeInsets::all(px(if is_desktop() { 0.0 } else { 10.0 })))
-        .px_3()
-        .py_0p5()
-        .rounded_full()
-        .border_1()
-        .border_color(move || theme().border)
-        .bg(move || theme().background.opacity(0.0))
-        .text_color(move || theme().muted_foreground)
-        .font_weight(FontWeight::NORMAL)
-        .pressed_style(|style| {
-            crate::ui::palette::selected(style)
-                .border_color(move || theme().background.opacity(0.0))
-                .font_weight(FontWeight::MEDIUM)
-        })
-        .hover(crate::ui::palette::highlighted)
-        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
-        .active(|style| style.opacity(0.8))
-        .transition()
-        .duration(move || {
-            if reduce_motion() {
-                0.0
-            } else {
-                crate::ui::motion::FAST_MS
-            }
-        })
-        .child(text(label).text_xs().line_height(px(16.0)))
+    crate::ui::filter_toggle(label)
 }
 
 pub(crate) fn browse_filter_group() -> nsh_base::ToggleGroupElement {
