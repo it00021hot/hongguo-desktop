@@ -2,9 +2,9 @@
 
 Source: https://github.com/longbridge/nsh
 
-Release: v0.7.1
+Release: v0.7.2
 
-Commit: f78eace7af23a9c1c72605c7ee46204f57f3e8e6
+Commit: 0c29b5e3351128f489fe53bfb167160801707191
 
 The source snapshot keeps all upstream crates, workspace metadata and licenses,
 compile-time fixtures, and workspace member examples. The website and unrelated
@@ -57,14 +57,11 @@ for interactive user-mode applications, instead of the console monitor's
 follow their own display state when the console display is off. Lock, disconnect,
 minimize and window-cloaking lifecycle handling is retained.
 
-Windows `system::lifecycle` checks open `app_window` HWNDs alongside the hidden
-host `surface.hwnd()`, and `app_window` `WM_WINDOWPOSCHANGED` refreshes both
-monitor color state and app lifecycle. Without this, apps declaring their main
-window via `app_window()` stay permanently in `Lifecycle::Background`. `ComponentContext::window_hwnd`
-also exposes the component's hosting `app_window` HWND directly so non-visual
-components do not depend on `placed()` reparenting. Remove these patches when
-upstream `nsh-platform-windows` derives lifecycle from `app_window` visibility
-and exposes the hosting window handle.
+NSH v0.7.2 handles app_window visibility in the upstream lifecycle and
+refreshes it on `WM_WINDOWPOSCHANGED`. The local monitor color refresh in
+that message is retained. The local `ComponentContext::window_hwnd` also
+continues to expose the hosting app window to nonvisual components without
+requiring `placed()` reparenting.
 
 On Android API 26–29, the bottom safe-area and native tab-bar insets are capped by the stable system-bar
 inset. The legacy system-window inset also includes the IME during `adjustResize`;
@@ -109,9 +106,6 @@ Desktop pointer presses release a control's keyboard focus when they land on
 plain content outside it. macOS returns the responder to the current window's
 root, and Windows clears the focus recorded for that window. Text selection and
 hosted editors retain their pointer handling.
-Windows resolves a press target before releasing native text focus, matching
-macOS: non-focusable actions such as combobox options keep the editor focused
-until the action runs. Blank space still blurs it.
 
 On macOS, live text alignment changes apply to the field editor while editing.
 The field's cell takes the new alignment after the edit commits so AppKit cannot

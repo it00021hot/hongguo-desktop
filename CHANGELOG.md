@@ -9,6 +9,23 @@
 - 只写用户可感知的变化：新功能、行为改进、修掉的问题。重构、依赖升级、纯文档不进这里
   （对用户有可感影响才提一句）。
 
+## [0.9.2] - 2026-11-28
+
+### ✨ 新增
+
+- 登录支持扫码，保留手机号登录。
+- 可指定启动页面，也可恢复上次停留的页面。
+
+### ⚡ 优化
+
+- 优化大量收藏和个人片库的加载，统一筛选按钮和短时操作提示。
+
+### 🐛 修复
+
+- 修复 Windows 搜索建议无法点击、预约取消与个人片库多选处理不一致，以及部分偏好设置重启后丢失的问题。
+
+English: Added QR login alongside phone login and configurable startup navigation. Improved large personal-library lists and standardized action feedback. Fixed Windows search suggestion clicks, reservation and batch actions, and preferences not surviving restart.
+
 ## [0.9.1] - 2026-11-27
 
 ### 🐛 修复

@@ -24,7 +24,7 @@ pub(crate) struct SearchSuggestion {
 #[derive(Clone, Copy)]
 pub(crate) struct SearchPopup {
     pub open: Memo<bool>,
-    pub focused: Memo<bool>,
+    pub session_open: Signal<bool>,
     pub composing: Signal<bool>,
     pub selected: Signal<usize>,
     pub options: Memo<Vec<SearchSuggestion>>,
@@ -51,7 +51,7 @@ pub(crate) fn search_suggestions(
         nsh_base::popover()
             .open(move || {
                 Some(if is_desktop() {
-                    popup.focused.get()
+                    popup.session_open.get()
                 } else {
                     popup.open.get()
                 })
@@ -172,6 +172,14 @@ pub(crate) fn search_suggestions(
                                             format!("{}:{index}", option.word)
                                         },
                                         move |entry, _| {
+                                            let desktop = is_desktop();
+                                            let pressed_down = stored(false);
+                                            let choose = move || {
+                                                if desktop {
+                                                    input_ref.blur();
+                                                }
+                                                pick(entry.with(|(index, _)| *index));
+                                            };
                                             let option = computed(move || {
                                                 entry.with(|(_, option)| option.clone())
                                             });
@@ -192,8 +200,19 @@ pub(crate) fn search_suggestions(
                                                         entry.with(|(index, _)| *index)
                                                             == popup.selected.get()
                                                     })
+                                                    .on(
+                                                        EventKind::PressDown,
+                                                        move |_: &EventPayload| {
+                                                            if desktop {
+                                                                pressed_down.replace(true);
+                                                                choose();
+                                                            }
+                                                        },
+                                                    )
                                                     .on_press(move || {
-                                                        pick(entry.with(|(index, _)| *index))
+                                                        if !pressed_down.replace(false) {
+                                                            choose();
+                                                        }
                                                     }),
                                                 )
                                         },
