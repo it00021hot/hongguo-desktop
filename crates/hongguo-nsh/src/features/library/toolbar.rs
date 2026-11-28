@@ -22,6 +22,7 @@ pub(super) struct Toolbar {
 pub(super) fn build(
     state: Toolbar,
     choose_folder: impl Fn(CollectionFolder) + Copy + 'static,
+    leading: Option<View>,
 ) -> View {
     let manage = move || {
         crate::features::library::presentation::library_action(
@@ -48,7 +49,7 @@ pub(super) fn build(
         .justify_between()
         .gap_2();
     match state.kind {
-        Kind::Follows => view().flex_row().child(manage()),
+        Kind::Follows => toolbar.children(leading).child(manage()),
         Kind::Collections => toolbar
             .child(
                 view()
@@ -157,10 +158,18 @@ pub(super) fn build(
 pub(super) fn batch(
     rows: super::rows::Rows,
     remove: impl Fn(Vec<Entry>) + Copy + 'static,
-    report: impl Fn(SharedString) + Copy + 'static,
     extras: impl Fn() -> View + 'static,
 ) -> impl IntoElement {
     when(rows.managing, move || {
+        let confirm = signal(false);
+        let pending = signal(Vec::<Entry>::new());
+        let scope = stored(rows.scroll_scope.get_untracked());
+        let title = match rows.kind {
+            Kind::Follows => "follow.batchCancelTitle",
+            Kind::Collections => "collections.batchRemoveTitle",
+            Kind::Liked => "liked.batchUndoTitle",
+            Kind::Reservations => "reservation.batchCancelTitle",
+        };
         let selected_count = move || {
             rows.selected.with(|keys| {
                 rows.items.with(|items| {
@@ -231,30 +240,39 @@ pub(super) fn batch(
                     if entries.is_empty() || rows.busy.get_untracked() {
                         return;
                     }
-                    let title = match rows.kind {
-                        Kind::Follows => "follow.batchCancelTitle",
-                        Kind::Collections => "collections.batchRemoveTitle",
-                        Kind::Liked => "liked.batchUndoTitle",
-                        Kind::Reservations => "reservation.batchCancelTitle",
-                    };
-                    let confirmation = nsh_base::alert_dialog()
-                        .title(tr(title))
-                        .description(
-                            tr("batch.confirmBody").replace("{count}", &entries.len().to_string()),
-                        )
-                        .cancel("cancel", tr("common.cancel"))
-                        .destructive("remove", tr("common.confirm"))
-                        .show();
-                    spawn(async move {
-                        match confirmation.await {
-                            Ok(answer) if answer.action.as_deref() == Some("remove") => {
-                                remove(entries)
-                            }
-                            Ok(_) => {}
-                            Err(error) => report(error.into()),
-                        }
-                    });
+                    scope.replace(rows.scroll_scope.get_untracked());
+                    pending.set(entries);
+                    confirm.set(true);
                 }),
             )
+            .child(ui::confirmation(
+                confirm,
+                move || tr(title),
+                move || {
+                    tr(if rows.kind == Kind::Reservations {
+                        "reservation.confirmCancel"
+                    } else {
+                        rows.kind.action()
+                    })
+                },
+                move || {
+                    text(move || {
+                        tr(if rows.kind == Kind::Reservations {
+                            "reservation.confirmCancelBody"
+                        } else {
+                            "batch.confirmBody"
+                        })
+                        .replace("{count}", &pending.with(Vec::len).to_string())
+                    })
+                    .text_sm()
+                    .line_height(px(20.0))
+                    .text_color(move || theme().muted_foreground)
+                },
+                move || {
+                    if scope.with(|scope| *scope == rows.scroll_scope.get_untracked()) {
+                        remove(pending.get_untracked());
+                    }
+                },
+            ))
     })
 }

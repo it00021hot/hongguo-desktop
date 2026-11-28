@@ -54,8 +54,8 @@ impl StartAction {
     pub fn pending(self, id: &str) -> bool {
         self.pending.with(|pending| pending.as_deref() == Some(id))
     }
-    pub fn notice(self) -> SharedString {
-        self.notice.get()
+    pub fn notice(self) -> Signal<SharedString> {
+        self.notice
     }
     pub fn start(self, id: String) {
         self.request(id, Entry::Regular);

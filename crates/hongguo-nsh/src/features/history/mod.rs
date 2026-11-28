@@ -112,6 +112,7 @@ fn content(
         feedback.set(SharedString::default());
         let identity = session.identity();
         let expected_user = user.get_untracked();
+        let selected_count = entries.len();
         let state = session.with(|session| session.state.clone());
         owner.run(move || {
             spawn(async move {
@@ -123,8 +124,16 @@ fn content(
                             deleted.update(|revision| *revision += 1);
                             session.notify_library();
                             result.refetch();
+                            feedback.set(
+                                tr("batch.done")
+                                    .replace("{count}", &selected_count.to_string())
+                                    .into(),
+                            );
                         }
-                        Err(error) => feedback.set(error.text()),
+                        Err(error) => {
+                            feedback.set(error.text());
+                            result.refetch();
+                        }
                     }
                 }
                 busy.set(false);
@@ -136,8 +145,8 @@ fn content(
     });
     crate::shell::content(nav, move || tr("nav.history.title")).child(
         view()
+            .relative()
             .flex_1()
-            .child(ui::status(feedback))
             .child(when(
                 move || resolving.get(),
                 move || ui::status(move || tr("common.resolving")),
@@ -177,6 +186,7 @@ fn content(
                         },
                     )
                 },
-            )),
+            ))
+            .child(ui::transient_notice(feedback)),
     )
 }

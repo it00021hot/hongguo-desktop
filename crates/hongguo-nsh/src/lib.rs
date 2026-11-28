@@ -163,7 +163,12 @@ pub fn App() -> impl IntoElement {
                     )
                     .child(account_dialogs)
                     .child(window_modes)
+                    .children(
+                        window_modes::WindowModes::current()
+                            .map(|modes| ui::transient_notice(modes.error())),
+                    )
                     .child(file_access)
+                    .child(ui::transient_notice(ui::window_notice()))
                 },
             ))
     })

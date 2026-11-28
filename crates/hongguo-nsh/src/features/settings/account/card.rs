@@ -57,6 +57,7 @@ pub(super) fn provide(session: SessionHandle) -> View {
         pending: signal(false),
     };
     provide_context(state);
+    let feedback = signal(SharedString::default());
     confirmation(state, move || {
         if state.pending.get_untracked() {
             return;
@@ -77,22 +78,12 @@ pub(super) fn provide(session: SessionHandle) -> View {
                     session.notify_identity();
                     session.notify_library();
                 }
-                Err(error) => {
-                    let notice = nsh_base::alert_dialog()
-                        .title(tr("settings.logout"))
-                        .description(error.text())
-                        .action("close", tr("common.close"))
-                        .show();
-                    spawn(async move {
-                        if let Err(error) = notice.await {
-                            log::error!("[NSH account] logout notice: {error}");
-                        }
-                    });
-                }
+                Err(error) => feedback.set(error.text()),
             }
             state.pending.set(false);
         });
     })
+    .child(ui::transient_notice(feedback))
 }
 
 fn confirmation(state: Context, logout: impl Fn() + 'static) -> View {

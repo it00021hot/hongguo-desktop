@@ -222,11 +222,7 @@ fn presenter(
                                 },
                             )),
                         ),
-                    )
-                    .child(when(
-                        move || !message.get().is_empty(),
-                        move || crate::features::player::presentation::download_status(message),
-                    )),
+                    ),
             )
             .child(
                 view()
@@ -259,5 +255,6 @@ fn presenter(
                             }),
                     ),
             )
+            .child(ui::transient_notice(message))
     })
 }

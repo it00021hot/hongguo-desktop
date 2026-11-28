@@ -71,7 +71,7 @@ pub(super) fn content(source: Source, nav: Navigation, session: SessionHandle) -
                 )
             },
         ))
-        .child(ui::status(reservation.feedback))
+        .child(ui::transient_notice(reservation.feedback))
         .child(section(
             move || {
                 source.with(|source| {

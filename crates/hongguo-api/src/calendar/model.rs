@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct CalendarItem {
     pub series_id: String,
+    /// 外层预约记录标识；已上线条目的内容 ID 仍取 subscribe_data.series_id。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservation_item_id: Option<String>,
     pub title: String,
     #[serde(default)]
     pub cover: String,

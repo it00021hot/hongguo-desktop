@@ -170,7 +170,7 @@ pub(super) fn content(
                                         |style| style.hidden(),
                                     )
                                     .child(when(managing, move || {
-                                        crate::features::library::presentation::personal_pick(
+                                        crate::features::library::presentation::personal_card_pick(
                                             move || {
                                                 item.get()
                                                     .map(|item| SharedString::from(format!("{} · {}", item.title, time_ago(item.updated_at_ms, now_ms))))
@@ -184,7 +184,7 @@ pub(super) fn content(
                                                 })
                                             },
                                         )
-                                        .absolute().top_2().left_2().z_index(10)
+                                        .disabled(busy)
                                         .on_change(move |_: &bool| open())
                                     }))
                                     .child(
@@ -193,7 +193,9 @@ pub(super) fn content(
                                                 item.get()
                                                     .map(|item| SharedString::from(item.title))
                                             })
-                                            .on_press(open)
+                                            .disabled(move || managing.get() || busy.get())
+                                            .disabled_style(|style| style.opacity(move || if managing.get() { 1.0_f32 } else { 0.5 }))
+                                            .on_press(move || { if !managing.get_untracked() { open(); } })
                                             .child(
                                                 view().w_full().aspect_ratio(3.0 / 4.0).relative().overflow_hidden().rounded(px(8.0)).child(image(move || {
                                                     item.get()

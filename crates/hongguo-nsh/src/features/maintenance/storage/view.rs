@@ -175,6 +175,6 @@ pub(super) fn content(
                         ),
                 ),
             )
-            .child(ui::status(message)),
+            .child(ui::transient_notice(message)),
     )
 }

@@ -169,7 +169,7 @@ pub(super) fn dialog(
                         )
                         .child(visibility(publish, membership.busy))
                         .child(extra())
-                        .child(ui::status(membership.feedback))
+                        .child(ui::transient_notice(membership.feedback))
                         .child(
                             view()
                                 .flex_row()

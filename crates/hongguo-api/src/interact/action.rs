@@ -122,7 +122,7 @@ pub async fn collect_series(series_id: &str, collect: bool, env: &ApiEnv) -> App
 
 /// 批量收藏/取消收藏：同一 `update_bookshelf_video_list` 携带多条目，
 /// 一请求完成批量；`(series_id, collect)` 对，信封与单条完全同形。
-pub async fn collect_series_batch(entries: &[(String, bool)], env: &ApiEnv) -> AppResult<()> {
+pub async fn collect_series_batch(entries: &[(String, i64, bool)], env: &ApiEnv) -> AppResult<()> {
     if entries.is_empty() {
         return Ok(());
     }
@@ -132,10 +132,10 @@ pub async fn collect_series_batch(entries: &[(String, bool)], env: &ApiEnv) -> A
         .unwrap_or(0);
     let list: Vec<Value> = entries
         .iter()
-        .map(|(series_id, collect)| {
+        .map(|(book_id, book_type, collect)| {
             serde_json::json!({
-                "book_id": series_id,
-                "book_type": 2,
+                "book_id": book_id,
+                "book_type": book_type,
                 "modify_time": now,
                 "video_shelf_operate_type": shelf_operate_type(*collect),
             })

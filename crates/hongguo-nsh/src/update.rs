@@ -1,4 +1,4 @@
-use crate::{i18n::tr, ui};
+use crate::i18n::tr;
 use nsh_core::prelude::*;
 use std::future::Future;
 
@@ -13,7 +13,6 @@ struct Updates {
     available: Signal<Option<nsh_updater::Available>>,
     downloaded: Signal<Option<std::path::PathBuf>>,
     operation: Signal<&'static str>,
-    failure: Signal<SharedString>,
 }
 
 impl Default for Updates {
@@ -25,7 +24,6 @@ impl Default for Updates {
             available: signal(None),
             downloaded: signal(None),
             operation: signal("update.checking"),
-            failure: signal(SharedString::default()),
         }
     }
 }
@@ -34,24 +32,34 @@ pub(crate) fn check_on_startup() {
     if is_desktop() {
         let updates = global::<Updates>().get_untracked();
         if !updates.checked.get_untracked() {
-            updates.check();
+            updates.check(None);
         }
     }
 }
 
 impl Updates {
-    fn check(self) {
-        self.run("update.checking", async move {
+    fn check(self, feedback: Option<Signal<SharedString>>) {
+        self.run("update.checking", feedback, async move {
             let update = desktop::check().await?;
+            if let Some(feedback) = feedback {
+                feedback.try_set(update.as_ref().map_or_else(
+                    || tr("update.upToDate"),
+                    |available| {
+                        tr("update.newVersionAvailable")
+                            .replace("{version}", &available.version)
+                            .into()
+                    },
+                ));
+            }
             self.available.set(update);
             self.checked.set(true);
             Ok(())
         });
     }
 
-    fn activate(self) {
+    fn activate(self, feedback: Signal<SharedString>) {
         if !is_desktop() {
-            self.run("update.checking", async {
+            self.run("update.checking", Some(feedback), async {
                 if open_url(RELEASES).await {
                     Ok(())
                 } else {
@@ -59,7 +67,7 @@ impl Updates {
                 }
             });
         } else if let Some(path) = self.downloaded.get_untracked() {
-            self.run("update.installing", async move {
+            self.run("update.installing", Some(feedback), async move {
                 let update = self
                     .available
                     .get_untracked()
@@ -67,26 +75,30 @@ impl Updates {
                 desktop::install(path, update).await
             });
         } else if let Some(update) = self.available.get_untracked() {
-            self.run("update.downloadingArchive", async move {
+            self.run("update.downloadingArchive", Some(feedback), async move {
                 let path = desktop::download(update).await?;
                 self.downloaded.set(Some(path));
+                feedback.try_set(tr("update.downloadedNote"));
                 Ok(())
             });
         } else {
-            self.check();
+            self.check(Some(feedback));
         }
     }
 
     fn run(
         self,
         operation: &'static str,
+        feedback: Option<Signal<SharedString>>,
         work: impl Future<Output = Result<(), String>> + 'static,
     ) {
         if self.busy.get_untracked() {
             return;
         }
         self.busy.set(true);
-        self.failure.set(SharedString::default());
+        if let Some(feedback) = feedback {
+            feedback.set(SharedString::default());
+        }
         self.operation.set(operation);
         self.owner.run(move || {
             spawn(async move {
@@ -107,7 +119,9 @@ impl Updates {
                             "update.downloadingArchive" => "update.downloadFailed",
                             _ => "update.checkFailed",
                         });
-                        self.failure.set(message.replace("{error}", &error).into());
+                        if let Some(feedback) = feedback {
+                            feedback.try_set(message.replace("{error}", &error).into());
+                        }
                     }
                 }
                 self.busy.set(false);
@@ -116,15 +130,13 @@ impl Updates {
     }
 }
 
-pub(crate) fn card() -> View {
+pub(crate) fn card(feedback: Signal<SharedString>) -> View {
     let updates = global::<Updates>().get_untracked();
     let Updates {
         busy,
-        checked,
         available,
         downloaded,
         operation,
-        failure,
         ..
     } = updates;
     crate::features::settings::presentation::form_surface(
@@ -157,7 +169,7 @@ pub(crate) fn card() -> View {
                             computed(move || available.get().is_some()),
                         )
                         .disabled(busy)
-                        .on_press(move || updates.activate()),
+                        .on_press(move || updates.activate(feedback)),
                     ),
             )
             .child(crate::features::settings::presentation::form_hint(
@@ -170,8 +182,6 @@ pub(crate) fn card() -> View {
                             tr("update.newVersionAvailable")
                                 .replace("{version}", &available.version)
                         )
-                    } else if checked.get() {
-                        format!("{version} · {}", tr("update.upToDate"))
                     } else {
                         version
                     }
@@ -195,10 +205,6 @@ pub(crate) fn card() -> View {
                         }
                     })
                 },
-            ))
-            .child(when(
-                move || !failure.get().is_empty(),
-                move || ui::status(failure),
             )),
     )
 }

@@ -18,16 +18,6 @@ pub(super) fn toggle(expanded: Signal<bool>) {
     if let Err(error) = Storage::set_item(COLLAPSED_KEY, if next { "0" } else { "1" }) {
         expanded.set(previous);
         let description = tr("settings.saveFailed").replace("{message}", &error.to_string());
-        spawn(async move {
-            if let Err(error) = nsh_base::alert_dialog()
-                .title(tr("settings.save"))
-                .description(description)
-                .cancel("close", tr("common.close"))
-                .show()
-                .await
-            {
-                log::error!("[NSH browse] could not present save failure: {error}");
-            }
-        });
+        crate::ui::window_notice().update(|message| *message = description.into());
     }
 }

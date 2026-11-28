@@ -149,11 +149,14 @@ fn controls(
                 match action {
                     RailAction::Comments => comments_open.set(true),
                     RailAction::Share => {
-                        target.with(|target| {
-                            drop(set_clipboard(format!(
+                        let link = target.with(|target| {
+                            format!(
                                 "{} https://hongguoduanju.com/detail?series_id={}",
                                 target.title, target.series_id
-                            )));
+                            )
+                        });
+                        spawn(async move {
+                            message.set(ui::copy_feedback(link).await);
                         });
                     }
                     RailAction::Like => submit(Action::Like),
@@ -169,7 +172,7 @@ fn controls(
             logged_in,
             comments_open,
         ))
-        .child(ui::status(message))
+        .child(ui::transient_notice(message))
         .child(when(
             move || loaded.error().is_some(),
             move || {

@@ -25,6 +25,8 @@ pub async fn load(state: AppState, kind: Kind, query: Query) -> AppResult<Page> 
                     .map(|item| Entry {
                         key: item.series_id.clone(),
                         series_id: item.series_id,
+                        collection_book_id: Some(item.book_id),
+                        collection_book_type: item.book_type,
                         content_type: item.content_type,
                         ..Default::default()
                     })
@@ -52,14 +54,8 @@ pub async fn load(state: AppState, kind: Kind, query: Query) -> AppResult<Page> 
         },
         Kind::Reservations => reservations(&query, &env).await?,
     };
-    if matches!(kind, Kind::Collections | Kind::Liked) {
-        page.warning = enrich(&state, &env, kind, &mut page.items).await?;
-    }
-    if kind == Kind::Collections {
-        for entry in &mut page.items {
-            // Incomplete metadata does not establish that the catalog removed this series.
-            entry.can_play = !entry.title.trim().is_empty() && entry.episode_count > 0;
-        }
+    if kind == Kind::Liked {
+        page.warning = enrich(&state, &env, &mut page.items).await?;
     }
     page.items = merge_page(query.previous, page.items);
     Ok(page)
@@ -207,7 +203,6 @@ async fn reservations(query: &Query, env: &ApiEnv) -> AppResult<Page> {
 async fn enrich(
     state: &AppState,
     env: &ApiEnv,
-    kind: Kind,
     entries: &mut [Entry],
 ) -> AppResult<Option<AppError>> {
     let ids: Vec<_> = entries
@@ -238,11 +233,7 @@ async fn enrich(
     }
     let mut missing: Vec<_> = entries
         .iter()
-        .filter(|entry| {
-            entry.title.trim().is_empty()
-                || entry.cover.is_empty()
-                || (kind == Kind::Collections && entry.episode_count <= 0)
-        })
+        .filter(|entry| entry.title.trim().is_empty() || entry.cover.is_empty())
         .map(|entry| entry.series_id.clone())
         .collect();
     missing.sort();

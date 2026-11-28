@@ -24,6 +24,7 @@ pub(crate) struct FollowNoticesState {
 }
 
 pub(crate) fn follow_notices(
+    tabs: View,
     state: FollowNoticesState,
     action: impl Fn(NoticeAction) + Copy + 'static,
 ) -> View {
@@ -36,56 +37,67 @@ pub(crate) fn follow_notices(
                 .flex_row()
                 .flex_wrap()
                 .items_center()
+                .justify_between()
                 .gap_2()
+                .child(tabs)
                 .child(
-                    crate::features::library::presentation::library_check(
-                        move || tr("follow.popupOn"),
-                        state.popup,
-                        || false,
-                    )
-                    .flex_row()
-                    .items_center()
-                    .gap_1p5()
-                    .min_h(move || px(if is_desktop() { 20.0 } else { 48.0 }))
-                    .child(text(move || tr("follow.popupOn")).text_sm())
-                    .disabled(state.busy)
-                    .on_change(move |value: &bool| action(NoticeAction::Popup(*value))),
-                )
-                .child(
-                    crate::features::library::presentation::library_action(
-                        move || {
-                            tr(if state.checking.get() {
-                                "follow.checking"
-                            } else {
-                                "follow.checkUpdate"
-                            })
-                        },
-                        Some(Icon::Retry),
-                    )
-                    .disabled(state.busy)
-                    .on_press(move || action(NoticeAction::Check)),
-                )
-                .child(when(
-                    move || !state.items.with(Vec::is_empty),
-                    move || {
-                        surface(ButtonVariant::Quiet)
-                            .accessibility_label(move || tr("follow.clearAll"))
+                    view()
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .justify_end()
+                        .gap_2()
+                        .ml(auto())
+                        .child(
+                            crate::features::library::presentation::library_check(
+                                move || tr("follow.popupOn"),
+                                state.popup,
+                                || false,
+                            )
                             .flex_row()
+                            .items_center()
                             .gap_1p5()
-                            .px_2p5()
-                            .py_1()
-                            .min_h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
-                            .child(crate::ui::icon(Icon::CheckCheck).size_4())
-                            .child(
-                                text(move || tr("follow.clearAll"))
-                                    .text_sm()
-                                    .line_height(px(20.0))
-                                    .font_weight(FontWeight::MEDIUM),
+                            .min_h(move || px(if is_desktop() { 20.0 } else { 48.0 }))
+                            .child(text(move || tr("follow.popupOn")).text_sm())
+                            .disabled(state.busy)
+                            .on_change(move |value: &bool| action(NoticeAction::Popup(*value))),
+                        )
+                        .child(
+                            crate::features::library::presentation::library_action(
+                                move || {
+                                    tr(if state.checking.get() {
+                                        "follow.checking"
+                                    } else {
+                                        "follow.checkUpdate"
+                                    })
+                                },
+                                Some(Icon::Retry),
                             )
                             .disabled(state.busy)
-                            .on_press(move || action(NoticeAction::Clear))
-                    },
-                )),
+                            .on_press(move || action(NoticeAction::Check)),
+                        )
+                        .child(when(
+                            move || !state.items.with(Vec::is_empty),
+                            move || {
+                                surface(ButtonVariant::Quiet)
+                                    .accessibility_label(move || tr("follow.clearAll"))
+                                    .flex_row()
+                                    .gap_1p5()
+                                    .px_2p5()
+                                    .py_1()
+                                    .min_h(move || px(if is_desktop() { 32.0 } else { 48.0 }))
+                                    .child(crate::ui::icon(Icon::CheckCheck).size_4())
+                                    .child(
+                                        text(move || tr("follow.clearAll"))
+                                            .text_sm()
+                                            .line_height(px(20.0))
+                                            .font_weight(FontWeight::MEDIUM),
+                                    )
+                                    .disabled(state.busy)
+                                    .on_press(move || action(NoticeAction::Clear))
+                            },
+                        )),
+                ),
         )
         .child(when(
             move || state.loading.get() && state.items.with(Vec::is_empty),
@@ -213,39 +225,8 @@ pub(crate) fn follow_notices(
         )
 }
 
-pub(crate) fn follow_notice_feedback(message: Signal<SharedString>) -> View {
-    const FEEDBACK_LIFETIME: std::time::Duration = std::time::Duration::from_millis(2500);
-    effect(move || {
-        if !message.get().is_empty() {
-            let deadline = set_timeout(FEEDBACK_LIFETIME, move || {
-                message.set(SharedString::default())
-            });
-            cleanup(move || deadline.cancel());
-        }
-    });
-    view()
-        .absolute()
-        .right(move || px(if is_desktop() { 24.0 } else { 16.0 }))
-        .bottom(move || px(if is_desktop() { 24.0 } else { 16.0 }))
-        .w(px(356.0))
-        .max_w(move || px(window().width.0 - 32.0))
-        .p_4()
-        .border_1()
-        .border_color(move || theme().border)
-        .rounded(crate::ui::radii::control)
-        .bg(move || theme().popover)
-        .text_color(move || theme().popover_foreground)
-        .shadow_lg()
-        .z_index(50)
-        .role(AccessibilityRole::Alert)
-        .accessible(true)
-        .style_when(move || message.get().is_empty(), |style| style.hidden())
-        .child(
-            text(message)
-                .text_size(px(13.0))
-                .line_height(px(19.5))
-                .font_weight(FontWeight::MEDIUM),
-        )
+pub(crate) fn follow_notice_feedback(message: Signal<SharedString>) -> impl IntoElement {
+    crate::ui::transient_notice(message)
 }
 
 pub(crate) fn follow_login_required(on_login: impl Fn() + 'static) -> View {

@@ -162,7 +162,7 @@ pub(super) fn row(
                                 thread.recipient,
                                 thread.message,
                             ))
-                            .child(ui::status(thread.message))
+                            .child(ui::transient_notice(thread.message))
                     }))
                     .into_element()
             }),

@@ -170,7 +170,7 @@ pub(super) fn form(state: State, dispatch: impl Fn(Action) + Copy + 'static) -> 
                     )
             },
         ))
-        .child(ui::status(state.feedback))
+        .child(ui::transient_notice(state.feedback))
 }
 
 fn label(key: &'static str) -> Text {

@@ -610,6 +610,8 @@
     "emptyResponse": "服务器没有返回内容，请稍后再试一次",
     "signer": "暂时准备不了这次请求，请稍后重试",
     "playbackMaterials": "无法验证在线播放组件，请更新应用后重试。",
+    "reservationVerification": "暂时无法核实是否已取消预约。请刷新预约列表后再试。",
+    "reservationStillListed": "该预约仍在列表中，未确认取消。",
     "storeCorrupt": "本地记录读取失败，请重启应用后再试",
     "io": "文件读写失败，请检查磁盘剩余空间",
     "decrypt": "这一集无法播放，请重新下载后再试",
@@ -754,7 +756,9 @@
   },
   "reservation": {
     "searchPlaceholder": "搜索预约的剧",
-    "batchCancelTitle": "批量删除预约？",
+    "batchCancelTitle": "取消选中的预约？",
+    "confirmCancel": "确认取消预约",
+    "confirmCancelBody": "将取消选中的 {count} 条预约，不影响其他预约。",
     "tab": {
       "online": "已上线",
       "offline": "待上线"
@@ -854,6 +858,10 @@
     "confirmFolderDelete": "确认删除",
     "folderVisibilityUnavailable": "暂未读取到可见性，刷新后再试。",
     "unavailableHint": "暂时无法打开，可取消收藏",
+    "metadataLoading": "正在加载剧集资料…",
+    "metadataFailed": "资料加载失败，可重新进入重试",
+    "searchLoading": "正在搜索其余收藏…",
+    "searchIncomplete": "部分收藏资料未加载，搜索结果可能不完整",
     "filterAll": "全部",
     "filterReal": "真人剧",
     "filterComic": "漫剧",

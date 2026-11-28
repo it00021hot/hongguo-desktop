@@ -187,14 +187,6 @@ pub(crate) fn download_field(label: impl IntoReactive<SharedString>) -> nsh_base
         })
 }
 
-pub(crate) fn download_status(message: impl IntoReactive<SharedString>) -> View {
-    view().py_3().child(
-        text(message)
-            .text_sm()
-            .text_color(move || theme().muted_foreground),
-    )
-}
-
 fn surface(height: f32) -> nsh_base::ButtonElement {
     crate::ui::controls::surface_height(ButtonVariant::Quiet, height)
         .text_color(move || theme().foreground)

@@ -151,76 +151,101 @@ pub(super) fn build(session: SessionHandle, nav: Navigation, logged_in: Memo<boo
         }
     });
     let items = feed.items;
-    frame(
-        active,
-        computed(move || unread(&items.get())),
-        logged_in,
-        move || nav.push(Route::Account),
-    )
-    .child(crate::features::library::presentation::follow_notice_feedback(feedback))
-    .child(when(
-        move || logged_in.get() && !active.get(),
-        move || super::content(session, nav, super::Kind::Follows),
-    ))
-    .child(when(
-        move || logged_in.get() && active.get(),
-        move || {
-            view()
-                .flex_1()
-                .min_h(px(0.0))
-                .child(when(
-                    move || !list.loading() && list.error().is_some(),
-                    move || {
-                        crate::features::error_state(
-                            move || {
-                                list.error()
-                                    .map_or_else(SharedString::default, |error| error.text())
-                            },
-                            move || list.refetch(),
-                        )
-                    },
-                ))
-                .child(crate::features::library::presentation::follow_notices(
-                    crate::features::library::presentation::FollowNoticesState {
-                        items,
-                        loading: computed(move || list.loading()),
-                        busy: computed(move || request.loading()),
-                        checking: computed(move || {
-                            request.loading()
-                                && command
-                                    .with(|command| matches!(command, Some((_, _, Command::Check))))
-                        }),
-                        popup: session.notice_preferences().enabled,
-                    },
-                    move |action| {
-                        if request.loading() {
-                            return;
-                        }
-                        feedback.set(SharedString::default());
-                        let next = sequence.get() + 1;
-                        sequence.replace(next);
-                        command.set(Some((
-                            next,
-                            session.identity(),
-                            match action {
-                                crate::features::library::presentation::NoticeAction::Check => {
-                                    Command::Check
-                                }
-                                crate::features::library::presentation::NoticeAction::Clear => {
-                                    Command::Clear
-                                }
-                                crate::features::library::presentation::NoticeAction::Open(
-                                    notice,
-                                ) => Command::Open(notice),
-                                crate::features::library::presentation::NoticeAction::Popup(
-                                    enabled,
-                                ) => Command::Popup(enabled),
-                            },
-                        )));
-                    },
-                ))
-        },
-    ))
+    let unread_count = computed(move || {
+        if logged_in.get() {
+            unread(&items.get())
+        } else {
+            0
+        }
+    });
+    view()
+        .flex_1()
+        .min_h_0()
+        .p_4()
+        .gap_4()
+        .child(when(
+            move || !logged_in.get(),
+            move || {
+                view().gap_4().child(tabs(active, unread_count)).child(
+                    crate::features::library::presentation::follow_login_required(move || {
+                        nav.push(Route::Account)
+                    }),
+                )
+            },
+        ))
+        .child(crate::features::library::presentation::follow_notice_feedback(feedback))
+        .child(when(
+            move || logged_in.get() && !active.get(),
+            move || {
+                super::content(
+                    session,
+                    nav,
+                    super::Kind::Follows,
+                    Some(tabs(active, unread_count)),
+                )
+            },
+        ))
+        .child(when(
+            move || logged_in.get() && active.get(),
+            move || {
+                view()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .child(when(
+                        move || !list.loading() && list.error().is_some(),
+                        move || {
+                            crate::features::error_state(
+                                move || {
+                                    list.error()
+                                        .map_or_else(SharedString::default, |error| error.text())
+                                },
+                                move || list.refetch(),
+                            )
+                        },
+                    ))
+                    .child(crate::features::library::presentation::follow_notices(
+                        tabs(active, unread_count),
+                        crate::features::library::presentation::FollowNoticesState {
+                            items,
+                            loading: computed(move || list.loading()),
+                            busy: computed(move || request.loading()),
+                            checking: computed(move || {
+                                request.loading()
+                                    && command.with(|command| {
+                                        matches!(command, Some((_, _, Command::Check)))
+                                    })
+                            }),
+                            popup: session.notice_preferences().enabled,
+                        },
+                        move |action| {
+                            if request.loading() {
+                                return;
+                            }
+                            feedback.set(SharedString::default());
+                            let next = sequence.get() + 1;
+                            sequence.replace(next);
+                            command.set(Some((
+                                next,
+                                session.identity(),
+                                match action {
+                                    crate::features::library::presentation::NoticeAction::Check => {
+                                        Command::Check
+                                    }
+                                    crate::features::library::presentation::NoticeAction::Clear => {
+                                        Command::Clear
+                                    }
+                                    crate::features::library::presentation::NoticeAction::Open(
+                                        notice,
+                                    ) => Command::Open(notice),
+                                    crate::features::library::presentation::NoticeAction::Popup(
+                                        enabled,
+                                    ) => Command::Popup(enabled),
+                                },
+                            )));
+                        },
+                    ))
+            },
+        ))
 }
 
 pub(super) fn tabs(active: Signal<bool>, unread: Memo<usize>) -> View {
@@ -260,27 +285,6 @@ pub(super) fn tabs(active: Signal<bool>, unread: Memo<usize>) -> View {
                     },
                 )),
         )
-}
-
-fn frame(
-    active: Signal<bool>,
-    unread: Memo<usize>,
-    logged_in: Memo<bool>,
-    on_login: impl Fn() + Copy + 'static,
-) -> View {
-    view()
-        .relative()
-        .flex_1()
-        .p_4()
-        .gap_4()
-        .child(tabs(
-            active,
-            computed(move || if logged_in.get() { unread.get() } else { 0 }),
-        ))
-        .child(when(
-            move || !logged_in.get(),
-            move || crate::features::library::presentation::follow_login_required(on_login),
-        ))
 }
 
 pub(super) fn unread(notices: &[FollowNotice]) -> usize {

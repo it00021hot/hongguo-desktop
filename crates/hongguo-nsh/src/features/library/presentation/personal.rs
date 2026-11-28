@@ -57,6 +57,7 @@ pub(crate) fn personal_tab(label: impl IntoReactive<SharedString>) -> nsh_base::
 
 pub(crate) fn personal_card(selected: impl IntoReactive<bool>) -> View {
     view()
+        .relative()
         .flex_row()
         .items_stretch()
         .gap_4()
@@ -81,7 +82,7 @@ pub(crate) fn personal_card(selected: impl IntoReactive<bool>) -> View {
         })
 }
 
-pub(crate) fn personal_pick(
+pub(crate) fn personal_card_pick(
     label: impl IntoReactive<SharedString>,
     checked: impl IntoReactive<bool>,
 ) -> nsh_base::CheckboxElement {
@@ -112,7 +113,14 @@ pub(crate) fn personal_pick(
                 .text_color(move || theme().primary_foreground)
         }))
         .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
-        .hit_slop(if is_desktop() { 4.0 } else { 14.0 })
+        .absolute()
+        .inset_0()
+        .z_index(20)
+        .items_start()
+        .justify_start()
+        .p_2()
+        .rounded(radii::card)
+        .checked_style(|style| style.border_1().border_color(move || theme().primary))
 }
 
 pub(crate) fn personal_cover(cover: impl IntoReactive<String>) -> nsh_base::ButtonElement {

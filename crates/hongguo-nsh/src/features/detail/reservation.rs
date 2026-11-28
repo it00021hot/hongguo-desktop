@@ -10,8 +10,8 @@ use nsh_core::prelude::*;
 pub(super) struct Reservation {
     pub selected: Memo<bool>,
     pub busy: Signal<bool>,
-    pub message: Memo<SharedString>,
-    pub failed: Memo<bool>,
+    pub feedback: Signal<SharedString>,
+    pub load_error: Memo<SharedString>,
     submit: Stored<Box<dyn Fn()>>,
     retry: Stored<Box<dyn Fn()>>,
 }
@@ -77,7 +77,7 @@ pub(super) fn controller<F: std::future::Future<Output = Result<(), bridge::Fail
     let override_value = signal(None);
     let busy = signal(false);
     let notice = signal(SharedString::default());
-    let failed = signal(false);
+
     let generation = stored(identity.get_untracked());
     effect(move || {
         let next = identity.get();
@@ -85,7 +85,6 @@ pub(super) fn controller<F: std::future::Future<Output = Result<(), bridge::Fail
             override_value.set(None);
             busy.set(false);
             notice.set(SharedString::default());
-            failed.set(false);
         }
     });
     effect(move || {
@@ -113,7 +112,6 @@ pub(super) fn controller<F: std::future::Future<Output = Result<(), bridge::Fail
         let expected_identity = identity.get_untracked();
         busy.set(true);
         notice.set(SharedString::default());
-        failed.set(false);
         let pending = write.with(|write| write(next));
         spawn(async move {
             let result = pending.await;
@@ -131,32 +129,22 @@ pub(super) fn controller<F: std::future::Future<Output = Result<(), bridge::Fail
                     }));
                     changed.with(|changed| changed());
                 }
-                Err(error) => {
-                    failed.set(true);
-                    notice.set(error.text());
-                }
+                Err(error) => notice.set(error.text()),
             }
         });
     }) as Box<dyn Fn()>);
     Reservation {
         selected,
         busy,
-        failed: computed(move || {
-            failed.get() || (notice.get().is_empty() && loaded.error().is_some())
-        }),
-        message: computed(move || {
-            if !notice.get().is_empty() {
-                notice.get()
-            } else {
-                loaded
-                    .error()
-                    .map_or_else(SharedString::default, |error| error.text())
-            }
+        feedback: notice,
+        load_error: computed(move || {
+            loaded
+                .error()
+                .map_or_else(SharedString::default, |error| error.text())
         }),
         submit,
         retry: stored(Box::new(move || {
             notice.set(SharedString::default());
-            failed.set(false);
             loaded.refetch();
         }) as Box<dyn Fn()>),
     }

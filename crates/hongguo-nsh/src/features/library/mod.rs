@@ -10,6 +10,7 @@ mod folder_settings;
 mod folders;
 use hongguo_service::library_service::model;
 mod loading;
+mod metadata;
 mod notices;
 mod posters;
 pub(crate) mod presentation;
@@ -23,7 +24,7 @@ use crate::{
     navigation::{Navigation, Route},
     ui::{self, ButtonVariant},
 };
-use hongguo_service::library_service::{BookshelfFolder, FolderMembership};
+use hongguo_service::library_service::{BookshelfFolder, FolderMembership, RemovalMode};
 use model::{Entry, Query};
 pub(crate) use notices::NoticePreferences;
 use nsh_core::prelude::*;
@@ -129,12 +130,12 @@ pub(crate) fn page(session: SessionHandle, nav: Navigation, kind: Kind) -> View 
     }
     if kind == Kind::Reservations {
         return crate::shell::content(nav, move || tr(kind.title()))
-            .child(content(session, nav, kind));
+            .child(content(session, nav, kind, None));
     }
     crate::shell::content(nav, move || tr(kind.title()))
         .child(when(
             move || logged_in.get(),
-            move || content(session, nav, kind),
+            move || content(session, nav, kind, None),
         ))
         .child(when(
             move || !logged_in.get(),
@@ -151,7 +152,12 @@ pub(crate) fn page(session: SessionHandle, nav: Navigation, kind: Kind) -> View 
         ))
 }
 
-fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElement {
+fn content(
+    session: SessionHandle,
+    nav: Navigation,
+    kind: Kind,
+    leading: Option<View>,
+) -> impl IntoElement {
     let memory = crate::view_memory::scope(kind.memory_name());
     let data::Model {
         online,
@@ -188,27 +194,46 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
         feedback,
     };
     let items = feed::current_items(result, query, context);
-    let visible = computed(move || {
-        let filter = search.get().trim().to_lowercase();
+    let cards = metadata::Cards::new(context.identity);
+    let categorized = computed(move || {
         let category = category.get();
         let folder = collection_folder.get();
         items.with(|items| {
             items
                 .iter()
-                .filter(|item| {
-                    (filter.is_empty()
-                        || item.title.to_lowercase().contains(&filter)
-                        || item.series_id.to_lowercase().contains(&filter)
-                        || item
-                            .collection_item_id
-                            .as_ref()
-                            .is_some_and(|id| id.to_lowercase().contains(&filter)))
-                        && (kind != Kind::Collections || folder.includes(item, category))
-                })
+                .filter(|item| kind != Kind::Collections || folder.includes(item, category))
                 .cloned()
                 .collect::<Vec<_>>()
         })
     });
+    let visible = computed(move || {
+        let filter = search.get().trim().to_lowercase();
+        categorized.with(|items| {
+            items
+                .iter()
+                .filter(|item| filter.is_empty() || cards.matches(item, &filter))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+    });
+    if kind == Kind::Collections {
+        cards.drive(
+            session,
+            context,
+            move || collection_folder.get() != CollectionFolder::Index,
+            visible,
+            categorized,
+            search,
+        );
+        effect(move || {
+            collection_folder.get();
+            category.get();
+            search.get();
+            if context.active.get() {
+                cards.reset();
+            }
+        });
+    }
     effect(move || {
         let keys = result.with(|page| {
             page.map(|page| {
@@ -230,13 +255,19 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
         let requested = entries.len();
         let identity = session.identity();
         let state = session.with(|session| session.state.clone());
-        let online = query.get_untracked().online;
+        let mode = if managing.get_untracked() {
+            RemovalMode::Selection {
+                online: query.with(|query| query.online),
+            }
+        } else {
+            RemovalMode::Row
+        };
         spawn(async move {
             let outcome = bridge::request(hongguo_service::library_service::remove(
                 state,
                 kind.into(),
                 entries,
-                online,
+                mode,
             ))
             .await;
             if session.identity() != identity {
@@ -245,6 +276,8 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
             }
             match outcome {
                 Ok(outcome) => {
+                    let reservation_changed =
+                        kind == Kind::Reservations && !outcome.removed.is_empty();
                     if let Some(mut page) = result.get() {
                         page.items
                             .retain(|item| !outcome.removed.contains(&item.key));
@@ -278,6 +311,15 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                                 .replace("{count}", &outcome.removed.len().to_string())
                                 .into(),
                         );
+                    }
+                    if reservation_changed {
+                        let online = query.with(|query| query.online);
+                        query.set(Query {
+                            identity: Some(identity),
+                            online,
+                            ..Default::default()
+                        });
+                        session.notify_library();
                     }
                 }
                 Err(error) => feedback.set(error.text()),
@@ -335,6 +377,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
     });
     let rows = rows::Rows {
         kind,
+        cards,
         nav,
         items: visible,
         busy,
@@ -414,7 +457,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
         }),
         logged_in: context.logged_in,
     };
-    let toolbar = toolbar::build(toolbar_state, choose_folder);
+    let toolbar = toolbar::build(toolbar_state, choose_folder, leading);
     presentation::frame(kind, toolbar, context.logged_in, nav, move || {
         let body = move || {
             view()
@@ -590,7 +633,6 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                                 ),
                         )
                 }))
-                .child(ui::status(feedback))
                 .child(when(
                     move || result.loading() && items.with(Vec::is_empty),
                     move || loading::entries(kind),
@@ -628,7 +670,16 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                     move || {
                         ui::status(move || {
                             if !search.with(|value| value.trim().is_empty()) {
-                                tr("common.searchNoMatch")
+                                if kind == Kind::Collections && cards.searching(categorized, search)
+                                {
+                                    tr("collections.searchLoading")
+                                } else if kind == Kind::Collections
+                                    && cards.search_incomplete(categorized)
+                                {
+                                    tr("collections.searchIncomplete")
+                                } else {
+                                    tr("common.searchNoMatch")
+                                }
                             } else {
                                 tr(kind.empty())
                             }
@@ -659,52 +710,46 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                         .on_press(move || feed::advance(result, query, context))
                     },
                 ))
-                .child(toolbar::batch(
-                    rows,
-                    remove,
-                    move |error| feedback.set(error),
-                    move || {
-                        let CollectionFolder::Official(id) = collection_folder.get_untracked()
-                        else {
-                            return view();
-                        };
-                        let picked = computed(move || {
-                            let keys = selected.get();
-                            visible.with(|entries| {
-                                entries
-                                    .iter()
-                                    .filter(|entry| keys.contains(&entry.key))
-                                    .cloned()
-                                    .collect::<Vec<_>>()
-                            })
-                        });
-                        let done = move || {
-                            managing.set(false);
-                            reset();
-                        };
-                        view()
-                            .flex_row()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_2()
-                            .child(folder_move::action(membership, id, picked, done))
-                            .child(
-                                ui::controls::compact_button(
-                                    move || tr("collections.folderRemove"),
-                                    ButtonVariant::Secondary,
-                                )
-                                .disabled(move || busy.get() || picked.with(Vec::is_empty))
-                                .on_press(move || {
-                                    membership.change(
-                                        id,
-                                        FolderMembership::Remove,
-                                        picked.get_untracked(),
-                                        done,
-                                    )
-                                }),
+                .child(toolbar::batch(rows, remove, move || {
+                    let CollectionFolder::Official(id) = collection_folder.get_untracked() else {
+                        return view();
+                    };
+                    let picked = computed(move || {
+                        let keys = selected.get();
+                        visible.with(|entries| {
+                            entries
+                                .iter()
+                                .filter(|entry| keys.contains(&entry.key))
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        })
+                    });
+                    let done = move || {
+                        managing.set(false);
+                        reset();
+                    };
+                    view()
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .child(folder_move::action(membership, id, picked, done))
+                        .child(
+                            ui::controls::compact_button(
+                                move || tr("collections.folderRemove"),
+                                ButtonVariant::Secondary,
                             )
-                    },
-                ))
+                            .disabled(move || busy.get() || picked.with(Vec::is_empty))
+                            .on_press(move || {
+                                membership.change(
+                                    id,
+                                    FolderMembership::Remove,
+                                    picked.get_untracked(),
+                                    done,
+                                )
+                            }),
+                        )
+                }))
                 .child(when(
                     move || {
                         kind == Kind::Follows
@@ -727,6 +772,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                 ))
         };
         view()
+            .relative()
             .flex_1()
             .min_h_0()
             .child(when(
@@ -737,5 +783,6 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                 move || collection_folder.get() != CollectionFolder::Index,
                 body,
             ))
+            .child(ui::transient_notice(feedback))
     })
 }

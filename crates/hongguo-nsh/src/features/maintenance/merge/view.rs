@@ -179,7 +179,7 @@ pub(super) fn content(model: MergeView, dispatch: impl Fn(Intent) + 'static) -> 
                 move || model.snapshot.with(|snapshot| !snapshot.tasks.is_empty()),
                 move || super::tasks::content(model, dispatch),
             ))
-            .child(ui::status(model.message)),
+            .child(ui::transient_notice(model.message)),
     )
 }
 

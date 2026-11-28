@@ -1,12 +1,11 @@
-use crate::{features::settings::presentation, i18n::tr, ui, ui::ButtonVariant};
+use crate::{features::settings::presentation, i18n::tr, ui::ButtonVariant};
 use nsh_core::prelude::*;
 
 const NEW_ISSUE_BASE: &str =
     "https://github.com/it00021hot/hongguo-desktop/issues/new?template=bug_report.yml";
 
-pub(super) fn section() -> View {
+pub(super) fn section(status: Signal<SharedString>) -> View {
     let owner = Owner::current();
-    let status = signal(SharedString::default());
     let copy_logs = move || {
         let excerpt = crate::logging::read_diagnostic_excerpt();
         owner.run(move || {
@@ -90,11 +89,7 @@ pub(super) fn section() -> View {
                         )
                         .on_press(open_log_dir)
                     })),
-            )
-            .child(when(
-                move || !status.get().is_empty(),
-                move || ui::status(status),
-            )),
+            ),
     )
 }
 

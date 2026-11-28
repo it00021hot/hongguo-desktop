@@ -42,7 +42,13 @@ pub(super) fn section(
             ))
             .child(
                 crate::features::settings::presentation::form_icon_action(
-                    move || tr("settings.testProxy"),
+                    move || {
+                        tr(if busy.get() {
+                            "settings.testing"
+                        } else {
+                            "settings.testProxy"
+                        })
+                    },
                     crate::features::settings::presentation::FormAction::TestProxy,
                 )
                 .self_start()
@@ -50,7 +56,7 @@ pub(super) fn section(
                 .on_press(move || {
                     let proxy = draft.with_untracked(|draft| draft.proxy.clone());
                     busy.set(true);
-                    message.set(tr("settings.testing"));
+                    message.set(SharedString::default());
                     spawn(async move {
                         let result = crate::bridge::request(async move {
                             hongguo_service::settings_service::proxy::test_proxy(&proxy).await

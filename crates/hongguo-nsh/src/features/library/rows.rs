@@ -13,6 +13,7 @@ use nsh_core::prelude::*;
 
 #[derive(Clone, Copy)]
 pub(super) struct Rows {
+    pub(super) cards: super::metadata::Cards,
     pub(super) kind: Kind,
     pub(super) nav: Navigation,
     pub(super) items: Memo<Vec<Entry>>,
@@ -73,7 +74,7 @@ pub(super) fn build(
                             })
                         })
                         .child(when(rows.managing, move || {
-                            crate::features::library::presentation::personal_pick(
+                            crate::features::library::presentation::personal_card_pick(
                                 move || {
                                     item.get()
                                         .map_or(SharedString::default(), |item| item.title.into())
@@ -94,8 +95,9 @@ pub(super) fn build(
                             .accessibility_label(move || {
                                 item.get().map(|item| SharedString::from(item.title))
                             })
-                            .disabled(rows.busy)
-                            .on_press(select)
+                            .disabled(move || rows.busy.get() || rows.managing.get())
+                            .disabled_style(|style| style.opacity(move || if rows.managing.get() { 1.0_f32 } else { 0.5 }))
+                            .on_press(move || { if !rows.managing.get_untracked() { select(); } })
                             .child(when(
                                 move || {
                                     item.get()
@@ -130,8 +132,9 @@ pub(super) fn build(
                                                     item.title.into()
                                                 })
                                             })
-                                            .disabled(rows.busy)
-                                            .on_press(select),
+                                            .disabled(move || rows.busy.get() || rows.managing.get())
+                                            .disabled_style(|style| style.opacity(move || if rows.managing.get() { 1.0_f32 } else { 0.5 }))
+                                            .on_press(move || { if !rows.managing.get_untracked() { select(); } }),
                                         )
                                         .child(when(
                                             move || {

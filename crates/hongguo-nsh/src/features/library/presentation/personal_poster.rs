@@ -13,11 +13,14 @@ pub(crate) fn personal_poster(
     cover: impl IntoReactive<String>,
     metadata: impl IntoReactive<SharedString>,
     liked: bool,
+    show_open_hint: impl IntoReactive<bool>,
 ) -> nsh_base::ButtonElement {
     let title = title.into_reactive();
     let name = title.clone();
     let cover = cover.into_reactive();
     let cover = computed(move || cover.get());
+    let show_open_hint = show_open_hint.into_reactive();
+    let show_open_hint = computed(move || show_open_hint.get());
     surface(ButtonVariant::Quiet)
         .accessibility_label(move || Some(name.get()))
         .p_0()
@@ -89,7 +92,7 @@ pub(crate) fn personal_poster(
                                 theme()
                                     .color("video-surface")
                                     .expect("media surface token")
-                                    .opacity(0.3)
+                                    .opacity(if show_open_hint.get() { 0.3 } else { 0.0 })
                             })
                         }),
                 )
@@ -101,8 +104,12 @@ pub(crate) fn personal_poster(
                         .justify_center()
                         .pointer_events(nsh_core::PointerEvents::None)
                         .opacity(0.0)
-                        .group_hover(|style| style.opacity(1.0))
-                        .group_focus_within(|style| style.opacity(1.0))
+                        .group_hover(|style| {
+                            style.opacity(move || if show_open_hint.get() { 1.0_f32 } else { 0.0 })
+                        })
+                        .group_focus_within(|style| {
+                            style.opacity(move || if show_open_hint.get() { 1.0_f32 } else { 0.0 })
+                        })
                         .child(
                             view()
                                 .flex_row()
@@ -202,37 +209,6 @@ pub(crate) fn personal_poster_remove(
         .group_hover(|style| style.flex())
         .group_focus_within(|style| style.flex())
         .child(icon(if liked { Icon::HeartOff } else { Icon::StarOff }).size(px(14.0)))
-}
-
-pub(crate) fn personal_poster_pick(checked: impl IntoReactive<bool>) -> View {
-    let checked = checked.into_reactive();
-    let checked = computed(move || checked.get());
-    view()
-        .absolute()
-        .top_2()
-        .left_2()
-        .size(px(20.0))
-        .rounded_full()
-        .border_2()
-        .border_color(move || {
-            if checked.get() {
-                theme().primary
-            } else {
-                theme().muted_foreground.opacity(0.5)
-            }
-        })
-        .bg(move || {
-            if checked.get() {
-                theme().primary
-            } else {
-                theme().background.opacity(0.0)
-            }
-        })
-        .text_color(move || theme().primary_foreground)
-        .items_center()
-        .justify_center()
-        .pointer_events(nsh_core::PointerEvents::None)
-        .child(when(checked, move || icon(Icon::Tasks).size(px(14.0))))
 }
 
 pub(crate) fn personal_poster_columns(width: f32) -> u32 {

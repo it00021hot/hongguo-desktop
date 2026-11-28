@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BookshelfEntry {
+    #[serde(default)]
+    pub book_id: String,
+    #[serde(default)]
+    pub book_type: Option<i64>,
     pub series_id: String,
     /// 收藏时间（unix 毫秒；0 = 服务端未给）
     #[serde(default)]

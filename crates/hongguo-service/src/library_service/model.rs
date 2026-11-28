@@ -9,6 +9,7 @@ pub struct Entry {
     pub collection_item_id: Option<String>,
     pub collection_folder_id: Option<i64>,
     pub collection_book_type: Option<i64>,
+    pub collection_book_id: Option<String>,
     pub can_play: bool,
     pub episode_count: i64,
     pub watched_episode: i64,
