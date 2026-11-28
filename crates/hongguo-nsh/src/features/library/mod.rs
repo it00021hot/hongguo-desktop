@@ -10,6 +10,7 @@ mod folder_settings;
 mod folders;
 use hongguo_service::library_service::model;
 mod loading;
+mod metadata;
 mod notices;
 mod posters;
 pub(crate) mod presentation;
@@ -23,10 +24,11 @@ use crate::{
     navigation::{Navigation, Route},
     ui::{self, ButtonVariant},
 };
-use hongguo_service::library_service::{BookshelfFolder, FolderMembership};
+use hongguo_service::library_service::{BookshelfFolder, FolderMembership, RemovalMode};
 use model::{Entry, Query};
 pub(crate) use notices::NoticePreferences;
 use nsh_core::prelude::*;
+use std::{collections::HashSet, sync::Arc};
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Kind {
@@ -129,12 +131,12 @@ pub(crate) fn page(session: SessionHandle, nav: Navigation, kind: Kind) -> View 
     }
     if kind == Kind::Reservations {
         return crate::shell::content(nav, move || tr(kind.title()))
-            .child(content(session, nav, kind));
+            .child(content(session, nav, kind, None));
     }
     crate::shell::content(nav, move || tr(kind.title()))
         .child(when(
             move || logged_in.get(),
-            move || content(session, nav, kind),
+            move || content(session, nav, kind, None),
         ))
         .child(when(
             move || !logged_in.get(),
@@ -151,7 +153,12 @@ pub(crate) fn page(session: SessionHandle, nav: Navigation, kind: Kind) -> View 
         ))
 }
 
-fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElement {
+fn content(
+    session: SessionHandle,
+    nav: Navigation,
+    kind: Kind,
+    leading: Option<View>,
+) -> impl IntoElement {
     let memory = crate::view_memory::scope(kind.memory_name());
     let data::Model {
         online,
@@ -179,7 +186,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
     });
     let busy = signal(false);
     let managing = signal(false);
-    let selected = signal(Vec::<String>::new());
+    let selected = signal(HashSet::<String>::new());
     let feedback = signal(SharedString::default());
     let membership = folder_membership::Membership {
         session,
@@ -188,38 +195,55 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
         feedback,
     };
     let items = feed::current_items(result, query, context);
-    let visible = computed(move || {
-        let filter = search.get().trim().to_lowercase();
+    let cards = metadata::Cards::new(context.identity);
+    let categorized = computed(move || {
         let category = category.get();
         let folder = collection_folder.get();
         items.with(|items| {
             items
-                .iter()
-                .filter(|item| {
-                    (filter.is_empty()
-                        || item.title.to_lowercase().contains(&filter)
-                        || item.series_id.to_lowercase().contains(&filter)
-                        || item
-                            .collection_item_id
-                            .as_ref()
-                            .is_some_and(|id| id.to_lowercase().contains(&filter)))
-                        && (kind != Kind::Collections || folder.includes(item, category))
-                })
+                .shared_iter()
+                .filter(|item| kind != Kind::Collections || folder.includes(item, category))
                 .cloned()
                 .collect::<Vec<_>>()
         })
     });
-    effect(move || {
-        let keys = result.with(|page| {
-            page.map(|page| {
-                page.items
-                    .iter()
-                    .map(|item| item.key.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
+    let incomplete_search = computed(move || {
+        matches!(kind, Kind::Collections | Kind::Liked)
+            && !search.with(|query| query.trim().is_empty())
+            && !cards.searching(categorized, search)
+            && cards.search_incomplete(categorized)
+    });
+    let visible = computed(move || {
+        let filter = search.get().trim().to_lowercase();
+        categorized.with(|items| cards.filter(items, &filter))
+    });
+    if matches!(kind, Kind::Collections | Kind::Liked) {
+        cards.drive(
+            session,
+            context,
+            move || kind == Kind::Liked || collection_folder.get() != CollectionFolder::Index,
+            visible,
+            categorized,
+            search,
+        );
+        effect(move || {
+            collection_folder.get();
+            category.get();
+            search.get();
+            if context.active.get() {
+                cards.reset();
+            }
         });
-        selected.update(|selected| selected.retain(|key| keys.contains(key)));
+    }
+    effect(move || {
+        result.with(|page| {
+            if selected.with_untracked(HashSet::is_empty) {
+                return;
+            }
+            selected.update(|selected| {
+                selected.retain(|key| page.is_some_and(|page| page.items.contains_key(key)));
+            });
+        });
     });
     let remove = move |entries: Vec<Entry>| {
         if busy.get_untracked() || result.loading() || entries.is_empty() {
@@ -230,13 +254,19 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
         let requested = entries.len();
         let identity = session.identity();
         let state = session.with(|session| session.state.clone());
-        let online = query.get_untracked().online;
+        let mode = if managing.get_untracked() {
+            RemovalMode::Selection {
+                online: query.with(|query| query.online),
+            }
+        } else {
+            RemovalMode::Row
+        };
         spawn(async move {
             let outcome = bridge::request(hongguo_service::library_service::remove(
                 state,
                 kind.into(),
                 entries,
-                online,
+                mode,
             ))
             .await;
             if session.identity() != identity {
@@ -245,12 +275,18 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
             }
             match outcome {
                 Ok(outcome) => {
-                    if let Some(mut page) = result.get() {
-                        page.items
-                            .retain(|item| !outcome.removed.contains(&item.key));
-                        result.mutate(page);
+                    let page_offsets_changed = matches!(kind, Kind::Reservations | Kind::Liked)
+                        && !outcome.removed.is_empty();
+                    let removed: HashSet<&str> =
+                        outcome.removed.iter().map(String::as_str).collect();
+                    if !removed.is_empty() {
+                        if let Some(mut page) = result.get() {
+                            page.items
+                                .retain(|item| !removed.contains(item.key.as_str()));
+                            result.mutate(page);
+                        }
+                        selected.update(|keys| keys.retain(|key| !removed.contains(key.as_str())));
                     }
-                    selected.update(|keys| keys.retain(|key| !outcome.removed.contains(key)));
                     if !outcome.errors.is_empty() {
                         let mut messages = Vec::new();
                         for error in &outcome.errors {
@@ -279,6 +315,15 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                                 .into(),
                         );
                     }
+                    if page_offsets_changed {
+                        let online = query.with(|query| query.online);
+                        query.set(Query {
+                            identity: Some(identity),
+                            online,
+                            ..Default::default()
+                        });
+                        session.notify_library();
+                    }
                 }
                 Err(error) => feedback.set(error.text()),
             }
@@ -295,7 +340,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
             online: current.online,
             ..Default::default()
         });
-        selected.set(Vec::new());
+        selected.update(HashSet::clear);
         result.refetch();
     };
     let play = move |entry| {
@@ -335,6 +380,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
     });
     let rows = rows::Rows {
         kind,
+        cards,
         nav,
         items: visible,
         busy,
@@ -375,7 +421,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                 ..Default::default()
             });
         }
-        selected.set(Vec::new());
+        selected.update(HashSet::clear);
     };
     if kind == Kind::Collections {
         nav.on_back(
@@ -408,13 +454,15 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                 return None;
             }
             result.with(|page| {
-                page.filter(|page| page.belongs_to(&query.get(), context.identity.get()))
-                    .and_then(|page| page.reservation_counts)
+                page.filter(|page| {
+                    query.with(|query| page.belongs_to(query, context.identity.get()))
+                })
+                .and_then(|page| page.reservation_counts)
             })
         }),
         logged_in: context.logged_in,
     };
-    let toolbar = toolbar::build(toolbar_state, choose_folder);
+    let toolbar = toolbar::build(toolbar_state, choose_folder, leading);
     presentation::frame(kind, toolbar, context.logged_in, nav, move || {
         let body = move || {
             view()
@@ -567,7 +615,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                                             },
                                         ))
                                         .child(
-                                            ui::button(
+                                            presentation::library_action(
                                                 move || {
                                                     tr(if managing.get() {
                                                         "batch.exitManage"
@@ -575,14 +623,14 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                                                         "batch.manage"
                                                     })
                                                 },
-                                                ButtonVariant::Secondary,
+                                                None,
                                             )
                                             .disabled(busy)
                                             .on_press(
                                                 move || {
                                                     managing
                                                         .update(|managing| *managing = !*managing);
-                                                    selected.set(Vec::new());
+                                                    selected.update(HashSet::clear);
                                                 },
                                             ),
                                         )
@@ -590,9 +638,8 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                                 ),
                         )
                 }))
-                .child(ui::status(feedback))
                 .child(when(
-                    move || result.loading() && items.with(Vec::is_empty),
+                    move || result.loading() && items.with(model::EntryRows::is_empty),
                     move || loading::entries(kind),
                 ))
                 .child(when(
@@ -623,12 +670,27 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                 ))
                 .child(when(
                     move || {
-                        !result.loading() && result.error().is_none() && visible.with(Vec::is_empty)
+                        !result.loading()
+                            && result.error().is_none()
+                            && visible.with(Vec::is_empty)
+                            && !incomplete_search.get()
                     },
                     move || {
                         ui::status(move || {
                             if !search.with(|value| value.trim().is_empty()) {
-                                tr("common.searchNoMatch")
+                                if matches!(kind, Kind::Collections | Kind::Liked)
+                                    && cards.searching(categorized, search)
+                                {
+                                    tr(if kind == Kind::Liked {
+                                        "liked.searchLoading"
+                                    } else {
+                                        "collections.searchLoading"
+                                    })
+                                } else if kind == Kind::Liked && rows.has_more.get() {
+                                    tr("feed.loadingMore")
+                                } else {
+                                    tr("common.searchNoMatch")
+                                }
                             } else {
                                 tr(kind.empty())
                             }
@@ -638,9 +700,18 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                 .child(rows::build(rows, remove, play, move || {
                     feed::advance(result, query, context)
                 }))
+                .child(when(incomplete_search, move || {
+                    let message = if kind == Kind::Liked {
+                        "liked.searchIncomplete"
+                    } else {
+                        "collections.searchIncomplete"
+                    };
+                    super::error_state(move || tr(message), move || cards.retry_search())
+                }))
                 .child(when(
                     move || {
-                        matches!(collection_folder.get(), CollectionFolder::Official(_))
+                        (kind == Kind::Liked
+                            || matches!(collection_folder.get(), CollectionFolder::Official(_)))
                             && rows.has_more.get()
                             && result.error().is_none()
                     },
@@ -659,52 +730,59 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                         .on_press(move || feed::advance(result, query, context))
                     },
                 ))
-                .child(toolbar::batch(
-                    rows,
-                    remove,
-                    move |error| feedback.set(error),
-                    move || {
-                        let CollectionFolder::Official(id) = collection_folder.get_untracked()
-                        else {
-                            return view();
-                        };
-                        let picked = computed(move || {
-                            let keys = selected.get();
+                .child(toolbar::batch(rows, remove, move || {
+                    let CollectionFolder::Official(id) = collection_folder.get_untracked() else {
+                        return view();
+                    };
+                    let has_selection = computed(move || {
+                        selected.with(|keys| {
+                            !keys.is_empty()
+                                && visible.with(|entries| {
+                                    entries.iter().any(|entry| keys.contains(&entry.key))
+                                })
+                        })
+                    });
+                    let picked = move || {
+                        selected.with(|keys| {
+                            if keys.is_empty() {
+                                return Vec::new();
+                            }
                             visible.with(|entries| {
                                 entries
                                     .iter()
                                     .filter(|entry| keys.contains(&entry.key))
-                                    .cloned()
+                                    .map(|entry| Arc::as_ref(entry).clone())
                                     .collect::<Vec<_>>()
                             })
-                        });
-                        let done = move || {
-                            managing.set(false);
-                            reset();
-                        };
-                        view()
-                            .flex_row()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_2()
-                            .child(folder_move::action(membership, id, picked, done))
-                            .child(
-                                ui::controls::compact_button(
-                                    move || tr("collections.folderRemove"),
-                                    ButtonVariant::Secondary,
-                                )
-                                .disabled(move || busy.get() || picked.with(Vec::is_empty))
-                                .on_press(move || {
-                                    membership.change(
-                                        id,
-                                        FolderMembership::Remove,
-                                        picked.get_untracked(),
-                                        done,
-                                    )
-                                }),
+                        })
+                    };
+                    let done = move || {
+                        managing.set(false);
+                        reset();
+                    };
+                    view()
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .child(folder_move::action(
+                            membership,
+                            id,
+                            picked,
+                            has_selection,
+                            done,
+                        ))
+                        .child(
+                            ui::controls::compact_button(
+                                move || tr("collections.folderRemove"),
+                                ButtonVariant::Secondary,
                             )
-                    },
-                ))
+                            .disabled(move || busy.get() || !has_selection.get())
+                            .on_press(move || {
+                                membership.change(id, FolderMembership::Remove, picked(), done)
+                            }),
+                        )
+                }))
                 .child(when(
                     move || {
                         kind == Kind::Follows
@@ -727,6 +805,7 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                 ))
         };
         view()
+            .relative()
             .flex_1()
             .min_h_0()
             .child(when(
@@ -737,5 +816,6 @@ fn content(session: SessionHandle, nav: Navigation, kind: Kind) -> impl IntoElem
                 move || collection_folder.get() != CollectionFolder::Index,
                 body,
             ))
+            .child(ui::transient_notice(feedback))
     })
 }

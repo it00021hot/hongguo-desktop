@@ -7,6 +7,7 @@ pub(crate) fn profile() -> View {
     card::profile()
 }
 mod model;
+mod qr;
 mod view;
 
 use crate::{
@@ -74,6 +75,7 @@ pub(crate) fn dialogs(session: SessionHandle) -> View {
     });
     let state = State::new(mfa);
     let dispatch = controller::dispatch(session, state, prompt);
+    let scan = qr::State::new();
     clock(state, prompt);
     effect(move || {
         session.identity();
@@ -90,8 +92,11 @@ pub(crate) fn dialogs(session: SessionHandle) -> View {
     });
     crate::features::settings::presentation::login_dialog(
         computed(move || prompt.open()),
-        move || prompt.set_open(false),
-        move || view::form(state, dispatch),
+        move || {
+            scan.close();
+            prompt.set_open(false);
+        },
+        move || qr::login_methods(scan, state, dispatch, session, prompt),
     )
     .child(account_card)
 }

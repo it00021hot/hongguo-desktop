@@ -4,6 +4,7 @@
 
 mod mfa;
 mod model;
+pub mod qr;
 
 use serde_json::Value;
 

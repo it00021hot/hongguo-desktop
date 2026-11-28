@@ -8,15 +8,22 @@ struct Updates {
     session: SessionHandle,
     draft: Signal<Draft>,
     observed: Stored<Draft>,
+    validation: Signal<SharedString>,
     message: Signal<SharedString>,
     page: Owner,
 }
 
-pub(super) fn install(session: SessionHandle, draft: Signal<Draft>, message: Signal<SharedString>) {
+pub(super) fn install(
+    session: SessionHandle,
+    draft: Signal<Draft>,
+    validation: Signal<SharedString>,
+    message: Signal<SharedString>,
+) {
     let updates = Updates {
         session,
         draft,
         observed: stored(draft.get_untracked()),
+        validation,
         message,
         page: Owner::current(),
     };
@@ -28,7 +35,7 @@ pub(super) fn install(session: SessionHandle, draft: Signal<Draft>, message: Sig
             return;
         }
         untracked(move || {
-            message.set(
+            validation.set(
                 next.invalid_number()
                     .map_or_else(SharedString::default, number_error),
             );
@@ -51,7 +58,7 @@ impl Updates {
             Ok(settings) => settings,
             Err(error) => {
                 if self.page.is_live() && self.draft.get_untracked() == next {
-                    self.message.set(error);
+                    self.validation.set(error);
                 }
                 return;
             }

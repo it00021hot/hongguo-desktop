@@ -10,15 +10,17 @@ use crate::{
 };
 use nsh_base::theme;
 use nsh_core::prelude::*;
+use std::{collections::HashSet, sync::Arc};
 
 #[derive(Clone, Copy)]
 pub(super) struct Rows {
+    pub(super) cards: super::metadata::Cards,
     pub(super) kind: Kind,
     pub(super) nav: Navigation,
-    pub(super) items: Memo<Vec<Entry>>,
+    pub(super) items: Memo<Vec<Arc<Entry>>>,
     pub(super) busy: Signal<bool>,
     pub(super) managing: Signal<bool>,
-    pub(super) selected: Signal<Vec<String>>,
+    pub(super) selected: Signal<HashSet<String>>,
     pub(super) has_more: Memo<bool>,
     pub(super) loading_more: Memo<bool>,
     pub(super) scroll_scope: Memo<(u64, bool, String, i64, super::CollectionFolder)>,
@@ -40,18 +42,17 @@ pub(super) fn build(
         virtual_list(
             move || rows.items.with(Vec::len),
             move |at| {
-                let item =
-                    computed(move || rows.items.with(|items| items.get(at.index()).cloned()));
+                let item = computed(move || rows.items.with(|items| {
+                    items.get(at.index()).map(|entry| Arc::as_ref(entry).clone())
+                }));
                 let select = move || {
                     let Some(item) = item.get_untracked() else {
                         return;
                     };
                     if rows.managing.get_untracked() {
                         rows.selected.update(|keys| {
-                            if keys.contains(&item.key) {
-                                keys.retain(|key| key != &item.key);
-                            } else {
-                                keys.push(item.key);
+                            if !keys.remove(&item.key) {
+                                keys.insert(item.key);
                             }
                         });
                     } else {
@@ -73,7 +74,7 @@ pub(super) fn build(
                             })
                         })
                         .child(when(rows.managing, move || {
-                            crate::features::library::presentation::personal_pick(
+                            crate::features::library::presentation::personal_card_pick(
                                 move || {
                                     item.get()
                                         .map_or(SharedString::default(), |item| item.title.into())
@@ -94,8 +95,9 @@ pub(super) fn build(
                             .accessibility_label(move || {
                                 item.get().map(|item| SharedString::from(item.title))
                             })
-                            .disabled(rows.busy)
-                            .on_press(select)
+                            .disabled(move || rows.busy.get() || rows.managing.get())
+                            .disabled_style(|style| style.opacity(move || if rows.managing.get() { 1.0_f32 } else { 0.5 }))
+                            .on_press(move || { if !rows.managing.get_untracked() { select(); } })
                             .child(when(
                                 move || {
                                     item.get()
@@ -130,8 +132,9 @@ pub(super) fn build(
                                                     item.title.into()
                                                 })
                                             })
-                                            .disabled(rows.busy)
-                                            .on_press(select),
+                                            .disabled(move || rows.busy.get() || rows.managing.get())
+                                            .disabled_style(|style| style.opacity(move || if rows.managing.get() { 1.0_f32 } else { 0.5 }))
+                                            .on_press(move || { if !rows.managing.get_untracked() { select(); } }),
                                         )
                                         .child(when(
                                             move || {
@@ -352,7 +355,7 @@ pub(super) fn build(
     )
     .flex_1()
     .on_load_more(move || {
-        if rows.kind == Kind::Reservations {
+        if rows.has_more.get_untracked() {
             more();
         }
     })
@@ -367,11 +370,7 @@ pub(super) fn build(
             })
     })
     .keys(move || {
-        rows.items
-            .get()
-            .into_iter()
-            .map(|item| item.key)
-            .collect::<Vec<_>>()
+        rows.items.with(|items| items.iter().map(|item| item.key.clone()).collect::<Vec<_>>())
     })
     .footer(
         view()

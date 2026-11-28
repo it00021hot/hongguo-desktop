@@ -73,7 +73,7 @@ pub(super) fn shortcuts(active: Memo<bool>) -> View {
                         keys,
                     ))
             }))
-            .child(ui::status(move || keys.notice())),
+            .child(ui::transient_notice(keys.notice())),
     )
 }
 

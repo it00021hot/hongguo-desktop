@@ -1,6 +1,7 @@
 use super::{Kind, model::Entry, rows::Rows};
 use crate::{i18n::tr, navigation::Route};
 use nsh_core::prelude::*;
+use std::sync::Arc;
 
 pub(super) fn build(
     rows: Rows,
@@ -43,7 +44,20 @@ pub(super) fn build(
                     move || rows.items.with(Vec::len),
                     move |at| {
                         let item = computed(move || {
-                            rows.items.with(|items| items.get(at.index()).cloned())
+                            rows.items
+                                .with(|items| {
+                                    items
+                                        .get(at.index())
+                                        .map(|entry| Arc::as_ref(entry).clone())
+                                })
+                                .map(|mut item| {
+                                    let can_play = item.can_play;
+                                    rows.cards.hydrate(&mut item);
+                                    if liked {
+                                        item.can_play = can_play;
+                                    }
+                                    item
+                                })
                         });
                         let picked = move || {
                             item.get().is_some_and(|item| {
@@ -60,30 +74,29 @@ pub(super) fn build(
                                     move || item.get().map(|item| item.cover).unwrap_or_default(),
                                     move || {
                                         item.get()
-                                            .map(|item| summary(&item, liked))
+                                            .map(|item| summary(&item, liked, rows.cards))
                                             .unwrap_or_default()
                                     },
                                     liked,
+                                    move || !rows.managing.get(),
                                 )
-                                .selected(picked)
                                 .disabled(move || {
                                     rows.busy.get()
-                                        || (!rows.managing.get()
-                                            && item.get().is_none_or(|item| !item.can_play))
+                                        || rows.managing.get()
+                                        || item.get().is_none_or(|item| !item.can_play)
+                                })
+                                .disabled_style(|style| {
+                                    style.opacity(
+                                        move || if rows.managing.get() { 1.0_f32 } else { 0.5 },
+                                    )
                                 })
                                 .on_press(move || {
-                                    let Some(item) = item.get_untracked() else {
-                                        return;
-                                    };
                                     if rows.managing.get_untracked() {
-                                        rows.selected.update(|selected| {
-                                            if selected.contains(&item.key) {
-                                                selected.retain(|key| key != &item.key);
-                                            } else {
-                                                selected.push(item.key);
-                                            }
-                                        });
-                                    } else if item.can_play {
+                                        return;
+                                    }
+                                    if let Some(item) =
+                                        item.get_untracked().filter(|item| item.can_play)
+                                    {
                                         if liked {
                                             play(item);
                                         } else {
@@ -93,7 +106,24 @@ pub(super) fn build(
                                 }),
                             )
                             .child(when(rows.managing, move || {
-                                crate::features::library::presentation::personal_poster_pick(picked)
+                                crate::features::library::presentation::personal_card_pick(
+                                    move || item.get().map(|item| title(&item)).unwrap_or_default(),
+                                    picked,
+                                )
+                                .disabled(rows.busy)
+                                .on_change(
+                                    move |checked: &bool| {
+                                        if let Some(item) = item.get_untracked() {
+                                            rows.selected.update(|keys| {
+                                                if *checked {
+                                                    keys.insert(item.key);
+                                                } else {
+                                                    keys.remove(&item.key);
+                                                }
+                                            });
+                                        }
+                                    },
+                                )
                             }))
                             .child(when(
                                 move || !rows.managing.get(),
@@ -102,7 +132,11 @@ pub(super) fn build(
                                         move || tr(rows.kind.action()),
                                         liked,
                                         move || {
-                                            !liked && item.get().is_some_and(|item| !item.can_play)
+                                            !liked
+                                                && item.get().is_some_and(|item| {
+                                                    !item.can_play
+                                                        && rows.cards.status(&item).is_some()
+                                                })
                                         },
                                     )
                                     .disabled(rows.busy)
@@ -125,6 +159,10 @@ pub(super) fn build(
                     more();
                 }
             })
+            .minimum_view_time(super::metadata::VIEW_SETTLE_TIME)
+            .on_viewable_items_change(move |viewable: &nsh_core::element::ViewableItems| {
+                rows.cards.report(viewable);
+            })
             .columns(columns)
             .column_gap(px(16.0))
             .row_gap(px(16.0))
@@ -140,14 +178,17 @@ pub(super) fn build(
         )
 }
 
-fn title(entry: &Entry) -> SharedString {
+pub(super) fn title(entry: &Entry) -> SharedString {
     if entry.title.trim().is_empty() {
+        let id = if entry.series_id.is_empty() {
+            entry.key.as_str()
+        } else {
+            entry.series_id.as_str()
+        };
         tr("collections.unresolved")
             .replace(
                 "{id}",
-                &entry
-                    .series_id
-                    .chars()
+                &id.chars()
                     .rev()
                     .take(6)
                     .collect::<Vec<_>>()
@@ -161,7 +202,7 @@ fn title(entry: &Entry) -> SharedString {
     }
 }
 
-fn summary(entry: &Entry, liked: bool) -> SharedString {
+fn summary(entry: &Entry, liked: bool, cards: super::metadata::Cards) -> SharedString {
     if liked {
         if entry.digged_count > 0 {
             entry.digged_count.to_string().into()
@@ -169,7 +210,13 @@ fn summary(entry: &Entry, liked: bool) -> SharedString {
             SharedString::default()
         }
     } else if !entry.can_play {
-        tr("collections.unavailableHint")
+        match cards.status(entry) {
+            None => tr("collections.metadataLoading"),
+            Some(hongguo_service::library_service::CollectionMetadata::Failed) => {
+                tr("collections.metadataFailed")
+            }
+            _ => tr("collections.unavailableHint"),
+        }
     } else {
         tr("collections.episodeCount")
             .replace("{n}", &entry.episode_count.to_string())

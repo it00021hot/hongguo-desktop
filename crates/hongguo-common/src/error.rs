@@ -41,6 +41,12 @@ pub enum AppError {
     #[error("{0}")]
     Rejected(String),
 
+    #[error("预约取消结果未能核实: {0}")]
+    ReservationVerification(String),
+
+    #[error("该预约仍在列表中")]
+    ReservationStillListed,
+
     /// 取流未命中：有响应但挑不出可播流，或 base 族错误信封显式拒绝。
     /// 与 [`AppError::EmptyResponse`]（全程 200+0 空字节）分开——空响应由
     /// service 层匿名换档恢复；本变体只记账不换设备。
@@ -95,6 +101,8 @@ impl AppError {
             AppError::Media(_) => "error.media",
             AppError::Auth(_) => "error.auth",
             AppError::Rejected(_) => "error.rejected",
+            AppError::ReservationVerification(_) => "error.reservationVerification",
+            AppError::ReservationStillListed => "error.reservationStillListed",
             AppError::StreamMiss(_) => "error.streamMiss",
             AppError::ContentTypeUnknown(_) => "error.contentTypeUnknown",
             AppError::InvalidArgs(_) => "error.invalidArgs",

@@ -35,7 +35,7 @@ pub(crate) struct ControlState {
     pub(crate) playlist: bool,
     pub(crate) related_drama: Memo<Option<hongguo_common::model::RelatedDrama>>,
     pub(crate) linked_pending: Memo<bool>,
-    pub(crate) linked_notice: Memo<SharedString>,
+
     pub(crate) can_binge: bool,
     pub(crate) in_binge: Memo<bool>,
     pub(crate) advanced: AdvancedState,
@@ -170,19 +170,6 @@ pub(crate) fn controls<E: IntoElement>(
                     state.geometry.binge_height.set(bounds.size.height.0);
                 })
                 .child(trigger)
-                .child(when(
-                    move || !state.linked_notice.get().is_empty(),
-                    move || {
-                        text(move || state.linked_notice.get())
-                            .text_xs()
-                            .pt_1()
-                            .text_color(move || {
-                                nsh_base::theme()
-                                    .color("video-controls")
-                                    .expect("video controls")
-                            })
-                    },
-                ))
         })
     };
     effect(move || {

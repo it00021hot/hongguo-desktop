@@ -16,15 +16,10 @@ pub(crate) const LANGUAGES: &[(&str, &str)] =
 
 pub(crate) fn change_language(value: &'static str) {
     if let Err(error) = crate::i18n::select_language(value) {
-        spawn(async move {
-            let answer = nsh_base::alert_dialog()
-                .title(tr("search.langLabel").to_string())
-                .description(tr("settings.saveFailed").replace("{message}", &error))
-                .cancel("close", tr("common.close"))
-                .show();
-            if let Err(error) = answer.await {
-                log::error!("[NSH locale] could not present save failure: {error}");
-            }
+        super::window_notice().update(|message| {
+            *message = tr("settings.saveFailed")
+                .replace("{message}", &error)
+                .into();
         });
     }
 }

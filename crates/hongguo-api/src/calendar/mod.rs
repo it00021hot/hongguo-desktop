@@ -171,13 +171,18 @@ pub(super) fn parse_calendar(data: Option<&Value>) -> AppResult<CalendarPage> {
 /// 一条日历条目，两种 schema 都吃：嵌套形态（匿名请求，`subscribe_data.*`）与
 /// 扁平形态（带 install_id Cookie 或 target_date，字段直接在条目上，无 vid）。
 fn parse_calendar_item(raw: &Value) -> Option<CalendarItem> {
+    let reservation_item_id = raw.get("item_id").and_then(calendar_id);
     if let Some(sd) = raw.get("subscribe_data") {
-        let series_id = sd
-            .get("series_id")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())?;
+        let series_id = sd.get("series_id").and_then(|value| {
+            value
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .or_else(|| calendar_id(value))
+        })?;
         return Some(CalendarItem {
-            series_id: series_id.to_string(),
+            series_id,
+            reservation_item_id,
             title: str_field(sd, "title"),
             cover: str_field(sd, "cover"),
             vid: str_field(sd, "vid"),
@@ -198,12 +203,10 @@ fn parse_calendar_item(raw: &Value) -> Option<CalendarItem> {
                 .unwrap_or(false),
         });
     }
-    let series_id = raw
-        .get("item_id")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())?;
+    let series_id = reservation_item_id.clone()?;
     Some(CalendarItem {
-        series_id: series_id.to_string(),
+        series_id,
+        reservation_item_id,
         title: str_field(raw, "name"),
         cover: str_field(raw, "cover"),
         vid: String::new(),
@@ -223,6 +226,16 @@ fn parse_calendar_item(raw: &Value) -> Option<CalendarItem> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
     })
+}
+
+fn calendar_id(value: &Value) -> Option<String> {
+    if let Some(id) = value.as_str() {
+        return (!id.is_empty()
+            && id.bytes().all(|b| b.is_ascii_digit())
+            && id.bytes().any(|b| b != b'0'))
+        .then(|| id.to_owned());
+    }
+    value.as_u64().filter(|id| *id > 0).map(|id| id.to_string())
 }
 
 /// `[{content: "..."}, ...]` 形态的标签数组 → 字符串数组。

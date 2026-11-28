@@ -226,5 +226,5 @@ pub(super) fn panel(
                     ))
             },
         ))
-        .child(ui::status(state.notice))
+        .child(ui::transient_notice(state.notice))
 }

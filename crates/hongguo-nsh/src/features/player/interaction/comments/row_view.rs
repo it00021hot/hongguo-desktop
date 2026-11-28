@@ -200,7 +200,7 @@ pub(super) fn row(state: State, events: Events) -> View {
             },
         ))
         .child(metadata)
-        .child(ui::status(state.error))
+        .child(ui::transient_notice(state.error))
         .child(when(state.editing, move || (events.get().replies)()))
         .child(when(
             move || matches!(item.get(), Item::Comment(ref comment) if comment.reply_count > 0),

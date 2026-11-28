@@ -51,8 +51,8 @@ pub use device::{
     initialize_device_meta, save_device_profile, save_sdk_session, sdk_session,
 };
 pub use follow::{
-    baseline_delete, baseline_get, baseline_set, notice_insert, notices_clear, notices_list,
-    notices_mark_read,
+    FollowObservation, baseline_delete, baseline_set, notices_clear, notices_list,
+    notices_mark_read, observe_page,
 };
 pub use local_history::{
     delete_local_history, local_history_list, mark_local_history_reported, pending_local_history,
@@ -63,6 +63,6 @@ pub use playback::{
     playback_definition, playback_position, save_playback_definition, save_playback_position,
     series_last_position,
 };
-pub use series::{series_all, series_by_id, upsert_series};
+pub use series::{series_all, series_by_id, series_by_ids, upsert_series};
 pub use settings::{save_settings, settings};
 pub use task::{replace_tasks, tasks};

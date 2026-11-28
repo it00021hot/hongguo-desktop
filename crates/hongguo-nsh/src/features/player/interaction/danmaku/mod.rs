@@ -195,13 +195,8 @@ impl Handle {
     pub(in crate::features::player) fn toggle(self) {
         self.enabled.update(|enabled| *enabled = !*enabled);
     }
-    pub(in crate::features::player) fn notice(self) -> SharedString {
-        let error = self.error.get();
-        if error.is_empty() {
-            self.preferences.error.get()
-        } else {
-            error
-        }
+    pub(in crate::features::player) fn notices(self) -> [Signal<SharedString>; 2] {
+        [self.error, self.preferences.error]
     }
 }
 

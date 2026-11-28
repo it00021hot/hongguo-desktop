@@ -59,8 +59,8 @@ impl WindowModes {
     pub fn pending(self) -> bool {
         self.pending.get()
     }
-    pub fn error(self) -> SharedString {
-        self.error.get()
+    pub fn error(self) -> Signal<SharedString> {
+        self.error
     }
     pub fn immersive(self) -> bool {
         let s = self.state.get();

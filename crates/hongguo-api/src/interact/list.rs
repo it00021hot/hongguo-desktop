@@ -110,6 +110,22 @@ pub(super) fn parse_follow_updates(value: &Value) -> FollowUpdatePage {
 /// 拉账号的书架（收藏）列表，「我的收藏」页数据源；`target_user_id` 是
 /// 登录用户 uid。响应条目字段名未在非空样本中验证过，按同族字段容错解析。
 pub async fn fetch_bookshelf(target_user_id: &str, env: &ApiEnv) -> AppResult<Vec<BookshelfEntry>> {
+    fetch_bookshelf_inner(target_user_id, false, env).await
+}
+
+/// Only this complete, well-formed shelf snapshot can prove that a favorite disappeared.
+pub async fn fetch_bookshelf_strict(
+    target_user_id: &str,
+    env: &ApiEnv,
+) -> AppResult<Vec<BookshelfEntry>> {
+    fetch_bookshelf_inner(target_user_id, true, env).await
+}
+
+async fn fetch_bookshelf_inner(
+    target_user_id: &str,
+    strict: bool,
+    env: &ApiEnv,
+) -> AppResult<Vec<BookshelfEntry>> {
     let biz_query: Vec<(String, String)> =
         vec![("target_user_id".into(), target_user_id.to_string())];
     let bytes =
@@ -121,24 +137,40 @@ pub async fn fetch_bookshelf(target_user_id: &str, env: &ApiEnv) -> AppResult<Ve
         let msg = value.get("message").and_then(Value::as_str).unwrap_or("?");
         return Err(AppError::Media(format!("书架列表接口返回: {msg}")));
     }
-    Ok(parse_bookshelf(&value))
+    parse_bookshelf(&value, strict)
 }
 
-fn parse_bookshelf(value: &Value) -> Vec<BookshelfEntry> {
-    let mut items = Vec::new();
-    for raw in value
+fn parse_bookshelf(value: &Value, strict: bool) -> AppResult<Vec<BookshelfEntry>> {
+    if strict && value.pointer("/data/has_more").and_then(Value::as_bool) == Some(true) {
+        return Err(AppError::Media("收藏列表不完整".into()));
+    }
+    let rows = value
         .pointer("/data/video_shelf_info")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
+        .and_then(Value::as_array);
+    if strict && rows.is_none() {
+        return Err(AppError::Media("收藏列表缺少条目数组".into()));
+    }
+    let rows = rows.map(Vec::as_slice).unwrap_or_default();
+    let mut items = Vec::with_capacity(rows.len());
+    for raw in rows {
         let Some(series_id) = ["series_id", "book_id", "item_id"]
             .into_iter()
             .filter_map(|key| raw.get(key))
             .find_map(bookshelf_id)
         else {
+            if strict {
+                return Err(AppError::Media("收藏列表包含无法识别的条目".into()));
+            }
             continue;
         };
+        let book_id = raw
+            .get("book_id")
+            .and_then(bookshelf_id)
+            .unwrap_or_else(|| series_id.clone());
+        let book_type = raw
+            .get("book_type")
+            .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))
+            .filter(|&value| value > 0);
         // 候选字段秒/毫秒形态并存，按值判量级（1e12 ≈ 2001 年起的毫秒戳）：
         // 毫秒原样用，秒形态 ×1000。
         let collect_time_ms = ["collect_time_ms", "collect_time", "create_time"]
@@ -153,11 +185,13 @@ fn parse_bookshelf(value: &Value) -> Vec<BookshelfEntry> {
             .unwrap_or(0);
         items.push(BookshelfEntry {
             series_id,
+            book_id,
+            book_type,
             collect_time_ms,
             content_type,
         });
     }
-    items
+    Ok(items)
 }
 
 /// 排除空占位值，再按字段顺序尝试；JSON 整数保留 u64 全精度。
@@ -197,40 +231,37 @@ pub async fn fetch_interaction_state(env: &ApiEnv) -> AppResult<InteractionState
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let Some(video) = entry.get("video_data") else {
-            continue;
-        };
-        let vid = video.get("vid").and_then(Value::as_str).unwrap_or_default();
-        if vid.is_empty() {
-            continue;
+        if let Some(item) = entry.get("video_data").and_then(parse_interaction_item) {
+            state.items.push(item);
         }
-        let item = InteractionItem {
-            vid: vid.to_string(),
-            series_id: video
-                .get("series_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            user_digg: video.get("user_digg").and_then(Value::as_bool) == Some(true),
-            digged_count: video
-                .get("digged_count")
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
-            followed: video
-                .pointer("/video_detail/followed")
-                .and_then(Value::as_bool)
-                == Some(true),
-            followed_cnt: video
-                .pointer("/video_detail/followed_cnt")
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
-            series_title: video
-                .pointer("/video_detail/series_title")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        };
-        state.items.push(item);
     }
     Ok(state)
+}
+
+pub(super) fn parse_interaction_item(video: &Value) -> Option<InteractionItem> {
+    Some(InteractionItem {
+        vid: video.get("vid").and_then(bookshelf_id)?,
+        series_id: video
+            .get("series_id")
+            .and_then(bookshelf_id)
+            .unwrap_or_default(),
+        user_digg: video.get("user_digg").and_then(Value::as_bool) == Some(true),
+        digged_count: video
+            .get("digged_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        followed: video
+            .pointer("/video_detail/followed")
+            .and_then(Value::as_bool)
+            == Some(true),
+        followed_cnt: video
+            .pointer("/video_detail/followed_cnt")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        series_title: video
+            .pointer("/video_detail/series_title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
 }

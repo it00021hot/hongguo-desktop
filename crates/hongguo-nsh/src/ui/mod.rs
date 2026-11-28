@@ -3,7 +3,9 @@ pub(crate) mod confirmation;
 pub(crate) use confirmation::confirmation;
 pub(crate) mod controls;
 mod copy;
+mod filter_pill;
 pub(crate) use copy::copy_button;
+pub(crate) use filter_pill::{filter_pill, filter_toggle};
 pub(crate) mod loading;
 pub(crate) mod palette;
 pub(crate) use batch::{batch_bar, batch_delete, batch_select};
@@ -28,11 +30,14 @@ pub(crate) mod select;
 pub(crate) mod sheet;
 pub(crate) mod slider;
 pub(crate) mod switch;
+mod transient_notice;
 pub(crate) use controls::{
     ButtonVariant, button, field, form, form_with_scroll, refresh_shade, status,
 };
+pub(crate) use copy::copy_feedback;
 pub(crate) use icons::{Icon, icon};
 pub(crate) use select::{SelectControl, SelectOption, select};
 pub(crate) use sheet::sheet;
 pub(crate) use slider::{SliderValue, slider};
 pub(crate) use switch::switch;
+pub(crate) use transient_notice::{transient_notice, window_notice};

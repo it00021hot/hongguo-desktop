@@ -6,6 +6,7 @@ pub(crate) fn save(session: SessionHandle, appearance: Appearance, pending: Sign
         return;
     }
     pending.set(true);
+    let feedback = crate::ui::window_notice();
     let state = session.with(|session| session.state.clone());
     spawn(async move {
         let result = bridge::request(async move {
@@ -27,14 +28,11 @@ pub(crate) fn save(session: SessionHandle, appearance: Appearance, pending: Sign
         match result {
             Ok(_) => set_color_scheme(appearance),
             Err(error) => {
-                let notice = nsh_base::alert_dialog()
-                    .title(tr("settings.save").to_string())
-                    .description(tr("settings.saveFailed").replace("{message}", &error.text()))
-                    .cancel("close", tr("common.close"))
-                    .show();
-                if let Err(error) = notice.await {
-                    log::error!("[NSH appearance] could not present save failure: {error}");
-                }
+                feedback.update(|message| {
+                    *message = tr("settings.saveFailed")
+                        .replace("{message}", &error.text())
+                        .into()
+                });
             }
         }
     });

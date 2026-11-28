@@ -444,6 +444,8 @@ POST /reading/bookapi/search/uncover_subscribe/v
 - query 只放设备指纹；reading 轻签名头（x-ss-dp/lc/x-reading-request）；
   **必须带登录 cookie**，响应 `code==0` 即成功
   （操作完记得还原用户的原代理）
+- 「我的 → 预约」的行内取消沿用单条接口。「管理 → 删除选中」按 Android APK 的 `MineReservationViewModel.deleteSelected` 走 `POST /reading/user/subscribe/delete/v`。请求 `{"item_id":["<预约条目 ID>"],"not_del_item_id":[],"all_select":false,"is_online":<当前页签>,"tab_type":13}`。两个 ID 数组均为字符串（`DelUserSubscribeItemRequest`），不能转换成 JSON 数字。只删除显式选中的条目，不使用服务端全选。
+- 批量取消的 ID 取列表每行外层的 `item_id`，不是已上线条目的 `subscribe_data.series_id`。写入响应 `code=0` 只表明请求已受理；「我的预约」从两个页签分别用新会话拉全并复核，只有原记录和剧集都不再出现才算已取消。分页不完整时不报成功。
 
 ## 8. 短信登录（passport 系）
 ```
@@ -921,13 +923,15 @@ user_info.base_info.{user_id 数字, user_name, expand_user_avatar}}`、
    "modify_time":1791202503400,"video_shelf_operate_type":0}]}
 ```
 
-- `video_shelf_operate_type`：**0 收藏 / 1 取消**；对象是 **series_id**
-  （`book_id` 字段），`book_type=2` 短剧
+- `video_shelf_operate_type`：**0 收藏 / 1 取消**。取消时使用书架返回的原始
+  `book_id`（未提供时用 `series_id`）和该条目的 `book_type`，不将混合类型
+  统一改写为 2。APK 的同步队列逐条携带类型；真实书架也可返回 3、4。
 - shark_extra 其余字段：`inactive_type:"0"`、`is_active_behavior:"true"`
   （字符串形态，与 enter_from 等并列）
 - 列表查询是配套的 `GET /reading/bookapi/bookshelf/video/list/v?target_user_id=`
-  （target_user_id = 登录 uid；`data.video_shelf_info[]` 条目字段口径
-  以容错解析为准——series_id/book_id/item_id 任一命中即认）
+  （target_user_id = 登录 uid；`data.video_shelf_info[]` 是书架快照）。
+  批量取消后以重新拉取的完整快照确认每条记录都已消失；不能以更新接口
+  `code=0` 直接判为删除成功。
 
 ### 9.4.1 观看进度云上报
 2026-11-10 官方 APK 的《全球死考》匿名观看上报均走

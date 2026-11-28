@@ -22,7 +22,8 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
     let draft = signal(initial);
     let busy = signal(false);
     let message = signal(SharedString::default());
-    updates::install(session, draft, message);
+    let validation = signal(SharedString::default());
+    updates::install(session, draft, validation, message);
     let runtime = runtime::Runtime::production(session, nav, message);
     let active = computed(move || {
         nav.routes()
@@ -33,7 +34,7 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
             .flex_1()
             .min_h(px(0.0))
             .child(when(
-                move || !message.get().is_empty(),
+                move || !validation.get().is_empty(),
                 move || {
                     view()
                         .w_full()
@@ -41,7 +42,7 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
                         .self_center()
                         .px_6()
                         .pt_3()
-                        .child(ui::status(message))
+                        .child(ui::status(validation))
                 },
             ))
             .child(ui::form(
@@ -59,8 +60,9 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
                     .child(when(is_desktop, move || keyboard::shortcuts(active)))
                     .child(keyboard::boss(draft, busy))
                     .child(cache::section(draft, busy, message, runtime))
-                    .child(crate::update::card())
-                    .child(feedback::section()),
-            )),
+                    .child(crate::update::card(message))
+                    .child(feedback::section(message)),
+            ))
+            .child(ui::transient_notice(message)),
     )
 }

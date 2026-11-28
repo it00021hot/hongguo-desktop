@@ -203,11 +203,8 @@ fn rank_rows(
             },
             move || ui::status(move || tr("rank.empty")),
         ))
-        .child(ui::status(reservation.feedback))
-        .child(when(
-            move || play.is_some_and(|play| !play.notice().is_empty()),
-            move || ui::status(move || play.map(|play| play.notice()).unwrap_or_default()),
-        ))
+        .child(ui::transient_notice(reservation.feedback))
+        .children(play.map(|play| ui::transient_notice(play.notice())))
         .child(
             ui::refresh_shade(move || feed.loading() && !initial.get() && !paging.loading.get())
                 .style_when(

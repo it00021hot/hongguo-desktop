@@ -313,4 +313,8 @@ pub use folder::{
     create_folder, delete_folder, fetch_folder_items, fetch_folders, move_folder_items,
     update_folder_items, update_folder_settings,
 };
-pub use list::{fetch_bookshelf, fetch_follow_updates, fetch_interaction_state};
+pub use list::{
+    fetch_bookshelf, fetch_bookshelf_strict, fetch_follow_updates, fetch_interaction_state,
+};
+
+pub mod likes_verification;

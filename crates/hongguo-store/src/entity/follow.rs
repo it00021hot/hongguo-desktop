@@ -3,13 +3,13 @@
 use turso::Value;
 
 use crate::db::Db;
-use hongguo_common::model::FollowNotice;
+use hongguo_common::model::{FollowNotice, NOTICE_KIND_FOLLOW};
 use hongguo_common::{AppError, AppResult};
 
 use super::{col_i64, col_text, map_db_err};
 
 /// 某剧的基线集数；无基线（首次见到）返回 `None`。
-pub async fn baseline_get(db: &Db, series_id: &str) -> AppResult<Option<i64>> {
+async fn baseline_get(db: &Db, series_id: &str) -> AppResult<Option<i64>> {
     let mut rows = db
         .conn()
         .query(
@@ -28,7 +28,8 @@ pub async fn baseline_get(db: &Db, series_id: &str) -> AppResult<Option<i64>> {
 pub async fn baseline_set(db: &Db, series_id: &str, episode_cnt: i64) -> AppResult<()> {
     db.execute(
         "INSERT INTO follow_baseline (series_id, episode_cnt, updated_at) VALUES (?1, ?2, ?3)
-         ON CONFLICT(series_id) DO UPDATE SET episode_cnt = excluded.episode_cnt, updated_at = excluded.updated_at",
+         ON CONFLICT(series_id) DO UPDATE SET episode_cnt = excluded.episode_cnt, updated_at = excluded.updated_at
+         WHERE excluded.episode_cnt > follow_baseline.episode_cnt",
         [
             Value::Text(series_id.to_string()),
             Value::Integer(episode_cnt),
@@ -50,7 +51,7 @@ pub async fn baseline_delete(db: &Db, series_id: &str) -> AppResult<()> {
 }
 
 /// 落一条通知，返回行 id。
-pub async fn notice_insert(
+async fn notice_insert(
     db: &Db,
     kind: &str,
     series_id: &str,
@@ -81,6 +82,61 @@ pub async fn notice_insert(
         .map_err(map_db_err)?
         .ok_or_else(|| AppError::StoreCorrupt("last_insert_rowid 无行".into()))?;
     col_i64(&row, 0)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FollowObservation {
+    pub series_id: String,
+    pub title: String,
+    pub episode_count: i64,
+}
+
+/// Compare and advance a page atomically. Overlapping manual/automatic scans
+/// cannot observe the same old baseline between a notice and its update.
+pub async fn observe_page(db: &Db, items: Vec<FollowObservation>) -> AppResult<Vec<FollowNotice>> {
+    let at = chrono::Utc::now().timestamp();
+    db.with_tx(move |_| async move {
+        let mut fresh = Vec::new();
+        for item in items {
+            if item.series_id.is_empty() || item.episode_count <= 0 {
+                continue;
+            }
+            let Some(previous) = baseline_get(db, &item.series_id)
+                .await?
+                .filter(|count| *count > 0)
+            else {
+                baseline_set(db, &item.series_id, item.episode_count).await?;
+                continue;
+            };
+            if item.episode_count <= previous {
+                continue;
+            }
+            let added = item.episode_count - previous;
+            let title = if item.title.is_empty() {
+                "追更更新".to_owned()
+            } else {
+                item.title
+            };
+            let detail = format!(
+                "追的剧更新了，新增 {added} 集（共 {} 集）",
+                item.episode_count
+            );
+            let id =
+                notice_insert(db, NOTICE_KIND_FOLLOW, &item.series_id, &title, &detail, at).await?;
+            baseline_set(db, &item.series_id, item.episode_count).await?;
+            fresh.push(FollowNotice {
+                id,
+                kind: NOTICE_KIND_FOLLOW.into(),
+                series_id: item.series_id,
+                title,
+                detail,
+                at,
+                read: false,
+            });
+        }
+        Ok(fresh)
+    })
+    .await
 }
 
 /// 通知列表（新→旧；封顶 200 条——只进不出的表给个上界）。

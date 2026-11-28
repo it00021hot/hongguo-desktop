@@ -38,25 +38,12 @@ pub(crate) fn personal_login_required(
 }
 
 pub(crate) fn personal_tab(label: impl IntoReactive<SharedString>) -> nsh_base::ButtonElement {
-    surface(ButtonVariant::Quiet)
-        .min_h(crate::ui::controls::control_height)
-        .h(crate::ui::controls::control_height)
-        .px_4()
-        .py_1p5()
-        .rounded_full()
-        .bg(move || theme().muted)
-        .text_color(move || theme().muted_foreground)
-        .font_weight(FontWeight::NORMAL)
-        .selected_style(|style| {
-            crate::ui::palette::selected(style)
-                .border(px(0.0))
-                .font_weight(FontWeight::MEDIUM)
-        })
-        .child(text(label).text_sm().line_height(px(20.0)))
+    crate::ui::filter_pill(label)
 }
 
 pub(crate) fn personal_card(selected: impl IntoReactive<bool>) -> View {
     view()
+        .relative()
         .flex_row()
         .items_stretch()
         .gap_4()
@@ -81,7 +68,7 @@ pub(crate) fn personal_card(selected: impl IntoReactive<bool>) -> View {
         })
 }
 
-pub(crate) fn personal_pick(
+pub(crate) fn personal_card_pick(
     label: impl IntoReactive<SharedString>,
     checked: impl IntoReactive<bool>,
 ) -> nsh_base::CheckboxElement {
@@ -111,8 +98,15 @@ pub(crate) fn personal_pick(
                 .size(px(14.0))
                 .text_color(move || theme().primary_foreground)
         }))
-        .focus(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
-        .hit_slop(if is_desktop() { 4.0 } else { 14.0 })
+        .focus_visible(|style| style.outline(px(2.0)).outline_color(move || theme().ring))
+        .absolute()
+        .inset_0()
+        .z_index(20)
+        .items_start()
+        .justify_start()
+        .p_2()
+        .rounded(radii::card)
+        .checked_style(|style| style.border_1().border_color(move || theme().primary))
 }
 
 pub(crate) fn personal_cover(cover: impl IntoReactive<String>) -> nsh_base::ButtonElement {

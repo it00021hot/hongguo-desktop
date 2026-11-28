@@ -213,8 +213,8 @@ impl Shortcuts {
         }
         true
     }
-    pub(crate) fn notice(self) -> SharedString {
-        self.notice.get()
+    pub(crate) fn notice(self) -> Signal<SharedString> {
+        self.notice
     }
     pub(crate) fn reset(self) {
         self.cancel_capture();

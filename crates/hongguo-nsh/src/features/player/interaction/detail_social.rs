@@ -15,7 +15,8 @@ pub(crate) struct DetailSocial {
     pub liked: Memo<bool>,
     pub followed: Memo<bool>,
     pub busy: Memo<bool>,
-    pub message: Memo<SharedString>,
+    pub load_error: Memo<SharedString>,
+    pub feedback: Signal<SharedString>,
     submit: Stored<Box<dyn Fn(Action)>>,
     retry: Stored<Box<dyn Fn()>>,
 }
@@ -133,8 +134,9 @@ pub(crate) fn observe(
         computed(move || {
             loaded
                 .error()
-                .map_or_else(|| notice.get(), |error| error.text())
+                .map_or_else(SharedString::default, |error| error.text())
         }),
+        notice,
         submit,
         stored(Box::new(move || {
             notice.set(SharedString::default());
@@ -146,7 +148,8 @@ pub(crate) fn observe(
 fn state(
     snapshot: Signal<Snapshot>,
     busy: Memo<bool>,
-    message: Memo<SharedString>,
+    load_error: Memo<SharedString>,
+    feedback: Signal<SharedString>,
     submit: Stored<Box<dyn Fn(Action)>>,
     retry: Stored<Box<dyn Fn()>>,
 ) -> DetailSocial {
@@ -155,7 +158,8 @@ fn state(
         liked: computed(move || snapshot.get().like.selected),
         followed: computed(move || snapshot.get().follow.selected),
         busy,
-        message,
+        load_error,
+        feedback,
         submit,
         retry,
     }

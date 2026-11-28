@@ -38,13 +38,13 @@ pub(super) fn frame(
 
 pub(crate) mod personal_poster;
 pub(crate) use personal_poster::{
-    personal_poster, personal_poster_columns, personal_poster_pick, personal_poster_remove,
+    personal_poster, personal_poster_columns, personal_poster_remove,
 };
 
 pub(crate) mod personal;
 pub(crate) use personal::{
-    personal_badge, personal_card, personal_cover, personal_date, personal_detail,
-    personal_login_required, personal_pick, personal_publish_at, personal_score, personal_tab,
+    personal_badge, personal_card, personal_card_pick, personal_cover, personal_date,
+    personal_detail, personal_login_required, personal_publish_at, personal_score, personal_tab,
     personal_title,
 };
 

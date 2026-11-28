@@ -39,6 +39,17 @@ pub struct GuestProgressItem {
 
 /// 拉一页云端观看历史。
 pub async fn fetch_watch_history(offset: i64, env: &ApiEnv) -> AppResult<WatchHistoryPage> {
+    fetch_history(offset, env, false).await
+}
+
+pub async fn fetch_watch_history_for_verification(
+    offset: i64,
+    env: &ApiEnv,
+) -> AppResult<WatchHistoryPage> {
+    fetch_history(offset, env, true).await
+}
+
+async fn fetch_history(offset: i64, env: &ApiEnv, verify: bool) -> AppResult<WatchHistoryPage> {
     let q: Vec<(String, String)> = [
         // book_type=2 是短剧过滤的关键：缺了会落进无名字的阅读历史子集
         ("book_type", "2"),
@@ -57,29 +68,38 @@ pub async fn fetch_watch_history(offset: i64, env: &ApiEnv) -> AppResult<WatchHi
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析观看历史失败: {e}")))?;
     check_code(&value)?;
-    parse_history(value.get("data"))
+    parse_history(value.get("data"), verify)
 }
 
-fn parse_history(data: Option<&Value>) -> AppResult<WatchHistoryPage> {
+fn parse_history(data: Option<&Value>, verify: bool) -> AppResult<WatchHistoryPage> {
     let data = data.ok_or_else(|| AppError::Media("响应缺少 data".into()))?;
+    let array = data.get("data_list").and_then(Value::as_array);
+    let has_more = data.get("has_more").and_then(Value::as_bool);
+    let total = data.get("total").and_then(Value::as_i64);
+    if verify && array.is_none() && !(has_more == Some(false) && total == Some(0)) {
+        return Err(AppError::Rejected(
+            "无法核实观看历史：响应没有完整列表".into(),
+        ));
+    }
     let mut items = Vec::new();
-    for raw in data
-        .get("data_list")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
+    for raw in array.map(Vec::as_slice).unwrap_or_default() {
         // vid/book_id 在响应里是 JSON 数字，精度外的会失真，统一走字符串化
         let series_id = raw
             .get("book_id_str")
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| raw.get("book_id").map(num_to_string).unwrap_or_default());
-        if series_id.is_empty() {
+        if series_id.is_empty() || series_id == "0" {
+            if verify {
+                return Err(AppError::Rejected(
+                    "无法核实观看历史：条目缺少剧集标识".into(),
+                ));
+            }
             continue;
         }
         items.push(WatchHistoryItem {
             series_id,
+            book_type: raw.get("book_type").and_then(Value::as_i64),
             title: str_field(raw, "book_name"),
             cover: str_field(raw, "thumb_url"),
             // 线上 0 基 → +1 转回领域值（前端/本地存储 1 基）
@@ -114,12 +134,9 @@ fn parse_history(data: Option<&Value>) -> AppResult<WatchHistoryPage> {
     }
     Ok(WatchHistoryPage {
         items,
-        has_more: data
-            .get("has_more")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        has_more: has_more.unwrap_or(false),
         next_offset: data.get("next_offset").and_then(Value::as_i64).unwrap_or(0),
-        total: data.get("total").and_then(Value::as_i64).unwrap_or(0),
+        total: total.unwrap_or(0),
     })
 }
 
@@ -137,19 +154,18 @@ fn wire_vid_index(domain: i64) -> i64 {
     (domain - 1).max(0)
 }
 
-/// 批量删除云端观看历史：复用 `read_history/update`，每条带
-/// `is_delete=true + use_soft_delete=true`；响应 `update_fail_datas` 非空 = 部分失败。
-pub async fn delete_watch_history(items: &[(String, String, i64)], env: &ApiEnv) -> AppResult<()> {
+/// 批量删除云端观看历史，使用服务端给出的记录类型。
+pub async fn delete_watch_history(items: &[(String, i64)], env: &ApiEnv) -> AppResult<()> {
     if items.is_empty() {
         return Ok(());
     }
     let now = now_ms();
     let update_datas: Vec<Value> = items
         .iter()
-        .map(|(series_id, vid, vid_index)| {
+        .map(|(series_id, book_type)| {
             serde_json::json!({
                 "book_id": str_or_num(series_id),
-                "book_type": 2,
+                "book_type": book_type,
                 "chapter_index": 0,
                 "current_play_position": 0,
                 "digged_count": 0,
@@ -169,11 +185,11 @@ pub async fn delete_watch_history(items: &[(String, String, i64)], env: &ApiEnv)
                 "series_play_cnt": 0,
                 "tone_id": 0,
                 "update_timestamp_ms": now,
-                "use_soft_delete": true,
+                "use_soft_delete": false,
                 "user_digg": false,
                 "user_playlet_comment_flag": false,
-                "vid": str_or_num(vid),
-                "vid_index": wire_vid_index(*vid_index),
+                "vid": 0,
+                "vid_index": 1,
             })
         })
         .collect();

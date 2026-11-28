@@ -63,10 +63,11 @@ impl Membership {
     }
 }
 
-type Candidates = Resource<(u64, Vec<Entry>), bridge::Failure>;
+type Candidates = Resource<(u64, super::model::EntryRows), bridge::Failure>;
 
 #[derive(Clone, Copy)]
 struct Picker {
+    cards: super::metadata::Cards,
     owner: Signal<Option<u64>>,
     search: Signal<String>,
     selected: Signal<HashSet<String>>,
@@ -79,7 +80,7 @@ struct Picker {
 pub(super) fn add(
     membership: Membership,
     folder: i64,
-    existing: Memo<Vec<Entry>>,
+    existing: Memo<super::model::EntryRows>,
     refresh: impl Fn() + Copy + 'static,
 ) -> View {
     let picker = Picker::new(membership, existing);
@@ -122,7 +123,8 @@ pub(super) fn add(
 }
 
 impl Picker {
-    fn new(membership: Membership, existing: Memo<Vec<Entry>>) -> Self {
+    fn new(membership: Membership, existing: Memo<super::model::EntryRows>) -> Self {
+        let cards = super::metadata::Cards::new(membership.context.identity);
         let owner = signal(None);
         let search = signal(String::new());
         let selected = signal(HashSet::<String>::new());
@@ -174,10 +176,7 @@ impl Picker {
                         .filter(|(current, _)| *current == identity)
                         .map_or_else(Vec::new, |(_, rows)| {
                             rows.iter()
-                                .filter(|entry| {
-                                    !entry.title.trim().is_empty()
-                                        && !ids.contains(entry.series_id.as_str())
-                                })
+                                .filter(|entry| !ids.contains(entry.series_id.as_str()))
                                 .cloned()
                                 .collect()
                         })
@@ -186,19 +185,24 @@ impl Picker {
         });
         let visible = computed(move || {
             let query = search.get().trim().to_lowercase();
-            entries.with(|entries| {
-                entries
-                    .iter()
-                    .filter(|entry| {
-                        query.is_empty()
-                            || entry.title.to_lowercase().contains(&query)
-                            || entry.series_id.contains(&query)
-                    })
-                    .cloned()
-                    .collect()
-            })
+            entries.with(|entries| cards.filter(entries, &query))
+        });
+        cards.drive(
+            membership.session,
+            membership.context,
+            move || owner.get().is_some(),
+            visible,
+            entries,
+            search,
+        );
+        effect(move || {
+            if owner.get().is_some() {
+                search.get();
+                cards.reset();
+            }
         });
         Self {
+            cards,
             owner,
             search,
             selected,
@@ -250,6 +254,7 @@ fn dialog(
         picker.busy,
         close,
         view()
+            .relative()
             .min_h_0()
             .child(
                 view()
@@ -274,8 +279,8 @@ fn dialog(
                     .flex_shrink(1.0)
                     .child(picker_results(picker)),
             )
-            .child(ui::status(feedback))
-            .child(picker_footer(picker, close, submit)),
+            .child(picker_footer(picker, close, submit))
+            .child(ui::transient_notice(feedback)),
     )
 }
 
@@ -292,7 +297,13 @@ fn picker_results(picker: Picker) -> impl IntoElement {
                     .min_h(px(56.0))
                     .into_element();
             }
-            let key = if picker.entries.with(Vec::is_empty) {
+            let key = if picker.cards.searching(picker.entries, picker.search) {
+                "collections.searchLoading"
+            } else if !picker.search.with(|value| value.trim().is_empty())
+                && picker.cards.search_incomplete(picker.entries)
+            {
+                "collections.searchIncomplete"
+            } else if picker.entries.with(Vec::is_empty) {
                 "collections.folderAddEmpty"
             } else {
                 "common.searchNoMatch"
@@ -308,6 +319,10 @@ fn picker_results(picker: Picker) -> impl IntoElement {
                         picker
                             .visible
                             .with(|entries| entries.get(at.index()).cloned())
+                            .map(|mut entry| {
+                                picker.cards.hydrate(&mut entry);
+                                entry
+                            })
                     }),
                 )
             },
@@ -319,6 +334,10 @@ fn picker_results(picker: Picker) -> impl IntoElement {
         })
         .row_gap(px(4.0))
         .estimated_item_size(px(56.0))
+        .minimum_view_time(super::metadata::VIEW_SETTLE_TIME)
+        .on_viewable_items_change(move |viewable: &nsh_core::element::ViewableItems| {
+            picker.cards.report(viewable);
+        })
         .keys(move || {
             picker.visible.with(|entries| {
                 entries
@@ -336,7 +355,7 @@ fn picker_row(picker: Picker, entry: Memo<Option<Entry>>) -> impl IntoElement {
         entry.with(|entry| {
             entry
                 .as_ref()
-                .map_or_else(SharedString::default, |entry| entry.title.clone().into())
+                .map_or_else(SharedString::default, super::posters::title)
         })
     };
     let cover = computed(move || {
@@ -357,7 +376,14 @@ fn picker_row(picker: Picker, entry: Memo<Option<Entry>>) -> impl IntoElement {
         })
     });
     super::presentation::library_check(title, checked, false)
-        .disabled(move || picker.busy.get() || entry.with(Option::is_none))
+        .disabled(move || {
+            picker.busy.get()
+                || entry.with(|entry| {
+                    entry
+                        .as_ref()
+                        .is_none_or(|entry| entry.title.trim().is_empty())
+                })
+        })
         .hit_slop(0.0)
         .w_full()
         .h(px(56.0))

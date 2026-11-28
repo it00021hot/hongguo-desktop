@@ -870,7 +870,7 @@ fn content(
         is_highlight,
         playlist: playlist.is_some(),
         related_drama,
-        linked_notice: computed(move || open_linked.notice()),
+
         linked_pending: computed(move || {
             related_drama.with(|related| {
                 related
@@ -1121,14 +1121,12 @@ fn content(
                 },
                 move || ui::status(move || tr("player.bufferingShort")),
             ))
-            .child(ui::status(notice))
-            .child(ui::status(relay_notice))
-            .child(ui::status(move || {
-                window_modes.map_or_else(SharedString::default, |modes| modes.error())
-            }))
-            .child(ui::status(move || danmaku.notice())),
+            .child(ui::status(relay_notice)),
         computed(move || controls_state.binge_bar_visible()),
     )
+    .child(ui::transient_notice(notice))
+    .child(ui::transient_notice(open_linked.notice()))
+    .children(danmaku.notices().map(ui::transient_notice))
     .child(ui::loading::switch_cue(computed(move || {
         let label = manual_label.get()?;
         ((source.loading() || chrome.silent_handoff())

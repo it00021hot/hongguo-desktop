@@ -180,7 +180,7 @@ fn thread_with_header(
                         .on_press(move || cursor.set(feed.get_untracked().cursor))
                 },
             ))
-            .child(ui::status(message))
+            .child(ui::transient_notice(message))
     };
     let empty = move || {
         crate::features::player::presentation::comment_notice(
@@ -366,7 +366,7 @@ fn reply_footer(thread: threads::ReplyThread) -> View {
                 .on_press(move || thread.cursor.set(thread.feed.get_untracked().cursor))
             },
         ))
-        .child(ui::status(thread.message))
+        .child(ui::transient_notice(thread.message))
 }
 
 fn comment_skeleton(rows: usize) -> View {

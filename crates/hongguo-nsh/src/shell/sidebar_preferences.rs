@@ -13,17 +13,7 @@ pub(super) fn toggle(collapsed: Signal<bool>) {
         Ok(()) => collapsed.set(next),
         Err(error) => {
             let description = tr("settings.saveFailed").replace("{message}", &error.to_string());
-            spawn(async move {
-                if let Err(error) = nsh_base::alert_dialog()
-                    .title(tr("settings.save"))
-                    .description(description)
-                    .cancel("close", tr("common.close"))
-                    .show()
-                    .await
-                {
-                    log::error!("[NSH sidebar] could not present save failure: {error}");
-                }
-            });
+            crate::ui::window_notice().update(|message| *message = description.into());
         }
     }
 }

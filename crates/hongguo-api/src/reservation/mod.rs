@@ -8,14 +8,13 @@ use super::calendar::{CalendarPage, SUBSCRIBE_LIST_PATH, parse_calendar};
 use super::client::{ApiEnv, api_call_reading};
 use super::danmaku::LQ_API_ORIGIN;
 use super::discover::check_code;
-use hongguo_common::{AppError, AppResult};
+use hongguo_common::{AppError, AppResult, utils::json::check_code_rejected};
 
 /// 预约 / 取消预约端点：`POST`，body 为 **gzip 压缩的 JSON**
 ///（`op_type` 1 预约 / 2 取消），reading 轻签名、**必须带登录 cookie**；响应 `code==0` 即成功。
 pub const SUBSCRIBE_OP_PATH: &str = "/reading/bookapi/search/uncover_subscribe/v";
-
-/// 批量删除预约端点。
-pub const SUBSCRIBE_DELETE_PATH: &str = "/reading/user/subscribe/delete/v";
+const SUBSCRIBE_DELETE_PATH: &str = "/reading/user/subscribe/delete/v";
+const MY_SUBSCRIBED_CLIENT: i32 = 13;
 
 /// 预约列表拉全（串行翻页，只给「需要全集做成员判定」的消费方用；预约页走 [`fetch_reservations_page`] 懒翻页）。
 /// **session_id 绝不能自造常量**（服务端按它快照会话，操作后重读命中操作前缓存）；角标计数按拉全条数兜底（响应 total 部分形态缺失）。
@@ -85,6 +84,17 @@ pub async fn fetch_reservations_page(
     session_id: Option<&str>,
     env: &ApiEnv,
 ) -> AppResult<CalendarPage> {
+    let response = fetch_reservation_wire(is_online, offset, session_id, env).await?;
+    check_code(&response)?;
+    parse_calendar(response.get("data"))
+}
+
+async fn fetch_reservation_wire(
+    is_online: bool,
+    offset: i64,
+    session_id: Option<&str>,
+    env: &ApiEnv,
+) -> AppResult<Value> {
     let mut q: Vec<(String, String)> = vec![
         (
             "is_online".into(),
@@ -102,10 +112,106 @@ pub async fn fetch_reservations_page(
         q.push(("session_id".into(), sid.to_string()));
     }
     let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, env).await?;
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析预约失败: {e}")))?;
-    check_code(&value)?;
-    parse_calendar(value.get("data"))
+    serde_json::from_slice(&bytes).map_err(|e| AppError::Rejected(format!("解析预约列表失败: {e}")))
+}
+
+/// Mutation verification must never interpret a partial or malformed result as absence.
+pub async fn fetch_reservations_for_verification(
+    online: bool,
+    env: &ApiEnv,
+) -> AppResult<Vec<super::calendar::CalendarItem>> {
+    let total_field = if online {
+        "online_total_count"
+    } else {
+        "offline_total_count"
+    };
+    let mut items = Vec::new();
+    let mut expected_total = None;
+    let mut seen = std::collections::HashSet::new();
+    let mut offset = 0;
+    let mut session = String::new();
+    for _ in 0..20 {
+        let response = fetch_reservation_wire(
+            online,
+            offset,
+            (!session.is_empty()).then_some(session.as_str()),
+            env,
+        )
+        .await?;
+        check_code_rejected(&response, "读取预约列表")?;
+        let data = response
+            .get("data")
+            .ok_or_else(|| verification_error(online, "missing data"))?;
+        let total = data
+            .get(total_field)
+            .map(|total| {
+                total
+                    .as_i64()
+                    .filter(|total| *total >= 0)
+                    .ok_or_else(|| verification_error(online, "invalid total"))
+            })
+            .transpose()?;
+        if expected_total.is_none() {
+            expected_total = total;
+        }
+        if total.is_some() && total != expected_total {
+            return Err(verification_error(
+                online,
+                "total changed during pagination",
+            ));
+        }
+        let has_more = data.get("has_more").and_then(Value::as_bool);
+        let raw_count = match data.get("subscribe_items") {
+            Some(Value::Array(items)) => items.len(),
+            None | Some(Value::Null) if total == Some(0) && has_more != Some(true) => 0,
+            _ => return Err(verification_error(online, "missing subscribe_items")),
+        };
+        let page = parse_calendar(Some(data))?;
+        if page.items.len() != raw_count {
+            return Err(verification_error(online, "unparsed reservation rows"));
+        }
+        for item in page.items {
+            if !seen.insert(
+                item.reservation_item_id
+                    .clone()
+                    .unwrap_or_else(|| item.series_id.clone()),
+            ) {
+                return Err(verification_error(online, "duplicate reservation rows"));
+            }
+            items.push(item);
+        }
+        let has_more = has_more
+            .or_else(|| {
+                expected_total
+                    .filter(|total| *total == items.len() as i64)
+                    .map(|_| false)
+            })
+            .ok_or_else(|| verification_error(online, "indeterminate pagination"))?;
+        if !has_more {
+            if expected_total.is_some_and(|total| total != items.len() as i64) {
+                return Err(verification_error(
+                    online,
+                    "reservation count does not match",
+                ));
+            }
+            return Ok(items);
+        }
+        if page.next_offset <= offset || raw_count == 0 {
+            return Err(verification_error(online, "pagination stopped advancing"));
+        }
+        if session.is_empty() {
+            session = page.session_id;
+        }
+        offset = page.next_offset;
+    }
+    Err(verification_error(
+        online,
+        "maximum verification pages reached",
+    ))
+}
+
+fn verification_error(online: bool, reason: &str) -> AppError {
+    AppError::ReservationVerification(format!("online={online}: {reason}"))
 }
 
 /// 预约（reserve=true）或取消预约一部短剧。需要登录环境（env 带
@@ -113,7 +219,9 @@ pub async fn fetch_reservations_page(
 pub async fn reserve_series(series_id: &str, reserve: bool, env: &ApiEnv) -> AppResult<()> {
     let item_id: i64 = series_id
         .parse()
-        .map_err(|_| AppError::Media(format!("剧集 id 不是数字: {series_id}")))?;
+        .ok()
+        .filter(|id| *id > 0)
+        .ok_or_else(|| AppError::InvalidArgs("预约剧集标识无效".into()))?;
     let payload = serde_json::json!({
         "item_id": item_id,
         "item_type": 1,
@@ -127,50 +235,44 @@ pub async fn reserve_series(series_id: &str, reserve: bool, env: &ApiEnv) -> App
         "wish_list_all_del": 0,
     });
     let raw = serde_json::to_vec(&payload)
-        .map_err(|e| AppError::Media(format!("构造预约请求失败: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("构造预约请求失败: {e}")))?;
     let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_OP_PATH, Some(raw), &[], env).await?;
     let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析预约响应失败: {e}")))?;
-    check_code(&value)
+        .map_err(|e| AppError::Rejected(format!("解析预约响应失败: {e}")))?;
+    check_code_rejected(&value, if reserve { "预约" } else { "取消预约" })
 }
 
-/// 批量删除预约：`POST /reading/user/subscribe/delete/v`；
-/// `item_id` 即 subscribe 列表条目的 series_id（与 reserve_series 同源）。
-pub async fn delete_reservations(
-    item_ids: &[String],
+#[derive(serde::Serialize)]
+struct DeleteSelection<'a> {
+    item_id: &'a [String],
+    not_del_item_id: &'a [String],
     all_select: bool,
-    not_del_item_ids: &[String],
     is_online: bool,
-    env: &ApiEnv,
-) -> AppResult<()> {
-    if !all_select && item_ids.is_empty() {
+    tab_type: i32,
+}
+
+pub async fn delete_selected(item_ids: &[String], online: bool, env: &ApiEnv) -> AppResult<()> {
+    if item_ids.is_empty() {
         return Ok(());
     }
-    let to_num = |s: &str| -> AppResult<i64> {
-        s.parse()
-            .map_err(|_| AppError::Media(format!("剧集 id 不是数字: {s}")))
+    if item_ids.iter().any(|id| {
+        id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || id.bytes().all(|b| b == b'0')
+    }) {
+        return Err(AppError::InvalidArgs("预约条目标识无效".into()));
+    }
+    let payload = DeleteSelection {
+        item_id: item_ids,
+        not_del_item_id: &[],
+        all_select: false,
+        is_online: online,
+        tab_type: MY_SUBSCRIBED_CLIENT,
     };
-    let ids = item_ids
-        .iter()
-        .map(|s| to_num(s))
-        .collect::<AppResult<Vec<i64>>>()?;
-    let not_del = not_del_item_ids
-        .iter()
-        .map(|s| to_num(s))
-        .collect::<AppResult<Vec<i64>>>()?;
-    let payload = serde_json::json!({
-        "item_id": ids,
-        "all_select": all_select,
-        "not_del_item_id": not_del,
-        "is_online": is_online,
-        "tab_type": 13,
-    });
     let raw = serde_json::to_vec(&payload)
-        .map_err(|e| AppError::Media(format!("构造批量删预约请求失败: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("构造批量取消预约请求失败: {e}")))?;
     let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_DELETE_PATH, Some(raw), &[], env).await?;
     let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析批量删预约响应失败: {e}")))?;
-    check_code(&value)
+        .map_err(|e| AppError::Rejected(format!("解析批量取消预约响应失败: {e}")))?;
+    check_code_rejected(&value, "批量取消预约")
 }
 
 pub(crate) mod selectors;

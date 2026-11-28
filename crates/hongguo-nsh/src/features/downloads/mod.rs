@@ -47,13 +47,13 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
     };
     crate::shell::content(nav, move || tr("nav.tasks.title")).child(
         view()
+            .relative()
             .flex_1()
             .min_h_0()
             .child(when(
                 move || result.loading() && result.with(|data| data.is_none()),
                 queue_loading,
             ))
-            .child(ui::status(feedback))
             .child(when(
                 move || result.error().is_some(),
                 move || {
@@ -86,7 +86,8 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> View {
                         move || nav.push(Route::Browse),
                     )
                 },
-            )),
+            ))
+            .child(ui::transient_notice(feedback)),
     )
 }
 

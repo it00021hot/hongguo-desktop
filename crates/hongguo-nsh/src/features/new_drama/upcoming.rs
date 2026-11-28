@@ -118,7 +118,7 @@ pub(super) fn content(
         .min_h(px(0.0))
         .gap_3()
         .child(filters(session, active, query))
-        .child(ui::status(reservations.message))
+        .child(ui::transient_notice(reservations.message))
         .child(when(
             move || feed.error().is_some(),
             move || {

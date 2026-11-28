@@ -17,7 +17,7 @@ pub(crate) mod download;
 pub(crate) use download::download_submit;
 pub(crate) use download::{
     download_cancel, download_count, download_episode, download_field, download_grid,
-    download_quick, download_range_error, download_sheet, download_status,
+    download_quick, download_range_error, download_sheet,
 };
 
 pub(crate) mod player_popup;

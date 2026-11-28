@@ -98,7 +98,7 @@ pub(super) fn presentation(state: State, events: Events) -> View {
                     ),
                 )),
         )
-        .child(ui::status(reservations.message))
+        .child(ui::transient_notice(reservations.message))
         .child(when(
             move || feed.error().is_some(),
             move || {

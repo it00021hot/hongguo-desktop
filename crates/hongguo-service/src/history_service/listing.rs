@@ -1,7 +1,11 @@
-use std::{collections::BTreeMap, future::Future};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+};
 
 use hongguo_api::history::{
     WatchHistoryItem, WatchHistoryPage, delete_watch_history, fetch_watch_history,
+    fetch_watch_history_for_verification,
 };
 use hongguo_common::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
@@ -77,6 +81,25 @@ where
     } else {
         Vec::new()
     };
+    let local = read_local(state, identity).await?;
+    let items = merge(cloud, local);
+    Ok(WatchHistoryPage {
+        total: items.len() as i64,
+        items,
+        ..Default::default()
+    })
+}
+
+/// Displayable local history for an active account while the cloud snapshot is fetched.
+pub async fn list_local(
+    state: &AppState,
+    expected_account: HistoryAccount,
+) -> AppResult<Vec<WatchHistoryItem>> {
+    let local = read_local(state, Identity(Some(expected_account))).await?;
+    Ok(merge(Vec::new(), local))
+}
+
+async fn read_local(state: &AppState, identity: Identity) -> AppResult<Vec<WatchHistoryItem>> {
     identity.check(state)?;
     let local_state = state.clone();
     let local_identity = identity.clone();
@@ -88,15 +111,7 @@ where
     identity.check(state)?;
     let local =
         local.map_err(|error| AppError::Internal(format!("本地历史读取任务失败: {error}")))??;
-    let items = merge(
-        cloud,
-        local.into_iter().map(WatchHistoryItem::from).collect(),
-    );
-    Ok(WatchHistoryPage {
-        total: items.len() as i64,
-        items,
-        ..Default::default()
-    })
+    Ok(local.into_iter().map(WatchHistoryItem::from).collect())
 }
 
 async fn collect_pages<F, Fut>(mut fetch: F) -> AppResult<Vec<WatchHistoryItem>>
@@ -128,37 +143,63 @@ pub async fn delete(
 ) -> AppResult<()> {
     let identity = Identity(expected_account);
     identity.check(state)?;
+    if items.is_empty() {
+        return Ok(());
+    }
     if identity.0.is_none() {
         log::info!("[History] 未登录，仅删除本地历史 {} 条", items.len());
         return delete_local(state, &identity, items).await;
     }
     let env = state.api_env();
     identity.check(state)?;
-    delete_with(state, identity.0, items, || {
-        delete_watch_history(items, &env)
-    })
-    .await
+    let selected: BTreeSet<&str> = items.iter().map(|(id, _, _)| id.as_str()).collect();
+    let fetch = |offset| fetch_watch_history_for_verification(offset, &env);
+    let before = collect_pages(fetch).await?;
+    let targets = cloud_delete_targets(&before, &selected)?;
+    identity.check(state)?;
+    if targets.is_empty() {
+        return delete_local(state, &identity, items).await;
+    }
+    let write = delete_watch_history(&targets, &env).await;
+    identity.check(state)?;
+    let after = collect_pages(fetch).await?;
+    identity.check(state)?;
+    let still_listed: BTreeSet<&str> = after
+        .iter()
+        .map(|item| item.series_id.as_str())
+        .filter(|id| selected.contains(id))
+        .collect();
+    if still_listed.is_empty() {
+        return delete_local(state, &identity, items).await;
+    }
+    let confirmed: Vec<_> = items
+        .iter()
+        .filter(|(id, _, _)| !still_listed.contains(id.as_str()))
+        .cloned()
+        .collect();
+    delete_local(state, &identity, &confirmed).await?;
+    write?;
+    Err(AppError::Rejected(format!(
+        "{} 条观看历史仍在云端，未删除",
+        still_listed.len()
+    )))
 }
 
-async fn delete_with<F, Fut>(
-    state: &AppState,
-    expected_account: Option<HistoryAccount>,
-    items: &[(String, String, i64)],
-    cloud: F,
-) -> AppResult<()>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = AppResult<()>>,
-{
-    let identity = Identity(expected_account);
-    identity.check(state)?;
-    if items.is_empty() {
-        return Ok(());
-    }
-    let result = cloud().await;
-    identity.check(state)?;
-    result?;
-    delete_local(state, &identity, items).await
+fn cloud_delete_targets(
+    rows: &[WatchHistoryItem],
+    selected: &BTreeSet<&str>,
+) -> AppResult<Vec<(String, i64)>> {
+    rows.iter()
+        .filter(|item| selected.contains(item.series_id.as_str()))
+        .map(|item| {
+            let kind = item
+                .book_type
+                .filter(|kind| *kind > 0)
+                .ok_or_else(|| AppError::Rejected("该观看记录缺少类型，未删除".into()))?;
+            Ok((item.series_id.clone(), kind))
+        })
+        .collect::<AppResult<BTreeSet<_>>>()
+        .map(|rows| rows.into_iter().collect())
 }
 
 async fn delete_local(

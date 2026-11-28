@@ -133,7 +133,7 @@ pub(super) fn action(
                                 tr("collections.folderVisibilityUnavailable")
                             }))
                             .child(danger())
-                            .child(ui::status(membership.feedback))
+                            .child(ui::transient_notice(membership.feedback))
                             .child(
                                 view().flex_row().justify_end().child(
                                     ui::button(

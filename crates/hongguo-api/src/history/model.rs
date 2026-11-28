@@ -9,6 +9,8 @@ use hongguo_common::model::LocalHistoryItem;
 #[serde(rename_all = "camelCase")]
 pub struct WatchHistoryItem {
     pub series_id: String,
+    #[serde(skip)]
+    pub book_type: Option<i64>,
     pub title: String,
     /// 封面（HEIC 签名 URL；前端走 hongguo-cover 代理渲染）
     #[serde(default)]
@@ -35,6 +37,7 @@ impl From<LocalHistoryItem> for WatchHistoryItem {
     fn from(item: LocalHistoryItem) -> Self {
         Self {
             series_id: item.series_id,
+            book_type: None,
             title: item.title,
             cover: item.cover,
             vid_index: i64::from(item.vid_index),
