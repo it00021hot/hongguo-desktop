@@ -167,6 +167,25 @@ pub struct AccountState {
     pub raw_profile: String,
 }
 
+/// 启动页选择模式；旧设置默认仍打开首页。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StartupMode {
+    #[default]
+    Fixed,
+    LastPage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StartupPage {
+    #[default]
+    Home,
+    Browse,
+    Downloads,
+    My,
+}
+
 /// 应用设置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,6 +224,10 @@ pub struct Settings {
     /// 空 = 未启用）。注册在壳侧（issue #4：隐藏/显示主窗口）
     #[serde(default)]
     pub boss_key: String,
+    #[serde(default)]
+    pub startup_mode: StartupMode,
+    #[serde(default)]
+    pub startup_page: StartupPage,
     /// 主题：auto / light / dark（默认 dark——黑色是应用的默认观感）
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -239,6 +262,8 @@ impl Default for Settings {
             auto_next_episode: true,
             pause_on_minimize: true,
             boss_key: String::new(),
+            startup_mode: StartupMode::default(),
+            startup_page: StartupPage::default(),
             theme: default_theme(),
             account: None,
         }

@@ -489,6 +489,13 @@
     "issueOpenFailed": "Could not open the GitHub Issue page."
   },
   "settings": {
+    "startup": "Open on startup",
+    "startupMode": "Startup mode",
+    "startupFixed": "Open a specific page",
+    "startupLastPage": "Restore last page",
+    "startupPage": "Page to open",
+    "startupFixedDesc": "Open the selected page directly on the next launch.",
+    "startupLastPageDesc": "Restore the last page or tab, but not playback or details. Open Browse if there is no saved page.",
     "downloadDir": "Download folder",
     "chooseDownloadDir": "Choose download folder",
     "choose": "Choose folder",

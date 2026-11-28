@@ -197,7 +197,7 @@ fn content(
         computed(move || window_modes.is_some_and(|modes| modes.state().landscape)),
     );
     let play_allowed = computed(move || {
-        session.identity();
+        session.settings_revision();
         lifecycle::may_play(
             is_desktop(),
             lifecycle(),

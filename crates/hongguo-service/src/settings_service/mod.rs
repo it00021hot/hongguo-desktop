@@ -13,24 +13,32 @@ const MAX_CACHE_LIMIT_MB: u32 = 1024 * 1024;
 const MAX_CACHE_TTL_DAYS: u32 = 365;
 
 /// 保存设置（立即生效，无需重启）。
-pub fn save(state: &AppState, settings: Settings) -> AppResult<Settings> {
-    let normalized = normalize(settings)?;
+pub fn update(
+    state: &AppState,
+    edit: impl FnOnce(Settings) -> AppResult<Settings>,
+) -> AppResult<()> {
+    // Read, merge, and persist under the same lock as account/profile writes.
+    // Otherwise a concurrent writer can save a stale copy over newer settings.
+    let mut current = state.settings.write();
+    let normalized = normalize(edit(current.clone())?)?;
+    if normalized == *current {
+        return Ok(());
+    }
     state.store.save_settings(&normalized)?;
-    state.replace_settings(normalized.clone());
     // 并发上限立即应用到调度器：调高并发时在途任务数不会自己涨，保存后补一轮派发
     //（降低或不变时 kick 因坑满/无可跑任务自然空转）。
     state.queue().set_limit(normalized.max_concurrency);
-    crate::download_service::kick(state.clone());
     // 缓存根即时生效于新写入（旧目录残留不迁移）
-    hongguo_store::paths::set_cache_root_override(
-        normalized.cache_override().map(std::path::PathBuf::from),
-    );
+    apply_cache_root(&normalized);
+    *current = normalized;
+    drop(current);
+    crate::download_service::kick(state.clone());
 
-    Ok(normalized)
+    Ok(())
 }
 
 /// 启动装载后把持久化的缓存根应用到 `hongguo_store::paths`（两壳各调一次，
-/// 与 [`save`] 走同一映射，别在壳里各写一份 trim/判空）。
+/// 与 [`update`] 走同一映射，别在壳里各写一份 trim/判空）。
 pub fn apply_cache_root(settings: &Settings) {
     hongguo_store::paths::set_cache_root_override(
         settings.cache_override().map(std::path::PathBuf::from),

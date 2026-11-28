@@ -8,7 +8,6 @@ struct Updates {
     session: SessionHandle,
     draft: Signal<Draft>,
     observed: Stored<Draft>,
-    validation: Signal<SharedString>,
     message: Signal<SharedString>,
     page: Owner,
 }
@@ -23,22 +22,23 @@ pub(super) fn install(
         session,
         draft,
         observed: stored(draft.get_untracked()),
-        validation,
         message,
         page: Owner::current(),
     };
     let tasks = super::super::Tasks::provide();
     effect(move || {
-        let next = draft.get();
-        let previous = updates.observed.replace(next.clone());
-        if next == previous {
-            return;
-        }
+        let mut next = draft.get();
         untracked(move || {
             validation.set(
                 next.invalid_number()
                     .map_or_else(SharedString::default, number_error),
             );
+            let previous = updates.observed.with(|observed| observed.clone());
+            next.preserve_invalid_numbers(&previous);
+            if next == previous {
+                return;
+            }
+            updates.observed.replace(next.clone());
             let gate = tasks.updates.get();
             tasks.owner.run(move || {
                 spawn(async move {
@@ -57,9 +57,8 @@ impl Updates {
         let proposed = match validate(&previous, &next, state.settings(), desktop) {
             Ok(settings) => settings,
             Err(error) => {
-                if self.page.is_live() && self.draft.get_untracked() == next {
-                    self.validation.set(error);
-                }
+                self.restore(&previous, &next);
+                self.report(error);
                 return;
             }
         };
@@ -72,25 +71,23 @@ impl Updates {
         }
         let before = previous.clone();
         let after = next.clone();
-        let result = bridge::request(async move {
+        let result = bridge::submit(async move {
             hongguo_service::runtime::spawn_blocking(move || {
-                let settings =
-                    after
-                        .apply(&before, state.settings(), desktop)
-                        .map_err(|error| {
-                            hongguo_common::AppError::InvalidArgs(format!(
-                                "{}: {}–{}",
-                                error.field, error.minimum, error.maximum
-                            ))
-                        })?;
-                hongguo_service::settings_service::save(&state, settings)
+                hongguo_service::settings_service::update(&state, |latest| {
+                    after.apply(&before, latest, desktop).map_err(|error| {
+                        hongguo_common::AppError::InvalidArgs(format!(
+                            "{}: {}–{}",
+                            error.field, error.minimum, error.maximum
+                        ))
+                    })
+                })
             })
             .await
             .map_err(|error| hongguo_common::AppError::Internal(error.to_string()))?
         })
         .await;
         match result {
-            Ok(_) => self.session.notify_identity(),
+            Ok(()) => self.session.notify_settings(),
             Err(error) => {
                 let mut notice = error.text();
                 if boss_changed && let Err(rollback) = crate::boss_key::apply(old_boss).await {
@@ -116,7 +113,10 @@ impl Updates {
         let saved = Draft::from(self.session.with(|session| session.state.settings()));
         let mut current = self.draft.get_untracked();
         current.restore_changed(previous, attempted, saved);
-        self.observed.replace(current.clone());
+        let mut observed = current.clone();
+        self.observed
+            .with(|previous| observed.preserve_invalid_numbers(previous));
+        self.observed.replace(observed);
         self.draft.set(current);
     }
 
