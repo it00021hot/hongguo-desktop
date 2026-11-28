@@ -6,6 +6,10 @@ use nsh_core::prelude::*;
 mod account;
 mod preferences;
 
+pub(crate) fn provide_tasks() {
+    Tasks::provide();
+}
+
 #[derive(Clone, Copy)]
 struct Tasks {
     owner: Owner,

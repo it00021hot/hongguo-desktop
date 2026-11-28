@@ -15,6 +15,7 @@ mod notifications;
 use hongguo_service::personal_service as personal_sources;
 mod shell;
 mod shortcuts;
+mod startup;
 mod ui;
 mod update;
 mod view_memory;
@@ -108,7 +109,7 @@ pub fn App() -> impl IntoElement {
                     let handle = events::SessionHandle::new(session.get().expect("loaded session"));
                     boss_key::install(handle.with(|session| session.state.settings().boss_key));
                     let window_modes = window_modes::install(computed(move || {
-                        handle.identity();
+                        handle.settings_revision();
                         is_desktop()
                             && handle.with(|session| session.state.settings().pause_on_minimize)
                     }));
@@ -119,7 +120,8 @@ pub fn App() -> impl IntoElement {
                         "dark" => nsh_core::platform::Appearance::Dark,
                         _ => nsh_core::platform::Appearance::System,
                     });
-                    let nav = navigation::Navigation::new();
+                    let nav = startup::navigation(handle);
+                    features::settings::provide_tasks();
                     view_memory::provide_models();
                     features::browse::GlobalSearch::provide();
                     shortcuts::Shortcuts::provide();

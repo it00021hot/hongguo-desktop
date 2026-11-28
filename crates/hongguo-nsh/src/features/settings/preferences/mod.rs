@@ -52,6 +52,7 @@ pub(super) fn page(session: SessionHandle, nav: Navigation) -> Screen {
                     .self_center()
                     .p_6()
                     .gap_4()
+                    .child(sections::startup(draft, busy))
                     .child(sections::download(draft, busy, message))
                     .child(sections::naming(draft, busy))
                     .child(proxy::section(draft, busy, message))

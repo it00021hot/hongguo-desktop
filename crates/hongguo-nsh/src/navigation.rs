@@ -96,12 +96,8 @@ impl AccountPrompt {
 }
 
 impl Navigation {
-    pub(crate) fn new() -> Self {
-        Self(
-            signal(vec![Route::Catalog]),
-            signal(Vec::new()),
-            signal(None),
-        )
+    pub(crate) fn new(initial: Route) -> Self {
+        Self(signal(vec![initial]), signal(Vec::new()), signal(None))
     }
     pub(crate) fn routes(self) -> Signal<Vec<Route>> {
         self.0

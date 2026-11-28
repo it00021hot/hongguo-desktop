@@ -489,6 +489,13 @@
     "issueOpenFailed": "无法打开 GitHub Issue 页面。"
   },
   "settings": {
+    "startup": "启动时打开",
+    "startupMode": "启动模式",
+    "startupFixed": "指定页面",
+    "startupLastPage": "恢复上次页面",
+    "startupPage": "指定页面",
+    "startupFixedDesc": "下次启动直接打开指定的页面。",
+    "startupLastPageDesc": "恢复上次使用的页面或标签，不恢复播放和详情。没有记录时打开找剧。",
     "downloadDir": "下载目录",
     "chooseDownloadDir": "选择下载目录",
     "choose": "选择目录",

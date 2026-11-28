@@ -4,8 +4,63 @@ use super::{
     model::Draft,
 };
 use crate::{i18n::tr, ui};
-use hongguo_common::model::settings::NamingTemplate;
+use hongguo_common::model::settings::{NamingTemplate, StartupMode, StartupPage};
 use nsh_core::prelude::*;
+
+pub(super) fn startup(draft: Signal<Draft>, busy: Signal<bool>) -> View {
+    use crate::features::settings::presentation::{form_description, form_label};
+
+    let fixed = move || draft.with(|draft| draft.startup_mode == StartupMode::Fixed);
+    group("settings.startup").child(
+        view()
+            .gap_3()
+            .child(
+                view()
+                    .gap_2()
+                    .child(form_label(move || tr("settings.startupMode")))
+                    .child(choices(
+                        "settings.startupMode",
+                        draft,
+                        busy,
+                        vec![
+                            (StartupMode::Fixed, "fixed", "settings.startupFixed"),
+                            (
+                                StartupMode::LastPage,
+                                "lastPage",
+                                "settings.startupLastPage",
+                            ),
+                        ],
+                        |draft| draft.startup_mode,
+                        |draft, value| draft.startup_mode = value,
+                    )),
+            )
+            .child(when(fixed, move || {
+                view()
+                    .gap_2()
+                    .child(form_label(move || tr("settings.startupPage")))
+                    .child(choices(
+                        "settings.startupPage",
+                        draft,
+                        busy,
+                        vec![
+                            (StartupPage::Home, "home", "nav.primaryHome"),
+                            (StartupPage::Browse, "browse", "nav.browse.title"),
+                            (StartupPage::Downloads, "downloads", "nav.primaryDownloads"),
+                            (StartupPage::My, "my", "nav.my"),
+                        ],
+                        |draft| draft.startup_page,
+                        |draft, value| draft.startup_page = value,
+                    ))
+            }))
+            .child(form_description(move || {
+                tr(if fixed() {
+                    "settings.startupFixedDesc"
+                } else {
+                    "settings.startupLastPageDesc"
+                })
+            })),
+    )
+}
 
 pub(super) fn download(
     draft: Signal<Draft>,

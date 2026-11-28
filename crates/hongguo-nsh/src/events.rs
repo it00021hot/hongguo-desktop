@@ -9,6 +9,7 @@ use tokio::sync::broadcast::error::RecvError;
 pub(crate) struct SessionHandle {
     session: Stored<Arc<Session>>,
     identity: Signal<u64>,
+    settings_revision: Signal<u64>,
     account_profile: Signal<u64>,
     downloads: Signal<u64>,
     merges: Signal<u64>,
@@ -31,6 +32,7 @@ impl SessionHandle {
         let handle = Self {
             session: stored(session),
             identity: signal(0),
+            settings_revision: signal(0),
             account_profile: signal(0),
             downloads: signal(0),
             merges: signal(0),
@@ -136,6 +138,12 @@ impl SessionHandle {
     }
     pub(crate) fn identity(self) -> u64 {
         self.identity.get()
+    }
+    pub(crate) fn settings_revision(self) -> u64 {
+        self.settings_revision.get()
+    }
+    pub(crate) fn notify_settings(self) {
+        self.settings_revision.update(|version| *version += 1);
     }
     pub(crate) fn account_profile(self) -> u64 {
         self.account_profile.get()

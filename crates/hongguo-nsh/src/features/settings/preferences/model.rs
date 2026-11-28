@@ -1,4 +1,7 @@
-use hongguo_common::model::{ProxyConfig, Settings, settings::NamingTemplate};
+use hongguo_common::model::{
+    ProxyConfig, Settings,
+    settings::{NamingTemplate, StartupMode, StartupPage},
+};
 
 const MAX_CACHE_MB: u32 = 1024 * 1024;
 const MAX_CACHE_DAYS: u32 = 365;
@@ -24,6 +27,8 @@ pub(super) struct Draft {
     pub(super) pause_on_minimize: bool,
     pub(super) auto_delete: bool,
     pub(super) boss_key: String,
+    pub(super) startup_mode: StartupMode,
+    pub(super) startup_page: StartupPage,
 }
 
 impl From<Settings> for Draft {
@@ -40,11 +45,43 @@ impl From<Settings> for Draft {
             pause_on_minimize: settings.pause_on_minimize,
             auto_delete: settings.auto_delete_after_play,
             boss_key: settings.boss_key,
+            startup_mode: settings.startup_mode,
+            startup_page: settings.startup_page,
         }
     }
 }
 
 impl Draft {
+    pub(super) fn preserve_invalid_numbers(&mut self, previous: &Self) {
+        for (value, old, maximum, minimum, field) in [
+            (
+                &mut self.concurrency,
+                &previous.concurrency,
+                MAX_CONCURRENCY,
+                1,
+                "settings.concurrency",
+            ),
+            (
+                &mut self.cache_limit,
+                &previous.cache_limit,
+                MAX_CACHE_MB,
+                0,
+                "settings.cacheLimit",
+            ),
+            (
+                &mut self.cache_ttl,
+                &previous.cache_ttl,
+                MAX_CACHE_DAYS,
+                0,
+                "settings.cacheTtl",
+            ),
+        ] {
+            if number(value, minimum, maximum, field).is_err() {
+                value.clone_from(old);
+            }
+        }
+    }
+
     pub(super) fn invalid_number(&self) -> Option<InvalidNumber> {
         [
             (
@@ -99,6 +136,8 @@ impl Draft {
         changed!(proxy, proxy);
         changed!(auto_next, auto_next_episode);
         changed!(auto_delete, auto_delete_after_play);
+        changed!(startup_mode, startup_mode);
+        changed!(startup_page, startup_page);
         Ok(latest)
     }
 
@@ -121,7 +160,9 @@ impl Draft {
             auto_next,
             pause_on_minimize,
             auto_delete,
-            boss_key
+            boss_key,
+            startup_mode,
+            startup_page
         );
     }
 }
@@ -142,4 +183,71 @@ fn number(
         minimum,
         maximum,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_cache_edit_does_not_discard_other_settings() {
+        let settings = Settings::default();
+        let saved = Draft::from(settings.clone());
+        let mut next = saved.clone();
+        next.cache_limit.clear();
+        next.cache_ttl = "7".into();
+        next.auto_next = false;
+        next.startup_mode = StartupMode::LastPage;
+        assert_eq!(next.invalid_number().unwrap().field, "settings.cacheLimit");
+        next.preserve_invalid_numbers(&saved);
+        let persisted = next.apply(&saved, settings, true).unwrap();
+        assert_eq!(persisted.cache_limit_mb, 0);
+        assert_eq!(persisted.cache_ttl_days, 7);
+        assert!(!persisted.auto_next_episode);
+        assert_eq!(persisted.startup_mode, StartupMode::LastPage);
+    }
+
+    #[test]
+    fn cache_edits_and_startup_choice_round_trip_without_overwriting_newer_values() {
+        let original = Settings::default();
+        let saved = Draft::from(original.clone());
+        let mut next = saved.clone();
+        next.cache_limit = "2048".into();
+        next.cache_ttl = "30".into();
+        next.startup_page = StartupPage::My;
+        let latest = Settings {
+            theme: "light".into(),
+            max_concurrency: 8,
+            ..original
+        };
+        let persisted = next.apply(&saved, latest, true).unwrap();
+        let path = std::env::temp_dir().join(format!("guava-settings-{}.db", uuid::Uuid::new_v4()));
+        {
+            let store = hongguo_store::Store::open(&path).unwrap();
+            store.save_settings(&persisted).unwrap();
+        }
+        let reopened = {
+            let store = hongguo_store::Store::open_with_lock_retry(&path).unwrap();
+            store.settings().unwrap().unwrap()
+        };
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(path.with_file_name(format!(
+                "{}{suffix}",
+                path.file_name().unwrap().to_string_lossy()
+            )));
+        }
+        assert_eq!(reopened.cache_limit_mb, 2048);
+        assert_eq!(reopened.cache_ttl_days, 30);
+        assert_eq!(reopened.startup_page, StartupPage::My);
+        assert_eq!(reopened.theme, "light");
+        assert_eq!(reopened.max_concurrency, 8);
+    }
+
+    #[test]
+    fn upgrade_keeps_home_for_legacy_settings() {
+        let row = r#"{"downloadDir":".","maxConcurrency":3}"#;
+        let reopened: Settings = serde_json::from_str(row).unwrap();
+        assert_eq!(reopened.startup_mode, StartupMode::Fixed);
+        assert_eq!(reopened.startup_page, StartupPage::Home);
+    }
 }
