@@ -1711,29 +1711,6 @@ fn down(
             item = Some(c);
         }
     }
-    // The press gives the keyboard focus to the stop it is on (the view or
-    // its nearest focusable ancestor), as a click does on a desktop; a
-    // hosted item (a video's controls, a component's window) or a field
-    // keeps the keys for itself.
-    let window = crate::app_window::window_of(surface, &hit.view);
-    match &item {
-        Some(Item::Input(_)) => {}
-        Some(Item::Hosted(..)) => crate::keyboard::blur_window(surface, window),
-        _ => {
-            if let Some(target) = crate::keyboard::focus_target(surface, &hit.view) {
-                crate::keyboard::focus_pointer(surface, &target);
-            } else if !matches!(item, Some(Item::Text(_) | Item::Area(..))) {
-                crate::keyboard::blur_window(surface, window);
-                // A press that starts selection keeps the field focused
-                // for Ctrl+C (copy-selection-windows.test.tsx).
-                if let Some(field) = crate::text_input::focused(surface)
-                    && crate::app_window::window_of(surface, &field) == window
-                {
-                    crate::text_input::blur(&field);
-                }
-            }
-        }
-    }
     let native = matches!(item, Some(Item::Hosted(..) | Item::Input(_)));
     let selects = matches!(item, Some(Item::Text(_) | Item::Area(..)));
     let input = &surface.input;
@@ -1789,6 +1766,29 @@ fn down(
         };
         find_press(surface, &hit.view, pressable, x, y).map(|p| p.clicked(modifiers.core(), clicks))
     };
+    // The press gives the keyboard focus to the stop it is on (the view or
+    // its nearest focusable ancestor), as a click does on a desktop; a
+    // hosted item (a video's controls, a component's window) or a field
+    // keeps the keys for itself.
+    let window = crate::app_window::window_of(surface, &hit.view);
+    match &item {
+        Some(Item::Input(_)) => {}
+        Some(Item::Hosted(..)) => crate::keyboard::blur_window(surface, window),
+        _ => {
+            if let Some(target) = crate::keyboard::focus_target(surface, &hit.view) {
+                crate::keyboard::focus_pointer(surface, &target);
+            } else if !matches!(item, Some(Item::Text(_) | Item::Area(..))) {
+                crate::keyboard::blur_window(surface, window);
+                // Non-focusable actions (such as combobox options) still need the field.
+                if press.is_none()
+                    && let Some(field) = crate::text_input::focused(surface)
+                    && crate::app_window::window_of(surface, &field) == window
+                {
+                    crate::text_input::blur(&field);
+                }
+            }
+        }
+    }
     let id = input.next_id.get();
     input.next_id.set(id.wrapping_add(1));
     let mut p = Pointer {
@@ -3053,8 +3053,8 @@ mod tests {
         assert_eq!(pressed(60.0), None);
     }
 
-    /// A click on blank space (no stop of the keyboard focus) blurs the
-    /// field that has the focus; a click on the field keeps it.
+    /// Only blank space blurs the field; text selection and non-focusable
+    /// actions keep it focused.
     #[test]
     fn a_click_on_blank_space_blurs_the_field() {
         let surface = Surface::new(nsh_core::platform::Environment::default());
@@ -3088,6 +3088,14 @@ mod tests {
             rect(0.0, 300.0, 400.0, 100.0),
         );
         area.state_mut().props.selectable_view = true;
+        let option = view(
+            &surface.root,
+            6,
+            ViewKind::View,
+            rect(0.0, 50.0, 200.0, 40.0),
+        );
+        option.state_mut().props.focusable = Some(false);
+        option.state_mut().events.set(EventKind::Press, true);
         let click = |x: f32, y: f32| {
             let event = |kind| PointerEvent {
                 kind,
@@ -3112,6 +3120,8 @@ mod tests {
         // A press that starts a selection keeps the field focused, so
         // Ctrl+C copies the selection around it.
         click(200.0, 350.0);
+        assert_eq!(crate::text_input::focused(&surface), Some(field.clone()));
+        click(10.0, 60.0);
         assert_eq!(crate::text_input::focused(&surface), Some(field.clone()));
         click(200.0, 200.0);
         assert_eq!(crate::text_input::focused(&surface), None);
