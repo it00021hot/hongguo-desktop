@@ -1,6 +1,6 @@
 # NSH 壳开发与验证
 
-当前使用 NSH 0.7.1 固定源码 `vendor/nsh`，上游发布提交为 `f78eace7af23a9c1c72605c7ee46204f57f3e8e6`。启动、检查、打包统一使用 NSH CLI。旧 Tauri、GPUI 和 WebView 流程仅保存在备份分支，不能恢复。
+当前使用 NSH 0.7.2 固定源码 `vendor/nsh`，上游发布提交为 `0c29b5e3351128f489fe53bfb167160801707191`。启动、检查、打包统一使用 NSH CLI。旧 Tauri、GPUI 和 WebView 流程仅保存在备份分支，不能恢复。
 
 ## 工具与入口
 

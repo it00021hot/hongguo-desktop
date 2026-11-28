@@ -68,7 +68,6 @@ impl Search {
     pub fn visible(self) -> bool {
         self.context.get().is_some()
             && self.opened.get()
-            && self.focused.get()
             && !self.composing.get()
             && !self.suggestions.loading()
             && self.suggestions.error().is_none()
@@ -91,7 +90,9 @@ impl Search {
     pub fn focus(self, focused: bool) {
         batch(|| {
             self.focused.set(focused);
-            self.opened.set(focused);
+            if focused || !is_desktop() {
+                self.opened.set(focused);
+            }
             self.keyboard_selection.set(false);
         });
     }
@@ -140,7 +141,7 @@ impl Search {
     pub fn popup(self) -> crate::features::browse::presentation::SearchPopup {
         crate::features::browse::presentation::SearchPopup {
             open: computed(move || self.visible()),
-            focused: computed(move || self.focused.get()),
+            session_open: self.opened,
             composing: self.composing,
             selected: self.selected,
             options: computed(move || {
@@ -196,7 +197,7 @@ pub(super) fn field(
         submit();
     };
     effect(move || {
-        if !search.visible() {
+        if !search.focused.get() || !search.visible() {
             return;
         }
         for (key, delta) in [("up", -1), ("down", 1)] {
@@ -211,6 +212,24 @@ pub(super) fn field(
             );
         }
     });
+    if is_desktop() {
+        effect(move || {
+            if !search.opened.get() {
+                return;
+            }
+            for key in ["tab", "shift+tab"] {
+                on_key_with(
+                    key,
+                    KeyOptions {
+                        when: nsh_core::keymap::When::Always,
+                        pass_through: true,
+                        ..Default::default()
+                    },
+                    move |_| search.dismiss(),
+                );
+            }
+        });
+    }
     crate::features::browse::presentation::search_suggestions(
         search.popup(),
         crate::features::browse::presentation::search_field(move || {
