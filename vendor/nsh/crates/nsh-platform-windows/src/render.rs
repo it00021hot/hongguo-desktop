@@ -59,7 +59,6 @@ use windows::{
                 ID2D1DeviceContext, ID2D1Geometry, ID2D1Image, ID2D1SolidColorBrush,
             },
             DirectWrite::IDWriteRenderingParams,
-            Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
         },
     },
     core::Interface,
